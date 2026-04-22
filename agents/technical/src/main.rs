@@ -1,17 +1,24 @@
 // main.rs — Technical Agent entry point.
 //
-// Responsibilities (Phase 1.3 scaffold):
+// Responsibilities (Phase 1.3 scaffold → Phase 1.4 indicator engine):
 //   1. Load environment variables from .env
 //   2. Initialise the Kafka StreamConsumer (subscribed to `market.ticks`)
 //   3. Drive the tick listener loop — print each arriving tick symbol to
 //      stdout to confirm the end-to-end Kafka connection is live.
 //
-// Future phases will replace the println! with indicator computation
-// (EMA, RSI, VWAP, Bollinger Bands via the `ta` crate) and a Kafka
-// producer that publishes `TechSignal` Protobufs to `signals.technical`.
+// Phase 1.4 additions (modules declared below, not yet wired):
+//   • state.rs        — SymbolState + MarketState (Arc<RwLock<HashMap>>)
+//   • indicators.rs   — incremental RSI (ta crate) + intraday VWAP
+//   • signal_engine.rs — RSI/VWAP confluence → TechSignal conviction score
+//
+// Integration with the Kafka producer (publish TechSignal to
+// `signals.technical`) will be completed in Subphases 25-27.
 
+mod indicators;
 mod kafka_consumer;
 mod proto;
+mod signal_engine;
+mod state;
 
 #[tokio::main]
 async fn main() {
