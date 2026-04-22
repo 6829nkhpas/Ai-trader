@@ -1,0 +1,23 @@
+{
+  "name": "sentiment",
+  "version": "1.0.0",
+  "description": "NLP/Sentiment Agent — polls Marketaux for financial news, scores with Claude, publishes NewsSentiment Protobuf to Kafka",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "echo \"No tests defined yet\" && exit 0"
+  },
+  "keywords": ["sentiment", "nlp", "kafka", "claude", "ai-trade"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.90.0",
+    "axios": "^1.15.2",
+    "dotenv": "^17.4.2",
+    "kafkajs": "^2.2.4",
+    "protobufjs": "^8.0.1",
+    "redis": "^5.12.1"
+  }
+}
