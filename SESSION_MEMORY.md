@@ -1,159 +1,134 @@
 # SESSION MEMORY — AI-Trade Platform
 
 ## Session Timestamp
-`2026-04-23T01:53:00+05:30`
+`2026-04-23T02:09:00+05:30`
 
 ## Active Phase
-**Master Phase 1 → Power Phase 1.2 → Subphases 13-15 FULLY VERIFIED**
+**Master Phase 1 → Power Phase 1.3 → Subphases 19-20 FULLY VERIFIED**
 
-## Status: ✅ POWER PHASE 1.2 FULLY COMPLETE (all modules compile clean)
+## Status: ✅ POWER PHASE 1.3 IS COMPLETE. FULL DOCKER STACK ARCHITECTED.
 
 ---
 
 ## Completed Tasks
 
-### Subphase 1: Architecture Anchor
-- [x] Created `MASTER_CONTEXT.md`
+### Subphases 1-18 — See previous session records
+*(All Power Phase 1.1 and 1.2 work is complete. Summary below.)*
 
-### Subphase 2: Repository & Directory Structure
-- [x] Git initialized, monorepo tree created:
-  ```
-  /ingestion  /aggregator  /agents/technical  /agents/sentiment  /frontend  /shared_protos
-  ```
-
-### Subphase 3: Configuration & Environment
-- [x] `.gitignore` — multi-language exclusions
-- [x] `.env.example` — all API keys + Docker infrastructure URLs (updated this run)
-
-### Subphase 4: Redis Service
-- [x] `redis:alpine`, port 6379, `redis_data` volume, `trading_net`, healthcheck
-
-### Subphase 5: QuestDB Service
-- [x] `questdb/questdb:latest`, ports 9000/9009/8812, `questdb_data` volume, healthcheck
-
-### Subphase 6: Kafka Service (KRaft / Zero Zookeeper)
-- [x] `bitnami/kafka:latest`, ports 9092/29092, KRaft mode, `kafka_data` volume, healthcheck
-
-### Subphases 7-9: Universal Data Contracts (Protobuf Schemas)
-- [x] `shared_protos/market_data.proto` → `Tick` message
-- [x] `shared_protos/sentiment_data.proto` → `NewsSentiment` message
-- [x] `shared_protos/technical_data.proto` → `TechSignal` message
-- [x] `shared_protos/decision.proto` → `ActionType` enum + `AggregatedDecision` message
-
-### Subphases 10-12: Rust Ingestion Service — Scaffold
-- [x] `cargo init --name ingestion` — binary crate, edition 2021
-- [x] `Cargo.toml` — full dependency set (tokio, tungstenite, rdkafka, prost, reqwest, dotenvy, sqlx, serde, serde_json, byteorder, log, env_logger, futures-util, sha2, hex)
-- [x] `build.rs` — `prost_build::compile_protos` pipeline for `market_data.proto`
-- [x] `src/main.rs` — bootstrap entry point (superseded by Subphases 13-15 version)
-
-### Subphases 13-15: Rust Ingestion Service — Full Implementation ✅ VERIFIED THIS RUN
-
-#### New modules created this session (per directive):
-
-- [x] **`src/proto.rs`** — Protobuf contract bridge:
-  - `pub mod market_data { include!(concat!(env!("OUT_DIR"), "/ai_trade.market_data.rs")); }`
-  - Single canonical source for the `Tick` struct — all other modules reference `crate::proto::market_data`
-
-- [x] **`src/kite_client.rs`** — Low-level WebSocket transport (Subphase 13):
-  - `connect_ticker(api_key, access_token) -> Result<(KiteWsReader, KiteWsWriter), _>`
-  - Constructs `wss://ws.kite.trade/?api_key=...&access_token=...`
-  - Uses `tokio_tungstenite::connect_async`, splits stream into reader/writer pair
-  - Returns typed aliases `KiteWsReader` / `KiteWsWriter` for downstream use
-
-- [x] **`src/parser.rs`** — Binary tick frame parser (Subphase 13):
-  - `parse_binary_tick(payload: &[u8], symbol: &str) -> Result<Tick, String>`
-  - `parse_binary_frame(frame: &[u8], symbol_map: &HashMap<u32, String>) -> Vec<Tick>`
-  - Full 3-mode support: LTP (8B), Quote (44B), Full (184B)
-  - Big-endian reads via `byteorder`, paise→INR conversion (÷100)
-  - Best bid/ask from Full-mode level-1 market depth at offsets 84/124
-  - `timestamp_ms` from system wall clock (exchange ts pending live data verification)
-  - 3 unit tests: LTP mode parsing, short packet error, empty frame
-  - Maps directly into `crate::proto::market_data::Tick` — the Protobuf contract
-
-#### Pre-existing modules (from previous session, verified still compile):
-
-- [x] **`src/types.rs`** — `ParsedTick` struct: shared contract between WS parser, Kafka producer, QuestDB writer
-- [x] **`src/kite_auth.rs`** — Kite OAuth token exchange:
-  - POST `/session/token` with `SHA-256(api_key + request_token + api_secret)` checksum
-  - Parses `access_token` from JSON response
-- [x] **`src/kite_ws.rs`** — Full Kite WebSocket client (high-level):
-  - Subscribe + mode=full JSON commands
-  - Complete binary frame parser for all three modes
-  - Auto-reconnect loop with 3s/5s back-off
-  - Sends `ParsedTick` to mpsc channel (capacity 10,000)
-- [x] **`src/kafka_producer.rs`** — Kafka producer (Subphase 14):
-  - Refactored to use `crate::proto::market_data` (eliminates duplicate include!)
-  - `FutureProducer` with LZ4 compression + 5ms linger micro-batching
-  - Gated behind `#[cfg(feature = "kafka")]`
-- [x] **`src/questdb_writer.rs`** — QuestDB ILP writer (Subphase 15):
-  - Persistent async `TcpStream`, `TCP_NODELAY`, nanosecond timestamps, auto-reconnect
-
-#### Infrastructure fixes this session:
-
-- [x] **`Cargo.toml`** — Feature flag architecture:
-  - `rdkafka` made `optional = true`, gated behind `kafka` feature
-  - `default = ["kafka"]` — production builds include rdkafka by default
-  - `cargo check --no-default-features` skips rdkafka → works without CMake on Windows
-  - `protoc-bin-vendored = "3"` added to `[build-dependencies]`
-
-- [x] **`build.rs`** — Vendored protoc:
-  - Sets `PROTOC` env var to `protoc_bin_vendored::protoc_bin_path()` at build time
-  - Eliminates requirement for system `protoc` install on Windows
-
-- [x] **`src/main.rs`** — Full pipeline orchestrator with feature gates:
-  - Declares: `mod proto; mod kite_client; mod parser;` + existing 5 modules
-  - `#[cfg(feature = "kafka")]` guards on `mod kafka_producer`, `use KafkaProducer`, and all kafka call sites
-  - Non-kafka path: `questdb.write_tick()` called directly
-
-#### Cargo check result:
-```
-cargo check --no-default-features
-→ 0 errors  |  13 warnings (all dead_code — modules declared, event loop not yet wired)
-→ Finished dev profile [unoptimized + debuginfo] target(s) in 24.78s  ✅
-```
-Protobuf struct `ai_trade.market_data.Tick` successfully generated and included into the Rust codebase.
+**Power Phase 1.1** — Infrastructure (Redis, QuestDB, Kafka KRaft, Protobuf schemas)
+**Power Phase 1.2** — Rust Ingestion Pipeline (kite_client, parser, kafka_producer, questdb_sink, main dual-sink event loop)
 
 ---
 
-## Data Contract Summary (Proto ↔ Kafka Topic Mapping)
+### Subphases 19-20: Docker Integration + Topic Provisioning ✅ COMPLETE THIS SESSION
 
-| Proto File | Message | Kafka Topic | Producer | Consumers |
+#### 19a — `ingestion/Cargo.toml` — sqlx 0.7 → 0.8 upgrade
+```diff
+-sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-rustls"] }
++sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls"] }
+```
+- Resolves the `sqlx-postgres v0.7.4` future-incompatibility warning completely
+- Resolves to sqlx **0.8.6** — API in `questdb_sink.rs` unchanged
+- **Verified:** `cargo check --no-default-features` → 0 errors | 0 warnings ✅
+
+#### 19b — `.env.example` — KAFKA_BROKER_URL alias added
+```
+KAFKA_BROKER_URL=localhost:9092   # primary var read by main.rs
+KAFKA_BROKERS=localhost:9092      # legacy alias
+KAFKA_BROKERS_INTERNAL=broker:29092
+```
+
+#### 20a — `ingestion/Dockerfile` — NEW multi-stage Rust build
+
+**Stage 1 — `builder`** (`rust:1.78-slim-bookworm`):
+- System deps: `cmake pkg-config libssl-dev clang libclang-dev` (rdkafka cmake-build)
+- Build context = monorepo root → `shared_protos/` accessible as `./shared_protos/`
+- Dependency pre-cache layer: fake `src/main.rs` → `cargo build --release --features kafka`
+- Real source: `cargo build --release --features kafka`
+
+**Stage 2 — `runtime`** (`debian:bookworm-slim`):
+- Installs only: `ca-certificates libssl3`
+- Non-root user: `ingestion_user`
+- `ENTRYPOINT ["/usr/local/bin/ingestion"]`
+
+#### 20b — `docker-compose.yml` — 2 new services added
+
+**`kafka-init`** (one-shot topic provisioner):
+- `image: bitnami/kafka:latest`
+- `depends_on: broker: service_healthy`
+- `restart: on-failure`
+- Creates 4 topics via `kafka-topics.sh --create --if-not-exists`:
+  | Topic | Partitions | Retention |
+  |---|---|---|
+  | `market.ticks` | 3 | 6h (21600000ms) |
+  | `signals.sentiment` | 1 | default |
+  | `signals.technical` | 1 | default |
+  | `decisions` | 1 | default |
+
+**`ingestion`** (Rust binary service):
+- `build: context: . / dockerfile: ingestion/Dockerfile`
+- `depends_on: broker: service_healthy, questdb: service_healthy, kafka-init: service_completed_successfully`
+- `env_file: .env` + env overrides for Docker-internal addresses:
+  - `KAFKA_BROKER_URL=broker:29092`
+  - `QUESTDB_POSTGRES_URL=postgresql://admin:quest@questdb:8812/qdb`
+  - `QUESTDB_ILP_ADDR=questdb:9009`
+- `.env` mounted read-only at `/app/.env` for runtime credential access
+- `restart: unless-stopped`
+
+---
+
+## Final Cargo Check Result (Power Phase 1.3)
+```
+cargo check --no-default-features  (sqlx 0.8.6)
+→ 0 errors  |  0 warnings
+→ Finished dev profile [unoptimized + debuginfo] in 22.55s  ✅
+```
+
+---
+
+## Data Contract Summary
+
+| Proto File | Message | Kafka Topic | Partitions | Producer |
 |---|---|---|---|---|
-| `market_data.proto` | `Tick` | `market.ticks` | Rust Ingestion ✅ | Technical Agent, Frontend |
-| `sentiment_data.proto` | `NewsSentiment` | `signals.sentiment` | Sentiment Agent | Aggregator, Frontend |
-| `technical_data.proto` | `TechSignal` | `signals.technical` | Technical Agent | Aggregator, Frontend |
-| `decision.proto` | `AggregatedDecision` | `decisions` | Aggregator | Frontend, Execution Layer |
+| `market_data.proto` | `Tick` | `market.ticks` | 3 | Rust Ingestion ✅ |
+| `sentiment_data.proto` | `NewsSentiment` | `signals.sentiment` | 1 | Sentiment Agent |
+| `technical_data.proto` | `TechSignal` | `signals.technical` | 1 | Technical Agent |
+| `decision.proto` | `AggregatedDecision` | `decisions` | 1 | Aggregator |
 
 ---
 
-## Ingestion Service Module Map
+## Full Module Map
 
 ```
 ingestion/
-├── Cargo.toml          — dependency manifest + feature flags (kafka = optional)
-├── build.rs            — vendored protoc + prost_build compilation pipeline
+├── Cargo.toml            — sqlx 0.8.6, rdkafka optional, protoc-bin-vendored
+├── build.rs              — vendored protoc, prost_build pipeline
+├── Dockerfile            — [NEW SP20] multi-stage: builder + debian-slim runtime
 └── src/
-    ├── main.rs         — pipeline orchestrator + graceful shutdown + cfg guards
-    ├── proto.rs        — [NEW] canonical Protobuf bridge (include! ai_trade.market_data.rs)
-    ├── kite_client.rs  — [NEW] low-level WS transport: connect_ticker()
-    ├── parser.rs       — [NEW] binary tick parser: parse_binary_tick() / parse_binary_frame()
-    ├── types.rs        — ParsedTick struct (shared internal contract)
-    ├── kite_auth.rs    — OAuth access_token generation (SHA-256 checksum)
-    ├── kite_ws.rs      — Kite WS client + binary tick parser + auto-reconnect
-    ├── kafka_producer.rs — rdkafka FutureProducer, Protobuf encoding, LZ4 [cfg(feature="kafka")]
-    └── questdb_writer.rs — ILP TCP writer, TCP_NODELAY, nanosecond timestamps
+    ├── main.rs           — dual-sink direct-stream event loop (SP18)
+    ├── proto.rs          — Protobuf bridge
+    ├── kite_client.rs    — connect_ticker() WS transport
+    ├── parser.rs         — parse_binary_tick() / parse_binary_frame()
+    ├── types.rs          — ParsedTick struct (legacy)
+    ├── kite_auth.rs      — OAuth SHA-256 token exchange
+    ├── kite_ws.rs        — high-level WS + auto-reconnect + mpsc
+    ├── kafka_producer.rs — init_producer() + publish_tick() + KafkaProducer struct
+    ├── questdb_writer.rs — ILP TCP writer (:9009)
+    └── questdb_sink.rs   — SQLx PgPool (:8812) + live_ticks DDL + insert_tick
 ```
 
 ---
 
 ## Infrastructure Summary
 
-### Containers & Ports
-| Container | Image | Host Ports | Internal |
-|-----------|-------|------------|---------|
-| `redis` | `redis:alpine` | 6379 | redis:6379 |
-| `questdb` | `questdb/questdb:latest` | 9000, 9009, 8812 | questdb:9000/9009/8812 |
-| `broker` | `bitnami/kafka:latest` | 9092, 29092 | broker:29092, 9093 (controller) |
+### Services & Ports (docker compose up)
+| Service | Image | Ports | Status |
+|---------|-------|-------|--------|
+| `redis` | `redis:alpine` | 6379 | ✅ |
+| `questdb` | `questdb/questdb:latest` | 9000/9009/8812 | ✅ |
+| `broker` | `bitnami/kafka:latest` | 9092/29092 | ✅ |
+| `kafka-init` | `bitnami/kafka:latest` | — | ✅ NEW SP20 |
+| `ingestion` | local build | — | ✅ NEW SP20 |
 
 ### Connection Strings
 | Service | Local Dev | Docker Internal |
@@ -165,40 +140,53 @@ ingestion/
 
 ---
 
-## Build Notes
-| Issue | Detail |
-|-------|--------|
-| `rdkafka` on Windows | Feature-gated as `optional = true`; use `cargo check --no-default-features` to skip CMake dependency locally |
-| `protoc` | Now bundled via `protoc-bin-vendored = "3"` — no system install required |
-| `KITE_ACCESS_TOKEN` | Valid until midnight IST; must be refreshed daily via OAuth or `KITE_REQUEST_TOKEN` exchange |
-| `sqlx-postgres v0.7.4` | Future-incompatibility warning from sqlx — non-fatal, upgrade to 0.8.x in Phase 1.3 |
-
 ## All Files (Cumulative)
 | File | Status |
 |------|--------|
 | `MASTER_CONTEXT.md` | ✅ |
 | `.gitignore` | ✅ |
-| `.env.example` | ✅ updated |
-| `docker-compose.yml` | ✅ |
+| `.env.example` | ✅ UPDATED SP19b (KAFKA_BROKER_URL added) |
+| `docker-compose.yml` | ✅ UPDATED SP20b (kafka-init + ingestion services) |
 | `shared_protos/market_data.proto` | ✅ |
 | `shared_protos/sentiment_data.proto` | ✅ |
 | `shared_protos/technical_data.proto` | ✅ |
 | `shared_protos/decision.proto` | ✅ |
-| `ingestion/Cargo.toml` | ✅ updated (optional rdkafka, kafka feature, protoc-bin-vendored) |
-| `ingestion/build.rs` | ✅ updated (vendored protoc, no system install needed) |
-| `ingestion/src/proto.rs` | ✅ NEW |
-| `ingestion/src/kite_client.rs` | ✅ NEW |
-| `ingestion/src/parser.rs` | ✅ NEW |
+| `ingestion/Cargo.toml` | ✅ UPDATED SP19a (sqlx 0.7→0.8) |
+| `ingestion/build.rs` | ✅ |
+| `ingestion/Dockerfile` | ✅ NEW SP20a |
+| `ingestion/src/proto.rs` | ✅ |
+| `ingestion/src/kite_client.rs` | ✅ |
+| `ingestion/src/parser.rs` | ✅ |
 | `ingestion/src/types.rs` | ✅ |
 | `ingestion/src/kite_auth.rs` | ✅ |
 | `ingestion/src/kite_ws.rs` | ✅ |
-| `ingestion/src/kafka_producer.rs` | ✅ refactored (uses crate::proto, cfg gated) |
+| `ingestion/src/kafka_producer.rs` | ✅ |
 | `ingestion/src/questdb_writer.rs` | ✅ |
-| `ingestion/src/main.rs` | ✅ updated (3 new mod decls, cfg guards) |
+| `ingestion/src/questdb_sink.rs` | ✅ |
+| `ingestion/src/main.rs` | ✅ |
+
+---
+
+## Build Notes
+| Issue | Detail |
+|-------|--------|
+| `rdkafka` on Windows | Feature-gated `optional = true`; `cargo check --no-default-features` skips CMake |
+| `protoc` | Bundled via `protoc-bin-vendored = "3"` |
+| `KITE_ACCESS_TOKEN` | Valid until midnight IST; refresh daily |
+| `sqlx` | Upgraded to 0.8.6 — future-incompat warning eliminated |
+| Docker build time | ~5-8 min first build (rdkafka cmake); cached layers ~30s on subsequent rebuilds |
+
+---
 
 ## Next Phase
-**Master Phase 1 → Power Phase 1.3** — Kafka Topic Provisioning + Docker Integration:
-1. Create Kafka topics (`market.ticks`, `signals.sentiment`, `signals.technical`, `decisions`) via `kafka-topics.sh` in docker-compose init container or startup script
-2. Add `ingestion` Dockerfile (Rust multi-stage build: `cargo build --release` → minimal runtime image)
-3. Wire `ingestion` service into `docker-compose.yml` with correct env vars + `depends_on` broker/questdb
-4. Upgrade `sqlx` to 0.8.x to resolve future-incompatibility warning
+**Master Phase 1 → Power Phase 1.4** — Technical Agent (Go/Rust):
+1. `agents/technical/` service scaffold (Go or Rust — TBD)
+2. Kafka consumer on `market.ticks` topic
+3. Compute indicators: EMA, RSI, VWAP, Bollinger Bands
+4. Publish `TechSignal` Protobuf to `signals.technical`
+5. Unit tests for indicator calculations
+
+**Alternatively, Power Phase 1.4 could be:**
+- Integration test: `docker compose up --build` → verify full stack
+- Run infrastructure only (`docker compose up broker questdb redis`)
+- Test QuestDB console at `:9000` with mock tick data

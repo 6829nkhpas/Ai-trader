@@ -5,7 +5,9 @@
 ///   - `questdb_writer` → formats as ILP for QuestDB
 #[derive(Debug, Clone)]
 pub struct ParsedTick {
-    /// Kite instrument token (u32 integer ID)
+    /// Kite instrument token (u32 integer ID).
+    /// Stored for future use (re-subscription, depth-feed correlation).
+    #[allow(dead_code)]
     pub instrument_token: u32,
     /// Resolved NSE symbol name (e.g. "RELIANCE") from the token→symbol map
     pub symbol: String,

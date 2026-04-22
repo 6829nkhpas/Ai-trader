@@ -1,7 +1,14 @@
-/// Kafka producer — Subphase 14
+/// Kafka producer — Subphases 14 & 16
 ///
-/// Encodes a `ParsedTick` as a Protobuf `market_data::Tick` and produces it
-/// to the `market.ticks` Kafka topic using rdkafka's async FutureProducer.
+/// Provides two complementary APIs:
+///
+/// **Free-function API** (Subphase 16 — used by the new direct-stream loop in main.rs):
+///   - `init_producer(brokers) -> FutureProducer`  — construct a producer
+///   - `publish_tick(producer, topic, tick) -> ()`  — encode Protobuf + send
+///
+/// **Struct API** (Subphase 14 — kept for the legacy mpsc-channel pipeline path):
+///   - `KafkaProducer::new() -> Self`
+///   - `KafkaProducer::send_tick(&self, &ParsedTick)`
 ///
 /// The FutureProducer is non-blocking: it enqueues messages in an internal
 /// buffer and flushes them in the background, giving us fire-and-forget
@@ -100,5 +107,63 @@ impl KafkaProducer {
     pub fn flush(&self) {
         self.inner.flush(Timeout::After(Duration::from_secs(10)));
         info!("Kafka producer flushed.");
+    }
+}
+
+// ── Free-function API (Subphase 16) ─────────────────────────────────────────
+
+/// Build a `FutureProducer` from a broker list string.
+///
+/// # Arguments
+/// * `brokers` — comma-separated host:port list, e.g. `"localhost:9092"`
+///
+/// # Panics
+/// Panics if librdkafka cannot create the producer (invalid config / broker
+/// string). In production, prefer wrapping in `Result`.
+pub fn init_producer(brokers: &str) -> FutureProducer {
+    ClientConfig::new()
+        .set("bootstrap.servers", brokers)
+        .set("message.timeout.ms", "5000")
+        .set("linger.ms", "5")
+        .set("batch.num.messages", "1000")
+        .set("compression.type", "lz4")
+        .set("queue.buffering.max.messages", "100000")
+        .create()
+        .expect("Failed to create Kafka FutureProducer")
+}
+
+/// Encode a Protobuf `Tick` and publish it to the given Kafka topic.
+///
+/// Uses `prost::Message::encode_to_vec` for zero-copy serialisation into an
+/// owned byte vector, then fires a non-blocking rdkafka send. The message key
+/// is set to `tick.symbol` to guarantee per-symbol partition affinity.
+///
+/// Failures are logged as warnings — a dropped tick is preferable to stalling
+/// the hot WebSocket ingestion path.
+pub async fn publish_tick(
+    producer: &FutureProducer,
+    topic: &str,
+    tick: &crate::proto::market_data::Tick,
+) {
+    // Protobuf → bytes
+    let payload = prost::Message::encode_to_vec(tick);
+
+    let record = FutureRecord::to(topic)
+        .key(tick.symbol.as_bytes())
+        .payload(&payload);
+
+    match producer
+        .send(record, Timeout::After(Duration::from_secs(5)))
+        .await
+    {
+        Ok((partition, offset)) => {
+            log::trace!(
+                "→ Kafka [{}] partition={} offset={} symbol={}",
+                topic, partition, offset, tick.symbol
+            );
+        }
+        Err((e, _)) => {
+            warn!("Kafka publish_tick failed for {}: {}", tick.symbol, e);
+        }
     }
 }

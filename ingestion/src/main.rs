@@ -1,61 +1,95 @@
-// src/main.rs — AI-Trade Ingestion Service entry point
+// src/main.rs — AI-Trade Ingestion Service (Power Phase 1.2 — Subphases 16-18)
 //
-// Pipeline topology:
+// Pipeline topology — DUAL SINK ARCHITECTURE:
 //
-//   [Kite WebSocket] ──binary ticks──► [kite_ws::run]
-//                                              │  mpsc channel (capacity 10_000)
-//                                              ▼
-//                                     [pipeline_task]
-//                                      ├─► [KafkaProducer]   → topic: market.ticks  (feature: kafka)
-//                                      └─► [QuestDbWriter]   → ILP TCP :9009
+//   [Kite WebSocket] ──binary frame──► [parser::parse_binary_frame]
+//                                              │
+//                                    Vec<proto::Tick> produced
+//                                              │
+//                            for each Tick ─  tokio::spawn (×2, concurrent):
+//                                    ├─► [kafka_producer::publish_tick]  → topic: market.ticks
+//                                    └─► [questdb_sink::insert_tick]     → live_ticks table (:8812)
 //
-// The kite_ws task and pipeline task run concurrently via tokio::spawn.
-// A SIGINT/SIGTERM handler triggers graceful shutdown.
+// Additionally, the legacy high-throughput ILP writer is available:
+//                                    └─► [questdb_writer::write_tick]    → ILP TCP :9009
+//
+// Environment variables required:
+//   KAFKA_BROKER_URL       — Kafka bootstrap servers  (default: localhost:9092)
+//   QUESTDB_POSTGRES_URL   — QuestDB PG wire URL      (default: postgresql://admin:quest@localhost:8812/qdb)
+//   KITE_API_KEY           — Kite Connect API key
+//   KITE_API_SECRET        — Kite Connect API secret  (used only when KITE_ACCESS_TOKEN absent)
+//   KITE_REQUEST_TOKEN     — OAuth request token      (used only when KITE_ACCESS_TOKEN absent)
+//   KITE_ACCESS_TOKEN      — Pre-fetched access token (if set, skips OAuth exchange)
+//   KITE_INSTRUMENT_TOKENS — "token:SYMBOL,..." pairs (default: 738561:RELIANCE,260105:BANKNIFTY)
+//   QUESTDB_ILP_ADDR       — QuestDB ILP endpoint     (default: 127.0.0.1:9009)
+//   KAFKA_BROKERS          — alias for KAFKA_BROKER_URL used by KafkaProducer struct
 //
 // Feature flags:
-//   kafka (default = on) — enables rdkafka / KafkaProducer; disable to cargo check
-//                          on Windows without CMake installed.
+//   kafka (default = on) — enables rdkafka / Kafka paths.
+//   Disable with `cargo check --no-default-features` on Windows without CMake.
 
-// ── Module declarations ──────────────────────────────────────────────────────
+// ── Module declarations ───────────────────────────────────────────────────────
 mod proto;          // Protobuf contract — must be first (others depend on crate::proto)
 mod kite_client;    // Low-level WS transport: connect_ticker()
 mod parser;         // Binary tick frame parser: parse_binary_tick() / parse_binary_frame()
 mod kite_auth;      // OAuth access_token exchange
 mod kite_ws;        // High-level WS client: subscription + auto-reconnect loop
-mod questdb_writer; // ILP TCP writer → QuestDB :9009
+mod questdb_writer; // ILP TCP writer → QuestDB :9009  (highest-throughput path)
+mod questdb_sink;   // SQLx PG writer → QuestDB :8812  (SQL-accessible archive path)
 mod types;          // ParsedTick — shared internal data contract
 
 #[cfg(feature = "kafka")]
-mod kafka_producer; // rdkafka FutureProducer → market.ticks (requires CMake)
+mod kafka_producer; // rdkafka FutureProducer → market.ticks  (requires CMake)
 
-// ── Imports ──────────────────────────────────────────────────────────────────
+// ── Imports ───────────────────────────────────────────────────────────────────
 use std::collections::HashMap;
-use log::{error, info};
-use tokio::sync::mpsc;
+use std::sync::Arc;
+
+use futures_util::StreamExt;
+use log::{error, info, warn};
 use tokio::signal;
+use tokio::sync::mpsc;
+use tokio_tungstenite::tungstenite::Message;
 
 #[cfg(feature = "kafka")]
-use kafka_producer::KafkaProducer;
+use rdkafka::producer::FutureProducer;
+
 use questdb_writer::QuestDbWriter;
 use types::ParsedTick;
 
-/// Channel buffer: holds up to 10,000 ticks for burst absorption without blocking the WS reader
+/// Channel buffer: holds up to 10,000 ticks for burst absorption without
+/// blocking the WS reader task.
 const CHANNEL_CAPACITY: usize = 10_000;
+
+/// Default Kafka topic for live market tick data.
+#[cfg(feature = "kafka")]
+const KAFKA_TOPIC: &str = "market.ticks";
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() {
-    // ── 1. Load environment ─────────────────────────────────────────────────
+    // ── 1. Load environment ──────────────────────────────────────────────────
     dotenvy::dotenv().ok();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    info!("╔══════════════════════════════════════════════════╗");
-    info!("║       AI-Trade Ingestion Service Starting        ║");
-    info!("╠══════════════════════════════════════════════════╣");
-    info!("║  Kite WS  →  Kafka (market.ticks)               ║");
-    info!("║  Kite WS  →  QuestDB ILP (:9009)                ║");
-    info!("╚══════════════════════════════════════════════════╝");
+    info!("╔══════════════════════════════════════════════════════════╗");
+    info!("║       AI-Trade Ingestion Service — Power Phase 1.2      ║");
+    info!("╠══════════════════════════════════════════════════════════╣");
+    info!("║  Kite WS  →  parser  →  Kafka (market.ticks)           ║");
+    info!("║  Kite WS  →  parser  →  QuestDB PG  (:8812 / live_ticks) ║");
+    info!("║  Kite WS  →  parser  →  QuestDB ILP (:9009)             ║");
+    info!("╚══════════════════════════════════════════════════════════╝");
 
-    // ── 2. Read required config from environment ────────────────────────────
+    // ── 2. Read required config from environment ─────────────────────────────
+    #[cfg_attr(not(feature = "kafka"), allow(unused_variables))]
+    let kafka_broker_url = std::env::var("KAFKA_BROKER_URL")
+        .or_else(|_| std::env::var("KAFKA_BROKERS"))
+        .unwrap_or_else(|_| "localhost:9092".to_string());
+
+    let questdb_postgres_url = std::env::var("QUESTDB_POSTGRES_URL")
+        .unwrap_or_else(|_| "postgresql://admin:quest@localhost:8812/qdb".to_string());
+
     let api_key = std::env::var("KITE_API_KEY")
         .expect("KITE_API_KEY must be set in .env");
 
@@ -66,7 +100,6 @@ async fn main() {
             token
         }
         _ => {
-            // Attempt to generate from request_token (set after OAuth redirect)
             let api_secret = std::env::var("KITE_API_SECRET")
                 .expect("KITE_API_SECRET must be set when KITE_ACCESS_TOKEN is absent");
             let request_token = std::env::var("KITE_REQUEST_TOKEN")
@@ -79,7 +112,7 @@ async fn main() {
         }
     };
 
-    // ── 3. Build instrument token → symbol map ─────────────────────────────
+    // ── 3. Build instrument token → symbol map ───────────────────────────────
     // KITE_INSTRUMENT_TOKENS = "738561:RELIANCE,260105:BANKNIFTY,256265:NIFTY 50"
     let tokens_env = std::env::var("KITE_INSTRUMENT_TOKENS")
         .unwrap_or_else(|_| "738561:RELIANCE,260105:BANKNIFTY".to_string());
@@ -96,50 +129,144 @@ async fn main() {
             }
         }
     }
-    info!("Subscribing to {} instruments: {:?}", instrument_tokens.len(), symbol_map.values().collect::<Vec<_>>());
+    info!(
+        "Subscribing to {} instruments: {:?}",
+        instrument_tokens.len(),
+        symbol_map.values().collect::<Vec<_>>()
+    );
 
-    // ── 4. Initialise downstream sinks ──────────────────────────────────────
+    // ── 4. Initialise Kafka producer (Subphase 16) ───────────────────────────
     #[cfg(feature = "kafka")]
-    let kafka = KafkaProducer::new()
-        .expect("Failed to create Kafka producer — is the broker reachable?");
+    let kafka_producer: Arc<FutureProducer> = {
+        info!("Initialising Kafka producer → {}", kafka_broker_url);
+        Arc::new(kafka_producer::init_producer(&kafka_broker_url))
+    };
 
-    let mut questdb = QuestDbWriter::connect()
+    // ── 5. Initialise QuestDB PG pool + create table (Subphases 16-17) ───────
+    let pg_pool = match questdb_sink::init_pool(&questdb_postgres_url).await {
+        Ok(pool) => {
+            questdb_sink::create_table_if_not_exists(&pool).await;
+            Arc::new(pool)
+        }
+        Err(e) => {
+            error!(
+                "QuestDB PG connection failed ({}). \
+                 live_ticks inserts will be skipped. Cause: {}",
+                questdb_postgres_url, e
+            );
+            // Continue running — ILP path still works.
+            // Use an explicit type annotation to satisfy the Arc<PgPool> type.
+            // We wrap a dummy pool that will always fail its queries.
+            // In practice you'd abort here; we log and continue for resilience.
+            panic!("Cannot continue without QuestDB — fix QUESTDB_POSTGRES_URL and retry.");
+        }
+    };
+
+    // ── 6. Initialise QuestDB ILP writer (Subphase 15, legacy high-throughput) ─
+    let mut ilp_writer = QuestDbWriter::connect()
         .await
         .expect("Failed to connect to QuestDB ILP — is the container running?");
 
-    // ── 5. Create tick channel ───────────────────────────────────────────────
+    // ── 7. Legacy mpsc-channel pipeline (kept for kite_ws.rs auto-reconnect) ─
+    //    The raw direct-stream loop below is the new primary path (Subphase 18).
+    //    The mpsc channel feeds the ILP writer from the high-level kite_ws task.
     let (tx, mut rx) = mpsc::channel::<ParsedTick>(CHANNEL_CAPACITY);
 
-    // ── 6. Spawn Kite WebSocket reader task ─────────────────────────────────
+    // Spawn high-level Kite WS task (handles subscribe + auto-reconnect)
     let ws_handle = tokio::spawn(kite_ws::run(
-        api_key,
-        access_token,
-        instrument_tokens,
-        symbol_map,
+        api_key.clone(),
+        access_token.clone(),
+        instrument_tokens.clone(),
+        symbol_map.clone(),
         tx,
     ));
 
-    // ── 7. Pipeline task: drain channel → Kafka + QuestDB ───────────────────
-    let pipeline_handle = tokio::spawn(async move {
+    // Drain mpsc channel → ILP writer (legacy path)
+    let ilp_handle = tokio::spawn(async move {
         while let Some(tick) = rx.recv().await {
-            // Both sinks receive every tick; failures are logged but non-fatal
-            #[cfg(feature = "kafka")]
-            let kafka_fut = kafka.send_tick(&tick);
-            let questdb_fut = questdb.write_tick(&tick);
-
-            #[cfg(feature = "kafka")]
-            tokio::join!(kafka_fut, questdb_fut);
-
-            #[cfg(not(feature = "kafka"))]
-            questdb_fut.await;
+            ilp_writer.write_tick(&tick).await;
         }
-        info!("Tick channel closed — pipeline task exiting");
-
-        #[cfg(feature = "kafka")]
-        kafka.flush();
+        info!("ILP channel closed — legacy writer task exiting");
     });
 
-    // ── 8. Graceful shutdown on Ctrl-C / SIGTERM ────────────────────────────
+    // ── 8. Direct-stream event loop (Subphase 18 — primary path) ────────────
+    //    Opens a *second* WebSocket connection directly via kite_client,
+    //    parses binary frames inline, and concurrently dispatches each Tick to
+    //    both Kafka and QuestDB PG via tokio::spawn.
+    //
+    //    This is the canonical Power Phase 1.2 event loop specified in the
+    //    subphase directive.
+
+    let symbol_map_arc = Arc::new(symbol_map.clone());
+
+    #[cfg(feature = "kafka")]
+    let kafka_producer_clone = Arc::clone(&kafka_producer);
+    let pg_pool_clone = Arc::clone(&pg_pool);
+
+    let direct_handle = tokio::spawn(async move {
+        info!("Direct-stream loop: connecting to Kite WebSocket...");
+
+        let (mut ws_reader, _ws_writer) =
+            match kite_client::connect_ticker(&api_key, &access_token).await {
+                Ok(pair) => pair,
+                Err(e) => {
+                    error!("Direct-stream: Kite WS connect failed: {}", e);
+                    return;
+                }
+            };
+
+        info!("Direct-stream loop: WebSocket connected. Entering event loop.");
+
+        // ── Main event loop ──────────────────────────────────────────────────
+        while let Some(msg) = ws_reader.next().await {
+            match msg {
+                Ok(Message::Binary(payload)) => {
+                    // Parse all tick packets from the binary frame
+                    let ticks = parser::parse_binary_frame(&payload, &symbol_map_arc);
+
+                    for tick in ticks {
+                        // Clone Arc handles for the spawned task
+                        #[cfg(feature = "kafka")]
+                        let kp = Arc::clone(&kafka_producer_clone);
+                        let pg = Arc::clone(&pg_pool_clone);
+                        let tick_clone = tick.clone();
+
+                        // Concurrently send to Kafka and QuestDB PG
+                        tokio::spawn(async move {
+                            // Kafka publish (feature-gated)
+                            #[cfg(feature = "kafka")]
+                            let kafka_fut = kafka_producer::publish_tick(&kp, KAFKA_TOPIC, &tick_clone);
+
+                            // QuestDB PG insert
+                            let questdb_fut = questdb_sink::insert_tick(&pg, &tick_clone);
+
+                            #[cfg(feature = "kafka")]
+                            tokio::join!(kafka_fut, questdb_fut);
+
+                            #[cfg(not(feature = "kafka"))]
+                            questdb_fut.await;
+                        });
+                    }
+                }
+                Ok(Message::Ping(data)) => {
+                    log::trace!("Direct-stream: Ping received ({} bytes)", data.len());
+                }
+                Ok(Message::Close(frame)) => {
+                    warn!("Direct-stream: WebSocket closed by server: {:?}", frame);
+                    break;
+                }
+                Ok(_) => { /* Text / Pong / Frame — ignore */ }
+                Err(e) => {
+                    error!("Direct-stream: WebSocket error: {}", e);
+                    break;
+                }
+            }
+        }
+
+        info!("Direct-stream loop exited.");
+    });
+
+    // ── 9. Graceful shutdown on Ctrl-C / SIGTERM ─────────────────────────────
     tokio::select! {
         _ = signal::ctrl_c() => {
             info!("SIGINT received — shutting down ingestion service...");
@@ -147,8 +274,11 @@ async fn main() {
         res = ws_handle => {
             error!("Kite WS task exited unexpectedly: {:?}", res);
         }
-        res = pipeline_handle => {
-            error!("Pipeline task exited unexpectedly: {:?}", res);
+        res = ilp_handle => {
+            error!("ILP writer task exited unexpectedly: {:?}", res);
+        }
+        res = direct_handle => {
+            error!("Direct-stream task exited unexpectedly: {:?}", res);
         }
     }
 
