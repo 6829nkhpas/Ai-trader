@@ -1,12 +1,12 @@
 # SESSION MEMORY — AI-Trade Platform
 
 ## Session Timestamp
-`2026-04-23T01:00:00+05:30`
+`2026-04-23T01:03:00+05:30`
 
 ## Active Phase
-**Master Phase 1 → Power Phase 1.1 → Subphases 4-6** (Infrastructure Orchestration)
+**Master Phase 1 → Power Phase 1.1 → COMPLETE**
 
-## Status: ✅ COMPLETE
+## Status: ✅ POWER PHASE 1.1 FULLY COMPLETE
 
 ---
 
@@ -68,9 +68,35 @@
 - [x] Static cluster ID: `MkU3OEVBNTcwNTJENDM2Qk`
 - [x] Healthcheck: `kafka-broker-api-versions.sh` (15s interval, 45s start_period)
 
+### Subphases 7-9: Universal Data Contracts (Protobuf Schemas) ← NEW THIS RUN
+- [x] Created `shared_protos/market_data.proto`
+  - Package: `ai_trade.market_data`
+  - Message: `Tick` — fields: `symbol` (string), `timestamp_ms` (int64), `last_traded_price` (double), `volume` (int32), `best_bid` (double), `best_ask` (double)
+- [x] Created `shared_protos/sentiment_data.proto`
+  - Package: `ai_trade.sentiment_data`
+  - Message: `NewsSentiment` — fields: `symbol` (string), `timestamp_ms` (int64), `headline` (string), `claude_conviction_score` (int32, 1-100), `reasoning_snippet` (string)
+- [x] Created `shared_protos/technical_data.proto`
+  - Package: `ai_trade.technical_data`
+  - Message: `TechSignal` — fields: `symbol` (string), `timestamp_ms` (int64), `rsi_value` (double), `vwap_distance` (double), `technical_conviction_score` (int32, 1-100)
+- [x] Created `shared_protos/decision.proto`
+  - Package: `ai_trade.decision`
+  - Enum: `ActionType` — values: `BUY` (0), `SELL` (1), `HOLD` (2)
+  - Message: `AggregatedDecision` — fields: `symbol` (string), `timestamp_ms` (int64), `final_conviction_score` (int32), `technical_weight_used` (double), `sentiment_weight_used` (double), `action_type` (ActionType)
+
 ---
 
-## Infrastructure Summary (for downstream Subphases 7-9)
+## Data Contract Summary (Proto ↔ Kafka Topic Mapping)
+
+| Proto File | Message | Kafka Topic (planned) | Producer | Consumers |
+|---|---|---|---|---|
+| `market_data.proto` | `Tick` | `market.ticks` | Rust Ingestion | Technical Agent, Frontend |
+| `sentiment_data.proto` | `NewsSentiment` | `signals.sentiment` | Sentiment Agent | Aggregator, Frontend |
+| `technical_data.proto` | `TechSignal` | `signals.technical` | Technical Agent | Aggregator, Frontend |
+| `decision.proto` | `AggregatedDecision` | `decisions` | Aggregator | Frontend, Execution Layer |
+
+---
+
+## Infrastructure Summary
 
 ### Network
 | Network Name | Driver | Purpose |
@@ -104,10 +130,13 @@
 
 ---
 
-## Files Created This Run
+## Files Added This Run
 | File | Purpose |
 |------|---------|
-| `docker-compose.yml` | Infrastructure backbone — Redis, QuestDB, Kafka (KRaft) on `trading_net` |
+| `shared_protos/market_data.proto` | Tick message — raw market data contract |
+| `shared_protos/sentiment_data.proto` | NewsSentiment message — Claude NLP scoring contract |
+| `shared_protos/technical_data.proto` | TechSignal message — RSI/VWAP technical indicators contract |
+| `shared_protos/decision.proto` | ActionType enum + AggregatedDecision message — final trading decision contract |
 
 ## All Files Created (Cumulative)
 | File | Purpose |
@@ -123,6 +152,10 @@
 | `agents/sentiment/.gitkeep` | Sentiment analysis agent placeholder |
 | `frontend/.gitkeep` | Next.js frontend placeholder |
 | `shared_protos/.gitkeep` | Protobuf contracts placeholder |
+| `shared_protos/market_data.proto` | Tick message — raw market data |
+| `shared_protos/sentiment_data.proto` | NewsSentiment message — Claude NLP scoring |
+| `shared_protos/technical_data.proto` | TechSignal message — RSI/VWAP indicators |
+| `shared_protos/decision.proto` | ActionType enum + AggregatedDecision — final decision |
 
 ## Ports Exposed (Host Machine)
 | Port | Service | Protocol |
@@ -135,4 +168,4 @@
 | `29092` | Kafka Internal (also host-mapped) | PLAINTEXT |
 
 ## Next Phase
-**Power Phase 1.1 → Subphases 7-9** — Protobuf schema definitions (`shared_protos/`), ingestion service scaffolding (Rust/Cargo), and initial Kafka topic creation.
+**Master Phase 1 → Power Phase 1.2** — Data Ingestion: Scaffold the Rust ingestion service (`/ingestion`), establish Cargo workspace, implement Kite WebSocket connection, Kafka producer, and QuestDB ILP writer. Create Kafka topics (`market.ticks`, `signals.sentiment`, `signals.technical`, `decisions`).

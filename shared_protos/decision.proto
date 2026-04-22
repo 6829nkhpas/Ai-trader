@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package ai_trade.decision;
+
+// The final action type the aggregated decision engine can emit.
+enum ActionType {
+  BUY  = 0;
+  SELL = 1;
+  HOLD = 2;
+}
+
+// The aggregated decision produced by the core decision engine after
+// fusing technical and sentiment signals with configurable weights.
+// This is the final output that the frontend Glass-Box UI renders
+// and that the execution layer acts upon.
+message AggregatedDecision {
+  string     symbol                = 1;  // NSE instrument symbol
+  int64      timestamp_ms          = 2;  // Unix epoch milliseconds — when decision was made
+  int32      final_conviction_score = 3;  // Weighted final conviction (1-100)
+  double     technical_weight_used = 4;  // Weight applied to technical signal (0.0 - 1.0)
+  double     sentiment_weight_used = 5;  // Weight applied to sentiment signal (0.0 - 1.0)
+  ActionType action_type           = 6;  // BUY, SELL, or HOLD
+}
