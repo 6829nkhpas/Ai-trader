@@ -1,0 +1,116 @@
+##############################################################################
+# AI-Trade Platform — Local Infrastructure
+# Phase 1.1 / Subphases 4-6: Redis, QuestDB, Kafka (KRaft)
+#
+# Network : trading_net (custom bridge)
+# Zero Zookeeper dependencies — Kafka runs in KRaft mode exclusively.
+##############################################################################
+
+services:
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # REDIS — In-memory cache / pub-sub for real-time signals
+  # ──────────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:alpine
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - trading_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # QUESTDB — Time-series database for tick/OHLCV storage
+  #   REST UI     → localhost:9000
+  #   ILP ingest  → localhost:9009  (InfluxDB line protocol)
+  #   PG wire     → localhost:8812  (Postgres-compatible queries)
+  # ──────────────────────────────────────────────────────────────────────────
+  questdb:
+    image: questdb/questdb:latest
+    container_name: questdb
+    restart: unless-stopped
+    ports:
+      - "9000:9000"   # REST / Web Console
+      - "9009:9009"   # InfluxDB Line Protocol (high-speed ingest)
+      - "8812:8812"   # Postgres wire protocol
+    volumes:
+      - questdb_data:/var/lib/questdb
+    networks:
+      - trading_net
+    environment:
+      - QDB_LOG_W_STDOUT_LEVEL=ERROR
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/exec?query=select%201 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # KAFKA (KRaft) — High-throughput event broker
+  #   NO ZOOKEEPER. Runs in combined controller+broker KRaft mode.
+  #   External (host)    → localhost:9092
+  #   Internal (docker)  → broker:29092
+  # ──────────────────────────────────────────────────────────────────────────
+  broker:
+    image: bitnami/kafka:latest
+    container_name: broker
+    restart: unless-stopped
+    ports:
+      - "9092:9092"    # Host-accessible
+      - "29092:29092"  # Internal (other containers via trading_net)
+    volumes:
+      - kafka_data:/bitnami/kafka
+    networks:
+      - trading_net
+    environment:
+      # ── KRaft mode (no Zookeeper) ──
+      - KAFKA_CFG_NODE_ID=0
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@broker:9093
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      # ── Listeners ──
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:29092,CONTROLLER://:9093,EXTERNAL://:9092
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://broker:29092,EXTERNAL://localhost:9092
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      # ── Cluster ID (static for reproducibility) ──
+      - KAFKA_KRAFT_CLUSTER_ID=MkU3OEVBNTcwNTJENDM2Qk
+      # ── General tuning ──
+      - KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR=1
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+      - ALLOW_PLAINTEXT_LISTENER=yes
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 45s
+
+# ════════════════════════════════════════════════════════════════════════════
+# Named Volumes
+# ════════════════════════════════════════════════════════════════════════════
+volumes:
+  redis_data:
+    driver: local
+  questdb_data:
+    driver: local
+  kafka_data:
+    driver: local
+
+# ════════════════════════════════════════════════════════════════════════════
+# Network
+# ════════════════════════════════════════════════════════════════════════════
+networks:
+  trading_net:
+    driver: bridge
