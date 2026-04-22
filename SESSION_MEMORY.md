@@ -1,12 +1,12 @@
 # SESSION MEMORY — AI-Trade Platform
 
 ## Session Timestamp
-`2026-04-23T02:09:00+05:30`
+`2026-04-23T02:31:00+05:30`
 
 ## Active Phase
-**Master Phase 1 → Power Phase 1.3 → Subphases 19-20 FULLY VERIFIED**
+**Master Phase 1 → Power Phase 1.3 → Subphases 19-21 FULLY VERIFIED**
 
-## Status: ✅ POWER PHASE 1.3 IS COMPLETE. FULL DOCKER STACK ARCHITECTED.
+## Status: ✅ POWER PHASE 1.3 IS COMPLETE. TECHNICAL AGENT SCAFFOLDED & KAFKA CONSUMER LIVE.
 
 ---
 
@@ -74,6 +74,69 @@ KAFKA_BROKERS_INTERNAL=broker:29092
   - `QUESTDB_ILP_ADDR=questdb:9009`
 - `.env` mounted read-only at `/app/.env` for runtime credential access
 - `restart: unless-stopped`
+
+---
+
+### Subphases 19-21: Technical Agent Scaffolding & Kafka Consumer ✅ COMPLETE THIS SESSION
+
+#### 19 — `agents/technical/` — Rust binary project initialized
+- `cargo init --name technical agents/technical` executed successfully
+- Creates a standalone Rust binary crate (independent of `ingestion`)
+
+#### 20 — `agents/technical/Cargo.toml` — Dependencies configured
+| Dependency | Version | Purpose |
+|---|---|---|
+| `tokio` | 1 (full) | Async runtime |
+| `rdkafka` | 0.36 (cmake-build, **optional**) | Kafka StreamConsumer |
+| `prost` | 0.12 | Protobuf decode (Tick) + encode (TechSignal) |
+| `dotenvy` | 0.15 | .env loader |
+| `ta` | 0.5 | Technical analysis (EMA, RSI, VWAP, BB) |
+| `futures-util` | 0.3 | StreamExt for rdkafka consumer stream |
+| `log` + `env_logger` | 0.4 / 0.10 | Structured logging |
+| `prost-build` *(build)* | 0.12 | Proto → Rust codegen |
+| `protoc-bin-vendored` *(build)* | 3 | Vendored protoc binary (no system install needed) |
+
+**Feature flags** (same pattern as `ingestion`):
+- `default = ["kafka"]` — full build with rdkafka CMake
+- `cargo check --no-default-features` → skips CMake, works on Windows ✅
+
+#### 21a — `agents/technical/build.rs` — Protobuf compilation pipeline
+- Uses `protoc-bin-vendored` to locate bundled protoc (no PATH dependency)
+- Compiles **both** protos:
+  - `../../shared_protos/market_data.proto` → `Tick` struct
+  - `../../shared_protos/technical_data.proto` → `TechSignal` struct
+
+#### 21b — `agents/technical/src/proto.rs` — Protobuf module bridge
+```rust
+pub mod market_data    { include!(concat!(env!("OUT_DIR"), "/ai_trade.market_data.rs")); }
+pub mod technical_data { include!(concat!(env!("OUT_DIR"), "/ai_trade.technical_data.rs")); }
+```
+
+#### 21c — `agents/technical/src/kafka_consumer.rs` — StreamConsumer module
+- `init_consumer(brokers, group_id) -> StreamConsumer` (async)
+  - `auto.offset.reset = "latest"` (real-time only, no historical replay)
+  - `enable.auto.commit = "true"`, `session.timeout.ms = "6000"`
+  - Subscribes to topic from `KAFKA_TOPIC_TICKS` env var (default: `market.ticks`)
+- `run_listener(consumer) -> mpsc::Receiver<Tick>` (async)
+  - Spawns Tokio task → `consumer.stream().next()` loop
+  - Decodes payload via `prost::Message::decode` into `Tick`
+  - Forwards decoded ticks through buffered mpsc channel (capacity 1024)
+  - Logs warnings on decode errors; exits cleanly when receiver is dropped
+
+#### 21d — `agents/technical/src/main.rs` — Verified connection entry point
+- Loads `.env` via `dotenvy::dotenv().ok()`
+- Reads `KAFKA_BROKER_URL` (default: `localhost:9092`), `TECHNICAL_AGENT_GROUP_ID`
+- Feature-gated: `#[cfg(feature = "kafka")]` block calls `init_consumer` + `run_listener`
+- Prints each arriving tick: `symbol / ltp / volume / timestamp_ms` to stdout
+
+---
+
+## Final Cargo Check Result (Technical Agent — Subphases 19-21)
+```
+cargo check --no-default-features  (agents/technical)
+→ 0 errors  |  2 warnings (dead_code: Tick, TechSignal — expected until Phase 1.4)
+→ Finished dev profile [unoptimized + debuginfo] in 16.86s  ✅
+```
 
 ---
 
@@ -179,14 +242,15 @@ ingestion/
 ---
 
 ## Next Phase
-**Master Phase 1 → Power Phase 1.4** — Technical Agent (Go/Rust):
-1. `agents/technical/` service scaffold (Go or Rust — TBD)
-2. Kafka consumer on `market.ticks` topic
-3. Compute indicators: EMA, RSI, VWAP, Bollinger Bands
-4. Publish `TechSignal` Protobuf to `signals.technical`
+**Master Phase 1 → Power Phase 1.4** — Technical Agent Indicator Engine:
+1. Implement indicator computation loop using the `ta` crate:
+   - EMA (9, 21, 55 periods)
+   - RSI (14 period)
+   - VWAP (intraday rolling)
+   - Bollinger Bands (20 period, 2σ)
+2. Build `indicators.rs` module with per-symbol state management
+3. Create `kafka_producer.rs` — publish `TechSignal` Protobuf to `signals.technical`
+4. Wire indicator results into published `TechSignal` (rsi_value, vwap_distance, technical_conviction_score)
 5. Unit tests for indicator calculations
-
-**Alternatively, Power Phase 1.4 could be:**
-- Integration test: `docker compose up --build` → verify full stack
-- Run infrastructure only (`docker compose up broker questdb redis`)
-- Test QuestDB console at `:9000` with mock tick data
+6. Add `agents/technical/Dockerfile` (multi-stage, same pattern as ingestion)
+7. Add `technical` service to `docker-compose.yml`
