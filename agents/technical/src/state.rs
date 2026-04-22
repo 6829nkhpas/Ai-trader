@@ -59,6 +59,13 @@ pub struct SymbolState {
 
     /// Running sum of volume — the VWAP denominator.
     pub cumulative_volume: f64,
+
+    // ── Volume delta tracking ─────────────────────────────────────────────────
+    /// The cumulative volume reported in the previous Tick for this symbol.
+    /// Kite's `volume` field is always the intraday cumulative total; we
+    /// subtract this value from the new tick's volume to get the per-tick delta
+    /// needed by `update_vwap`.
+    pub prev_cumulative_volume: u64,
 }
 
 impl SymbolState {
@@ -74,6 +81,7 @@ impl SymbolState {
             price_count: 0,
             cumulative_tp_volume: 0.0,
             cumulative_volume: 0.0,
+            prev_cumulative_volume: 0,
         }
     }
 
