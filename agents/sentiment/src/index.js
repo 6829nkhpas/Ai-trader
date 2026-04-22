@@ -1,111 +1,261 @@
-// index.js — Sentiment Agent integration test (Subphases 31-33).
+// index.js — Sentiment Agent — Full Production Polling Loop (Subphases 34-36).
 //
-// Wires the fetcher, cache, and analyzer together into a single testable flow:
+// SP35-36: Replaces the single-pass integration test with a continuous
+// `setInterval` background process that polls Marketaux, deduplicates via
+// Redis, scores with Claude, and broadcasts to Kafka as Protobuf messages.
 //
-//   1. fetchLatestNews("TATA")       → raw Marketaux article array
-//   2. Filter articles through isArticleProcessed (Redis deduplication)
-//   3. markArticleProcessed for each new article (24 h TTL)
-//   4. Collect headlines from all new articles
-//   5. analyzeSentiment(symbol, headlines) → Claude conviction score
-//   6. console.log the resulting JSON object
+// Pipeline (per tick per symbol):
+//   fetchLatestNews(symbol)
+//     ↓  raw Marketaux article array
+//   filter via isArticleProcessed()      → Redis EXISTS (24 h dedup window)
+//     ↓  new articles only
+//   analyzeSentiment(symbol, headlines)  → Claude conviction score + snippet
+//     ↓  { conviction_score, reasoning_snippet }
+//   publishSentiment(symbol, claudeJson, NewsSentiment)
+//     ↓  NewsSentiment Protobuf → Kafka topic: sentiment_signals
+//   markArticleProcessed(articleUrl)     → Redis SET EX 86400
 //
-// This is NOT an infinite loop — it is a single, testable pass designed to
-// validate the end-to-end pipeline before the full polling loop is wired.
+// Configuration (env vars):
+//   MARKETAUX_API_KEY          — Marketaux API token         (required)
+//   ANTHROPIC_API_KEY          — Anthropic Claude API key    (required)
+//   KAFKA_BROKER_URL           — Kafka broker                (default: localhost:9092)
+//   REDIS_URL                  — Redis connection string     (default: redis://localhost:6379)
+//   SENTIMENT_SYMBOLS          — comma-separated ticker list (default: TATA,RELIANCE)
+//   SENTIMENT_POLL_INTERVAL_MS — poll cadence in ms         (default: 60000)
 //
-// Required env vars:
-//   MARKETAUX_API_KEY  — Marketaux API token
-//   ANTHROPIC_API_KEY  — Anthropic API key
-//   REDIS_URL          — Redis connection string (default: redis://localhost:6379)
+// Graceful shutdown:
+//   SIGINT → disconnectProducer() + redis.quit() + process.exit(0)
 
 import 'dotenv/config';
-import { fetchLatestNews }     from './fetcher.js';
+import { loadNewsSentimentType }                   from './protoLoader.js';
+import { fetchLatestNews }                         from './fetcher.js';
 import { isArticleProcessed, markArticleProcessed } from './cache.js';
-import { analyzeSentiment }    from './analyzer.js';
+import { analyzeSentiment }                        from './analyzer.js';
+import { connectProducer, publishSentiment, disconnectProducer } from './kafkaProducer.js';
+import { createClient }                            from 'redis';
 
-// ── Configuration ──────────────────────────────────────────────────────────────
+// ── Configuration ─────────────────────────────────────────────────────────────
 
-const SYMBOL = 'TATA';
+const SYMBOLS = (process.env.SENTIMENT_SYMBOLS ?? 'TATA,RELIANCE')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 
-// ── main ───────────────────────────────────────────────────────────────────────
+const POLL_INTERVAL_MS = parseInt(process.env.SENTIMENT_POLL_INTERVAL_MS ?? '60000', 10);
 
-async function main() {
-  console.log('╔══════════════════════════════════════════════════════╗');
-  console.log('║  Sentiment Agent — Subphases 31-33 Integration Test  ║');
-  console.log('║  Redis Cache  ·  Claude Analyzer  ·  Pipeline Check   ║');
-  console.log('╚══════════════════════════════════════════════════════╝\n');
+// ── Redis client (for graceful shutdown reference) ────────────────────────────
+// cache.js manages its own singleton internally; we create a second reference
+// here only to expose .quit() in the SIGINT handler without breaking the cache
+// module's internal state.  We import the same env var so both point to the
+// same Redis instance.
 
-  // ── Step 1: Fetch latest news ────────────────────────────────────────────────
-  console.log(`[index] Step 1 — Fetching latest news for symbol: ${SYMBOL}`);
-  const articles = await fetchLatestNews(SYMBOL);
+const REDIS_URL  = process.env.REDIS_URL ?? 'redis://localhost:6379';
+let   redisClient = null; // initialised inside run()
 
-  if (articles.length === 0) {
-    console.log('[index] No articles returned from Marketaux. Exiting.');
-    process.exit(0);
+// ── processTicker ─────────────────────────────────────────────────────────────
+
+/**
+ * Runs a single poll cycle for one ticker symbol:
+ *   1. Fetch latest news from Marketaux.
+ *   2. Filter out articles already in the Redis dedup cache.
+ *   3. Collect headlines from new articles.
+ *   4. Call Claude via analyzeSentiment() to get a conviction score.
+ *   5. Publish the result to Kafka as an encoded NewsSentiment Protobuf.
+ *   6. Mark the new articles as processed in Redis.
+ *
+ * All errors are caught and logged — a single bad symbol never kills the loop.
+ *
+ * @param {string}                   symbol       - NSE ticker (e.g. "TATA").
+ * @param {import('protobufjs').Type} NewsSentiment - Loaded proto type (injected once).
+ * @returns {Promise<void>}
+ */
+async function processTicker(symbol, NewsSentiment) {
+  console.log(`\n[index] ── Processing symbol: ${symbol} ──`);
+
+  // ── Step 1: Fetch latest news ──────────────────────────────────────────────
+  let articles;
+  try {
+    articles = await fetchLatestNews(symbol);
+  } catch (err) {
+    console.error(`[index] fetchLatestNews failed for ${symbol}: ${err.message}`);
+    return;
   }
 
-  console.log(`[index] Received ${articles.length} article(s) from Marketaux.\n`);
+  if (!articles || articles.length === 0) {
+    console.log(`[index] No articles returned for ${symbol}. Skipping.`);
+    return;
+  }
 
-  // ── Step 2 & 3: Filter through Redis cache, mark new articles ────────────────
-  console.log('[index] Step 2 — Filtering articles through Redis deduplication cache...');
+  console.log(`[index] Fetched ${articles.length} article(s) for ${symbol}.`);
 
+  // ── Step 2: Filter new articles via Redis dedup cache ──────────────────────
   const newArticles = [];
 
   for (const article of articles) {
-    // Use the article URL as the canonical cache key.
-    const articleUrl = article.url ?? article.uuid ?? article.title;
+    const cacheKey = article.url ?? article.uuid ?? article.title;
 
-    if (!articleUrl) {
-      console.warn('[index] Article has no URL/UUID — skipping.');
+    if (!cacheKey) {
+      console.warn(`[index] Article for ${symbol} has no URL/UUID/title — skipping.`);
       continue;
     }
 
-    const alreadyProcessed = await isArticleProcessed(articleUrl);
+    const alreadyProcessed = await isArticleProcessed(cacheKey);
 
     if (alreadyProcessed) {
-      console.log(`[index] SKIP (already processed): "${(article.title ?? '').slice(0, 70)}"`);
+      console.log(`[index] SKIP (cached): "${(article.title ?? '').slice(0, 60)}"`);
     } else {
-      // Step 3: Mark the article as processed before scoring to prevent
-      // double-scoring if a concurrent process runs.
-      await markArticleProcessed(articleUrl);
-      newArticles.push(article);
-      console.log(`[index] NEW article queued: "${(article.title ?? '').slice(0, 70)}"`);
+      newArticles.push({ article, cacheKey });
     }
   }
 
-  console.log(`\n[index] ${newArticles.length} new article(s) to analyze (${articles.length - newArticles.length} skipped as duplicates).\n`);
-
   if (newArticles.length === 0) {
-    console.log('[index] All articles already processed in this cache window. Nothing to score.');
-    process.exit(0);
+    console.log(`[index] All articles for ${symbol} already processed. Nothing to publish.`);
+    return;
   }
 
-  // ── Step 4: Collect headlines ─────────────────────────────────────────────────
+  console.log(`[index] ${newArticles.length} new article(s) queued for ${symbol}.`);
+
+  // ── Step 3: Build headlines array ─────────────────────────────────────────
   const headlinesArray = newArticles
-    .map((a) => a.title)
+    .map(({ article }) => article.title)
     .filter(Boolean);
 
-  console.log('[index] Step 3 — Headlines to analyze:');
-  headlinesArray.forEach((h, i) => console.log(`  ${i + 1}. ${h}`));
-  console.log('');
+  if (headlinesArray.length === 0) {
+    console.warn(`[index] No usable headlines for ${symbol}. Skipping analyzer call.`);
+    return;
+  }
 
-  // ── Step 5 & 6: Call Claude analyzer and log result ───────────────────────────
-  console.log('[index] Step 4 — Calling Claude sentiment analyzer...\n');
-
+  // ── Step 4: Analyze with Claude ───────────────────────────────────────────
+  let claudeJson;
   try {
-    const result = await analyzeSentiment(SYMBOL, headlinesArray);
-
-    console.log('\n[index] ✅ Claude analysis complete. Result:');
-    console.log(JSON.stringify(result, null, 2));
+    claudeJson = await analyzeSentiment(symbol, headlinesArray);
   } catch (err) {
-    console.error(`\n[index] ❌ analyzeSentiment failed: ${err.message}`);
+    console.error(`[index] analyzeSentiment failed for ${symbol}: ${err.message}`);
+    return;
+  }
+
+  // Attach the most recent headline to the payload for Protobuf field `headline`.
+  claudeJson.headline = headlinesArray[0];
+
+  // ── Step 5: Publish to Kafka ──────────────────────────────────────────────
+  try {
+    await publishSentiment(symbol, claudeJson, NewsSentiment);
+  } catch (err) {
+    // publishSentiment already handles errors internally, but catch here too.
+    console.error(`[index] publishSentiment failed for ${symbol}: ${err.message}`);
+  }
+
+  // ── Step 6: Mark new articles as processed in Redis ───────────────────────
+  for (const { cacheKey } of newArticles) {
+    await markArticleProcessed(cacheKey);
+  }
+
+  console.log(`[index] ✅ Cycle complete for ${symbol}.`);
+}
+
+// ── run ───────────────────────────────────────────────────────────────────────
+
+/**
+ * Main entry point:
+ *   1. Load the Protobuf schema (once, shared across all publish calls).
+ *   2. Connect to Kafka.
+ *   3. Connect to Redis (for graceful-shutdown reference).
+ *   4. Start the setInterval polling loop immediately + every POLL_INTERVAL_MS.
+ *   5. Register SIGINT handler for graceful shutdown.
+ *
+ * @returns {Promise<void>}
+ */
+async function run() {
+  console.log('╔═══════════════════════════════════════════════════════════╗');
+  console.log('║  Sentiment Agent — NLP Polling Loop (Subphases 34-36)    ║');
+  console.log('║  Claude · Redis · Kafka Protobuf Pipeline                  ║');
+  console.log('╚═══════════════════════════════════════════════════════════╝\n');
+
+  // ── 1. Load Protobuf schema ───────────────────────────────────────────────
+  console.log('[index] Loading NewsSentiment Protobuf schema...');
+  let NewsSentiment;
+  try {
+    NewsSentiment = await loadNewsSentimentType();
+    console.log('[index] ✅ Protobuf schema loaded.');
+  } catch (err) {
+    console.error(`[index] FATAL: Failed to load Protobuf schema: ${err.message}`);
     process.exit(1);
   }
 
-  console.log('\n[index] Integration test complete. Pipeline verified ✅');
-  process.exit(0);
+  // ── 2. Connect Kafka producer ─────────────────────────────────────────────
+  console.log('[index] Connecting Kafka producer...');
+  try {
+    await connectProducer();
+    console.log('[index] ✅ Kafka producer connected.');
+  } catch (err) {
+    console.error(`[index] FATAL: Kafka producer connection failed: ${err.message}`);
+    process.exit(1);
+  }
+
+  // ── 3. Connect Redis (shutdown reference) ─────────────────────────────────
+  console.log('[index] Connecting Redis client...');
+  try {
+    redisClient = createClient({ url: REDIS_URL });
+    redisClient.on('error', (err) => {
+      console.error(`[index] Redis client error: ${err.message}`);
+    });
+    await redisClient.connect();
+    console.log('[index] ✅ Redis client connected.');
+  } catch (err) {
+    // Redis failure is non-fatal for startup; cache.js handles its own connection.
+    console.warn(`[index] Redis connection warning: ${err.message}`);
+  }
+
+  // ── 4. Poll loop ──────────────────────────────────────────────────────────
+  console.log(
+    `\n[index] Starting polling loop. Symbols=[${SYMBOLS.join(', ')}]  ` +
+    `Interval=${POLL_INTERVAL_MS}ms\n`
+  );
+
+  /**
+   * Single poll cycle — iterates over all configured symbols sequentially.
+   * Errors per symbol are caught inside processTicker; the overall loop
+   * continues regardless.
+   */
+  const pollCycle = async () => {
+    console.log(`\n[index] ══ Poll cycle started at ${new Date().toISOString()} ══`);
+    for (const symbol of SYMBOLS) {
+      await processTicker(symbol, NewsSentiment);
+    }
+    console.log(`[index] ══ Poll cycle complete. Next run in ${POLL_INTERVAL_MS / 1000}s ══\n`);
+  };
+
+  // Run immediately on startup, then on every interval.
+  await pollCycle();
+  setInterval(pollCycle, POLL_INTERVAL_MS);
+
+  // ── 5. Graceful shutdown ──────────────────────────────────────────────────
+  process.on('SIGINT', async () => {
+    console.log('\n[index] 🛑 SIGINT received — shutting down gracefully...');
+
+    try {
+      await disconnectProducer();
+    } catch (err) {
+      console.error(`[index] Error disconnecting Kafka producer: ${err.message}`);
+    }
+
+    if (redisClient) {
+      try {
+        await redisClient.quit();
+        console.log('[index] Redis client disconnected cleanly.');
+      } catch (err) {
+        console.error(`[index] Error disconnecting Redis client: ${err.message}`);
+      }
+    }
+
+    console.log('[index] Goodbye. ✅');
+    process.exit(0);
+  });
 }
 
-main().catch((err) => {
-  console.error('[index] Fatal error:', err);
+// ── Bootstrap ─────────────────────────────────────────────────────────────────
+
+run().catch((err) => {
+  console.error('[index] Fatal unhandled error:', err);
   process.exit(1);
 });

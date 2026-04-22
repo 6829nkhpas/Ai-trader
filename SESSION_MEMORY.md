@@ -1,12 +1,12 @@
 # SESSION MEMORY — AI-Trade Platform
 
 ## Session Timestamp
-`2026-04-23T03:10:14+05:30`
+`2026-04-23T03:29:35+05:30`
 
 ## Active Phase
-**Master Phase 1 → Power Phase 1.4 → Subphases 31-33 COMPLETE THIS SESSION**
+**Master Phase 1 → Power Phase 1.4 → Subphases 34-36 COMPLETE THIS SESSION**
 
-## Status: ✅ SUBPHASES 31-33 COMPLETE. Redis cache + Claude analyzer + integration flow built and verified.
+## Status: ✅ SUBPHASES 34-36 COMPLETE. POWER PHASE 1.4 IS COMPLETE. NLP SENTIMENT AGENT FULLY OPERATIONAL.
 
 ---
 
@@ -586,6 +586,110 @@ Key decisions:
 - Dedup key = `article.url` (falls back to `uuid`, then `title`)
 - `markArticleProcessed` called before scoring — prevents double-scoring in concurrent runs
 - Clean `process.exit(0)` on success / `process.exit(1)` on fatal error
+
+---
+
+---
+
+### Subphases 34-36: Kafka Producer (Injected Proto) & NLP Polling Loop ✅ COMPLETE THIS SESSION
+
+#### 34 — `agents/sentiment/src/kafkaProducer.js` — REBUILT
+
+**Architecture change**: Producer no longer imports `protoLoader.js` internally.
+The `protoMessage` (loaded `protobufjs` Type) is now **injected at call-site** — loaded once at startup in `run()` and passed into every `publishSentiment` call, matching the dependency-injection pattern used across the platform.
+
+**Exported API**:
+| Function | Signature | Purpose |
+|---|---|---|
+| `connectProducer()` | `async () → void` | Creates + connects KafkaJS producer (call once at startup) |
+| `publishSentiment(symbol, claudeJson, protoMessage)` | `async (string, Object, protobuf.Type) → void` | Maps, validates, encodes, publishes |
+| `disconnectProducer()` | `async () → void` | Graceful flush + disconnect (SIGINT handler) |
+
+**`publishSentiment` serialisation flow (SP34 spec)**:
+```js
+const payload = {
+  symbol,
+  timestamp_ms:            Date.now(),           // int64 Unix epoch ms
+  headline:                claudeJson.headline ?? '',
+  claude_conviction_score: claudeJson.conviction_score,
+  reasoning_snippet:       claudeJson.reasoning_snippet ?? '',
+};
+const errMsg = protoMessage.verify(payload);          // schema check
+const encoded = Buffer.from(
+  protoMessage.encode(payload).finish()              // Uint8Array → Buffer
+);
+await _producer.send({ topic: 'sentiment_signals', messages: [{ key: symbol, value: encoded }] });
+```
+
+- Topic: `sentiment_signals` (env `KAFKA_TOPIC_SENTIMENT`, default `sentiment_signals`)
+- Message key = `symbol` → per-symbol partition ordering guaranteed
+- GZIP compression | 5 ms linger | 5 retries | 300 ms initial retry
+- `disconnectProducer()` nulls `_producer` after disconnect (idempotent)
+
+#### 35 — `agents/sentiment/src/index.js` — REPLACED (continuous polling loop)
+
+**`run()` startup sequence**:
+```
+1. loadNewsSentimentType()   → NewsSentiment (injected into every publishSentiment call)
+2. connectProducer()         → KafkaJS producer connected
+3. createClient(REDIS_URL)   → Redis client connected (shutdown reference)
+4. pollCycle()               → first cycle executes immediately
+5. setInterval(pollCycle, POLL_INTERVAL_MS)  → subsequent cycles
+6. process.on('SIGINT', ...)  → graceful shutdown registered
+```
+
+**`processTicker(symbol, NewsSentiment)` — per-symbol pipeline**:
+```
+fetchLatestNews(symbol)
+  ↓  article[]
+for each article:
+  isArticleProcessed(cacheKey)        → Redis EXISTS (24 h dedup)
+  if new: push to newArticles[]
+if newArticles.length === 0: return early
+build headlinesArray from newArticles
+analyzeSentiment(symbol, headlinesArray)
+  ↓  { conviction_score, reasoning_snippet }
+claudeJson.headline = headlinesArray[0]  (attach most-recent headline)
+publishSentiment(symbol, claudeJson, NewsSentiment)
+  ↓  NewsSentiment Protobuf → Kafka: sentiment_signals
+markArticleProcessed(cacheKey) for each new article
+```
+
+**Key implementation decisions**:
+- `SENTIMENT_SYMBOLS` env var (default: `TATA,RELIANCE`); comma-separated list
+- `SENTIMENT_POLL_INTERVAL_MS` env var (default: `60000` ms = 1 minute)
+- First poll cycle fires immediately at startup (no cold-start delay)
+- Per-symbol errors caught inside `processTicker` — never kill the loop
+- Marks articles processed **after** Kafka publish — avoids silent drops on publish failure
+
+#### 36 — Graceful Shutdown (SIGINT handler)
+```js
+process.on('SIGINT', async () => {
+  await disconnectProducer();   // KafkaJS flush + disconnect
+  await redisClient.quit();     // Redis clean disconnect
+  process.exit(0);
+});
+```
+- `redisClient` held in `run()` scope — independent of cache.js singleton
+- Both `disconnectProducer` and `redisClient.quit()` errors caught and logged (non-fatal during shutdown)
+
+#### Module Import Verification (SP34-36)
+```
+node --input-type=module --eval "import all 6 modules (protoLoader, fetcher, cache, analyzer, kafkaProducer, redis)"
+✅ ALL IMPORTS RESOLVED.  Exit code: 0
+```
+
+---
+
+## All Files (Cumulative — SP34-36 additions)
+| File | Status |
+|------|--------|
+| `agents/sentiment/src/kafkaProducer.js` | ✅ REBUILT SP34 (injected protoMessage, connectProducer/publishSentiment/disconnectProducer) |
+| `agents/sentiment/src/index.js` | ✅ REPLACED SP35-36 (continuous setInterval polling loop + SIGINT shutdown) |
+
+---
+
+## POWER PHASE 1.4 IS COMPLETE. NLP SENTIMENT AGENT FULLY OPERATIONAL.
 
 ---
 
