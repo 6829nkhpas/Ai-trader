@@ -1,12 +1,12 @@
 # SESSION MEMORY — AI-Trade Platform
 
 ## Session Timestamp
-`2026-04-23T03:04:32+05:30`
+`2026-04-23T03:10:14+05:30`
 
 ## Active Phase
-**Master Phase 1 → Power Phase 1.4 → Subphases 31-33 FULLY VERIFIED**
+**Master Phase 1 → Power Phase 1.4 → Subphases 31-33 COMPLETE THIS SESSION**
 
-## Status: ✅ SUBPHASES 28-33 COMPLETE. POWER PHASE 1.4 IS COMPLETE. SENTIMENT AGENT FULLY OPERATIONAL.
+## Status: ✅ SUBPHASES 31-33 COMPLETE. Redis cache + Claude analyzer + integration flow built and verified.
 
 ---
 
@@ -527,9 +527,65 @@ node --input-type=module --eval "import all 4 modules"
 | `agents/sentiment/package.json` | ✅ NEW SP28 (type=module, 6 deps) |
 | `agents/sentiment/src/protoLoader.js` | ✅ NEW SP30a |
 | `agents/sentiment/src/fetcher.js` | ✅ NEW SP30b |
-| `agents/sentiment/src/claude.js` | ✅ NEW SP31 |
+| `agents/sentiment/src/claude.js` | ✅ NEW SP31 (per-article scorer, original) |
 | `agents/sentiment/src/kafkaProducer.js` | ✅ NEW SP32 |
-| `agents/sentiment/src/index.js` | ✅ NEW SP33 (full polling loop) |
+| `agents/sentiment/src/cache.js` | ✅ NEW SP31-33 (Redis dedup layer — THIS SESSION) |
+| `agents/sentiment/src/analyzer.js` | ✅ NEW SP31-33 (Claude HFT analyzer, batch headlines — THIS SESSION) |
+| `agents/sentiment/src/index.js` | ✅ UPDATED SP33 (testable one-shot integration flow — THIS SESSION) |
+
+---
+
+### Subphases 31-33 (Directive — 2026-04-23T03:10:14+05:30): Redis Cache + Claude Analyzer + Integration ✅ COMPLETE THIS SESSION
+
+#### 31 — `agents/sentiment/src/cache.js` — NEW
+**Redis caching layer** — deduplication guard preventing duplicate Claude API calls:
+- `createClient({ url: REDIS_URL })` — Redis client from env `REDIS_URL` (default: `redis://localhost:6379`)
+- `client.on('error', ...)` — connection failure handler (logs, does not crash)
+- **`isArticleProcessed(articleUrl) → Promise<boolean>`**:
+  - `client.exists(articleUrl)` — checks if URL key already exists in Redis
+  - Returns `true` (processed) or `false` (new); on Redis error returns `false` (fail-open)
+- **`markArticleProcessed(articleUrl) → Promise<void>`**:
+  - `client.set(articleUrl, '1', { EX: 86400 })` — stores URL key with 24 h TTL
+  - TTL = `86_400` seconds — prevents infinite cache growth
+  - On Redis error: logs and continues (non-fatal)
+- Lazy singleton `getClient()` — connects once, reused across calls
+
+#### 32 — `agents/sentiment/src/analyzer.js` — NEW
+**Claude LLM wrapper** — batch headline → quantitative conviction score:
+- `new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })` — lazy singleton
+- Model: **`claude-3-haiku-20240307`** (speed + cost for HFT polling)
+- Temperature: `0` — deterministic / backtesting-safe
+- System prompt: frames Claude as **high-frequency trading sentiment analyzer**
+  - Explicit mandate: ONLY raw JSON, no markdown fences, no conversational text
+- Strict JSON schema: `{"conviction_score": <int 1-100>, "reasoning_snippet": "<string>"}`
+- **`analyzeSentiment(symbol, headlinesArray) → Promise<{conviction_score, reasoning_snippet}>`**:
+  - User message: numbered headlines list `1. ...\n2. ...`
+  - `client.messages.create(model, system, messages)` → filters `text` blocks → joins
+  - `JSON.parse(rawText.trim())` — machine-parses Claude's response
+  - Validates `conviction_score` ∈ [1, 100] integer — throws on violation
+  - Validates `reasoning_snippet` is string — throws on violation
+  - Caps `reasoning_snippet` at 150 characters
+  - Throws on any API/parse/validation failure (caller treats as non-fatal)
+
+#### 33 — `agents/sentiment/src/index.js` — REPLACED (testable integration flow)
+**Single-pass, no-loop integration test**:
+```
+fetchLatestNews("TATA")
+  ↓  articles[]
+for each article:
+  isArticleProcessed(article.url)     → skip duplicates
+  markArticleProcessed(article.url)   → Redis SET EX 86400
+  push article.title → headlinesArray
+analyzeSentiment("TATA", headlinesArray)
+  ↓  { conviction_score, reasoning_snippet }
+console.log(JSON.stringify(result, null, 2))
+process.exit(0)
+```
+Key decisions:
+- `"TATA"` symbol hardcoded for isolated testability
+- Dedup key = `article.url` (falls back to `uuid`, then `title`)
+- `markArticleProcessed` called before scoring — prevents double-scoring in concurrent runs
+- Clean `process.exit(0)` on success / `process.exit(1)` on fatal error
 
 ---
 
