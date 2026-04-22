@@ -16,9 +16,10 @@ tokio = { version = "1", features = ["full"] }
 tungstenite = "0.20"
 tokio-tungstenite = "0.20"
 
-# Kafka producer — dynamically links to the system librdkafka (works on Windows without cmake).
-# For Linux/Docker production: swap to features = ["cmake-build"] for a static, fully portable binary.
-rdkafka = { version = "0.36", features = ["dynamic-linking"] }
+# Kafka producer — builds librdkafka from source via CMake.
+# Gated behind the 'kafka' feature so `cargo check --no-default-features` works
+# on Windows without requiring CMake. Enabled by default for production.
+rdkafka = { version = "0.36", features = ["cmake-build"], optional = true }
 
 # Protobuf serialization — encodes/decodes Tick, TechSignal, etc.
 prost = "0.12"
@@ -57,3 +58,17 @@ hex = "0.4"
 
 # Compiles .proto files in shared_protos/ → Rust structs during `cargo build`
 prost-build = "0.12"
+
+# Ships a precompiled protoc binary — eliminates the need for a system protoc install.
+# Sets PROTOC env var in build.rs so prost-build finds it automatically.
+protoc-bin-vendored = "3"
+
+# ===========================================================================
+# Feature Flags
+# ===========================================================================
+[features]
+# 'kafka' is on by default — production builds compile rdkafka via CMake.
+# Use `cargo check --no-default-features` on Windows (no CMake) to type-check
+# all modules except the Kafka producer.
+default = ["kafka"]
+kafka = ["dep:rdkafka"]

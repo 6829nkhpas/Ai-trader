@@ -6,23 +6,35 @@
 //                                              │  mpsc channel (capacity 10_000)
 //                                              ▼
 //                                     [pipeline_task]
-//                                      ├─► [KafkaProducer]   → topic: market.ticks
+//                                      ├─► [KafkaProducer]   → topic: market.ticks  (feature: kafka)
 //                                      └─► [QuestDbWriter]   → ILP TCP :9009
 //
 // The kite_ws task and pipeline task run concurrently via tokio::spawn.
 // A SIGINT/SIGTERM handler triggers graceful shutdown.
+//
+// Feature flags:
+//   kafka (default = on) — enables rdkafka / KafkaProducer; disable to cargo check
+//                          on Windows without CMake installed.
 
-mod kite_auth;
-mod kite_ws;
-mod kafka_producer;
-mod questdb_writer;
-mod types;
+// ── Module declarations ──────────────────────────────────────────────────────
+mod proto;          // Protobuf contract — must be first (others depend on crate::proto)
+mod kite_client;    // Low-level WS transport: connect_ticker()
+mod parser;         // Binary tick frame parser: parse_binary_tick() / parse_binary_frame()
+mod kite_auth;      // OAuth access_token exchange
+mod kite_ws;        // High-level WS client: subscription + auto-reconnect loop
+mod questdb_writer; // ILP TCP writer → QuestDB :9009
+mod types;          // ParsedTick — shared internal data contract
 
+#[cfg(feature = "kafka")]
+mod kafka_producer; // rdkafka FutureProducer → market.ticks (requires CMake)
+
+// ── Imports ──────────────────────────────────────────────────────────────────
 use std::collections::HashMap;
 use log::{error, info};
 use tokio::sync::mpsc;
 use tokio::signal;
 
+#[cfg(feature = "kafka")]
 use kafka_producer::KafkaProducer;
 use questdb_writer::QuestDbWriter;
 use types::ParsedTick;
@@ -87,6 +99,7 @@ async fn main() {
     info!("Subscribing to {} instruments: {:?}", instrument_tokens.len(), symbol_map.values().collect::<Vec<_>>());
 
     // ── 4. Initialise downstream sinks ──────────────────────────────────────
+    #[cfg(feature = "kafka")]
     let kafka = KafkaProducer::new()
         .expect("Failed to create Kafka producer — is the broker reachable?");
 
@@ -110,12 +123,19 @@ async fn main() {
     let pipeline_handle = tokio::spawn(async move {
         while let Some(tick) = rx.recv().await {
             // Both sinks receive every tick; failures are logged but non-fatal
-            tokio::join!(
-                kafka.send_tick(&tick),
-                questdb.write_tick(&tick),
-            );
+            #[cfg(feature = "kafka")]
+            let kafka_fut = kafka.send_tick(&tick);
+            let questdb_fut = questdb.write_tick(&tick);
+
+            #[cfg(feature = "kafka")]
+            tokio::join!(kafka_fut, questdb_fut);
+
+            #[cfg(not(feature = "kafka"))]
+            questdb_fut.await;
         }
         info!("Tick channel closed — pipeline task exiting");
+
+        #[cfg(feature = "kafka")]
         kafka.flush();
     });
 

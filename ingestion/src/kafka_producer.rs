@@ -6,6 +6,9 @@
 /// The FutureProducer is non-blocking: it enqueues messages in an internal
 /// buffer and flushes them in the background, giving us fire-and-forget
 /// semantics with back-pressure via the queue size limit.
+///
+/// Compiled only when the `kafka` feature is enabled (default = on).
+/// For a quick type-check on Windows (no CMake): `cargo check --no-default-features`
 
 use log::{error, info, warn};
 use prost::Message as ProstMessage;
@@ -16,12 +19,8 @@ use rdkafka::{
 };
 use std::time::Duration;
 
+use crate::proto::market_data;
 use crate::types::ParsedTick;
-
-// Protobuf module compiled from shared_protos/market_data.proto by build.rs
-pub mod market_data {
-    include!(concat!(env!("OUT_DIR"), "/ai_trade.market_data.rs"));
-}
 
 /// Topic name — matches the Kafka topic plan in SESSION_MEMORY.md
 const TOPIC: &str = "market.ticks";
