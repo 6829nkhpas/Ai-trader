@@ -33,7 +33,7 @@ export const useTradeStore = create<TradeStore>((set, get) => {
 
       // Use env variable or fallback
       const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://127.0.0.1:8080';
-      
+
       try {
         ws = new WebSocket(wsUrl);
 
@@ -45,14 +45,14 @@ export const useTradeStore = create<TradeStore>((set, get) => {
         ws.onmessage = (event) => {
           try {
             const data: AggregatedDecision = JSON.parse(event.data);
-            
+
             set((state) => {
               // Append new decision and cap at 100 to prevent memory leaks
               const updatedDecisions = [...state.liveDecisions, data];
               if (updatedDecisions.length > 100) {
                 updatedDecisions.shift();
               }
-              
+
               return { liveDecisions: updatedDecisions };
             });
           } catch (err) {
