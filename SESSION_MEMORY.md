@@ -1,12 +1,12 @@
 # SESSION MEMORY — AI-Trade Platform
 
 ## Session Timestamp
-`2026-04-24T09:55:00+05:30`
+`2026-04-24T11:29:00+05:30`
 
 ## Active Phase
-**Master Phase 1 → Power Phase 1.5 → Subphases 37-39 COMPLETE THIS SESSION**
+**Master Phase 1 → Power Phase 1.5 → Subphases 40-42 COMPLETE THIS SESSION**
 
-## Status: ✅ SUBPHASES 37-39 COMPLETE. AGGREGATOR SCAFFOLDING & MULTI-TOPIC CONSUMER OPERATIONAL.
+## Status: ✅ SUBPHASES 40-42 COMPLETE. DYNAMIC WEIGHTING ENGINE & CONFLICT RESOLUTION OPERATIONAL.
 
 ---
 
@@ -697,7 +697,7 @@ node --input-type=module --eval "import all 6 modules (protoLoader, fetcher, cac
 **Master Phase 1 → Power Phase 1.5** — Aggregator & Decision Engine (continued):
 1. ~~Initialize `aggregator/` service~~ ✅ SP37
 2. ~~Consume from `signals.technical` + `signals.sentiment` simultaneously~~ ✅ SP39
-3. Combine TechSignal + NewsSentiment into `AggregatedDecision` Protobuf
+3. ~~Combine TechSignal + NewsSentiment into `AggregatedDecision` Protobuf~~ ✅ SP40-42
 4. Publish `AggregatedDecision` to `decisions` Kafka topic
 5. Integrate Redis for position state / cooldown logic
 6. Add `agents/sentiment/Dockerfile` + docker-compose service entry
@@ -750,22 +750,23 @@ pub mod decision       { include!(concat!(env!("OUT_DIR"), "/ai_trade.decision.r
   - `technical_signals` — TechSignal from technical agent
   - `sentiment_signals` — NewsSentiment from sentiment agent
 
-**`run_consumer_loop(consumer: StreamConsumer)`** (async):
+**`run_consumer_loop(consumer: StreamConsumer, state: &AggregatorState)`** (async) — UPDATED SP42:
 - `consumer.stream().next()` loop — processes messages from both topics
 - **Topic-based routing** via `msg.topic()` match:
-  | Topic | Decode Target | Output Format |
+  | Topic | Decode Target | Action |
   |---|---|---|
-  | `technical_signals` | `TechSignal::decode(payload)` | `[TECH] symbol / rsi / vwap_dist / score / ts` |
-  | `sentiment_signals` | `NewsSentiment::decode(payload)` | `[SENT] symbol / score / headline / reason / ts` |
+  | `technical_signals` | `TechSignal::decode(payload)` | Read sentiment cache → `calculate_decision()` → println! `[DECISION]` |
+  | `sentiment_signals` | `NewsSentiment::decode(payload)` | `state.update_sentiment()` → println! `[SENT]` |
   | unknown | — | `log::warn!` (ignored) |
 - Decode errors logged as warnings (non-fatal, message skipped)
 - Empty payloads logged as warnings (skipped)
 
-#### 39b — `aggregator/src/main.rs` — Entry point
+#### 39b — `aggregator/src/main.rs` — Entry point (UPDATED SP42)
 - Loads `.env` via `dotenvy::dotenv().ok()`
 - Reads `KAFKA_BROKER_URL` (default: `localhost:9092`), `AGGREGATOR_GROUP_ID` (default: `aggregator-group`)
-- Feature-gated: `#[cfg(feature = "kafka")]` block calls `init_consumer` + `run_consumer_loop`
-- Prints decoded TechSignal and NewsSentiment structs to stdout for verification
+- Initializes `AggregatorState` (sentiment cache) before consumer loop
+- Feature-gated: `#[cfg(feature = "kafka")]` block calls `init_consumer` + `run_consumer_loop(consumer, &agg_state)`
+- Prints `AggregatedDecision` with dynamic weights to stdout for verification
 
 ---
 
@@ -785,18 +786,108 @@ aggregator/
 ├── Cargo.toml            — rdkafka optional, prost, protoc-bin-vendored
 ├── build.rs              — vendored protoc, prost_build pipeline (3 protos)
 └── src/
-    ├── main.rs           — multi-topic consumer entry point (SP39b)
+    ├── main.rs           — decision engine entry point + AggregatorState init (SP39b, UPDATED SP42)
     ├── proto.rs          — Protobuf bridge (TechSignal + NewsSentiment + AggregatedDecision)
-    └── consumer.rs       — init_consumer() + run_consumer_loop() (SP39a)
+    ├── consumer.rs       — init_consumer() + run_consumer_loop(state) (SP39a, UPDATED SP42)
+    ├── state.rs          — AggregatorState: RwLock<HashMap<String, NewsSentiment>> cache (SP40)
+    └── engine.rs         — calculate_decision(): dynamic weighting + conflict resolution (SP41)
 ```
 
 ---
 
-## All Files (Cumulative — SP37-39 additions)
+## All Files (Cumulative — SP37-42 additions)
 | File | Status |
 |------|--------|
 | `aggregator/Cargo.toml` | ✅ NEW SP38a (rdkafka optional, prost, 3 proto schemas) |
 | `aggregator/build.rs` | ✅ NEW SP38b (technical_data + sentiment_data + decision proto compilation) |
 | `aggregator/src/proto.rs` | ✅ NEW SP38c (3-module protobuf bridge) |
-| `aggregator/src/consumer.rs` | ✅ NEW SP39a (multi-topic StreamConsumer + topic router) |
-| `aggregator/src/main.rs` | ✅ NEW SP39b (env loader + consumer loop entry point) |
+| `aggregator/src/consumer.rs` | ✅ UPDATED SP42 (multi-topic consumer + state integration + decision output) |
+| `aggregator/src/main.rs` | ✅ UPDATED SP42 (AggregatorState init + state passed to consumer loop) |
+| `aggregator/src/state.rs` | ✅ NEW SP40 (sentiment cache: Arc<RwLock<HashMap>>) |
+| `aggregator/src/engine.rs` | ✅ NEW SP41 (dynamic weighting + conviction override + conflict resolution + 8 unit tests) |
+
+---
+
+### Subphases 40-42: Dynamic Weighting & Conflict Resolution ✅ COMPLETE THIS SESSION
+
+#### 40 — `aggregator/src/state.rs` — NEW
+**`AggregatorState`** — per-symbol sentiment cache:
+- `sentiments: Arc<RwLock<HashMap<String, NewsSentiment>>>` — O(1) lookup per symbol
+- `RwLock` chosen over `Mutex`: multiple concurrent readers (TechSignal processing) + exclusive writer (sentiment update)
+- **`update_sentiment(symbol, sentiment)`** (async) — acquires write lock, inserts/updates cached sentiment
+- **`get_sentiment(symbol) → Option<NewsSentiment>`** (async) — acquires read lock, returns cloned sentiment (non-blocking to other readers)
+- `new()` → initializes empty HashMap
+
+#### 41 — `aggregator/src/engine.rs` — NEW
+**`calculate_decision(tech, latest_sentiment) → AggregatedDecision`**:
+
+The proprietary algorithm that decides when math matters more than news:
+
+**Weight Constants:**
+| Constant | Value | Purpose |
+|---|---|---|
+| `BASE_TECH_WEIGHT` | 0.70 | Default technical signal weight |
+| `BASE_SENT_WEIGHT` | 0.30 | Default sentiment signal weight |
+| `OVERRIDE_TECH_WEIGHT` | 0.30 | Inverted weight when conviction override fires |
+| `OVERRIDE_SENT_WEIGHT` | 0.70 | Inverted weight when conviction override fires |
+| `CONVICTION_OVERRIDE_THRESHOLD` | 85 | Claude score above which weights invert |
+| `EXTREME_BEARISH_TECH` | 20.0 | Tech score below which signal is "extremely bearish" |
+| `EXTREME_BULLISH_SENT` | 80 | Sentiment score above which signal is "extremely bullish" |
+| `CONFLICT_PENALTY_FACTOR` | 0.60 | Strength of pull toward neutral during conflict |
+| `BUY_THRESHOLD` | 65.0 | Final score above this → BUY |
+| `SELL_THRESHOLD` | 35.0 | Final score below this → SELL |
+
+**Algorithm Logic:**
+1. **Base Case** — No sentiment exists → weight = 100% Technical, final score = tech score
+2. **Dynamic Shift** — Base weights: 70% Tech / 30% Sentiment
+3. **Conviction Override** — If `claude_conviction_score > 85` → invert to 30% Tech / 70% Sentiment (strong news breaks technical patterns)
+4. **Conflict Resolution** — If tech extremely bearish (score < 20) AND sentiment extremely bullish (score > 80):
+   - If conviction override active → trust the news (skip penalty)
+   - Otherwise → pull blended score toward 50 (Neutral) by `CONFLICT_PENALTY_FACTOR` (60%)
+5. **Clamping** — Final score clamped to `[1, 100]`
+6. **Action Mapping** — `BUY > 65`, `SELL < 35`, `HOLD` otherwise
+
+**Unit tests (8 tests, all inline, all passing):**
+| Test | Scenario | Expected |
+|---|---|---|
+| `base_case_no_sentiment_100pct_tech` | No sentiment → 100% tech | score=75, BUY |
+| `base_weights_70_30_normal` | Normal blend | 80×0.7 + 60×0.3 = 74, BUY |
+| `conviction_override_inverts_weights` | Claude=90 > 85 | 40×0.3 + 90×0.7 = 75, BUY |
+| `conflict_resolution_penalizes_toward_neutral` | Tech=15, Sent=82, no override | Penalized to 44, HOLD |
+| `conflict_with_conviction_override_trusts_news` | Tech=15, Sent=90, override active | 68, BUY (trusts news) |
+| `sell_action_on_bearish_blend` | Both bearish | score=23, SELL |
+| `hold_action_on_neutral_blend` | Both neutral | score=50, HOLD |
+| `score_clamped_to_valid_range` | Both max | score=100, BUY |
+
+#### 42 — Integration: `consumer.rs` + `main.rs` — UPDATED
+
+**`main.rs` changes (SP42):**
+- `mod engine;` and `mod state;` declarations added
+- `AggregatorState::new()` initialized before Kafka consumer loop
+- `run_consumer_loop(consumer, &agg_state)` — state passed by reference
+- `let _ = agg_state;` in non-kafka branch suppresses unused warning
+
+**`consumer.rs` changes (SP42):**
+- `run_consumer_loop` signature updated: `(consumer: StreamConsumer, state: &AggregatorState)`
+- **Sentiment path**: `NewsSentiment::decode` → `state.update_sentiment(symbol, sentiment).await`
+- **Technical path**: `TechSignal::decode` → `state.get_sentiment(&symbol).await` → `engine::calculate_decision(&signal, latest_sentiment.as_ref())` → `println!` formatted `[DECISION]` line
+- `[DECISION]` output format: `symbol / action / final_score / tech_w / sent_w / sentiment_status / ts`
+- Original `[TECH]` debug log demoted to `log::debug!` (visible only with `RUST_LOG=debug`)
+- `ActionType` enum mapped to human-readable labels (BUY/SELL/HOLD/UNKNOWN)
+
+---
+
+## Final Cargo Check Result (Aggregator — Subphases 40-42)
+```
+cargo check --no-default-features  (aggregator)
+→ 0 errors  |  15 warnings (all dead_code — Kafka-gated code; expected with --no-default-features)
+→ Finished dev profile [unoptimized + debuginfo] in 1.11s  ✅
+```
+
+## Final Cargo Test Result (Aggregator — Subphases 40-42)
+```
+cargo test --no-default-features  (aggregator)
+→ 8 passed  |  0 failed  |  0 ignored
+→ All engine::tests assertions verified  ✅
+→ Finished test profile in 6.43s  ✅
+```

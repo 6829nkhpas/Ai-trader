@@ -1,17 +1,22 @@
 // main.rs — Aggregator Decision Engine entry point.
 //
-// Master Phase 1 → Power Phase 1.5 → Subphases 37-39.
+// Master Phase 1 → Power Phase 1.5 → Subphases 37-42.
 //
-// Initializes the central decision engine and establishes a multi-topic
-// Kafka consumer that asynchronously processes streams from:
-//   - `technical_signals` → TechSignal Protobuf
-//   - `sentiment_signals` → NewsSentiment Protobuf
+// Initializes the central decision engine with:
+//   - AggregatorState — caches latest sentiment per symbol (SP40)
+//   - engine          — dynamic weighting & conflict resolution (SP41)
+//   - consumer        — multi-topic Kafka consumer with integrated state (SP42)
 //
-// The consumer routes each incoming message to the correct decoder based
-// on msg.topic() and prints the decoded struct for verification.
+// Consumer loop routes incoming messages:
+//   - `sentiment_signals` → update AggregatorState
+//   - `technical_signals` → read AggregatorState → calculate_decision → println!
 
 mod consumer;
+mod engine;
 mod proto;
+mod state;
+
+use state::AggregatorState;
 
 #[tokio::main]
 async fn main() {
@@ -24,7 +29,7 @@ async fn main() {
 
     log::info!("╔══════════════════════════════════════════════╗");
     log::info!("║  Aggregator — Central Decision Engine        ║");
-    log::info!("║  Master Phase 1 → Power Phase 1.5  SP 37-39  ║");
+    log::info!("║  Master Phase 1 → Power Phase 1.5  SP 37-42  ║");
     log::info!("╚══════════════════════════════════════════════╝");
 
     // ── Configuration ────────────────────────────────────────────────────────
@@ -37,6 +42,11 @@ async fn main() {
     log::info!("Kafka broker   : {}", brokers);
     log::info!("Consumer group : {}", group_id);
 
+    // ── Aggregator State (SP40) ──────────────────────────────────────────────
+    // Shared sentiment cache: updated by sentiment consumer, read by tech consumer.
+    let agg_state = AggregatorState::new();
+    log::info!("AggregatorState initialised (sentiment cache ready)");
+
     // ── Kafka-gated block ─────────────────────────────────────────────────────
     #[cfg(feature = "kafka")]
     {
@@ -47,11 +57,13 @@ async fn main() {
         log::info!("All subsystems initialised. Entering aggregator consumer loop...");
         log::info!("─────────────────────────────────────────────────────────");
 
-        run_consumer_loop(consumer).await;
+        run_consumer_loop(consumer, &agg_state).await;
     }
 
     #[cfg(not(feature = "kafka"))]
     {
+        // Suppress unused variable warning when Kafka feature is off.
+        let _ = agg_state;
         log::warn!(
             "Binary built WITHOUT the 'kafka' feature (--no-default-features). \
              Run with `cargo run` (default features enabled) for full functionality."
