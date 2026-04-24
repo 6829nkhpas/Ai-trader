@@ -1,0 +1,25 @@
+# AI-Trader Root Environment Template
+
+# Kafka Configuration
+
+KAFKA_BROKER_URL=localhost:9092
+KAFKA_BROKERS=localhost:9092
+KAFKA_BROKERS_INTERNAL=broker:29092
+
+# Database Configuration
+
+QUESTDB_POSTGRES_URL=postgresql://admin:quest@localhost:8812/qdb
+REDIS_URL=redis://localhost:6379
+
+# Trading APIs
+
+KITE_API_KEY=your_kite_api_key
+KITE_API_SECRET=your_kite_api_secret
+
+# AI/NLP Sentiment Configuration
+
+CLAUDE_API_KEY=your_anthropic_api_key
+
+# Frontend Configuration
+
+NEXT_PUBLIC_WS_URL=ws://127.0.0.1:8080

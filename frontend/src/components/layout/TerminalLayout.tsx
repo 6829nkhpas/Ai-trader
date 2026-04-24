@@ -1,9 +1,10 @@
 'use client';
 
 import React from 'react';
-import { Activity } from 'lucide-react';
+import { Activity, RefreshCcw } from 'lucide-react';
 import NetworkMetrics from '../panels/NetworkMetrics';
 import OrderExecutionPanel from '../panels/OrderExecutionPanel';
+import { useTradeStore } from '../../store/useTradeStore';
 
 interface TerminalLayoutProps {
   children: React.ReactNode;
@@ -11,6 +12,8 @@ interface TerminalLayoutProps {
 }
 
 export default function TerminalLayout({ children, sidebar }: TerminalLayoutProps) {
+  const resetSession = useTradeStore((state) => state.resetSession);
+
   return (
     <div className="flex flex-col h-screen bg-slate-950 text-slate-100 font-sans">
       {/* Header */}
@@ -19,7 +22,15 @@ export default function TerminalLayout({ children, sidebar }: TerminalLayoutProp
           <Activity className="text-blue-500" size={24} />
           <h1 className="text-xl font-bold tracking-wider text-slate-100">AI-TRADE TERMINAL</h1>
         </div>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-4">
+          <button
+            onClick={resetSession}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 hover:text-white rounded-md transition-colors border border-slate-700"
+            title="Reset Session and Clear Orders"
+          >
+            <RefreshCcw size={16} />
+            Reset Session
+          </button>
           <NetworkMetrics />
         </div>
       </header>

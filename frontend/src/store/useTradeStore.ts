@@ -23,6 +23,7 @@ interface TradeStore {
   connectWebSocket: () => void;
   executeTrade: (decision: AggregatedDecision, quantity: number) => void;
   rejectTrade: (decision: AggregatedDecision) => void;
+  resetSession: () => void;
 }
 
 export const useTradeStore = create<TradeStore>((set, get) => {
@@ -65,6 +66,16 @@ export const useTradeStore = create<TradeStore>((set, get) => {
 
     rejectTrade: (decision: AggregatedDecision) => {
       set({ activeDecision: null });
+    },
+
+    resetSession: () => {
+      set({
+        portfolioBalance: 100000,
+        positions: {},
+        executedTrades: [],
+        liveDecisions: [],
+        activeDecision: null,
+      });
     },
 
     connectWebSocket: () => {
