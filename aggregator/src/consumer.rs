@@ -6,17 +6,20 @@
 //
 //   - "technical_signals" → prost::Message::decode → TechSignal
 //     → fetch latest sentiment from AggregatorState
-//     → engine::calculate_decision → AggregatedDecision (printed to console)
+//     → engine::calculate_decision → AggregatedDecision
+//     → (1) Kafka publish to trade_decisions (protobuf)
+//     → (2) Broadcast JSON to WebSocket clients
 //
 //   - "sentiment_signals" → prost::Message::decode → NewsSentiment
 //     → update AggregatorState with latest sentiment for that symbol
 //
-// Updated in Subphase 42 to integrate AggregatorState and the dynamic
-// weighting engine for real-time decision output.
+// Updated in Subphase 42 for AggregatorState + dynamic weighting.
+// Updated in Subphase 43-45 for Kafka publish + WebSocket broadcast.
 
 #[cfg(feature = "kafka")]
 pub mod consumer {
     use crate::engine;
+    use crate::kafka_producer::producer as kprod;
     use crate::proto::decision::ActionType;
     use crate::proto::sentiment_data::NewsSentiment;
     use crate::proto::technical_data::TechSignal;
@@ -26,12 +29,16 @@ pub mod consumer {
     use rdkafka::config::ClientConfig;
     use rdkafka::consumer::{Consumer, StreamConsumer};
     use rdkafka::message::Message as KafkaMessage;
+    use rdkafka::producer::FutureProducer;
 
     /// Topic name for technical signals published by the technical agent.
     const TOPIC_TECHNICAL: &str = "technical_signals";
 
     /// Topic name for sentiment signals published by the sentiment agent.
     const TOPIC_SENTIMENT: &str = "sentiment_signals";
+
+    /// Topic name for publishing aggregated decisions.
+    const TOPIC_DECISIONS: &str = "trade_decisions";
 
     /// Creates and configures a Kafka [`StreamConsumer`] subscribed to both
     /// the `technical_signals` and `sentiment_signals` topics.
@@ -76,7 +83,8 @@ pub mod consumer {
         consumer
     }
 
-    /// Runs the multi-topic message processing loop with dynamic weighting.
+    /// Runs the multi-topic message processing loop with dynamic weighting,
+    /// Kafka decision publishing, and WebSocket broadcast.
     ///
     /// For each incoming message:
     /// - Inspects `msg.topic()` to determine the source topic.
@@ -86,11 +94,19 @@ pub mod consumer {
     /// - If `technical_signals`: decodes payload as `TechSignal` via prost,
     ///   acquires a read lock on `AggregatorState` to fetch the latest
     ///   sentiment for that symbol, calls `engine::calculate_decision()`,
-    ///   and prints the resulting `AggregatedDecision` to stdout.
+    ///   then:
+    ///     1. Spawns a task to publish the Protobuf decision to Kafka.
+    ///     2. Serialises the decision to JSON and broadcasts it to WebSocket
+    ///        clients via the `tx` broadcast channel.
     ///
     /// This function runs indefinitely until the consumer is shut down or
     /// the stream is closed.
-    pub async fn run_consumer_loop(consumer: StreamConsumer, state: &AggregatorState) {
+    pub async fn run_consumer_loop(
+        consumer: StreamConsumer,
+        state: &AggregatorState,
+        producer: FutureProducer,
+        tx: tokio::sync::broadcast::Sender<String>,
+    ) {
         let mut stream = consumer.stream();
 
         log::info!("Aggregator consumer loop started — waiting for signals...");
@@ -157,6 +173,38 @@ pub mod consumer {
                                         },
                                         decision.timestamp_ms,
                                     );
+
+                                    // ── SP43: Kafka Publish (fire-and-forget) ────
+                                    // Spawn so slow Kafka delivery doesn't block
+                                    // the consumer loop. FutureProducer is Arc-backed.
+                                    let prod_clone = producer.clone();
+                                    let decision_clone = decision.clone();
+                                    tokio::spawn(async move {
+                                        kprod::publish_decision(
+                                            &prod_clone,
+                                            TOPIC_DECISIONS,
+                                            &decision_clone,
+                                        )
+                                        .await;
+                                    });
+
+                                    // ── SP45: WebSocket Broadcast (JSON) ─────────
+                                    // Manually map AggregatedDecision fields to JSON
+                                    // so the Next.js frontend receives readable data
+                                    // rather than raw Protobuf bytes.
+                                    let json_string = serde_json::json!({
+                                        "symbol": decision.symbol,
+                                        "timestamp_ms": decision.timestamp_ms,
+                                        "final_conviction_score": decision.final_conviction_score,
+                                        "technical_weight_used": decision.technical_weight_used,
+                                        "sentiment_weight_used": decision.sentiment_weight_used,
+                                        "action": action_label,
+                                    })
+                                    .to_string();
+
+                                    // broadcast::send returns Err only when there
+                                    // are zero receivers — harmless (no WS clients).
+                                    let _ = tx.send(json_string);
                                 }
                                 Err(e) => {
                                     log::warn!(
@@ -210,3 +258,4 @@ pub mod consumer {
         log::warn!("Consumer stream ended — aggregator loop exiting.");
     }
 }
+

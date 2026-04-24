@@ -30,6 +30,13 @@ env_logger = "0.10"
 # Async stream combinators — StreamExt for iterating rdkafka::StreamConsumer
 futures-util = "0.3"
 
+# JSON serialization — converts AggregatedDecision to human-readable JSON
+# for WebSocket broadcast to the Next.js frontend (vs raw Protobuf bytes).
+serde_json = "1.0"
+
+# WebSocket server — upgrades TCP streams to WS for real-time decision push.
+tokio-tungstenite = "0.20"
+
 # ===========================================================================
 # Build-time Dependencies (proto compilation)
 # ===========================================================================
