@@ -13,10 +13,16 @@ export interface AggregatedDecision {
 
 interface TradeStore {
   liveDecisions: AggregatedDecision[];
+  activeDecision: AggregatedDecision | null;
+  portfolioBalance: number;
+  positions: Record<string, number>;
+  executedTrades: any[];
   latencyMs: number;
   connectionStatus: 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED';
   wsStatus: 'disconnected' | 'connecting' | 'connected' | 'error';
   connectWebSocket: () => void;
+  executeTrade: (decision: AggregatedDecision, quantity: number) => void;
+  rejectTrade: (decision: AggregatedDecision) => void;
 }
 
 export const useTradeStore = create<TradeStore>((set, get) => {
@@ -24,9 +30,42 @@ export const useTradeStore = create<TradeStore>((set, get) => {
 
   return {
     liveDecisions: [],
+    activeDecision: null,
+    portfolioBalance: 100000,
+    positions: {},
+    executedTrades: [],
     latencyMs: 0,
     connectionStatus: 'DISCONNECTED',
     wsStatus: 'disconnected',
+
+    executeTrade: (decision: AggregatedDecision, quantity: number) => {
+      set((state) => {
+        const symbol = decision.symbol;
+        const price = decision.price || 0;
+        let newBalance = state.portfolioBalance;
+        const newPositions = { ...state.positions };
+        const currentQty = newPositions[symbol] || 0;
+
+        if (decision.action_type === 'BUY') {
+          newBalance -= price * quantity;
+          newPositions[symbol] = currentQty + quantity;
+        } else if (decision.action_type === 'SELL') {
+          newBalance += price * quantity;
+          newPositions[symbol] = currentQty - quantity;
+        }
+
+        return {
+          portfolioBalance: newBalance,
+          positions: newPositions,
+          executedTrades: [...state.executedTrades, { decision, quantity, executedAt: Date.now() }],
+          activeDecision: null,
+        };
+      });
+    },
+
+    rejectTrade: (decision: AggregatedDecision) => {
+      set({ activeDecision: null });
+    },
 
     connectWebSocket: () => {
       // Prevent multiple connections
@@ -61,6 +100,7 @@ export const useTradeStore = create<TradeStore>((set, get) => {
 
               return {
                 liveDecisions: updatedDecisions,
+                activeDecision: state.activeDecision ? state.activeDecision : data,
                 latencyMs: Number.isFinite(currentLatency) ? Math.max(0, currentLatency) : 0,
               };
             });

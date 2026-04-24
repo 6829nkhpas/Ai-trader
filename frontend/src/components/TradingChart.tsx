@@ -8,7 +8,7 @@ export default function TradingChart() {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  
+
   const liveDecisions = useTradeStore((state) => state.liveDecisions);
   const [hoveredDecision, setHoveredDecision] = useState<AggregatedDecision | null>(null);
 
@@ -29,7 +29,7 @@ export default function TradingChart() {
       height: 500,
     });
 
-    const candlestickSeries = chart.addCandlestickSeries({
+    const candlestickSeries = (chart as any).addCandlestickSeries({
       upColor: '#26a69a',
       downColor: '#ef5350',
       borderVisible: false,
@@ -59,13 +59,13 @@ export default function TradingChart() {
     if (!seriesRef.current || liveDecisions.length === 0) return;
 
     const decision = liveDecisions[liveDecisions.length - 1];
-    
+
     // Use timestamp_ms to generate a live, advancing candlestick
     const time = (decision.timestamp_ms / 1000) as any;
-    
+
     // Simulated price movement using timestamp for demo purposes
     const simulatedPrice = decision.price || (100 + (decision.timestamp_ms % 10));
-    
+
     const candle = {
       time,
       open: simulatedPrice - 1,
@@ -89,7 +89,7 @@ export default function TradingChart() {
       }));
 
     if (markers.length > 0) {
-      seriesRef.current.setMarkers(markers);
+      (seriesRef.current as any).setMarkers(markers);
     }
   }, [liveDecisions]);
 
@@ -105,9 +105,9 @@ export default function TradingChart() {
 
       // Check if we are hovering over a marker by finding matching decision time
       const hoveredTime = param.time as number;
-      const matchedDecision = liveDecisions.find((d) => 
+      const matchedDecision = liveDecisions.find((d) =>
         Math.abs((d.timestamp_ms / 1000) - hoveredTime) < 1 &&
-        d.action_type === 'BUY' && 
+        d.action_type === 'BUY' &&
         d.final_conviction_score > 70
       );
 
@@ -123,11 +123,11 @@ export default function TradingChart() {
 
   return (
     <div className="relative w-full max-w-5xl mx-auto mt-8">
-      <div 
-        ref={chartContainerRef} 
+      <div
+        ref={chartContainerRef}
         className="w-full rounded-lg overflow-hidden border border-gray-800 shadow-xl"
       />
-      
+
       {/* Glass-Box Overlay */}
       {hoveredDecision && (
         <div className="absolute top-4 left-4 z-10 bg-black/80 backdrop-blur-md border border-gray-700 p-4 rounded-xl shadow-2xl text-white transition-opacity duration-200 pointer-events-none">

@@ -3,6 +3,7 @@
 import React from 'react';
 import { Activity } from 'lucide-react';
 import NetworkMetrics from '../panels/NetworkMetrics';
+import OrderExecutionPanel from '../panels/OrderExecutionPanel';
 
 interface TerminalLayoutProps {
   children: React.ReactNode;
@@ -28,6 +29,9 @@ export default function TerminalLayout({ children, sidebar }: TerminalLayoutProp
         {/* Sidebar */}
         <aside className="w-80 flex flex-col gap-4 p-4 border-r border-slate-800 bg-slate-900 overflow-y-auto">
           {sidebar}
+          <div className="mt-4">
+            <OrderExecutionPanel />
+          </div>
         </aside>
 
         {/* Central Area */}

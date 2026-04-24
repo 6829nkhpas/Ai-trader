@@ -1156,3 +1156,21 @@ POWER PHASE 2.2 IS COMPLETE. DASHBOARD UI & TELEMETRY FULLY OPERATIONAL.
 - No additional changes were made outside Subphases 58-60 scope.
 
 POWER PHASE 2.2 IS COMPLETE. DASHBOARD UI & TELEMETRY FULLY OPERATIONAL.
+
+### Subphases 61-63: Portfolio State & Order Execution UI ? COMPLETE THIS SESSION
+
+#### 61 — `frontend/src/store/useTradeStore.ts` — Portfolio State
+- Added `portfolioBalance`, `positions`, `executedTrades`, and `activeDecision` to the global store.
+- Implemented `executeTrade` action to handle simulated buy/sell updates and log execution.
+- Implemented `rejectTrade` action to explicitly dismiss a decision without portfolio changes.
+
+#### 62 — `frontend/src/components/panels/OrderExecutionPanel.tsx` — Execution UI
+- Built interactive panel linking to `useTradeStore`.
+- Supports minimized mode displaying current `portfolioBalance` ($100,000) and held `positions`.
+- Displays dynamic expanded mode upon receiving an `activeDecision`.
+- Features actionable "ACCEPT & EXECUTE" and "REJECT / IGNORE" actions mapped to state.
+
+#### 63 — `frontend/src/components/layout/TerminalLayout.tsx` — Layout Integration
+- Imported `<OrderExecutionPanel />` and embedded it within the sidebar layout.
+- Placed optimally for visual flow (under network/agent status) for responsive decision making.
+- Verified Next.js app compilation correctly passes without type errors in newly generated code.
