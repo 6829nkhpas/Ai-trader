@@ -1,13 +1,14 @@
 import { create } from 'zustand';
 
 export interface AggregatedDecision {
-  // Define structure based on your Aggregator output.
-  // Using generic fields here as examples.
-  timestamp: number;
+  timestamp_ms: number;
   symbol: string;
-  action: 'BUY' | 'SELL' | 'HOLD';
-  confidence: number;
+  action_type: 'BUY' | 'SELL' | 'HOLD';
+  final_conviction_score: number;
   reasoning: string;
+  technical_weight_used: number;
+  sentiment_weight_used: number;
+  price?: number;
 }
 
 interface TradeStore {

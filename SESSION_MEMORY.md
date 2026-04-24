@@ -1057,3 +1057,27 @@ cargo check --no-default-features  (aggregator)
 ```
 
 POWER PHASE 1.5 IS COMPLETE. AGGREGATOR (THE BRAIN) FULLY OPERATIONAL.
+
+---
+
+### Subphases 49-51: Lightweight Charts & Glass-Box Component ✅ COMPLETE THIS SESSION
+
+#### 49-51 — `frontend/src/components/TradingChart.tsx` & `frontend/src/app/page.tsx`
+- Updated `AggregatedDecision` in `useTradeStore.ts` with missing fields like `price`, `timestamp_ms`, `technical_weight_used`, etc.
+- Created `TradingChart.tsx` integrating `lightweight-charts`.
+- Initialized a dark-themed candlestick chart using a `useEffect` and `useRef` hook.
+- Integrated `useTradeStore` to stream `AggregatedDecision` updates live to the chart.
+- Used `decision.timestamp_ms` and simulated price actions for live advancing candlesticks.
+- Visualized AI action markers via `candlestickSeries.setMarkers()` for 'BUY' signals with > 70 conviction.
+- Implemented a standard React HTML glass-box overlay showing `technical_weight_used` and `sentiment_weight_used` on marker hover.
+- Replaced `page.tsx` with a basic Dashboard calling `connectWebSocket()` on mount.
+
+---
+
+### Subphases 52-54: Terminal Layout & System Status UI ✅ COMPLETE THIS SESSION
+
+#### 52-54 — Dashboard Components & Integration
+- Created `TerminalLayout.tsx` using Tailwind CSS with a dark theme (`bg-slate-950`), a header with connection status, and a sidebar for panels.
+- Created `AgentStatusPanel.tsx` to visualize the AI Swarm ("Ingestion Engine", "Technical Agent", "NLP Sentiment Agent", "Aggregator") using `lucide-react` icons and a mock pulse animation.
+- Created `LiveFeedPanel.tsx` connecting to `useTradeStore`, rendering a scrolling list of recent trades colored by action.
+- Updated `page.tsx` to wrap `TradingChart` in `TerminalLayout` and include the status and feed panels in the sidebar.
