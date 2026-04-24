@@ -10,6 +10,21 @@
 
 ---
 
+### Subphases 46-48: Next.js Initialization & Global State ✅ COMPLETE THIS SESSION
+
+#### 46-47 — `frontend/` — Next.js Initialized
+- Initialized App router with tailwind, typescript, eslint, via `create-next-app` in the `frontend` dir.
+- Added dependencies: `npm install lightweight-charts zustand lucide-react`
+- Created `frontend/.env.local` containing `NEXT_PUBLIC_WS_URL=ws://127.0.0.1:8080`
+
+#### 48 — `frontend/src/store/useTradeStore.ts` — Zustand Store & WebSocket Client
+- Created `useTradeStore` using `zustand`.
+- Stores `liveDecisions` in application state.
+- Exposes `connectWebSocket` action initializing a WebSocket listening to the provided URI and updating the state upon incoming valid `AggregatedDecision`.
+- Added cap on array size (100) to prevent browser memory leaks on stream updates.
+
+---
+
 ## Completed Tasks
 
 ### Subphases 1-18 — See previous session records

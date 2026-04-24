@@ -1,0 +1,79 @@
+import { create } from 'zustand';
+
+export interface AggregatedDecision {
+  // Define structure based on your Aggregator output.
+  // Using generic fields here as examples.
+  timestamp: number;
+  symbol: string;
+  action: 'BUY' | 'SELL' | 'HOLD';
+  confidence: number;
+  reasoning: string;
+}
+
+interface TradeStore {
+  liveDecisions: AggregatedDecision[];
+  wsStatus: 'disconnected' | 'connecting' | 'connected' | 'error';
+  connectWebSocket: () => void;
+}
+
+export const useTradeStore = create<TradeStore>((set, get) => {
+  let ws: WebSocket | null = null;
+
+  return {
+    liveDecisions: [],
+    wsStatus: 'disconnected',
+
+    connectWebSocket: () => {
+      // Prevent multiple connections
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+
+      set({ wsStatus: 'connecting' });
+
+      // Use env variable or fallback
+      const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://127.0.0.1:8080';
+      
+      try {
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+          console.log('WebSocket connected to Aggregator', wsUrl);
+          set({ wsStatus: 'connected' });
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data: AggregatedDecision = JSON.parse(event.data);
+            
+            set((state) => {
+              // Append new decision and cap at 100 to prevent memory leaks
+              const updatedDecisions = [...state.liveDecisions, data];
+              if (updatedDecisions.length > 100) {
+                updatedDecisions.shift();
+              }
+              
+              return { liveDecisions: updatedDecisions };
+            });
+          } catch (err) {
+            console.error('Failed to parse WebSocket message', err);
+          }
+        };
+
+        ws.onclose = () => {
+          console.log('WebSocket disconnected');
+          set({ wsStatus: 'disconnected' });
+          ws = null;
+        };
+
+        ws.onerror = (error) => {
+          console.error('WebSocket error:', error);
+          set({ wsStatus: 'error' });
+        };
+      } catch (error) {
+        console.error('Failed to initialize WebSocket', error);
+        set({ wsStatus: 'error' });
+      }
+    },
+  };
+});
