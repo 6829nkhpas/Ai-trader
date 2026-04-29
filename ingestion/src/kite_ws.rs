@@ -194,11 +194,10 @@ pub async fn run(
     symbol_map: HashMap<u32, String>,
     tx: mpsc::Sender<ParsedTick>,
 ) {
-    let url = format!("{}?api_key={}&access_token={}", KITE_WS_URL, api_key, access_token);
+    let url = format!("{}/?api_key={}&access_token={}", KITE_WS_URL, api_key, access_token);
 
     loop {
         info!("Connecting to Kite WebSocket...");
-
         let ws_stream = match connect_async(&url).await {
             Ok((stream, _)) => {
                 info!("Kite WebSocket connected ✓");

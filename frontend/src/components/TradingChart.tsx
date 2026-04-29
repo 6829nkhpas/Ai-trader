@@ -1,7 +1,8 @@
 'use client';
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { createChart, IChartApi, ISeriesApi, SeriesMarker } from 'lightweight-charts';
+import { createChart, IChartApi, ISeriesApi, SeriesMarker, CandlestickSeries } from 'lightweight-charts';
 import { useTradeStore, AggregatedDecision } from '../store/useTradeStore';
 
 export default function TradingChart() {
@@ -12,7 +13,6 @@ export default function TradingChart() {
   const liveDecisions = useTradeStore((state) => state.liveDecisions);
   const executedTrades = useTradeStore((state) => state.executedTrades);
   const [hoveredDecision, setHoveredDecision] = useState<AggregatedDecision | null>(null);
-  const [hoveredExecution, setHoveredExecution] = useState<any | null>(null);
 
   // Initialize chart
   useEffect(() => {
@@ -31,7 +31,7 @@ export default function TradingChart() {
       height: 500,
     });
 
-    const candlestickSeries = (chart as any).addCandlestickSeries({
+    const candlestickSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#26a69a',
       downColor: '#ef5350',
       borderVisible: false,
@@ -105,39 +105,33 @@ export default function TradingChart() {
       (seriesRef.current as any).setMarkers(markers);
     }
   }, [liveDecisions, executedTrades]);
-  // Check if we are hovering over an AI marker
-  const matchedDecision = liveDecisions.find((d) =>
-    Math.abs((d.timestamp_ms / 1000) - hoveredTime) < 1 &&
-    d.action_type === 'BUY' &&
-    d.final_conviction_score > 70
-  );
+  useEffect(() => {
+    if (!chartRef.current) return;
 
-  // Check if we are hovering over an Execution marker
-  const matchedExecution = executedTrades.find((t) =>
-    Math.abs((t.decision.timestamp_ms / 1000) - hoveredTime) < 1
-  );
+    const handleCrosshairMove = (param: any) => {
+      if (!param.time) {
+        setHoveredDecision(null);
+        return;
+      }
 
-  setHoveredDecision(matchedDecision || null);
-  setHoveredExecution(matchedExecution || null);
-};
+      const hoveredTime = param.time as number;
 
-chartRef.current.subscribeCrosshairMove(handleCrosshairMove);
-
-return () => {
-  chartRef.current?.unsubscribeCrosshairMove(handleCrosshairMove);
-};
-  }, [liveDecisions, executedTradenviction_score > 70
+      // Check if we are hovering over an AI marker
+      const matchedDecision = liveDecisions.find((d) =>
+        Math.abs((d.timestamp_ms / 1000) - hoveredTime) < 1 &&
+        d.action_type === 'BUY' &&
+        d.final_conviction_score > 70
       );
 
-  setHoveredDecision(matchedDecision || null);
+      setHoveredDecision(matchedDecision || null);
     };
 
-  chartRef.current.subscribeCrosshairMove(handleCrosshairMove);
+    chartRef.current.subscribeCrosshairMove(handleCrosshairMove);
 
     return () => {
-  chartRef.current?.unsubscribeCrosshairMove(handleCrosshairMove);
-};
-  }, [liveDecisions]);
+      chartRef.current?.unsubscribeCrosshairMove(handleCrosshairMove);
+    };
+  }, [liveDecisions, executedTrades]);
 
 return (
   <div className="relative w-full max-w-5xl mx-auto mt-8">
@@ -164,7 +158,7 @@ return (
             <span className="font-semibold">{hoveredDecision.sentiment_weight_used}%</span>
           </p>
           <p className="mt-2 text-xs text-gray-300 max-w-xs italic border-t border-gray-700 pt-2">
-            "{hoveredDecision.reasoning}"
+            &quot;{hoveredDecision.reasoning}&quot;
           </p>
         </div>
       </div>

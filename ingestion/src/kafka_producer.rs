@@ -21,7 +21,7 @@ use log::{error, info, warn};
 use prost::Message as ProstMessage;
 use rdkafka::{
     config::ClientConfig,
-    producer::{FutureProducer, FutureRecord},
+    producer::{FutureProducer, FutureRecord, Producer},
     util::Timeout,
 };
 use std::time::Duration;
@@ -72,6 +72,11 @@ impl KafkaProducer {
             volume: tick.volume as i32,
             best_bid: tick.best_bid,
             best_ask: tick.best_ask,
+            instrument_token: tick.instrument_token,
+            open: tick.open,
+            high: tick.high,
+            low: tick.low,
+            close: tick.close,
         };
 
         // Encode to bytes

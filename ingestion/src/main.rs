@@ -172,14 +172,7 @@ async fn main() {
     //    The mpsc channel feeds the ILP writer from the high-level kite_ws task.
     let (tx, mut rx) = mpsc::channel::<ParsedTick>(CHANNEL_CAPACITY);
 
-    // Spawn high-level Kite WS task (handles subscribe + auto-reconnect)
-    let ws_handle = tokio::spawn(kite_ws::run(
-        api_key.clone(),
-        access_token.clone(),
-        instrument_tokens.clone(),
-        symbol_map.clone(),
-        tx,
-    ));
+    // Secondary Kite WS task removed (merged into primary loop)
 
     // Drain mpsc channel → ILP writer (legacy path)
     let ilp_handle = tokio::spawn(async move {
@@ -206,7 +199,7 @@ async fn main() {
     let direct_handle = tokio::spawn(async move {
         info!("Direct-stream loop: connecting to Kite WebSocket...");
 
-        let (mut ws_reader, _ws_writer) =
+        let (mut ws_reader, mut ws_writer) =
             match kite_client::connect_ticker(&api_key, &access_token).await {
                 Ok(pair) => pair,
                 Err(e) => {
@@ -215,7 +208,24 @@ async fn main() {
                 }
             };
 
-        info!("Direct-stream loop: WebSocket connected. Entering event loop.");
+        info!("Direct-stream loop: WebSocket connected. Sending subscription.");
+
+        use futures_util::SinkExt;
+        use serde_json::json;
+        let token_vals: Vec<serde_json::Value> = instrument_tokens
+            .iter()
+            .map(|&t| serde_json::Value::Number(t.into()))
+            .collect();
+
+        let subscribe_msg = json!({ "a": "subscribe", "v": token_vals }).to_string();
+        let mode_msg = json!({ "a": "mode", "v": ["full", token_vals] }).to_string();
+
+        if let Err(e) = ws_writer.send(tokio_tungstenite::tungstenite::Message::Text(subscribe_msg)).await {
+            error!("Failed to send subscribe message: {}", e);
+        }
+        if let Err(e) = ws_writer.send(tokio_tungstenite::tungstenite::Message::Text(mode_msg)).await {
+            error!("Failed to send mode message: {}", e);
+        }
 
         // ── Main event loop ──────────────────────────────────────────────────
         while let Some(msg) = ws_reader.next().await {
@@ -225,6 +235,20 @@ async fn main() {
                     let ticks = parser::parse_binary_frame(&payload, &symbol_map_arc);
 
                     for tick in ticks {
+                        let parsed_tick = crate::types::ParsedTick {
+                            instrument_token: tick.instrument_token,
+                            symbol: tick.symbol.clone(),
+                            last_price: tick.last_traded_price,
+                            volume: tick.volume as u32,
+                            best_bid: tick.best_bid,
+                            best_ask: tick.best_ask,
+                            open: tick.open,
+                            high: tick.high,
+                            low: tick.low,
+                            close: tick.close,
+                            timestamp_ms: tick.timestamp_ms,
+                        };
+                        let _ = tx.send(parsed_tick).await;
                         // Clone Arc handles for the spawned task
                         #[cfg(feature = "kafka")]
                         let kp = Arc::clone(&kafka_producer_clone);
@@ -270,9 +294,6 @@ async fn main() {
     tokio::select! {
         _ = signal::ctrl_c() => {
             info!("SIGINT received — shutting down ingestion service...");
-        }
-        res = ws_handle => {
-            error!("Kite WS task exited unexpectedly: {:?}", res);
         }
         res = ilp_handle => {
             error!("ILP writer task exited unexpectedly: {:?}", res);

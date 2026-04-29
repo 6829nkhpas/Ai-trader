@@ -14,7 +14,7 @@ tokio = { version = "1", features = ["full"] }
 
 # WebSocket transport — raw + async wrappers
 tungstenite = "0.20"
-tokio-tungstenite = "0.20"
+tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
 
 # Kafka producer — builds librdkafka from source via CMake.
 # Gated behind the 'kafka' feature so `cargo check --no-default-features` works

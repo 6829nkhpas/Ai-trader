@@ -11,4 +11,9 @@ message Tick {
   int32  volume           = 4;  // Cumulative traded volume at this tick
   double best_bid         = 5;  // Top-of-book bid price
   double best_ask         = 6;  // Top-of-book ask price
+  uint32 instrument_token = 7;
+  double open             = 8;
+  double high             = 9;
+  double low              = 10;
+  double close            = 11;
 }

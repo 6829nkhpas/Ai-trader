@@ -89,7 +89,7 @@ pub fn parse_binary_tick(payload: &[u8], symbol: &str) -> Result<Tick, String> {
 
     // Bytes 0-3: instrument_token (u32 big-endian) — already resolved to
     // `symbol` by the caller, but we read it here so cursor advances correctly.
-    let _instrument_token = cur
+    let instrument_token = cur
         .read_u32::<BigEndian>()
         .map_err(|e| format!("Failed to read instrument_token: {e}"))?;
 
@@ -103,6 +103,10 @@ pub fn parse_binary_tick(payload: &[u8], symbol: &str) -> Result<Tick, String> {
     let mut volume: i32 = 0;
     let mut best_bid: f64 = 0.0;
     let mut best_ask: f64 = 0.0;
+    let mut open: f64 = 0.0;
+    let mut high: f64 = 0.0;
+    let mut low: f64 = 0.0;
+    let mut close: f64 = 0.0;
 
     if payload.len() >= MODE_QUOTE {
         // Quote / Full mode — additional OHLCV fields start at byte 8.
@@ -133,11 +137,11 @@ pub fn parse_binary_tick(payload: &[u8], symbol: &str) -> Result<Tick, String> {
         let _ = buy_qty;
         let _ = sell_qty;
 
-        // Skip OHLC prices (bytes 28-43) — not mapped to Tick proto yet.
-        cur.read_i32::<BigEndian>().ok(); // open
-        cur.read_i32::<BigEndian>().ok(); // high
-        cur.read_i32::<BigEndian>().ok(); // low
-        cur.read_i32::<BigEndian>().ok(); // close
+        // Read OHLC prices (bytes 28-43)
+        open = cur.read_i32::<BigEndian>().unwrap_or(0) as f64 / 100.0;
+        high = cur.read_i32::<BigEndian>().unwrap_or(0) as f64 / 100.0;
+        low = cur.read_i32::<BigEndian>().unwrap_or(0) as f64 / 100.0;
+        close = cur.read_i32::<BigEndian>().unwrap_or(0) as f64 / 100.0;
     }
 
     if payload.len() >= MODE_FULL {
@@ -177,6 +181,11 @@ pub fn parse_binary_tick(payload: &[u8], symbol: &str) -> Result<Tick, String> {
         volume,
         best_bid,
         best_ask,
+        instrument_token,
+        open,
+        high,
+        low,
+        close,
     })
 }
 

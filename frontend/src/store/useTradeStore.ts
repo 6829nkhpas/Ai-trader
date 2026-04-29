@@ -11,12 +11,18 @@ export interface AggregatedDecision {
   price?: number;
 }
 
+export interface ExecutedTrade {
+  decision: AggregatedDecision;
+  quantity: number;
+  executedAt: number;
+}
+
 interface TradeStore {
   liveDecisions: AggregatedDecision[];
   activeDecision: AggregatedDecision | null;
   portfolioBalance: number;
   positions: Record<string, number>;
-  executedTrades: any[];
+  executedTrades: ExecutedTrade[];
   latencyMs: number;
   connectionStatus: 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED';
   wsStatus: 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -26,7 +32,7 @@ interface TradeStore {
   resetSession: () => void;
 }
 
-export const useTradeStore = create<TradeStore>((set, get) => {
+export const useTradeStore = create<TradeStore>((set) => {
   let ws: WebSocket | null = null;
 
   return {
@@ -64,7 +70,7 @@ export const useTradeStore = create<TradeStore>((set, get) => {
       });
     },
 
-    rejectTrade: (decision: AggregatedDecision) => {
+    rejectTrade: (_decision: AggregatedDecision) => {
       set({ activeDecision: null });
     },
 

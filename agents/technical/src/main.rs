@@ -89,7 +89,7 @@ async fn main() {
         while let Some(tick) = rx.recv().await {
             let symbol = tick.symbol.clone();
             let price  = tick.last_traded_price;
-            let vol    = tick.volume;          // cumulative intraday volume (u64)
+            let vol    = tick.volume as u64;   // cumulative intraday volume (u64)
             let ts_ms  = tick.timestamp_ms;
 
             log::debug!(
