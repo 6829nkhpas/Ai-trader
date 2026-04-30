@@ -1,14 +1,29 @@
 import { create } from 'zustand';
 
+type BackendAction = 'BUY' | 'SELL' | 'HOLD';
+
 export interface AggregatedDecision {
   timestamp_ms: number;
   symbol: string;
-  action_type: 'BUY' | 'SELL' | 'HOLD';
+  action_type: BackendAction;
   final_conviction_score: number;
-  reasoning: string;
+  reasoning?: string;
   technical_weight_used: number;
   sentiment_weight_used: number;
   price?: number;
+}
+
+interface BackendDecisionPayload {
+  timestamp_ms?: number | string;
+  symbol?: string;
+  action_type?: BackendAction | number;
+  action?: BackendAction | string | number;
+  final_conviction_score?: number | string;
+  technical_weight_used?: number | string;
+  sentiment_weight_used?: number | string;
+  reasoning?: string;
+  reasoning_snippet?: string;
+  price?: number | string;
 }
 
 export interface ExecutedTrade {
@@ -34,6 +49,43 @@ interface TradeStore {
 
 export const useTradeStore = create<TradeStore>((set) => {
   let ws: WebSocket | null = null;
+
+  const resolveActionType = (value: BackendDecisionPayload['action_type'] | BackendDecisionPayload['action']): BackendAction => {
+    if (typeof value === 'string') {
+      const normalized = value.toUpperCase();
+      if (normalized === 'BUY' || normalized === 'SELL' || normalized === 'HOLD') {
+        return normalized;
+      }
+    }
+
+    if (typeof value === 'number') {
+      if (value === 0) return 'BUY';
+      if (value === 1) return 'SELL';
+      if (value === 2) return 'HOLD';
+    }
+
+    return 'HOLD';
+  };
+
+  const normalizeDecision = (payload: BackendDecisionPayload): AggregatedDecision => {
+    const timestampMs = Number(payload.timestamp_ms ?? Date.now());
+    const score = Number(payload.final_conviction_score ?? 50);
+    const technicalWeight = Number(payload.technical_weight_used ?? 1);
+    const sentimentWeight = Number(payload.sentiment_weight_used ?? 0);
+    const price = payload.price === undefined ? undefined : Number(payload.price);
+    const action_type = resolveActionType(payload.action_type ?? payload.action);
+
+    return {
+      timestamp_ms: Number.isFinite(timestampMs) ? timestampMs : Date.now(),
+      symbol: payload.symbol ?? 'UNKNOWN',
+      action_type,
+      final_conviction_score: Number.isFinite(score) ? score : 50,
+      reasoning: payload.reasoning ?? payload.reasoning_snippet,
+      technical_weight_used: Number.isFinite(technicalWeight) ? technicalWeight : 0,
+      sentiment_weight_used: Number.isFinite(sentimentWeight) ? sentimentWeight : 0,
+      price: Number.isFinite(price ?? Number.NaN) ? price : undefined,
+    };
+  };
 
   return {
     liveDecisions: [],
@@ -70,7 +122,8 @@ export const useTradeStore = create<TradeStore>((set) => {
       });
     },
 
-    rejectTrade: (_decision: AggregatedDecision) => {
+    rejectTrade: (decision: AggregatedDecision) => {
+      void decision;
       set({ activeDecision: null });
     },
 
@@ -92,8 +145,10 @@ export const useTradeStore = create<TradeStore>((set) => {
 
       set({ wsStatus: 'connecting', connectionStatus: 'CONNECTING' });
 
-      // Use env variable or fallback
-      const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://127.0.0.1:8080';
+      const wsUrl =
+        process.env.NEXT_PUBLIC_AGGREGATOR_WS_URL ||
+        process.env.NEXT_PUBLIC_WS_URL ||
+        'ws://127.0.0.1:8080';
 
       try {
         ws = new WebSocket(wsUrl);
@@ -104,8 +159,12 @@ export const useTradeStore = create<TradeStore>((set) => {
         };
 
         ws.onmessage = (event) => {
+          console.log('📨 WebSocket message received:', event.data);
           try {
-            const data: AggregatedDecision = JSON.parse(event.data);
+            const rawData: BackendDecisionPayload = JSON.parse(event.data);
+            console.log('✅ Parsed payload:', rawData);
+            const data = normalizeDecision(rawData);
+            console.log('✅ Normalized decision:', data);
             const currentLatency = Date.now() - data.timestamp_ms;
 
             set((state) => {

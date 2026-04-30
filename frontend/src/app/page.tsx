@@ -23,7 +23,7 @@ export default function Home() {
         </>
       }
     >
-      <div className="h-full w-full flex flex-col">
+      <div className="flex h-full min-h-0 w-full flex-col">
         <TradingChart />
       </div>
     </TerminalLayout>

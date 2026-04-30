@@ -23,17 +23,17 @@ export default function NetworkMetrics() {
   const { connectionStatus, latencyMs } = useTradeStore();
 
   return (
-    <div className="flex items-center gap-4 rounded-full border border-slate-700 bg-slate-800/80 px-4 py-2 text-xs uppercase tracking-wider">
+    <div className="flex items-center gap-4 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-xs uppercase tracking-wider text-slate-600">
       <div className="flex items-center gap-2">
         <span className={`h-2.5 w-2.5 rounded-full ${statusDotClass[connectionStatus]}`} />
-        <span className="text-slate-300">Status</span>
-        <span className="font-semibold text-slate-100">{connectionStatus}</span>
+        <span className="text-slate-500">Status</span>
+        <span className="font-semibold text-slate-900">{connectionStatus}</span>
       </div>
 
-      <div className="h-4 w-px bg-slate-700" />
+      <div className="h-4 w-px bg-slate-200" />
 
       <div className="flex items-center gap-2">
-        <span className="text-slate-300">Latency</span>
+        <span className="text-slate-500">Latency</span>
         <span className={`font-semibold ${getLatencyColor(latencyMs)}`}>{latencyMs}ms</span>
       </div>
     </div>

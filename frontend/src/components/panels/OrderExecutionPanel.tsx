@@ -10,26 +10,26 @@ export default function OrderExecutionPanel() {
 
   if (!activeDecision) {
     return (
-      <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 shadow-sm flex flex-col gap-4">
-        <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+      <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-500">
           <Briefcase size={16} /> Portfolio State
         </h2>
 
         <div className="flex items-center justify-between">
-          <span className="text-slate-300">Available Balance:</span>
-          <span className="text-xl font-bold text-slate-100 flex items-center">
-            <DollarSign size={20} className="text-emerald-500 mr-1" />
+          <span className="text-slate-600">Available Balance:</span>
+          <span className="flex items-center text-xl font-bold text-slate-900">
+            <DollarSign size={20} className="mr-1 text-emerald-500" />
             {portfolioBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </span>
         </div>
 
         {Object.keys(positions).length > 0 && (
           <div className="mt-2">
-            <span className="text-xs text-slate-500 uppercase font-semibold mb-2 block">Active Positions</span>
+            <span className="mb-2 block text-xs font-semibold uppercase text-slate-500">Active Positions</span>
             <div className="flex flex-wrap gap-2">
               {Object.entries(positions).map(([sym, qty]) => (
-                <div key={sym} className="px-3 py-1 bg-slate-800 rounded text-sm text-slate-300 border border-slate-700">
-                  <span className="font-bold text-slate-200">{sym}</span>: {qty}
+                <div key={sym} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-sm text-slate-700">
+                  <span className="font-bold text-slate-900">{sym}</span>: {qty}
                 </div>
               ))}
             </div>
@@ -41,7 +41,7 @@ export default function OrderExecutionPanel() {
 
   const isBuy = activeDecision.action_type === 'BUY';
   const isHold = activeDecision.action_type === 'HOLD';
-  const actionColor = isBuy ? 'text-emerald-500' : isHold ? 'text-blue-500' : 'text-red-500';
+  const actionColor = isBuy ? 'text-emerald-600' : isHold ? 'text-blue-600' : 'text-red-600';
   const buttonColor = isBuy
     ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
     : isHold
@@ -49,40 +49,40 @@ export default function OrderExecutionPanel() {
       : 'bg-red-600 hover:bg-red-500 text-white';
 
   return (
-    <div className="bg-slate-900 border border-blue-900/50 rounded-lg p-5 shadow-lg flex flex-col gap-5 animate-in fade-in zoom-in-95 duration-200">
-      <div className="flex justify-between items-start">
+    <div className="flex flex-col gap-5 rounded-2xl border border-blue-100 bg-white p-5 shadow-sm animate-in fade-in zoom-in-95 duration-200">
+      <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Execute Automaton</h2>
-          <div className="text-lg font-medium text-slate-200 mt-1">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-500">Execute Automaton</h2>
+          <div className="mt-1 text-lg font-medium text-slate-900">
             Recommended Action: <span className={`font-bold ${actionColor}`}>{activeDecision.action_type}</span> {activeDecision.symbol}
           </div>
         </div>
         <div className="text-right">
           <div className="text-sm text-slate-500">Conviction</div>
-          <div className="text-xl font-bold text-slate-100">{(activeDecision.final_conviction_score * 100).toFixed(1)}%</div>
+          <div className="text-xl font-bold text-slate-900">{activeDecision.final_conviction_score}%</div>
         </div>
       </div>
 
-      <div className="bg-slate-950/50 p-4 rounded-md border border-slate-800/80 text-sm text-slate-300">
-        <span className="font-semibold text-slate-400 block mb-1">Reasoning:</span>
-        {activeDecision.reasoning || 'Aggregated signals favor this execution.'}
+      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+        <span className="mb-1 block font-semibold text-slate-500">Reasoning:</span>
+        {activeDecision.reasoning || 'Live backend decision received without a reasoning string.'}
       </div>
 
       <div className="flex items-center gap-4">
         <div className="flex-1">
-          <label className="text-xs text-slate-400 font-semibold uppercase block mb-2">Quantity (Shares)</label>
+          <label className="mb-2 block text-xs font-semibold uppercase text-slate-500">Quantity (Shares)</label>
           <input
             type="number"
             value={quantity}
             onChange={(e) => setQuantity(Number(e.target.value))}
-            className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-slate-100 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all font-mono"
+            className="w-full rounded-lg border border-slate-200 bg-white p-2 font-mono text-slate-900 transition-all focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             min="1"
             disabled={isHold}
           />
         </div>
         <div className="flex-1">
-          <label className="text-xs text-slate-400 font-semibold uppercase block mb-2">Est. Value (Price: ${activeDecision.price?.toFixed(2) || '---'})</label>
-          <div className="w-full bg-slate-900/50 border border-slate-800 rounded p-2 text-slate-300 font-mono flex items-center h-[42px]">
+          <label className="mb-2 block text-xs font-semibold uppercase text-slate-500">Est. Value (Price: ${activeDecision.price?.toFixed(2) || '---'})</label>
+          <div className="flex h-10 w-full items-center rounded-lg border border-slate-200 bg-slate-50 p-2 font-mono text-slate-700">
             {activeDecision.price ? `$${(activeDecision.price * quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'N/A'}
           </div>
         </div>
@@ -91,13 +91,13 @@ export default function OrderExecutionPanel() {
       <div className="flex gap-3 mt-2">
         <button
           onClick={() => rejectTrade(activeDecision)}
-          className="flex-1 py-3 px-4 rounded font-bold text-sm bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
+          className="flex-1 rounded-xl border border-slate-200 bg-slate-100 px-4 py-3 text-sm font-bold text-slate-700 transition-colors hover:bg-slate-200"
         >
           REJECT / IGNORE
         </button>
         <button
           onClick={() => executeTrade(activeDecision, quantity)}
-          className={`flex-[2] py-3 px-4 rounded font-bold text-sm transition-colors uppercase ${buttonColor}`}
+          className={`flex-2 rounded-xl px-4 py-3 text-sm font-bold uppercase transition-colors ${buttonColor}`}
         >
           {isHold ? 'ACKNOWLEDGE HOLD' : `ACCEPT & ${activeDecision.action_type}`}
         </button>

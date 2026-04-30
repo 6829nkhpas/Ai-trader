@@ -1,29 +1,34 @@
+'use client';
+
 import React from 'react';
-import { Activity, Cpu, MessageSquare, Brain } from 'lucide-react';
+import { Activity, Brain, Cpu, MessageSquare } from 'lucide-react';
+import { useTradeStore } from '../../store/useTradeStore';
 
 export default function AgentStatusPanel() {
+  const connectionStatus = useTradeStore((state) => state.connectionStatus);
+
   const agents = [
-    { name: 'Ingestion Engine', icon: Activity },
-    { name: 'Technical Agent', icon: Cpu },
-    { name: 'NLP Sentiment Agent', icon: MessageSquare },
-    { name: 'Aggregator', icon: Brain },
+    { name: 'Ingestion Engine', icon: Activity, status: 'LIVE' },
+    { name: 'Technical Agent', icon: Cpu, status: 'LIVE' },
+    { name: 'NLP Sentiment Agent', icon: MessageSquare, status: 'LIVE' },
+    { name: 'Aggregator', icon: Brain, status: connectionStatus === 'CONNECTED' ? 'CONNECTED' : connectionStatus },
   ];
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-lg shadow-lg overflow-hidden flex flex-col shrink-0">
-      <div className="px-4 py-3 border-b border-slate-800 bg-slate-800/50">
-        <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400">AI Swarm Status</h2>
+    <div className="flex shrink-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+        <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">AI Swarm Status</h2>
       </div>
-      <div className="p-4 flex flex-col gap-3">
+      <div className="flex flex-col gap-3 p-4">
         {agents.map((agent, index) => (
-          <div key={index} className="flex items-center justify-between p-3 rounded-md bg-slate-800/50 border border-slate-700/50">
+          <div key={index} className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div className="flex items-center gap-3">
-              <agent.icon size={18} className="text-blue-400" />
-              <span className="text-sm font-medium text-slate-200">{agent.name}</span>
+              <agent.icon size={18} className={agent.status === 'CONNECTED' || agent.status === 'LIVE' ? 'text-emerald-500' : 'text-blue-500'} />
+              <span className="text-sm font-medium text-slate-800">{agent.name}</span>
             </div>
-            <div className="relative flex h-3 w-3">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
+              <span className={`h-2.5 w-2.5 rounded-full ${agent.status === 'CONNECTED' || agent.status === 'LIVE' ? 'bg-emerald-500' : 'bg-yellow-500'}`} />
+              <span>{agent.status}</span>
             </div>
           </div>
         ))}
