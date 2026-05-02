@@ -15,7 +15,11 @@ import {
 } from 'lightweight-charts';
 import { useTradeStore, AggregatedDecision } from '../store/useTradeStore';
 
-export default function TradingChart() {
+interface TradingChartProps {
+  showHeader?: boolean;
+}
+
+export default function TradingChart({ showHeader = true }: TradingChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -24,6 +28,12 @@ export default function TradingChart() {
   const liveDecisions = useTradeStore((state) => state.liveDecisions);
   const executedTrades = useTradeStore((state) => state.executedTrades);
   const [hoveredDecision, setHoveredDecision] = useState<AggregatedDecision | null>(null);
+  const decisionTone =
+    hoveredDecision?.action_type === 'BUY'
+      ? 'text-bull'
+      : hoveredDecision?.action_type === 'SELL'
+        ? 'text-bear'
+        : 'text-neutral';
 
   const buildChartData = (decisions: AggregatedDecision[]) => {
     let previousClose = 100;
@@ -87,15 +97,25 @@ export default function TradingChart() {
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
+    const rootStyles = getComputedStyle(document.documentElement);
+    const chartBackground = rootStyles.getPropertyValue('--chart-bg').trim() || '#0b1220';
+    const chartGrid = rootStyles.getPropertyValue('--chart-grid').trim() || '#1e293b';
+    const chartText = rootStyles.getPropertyValue('--text-secondary').trim() || '#9ca3af';
+    const borderDefault = rootStyles.getPropertyValue('--border-default').trim() || '#374151';
+    const candleUp = rootStyles.getPropertyValue('--candle-green').trim() || '#22c55e';
+    const candleDown = rootStyles.getPropertyValue('--candle-red').trim() || '#ef4444';
+
+    chartContainerRef.current.style.backgroundColor = chartBackground;
+
     const chart = createChart(chartContainerRef.current, {
       crosshair: {
         mode: CrosshairMode.Normal,
       },
       rightPriceScale: {
-        borderColor: '#e2e8f0',
+        borderColor: borderDefault,
       },
       timeScale: {
-        borderColor: '#e2e8f0',
+        borderColor: borderDefault,
         timeVisible: true,
         secondsVisible: false,
         fixLeftEdge: true,
@@ -104,23 +124,23 @@ export default function TradingChart() {
         rightOffset: 12,
       },
       layout: {
-        background: { color: '#ffffff' },
-        textColor: '#334155',
+        background: { type: 'solid', color: chartBackground },
+        textColor: chartText,
       },
       grid: {
-        vertLines: { color: 'rgba(148, 163, 184, 0.18)' },
-        horzLines: { color: 'rgba(148, 163, 184, 0.18)' },
+        vertLines: { color: chartGrid },
+        horzLines: { color: chartGrid },
       },
       width: chartContainerRef.current.clientWidth,
       height: chartContainerRef.current.clientHeight || 400,
     });
 
     const candlestickSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#22c55e',
-      downColor: '#ef4444',
+      upColor: candleUp,
+      downColor: candleDown,
       borderVisible: false,
-      wickUpColor: '#22c55e',
-      wickDownColor: '#ef4444',
+      wickUpColor: candleUp,
+      wickDownColor: candleDown,
       priceLineVisible: false,
       lastValueVisible: true,
       priceFormat: {
@@ -159,6 +179,10 @@ export default function TradingChart() {
   useEffect(() => {
     if (!seriesRef.current) return;
 
+    const rootStyles = getComputedStyle(document.documentElement);
+    const candleUp = rootStyles.getPropertyValue('--candle-green').trim() || '#22c55e';
+    const candleDown = rootStyles.getPropertyValue('--candle-red').trim() || '#ef4444';
+
     const chartData = buildChartData(liveDecisions);
     seriesRef.current.setData(chartData as any);
     chartRef.current?.timeScale().scrollToRealTime();
@@ -169,7 +193,7 @@ export default function TradingChart() {
       .map((item) => ({
         time: Math.max(0, Math.floor(item.timestamp_ms / 1000)) as any,
         position: item.action_type === 'BUY' ? 'belowBar' : 'aboveBar',
-        color: item.action_type === 'BUY' ? '#22c55e' : '#ef4444',
+        color: item.action_type === 'BUY' ? candleUp : candleDown,
         shape: item.action_type === 'BUY' ? 'arrowUp' : 'arrowDown',
         text: `${item.action_type} ${item.final_conviction_score}`,
         id: `decision-${item.timestamp_ms}`,
@@ -178,7 +202,7 @@ export default function TradingChart() {
     const executionMarkers: SeriesMarker<any>[] = executedTrades.map((trade) => ({
       time: Math.max(0, Math.floor(trade.decision.timestamp_ms / 1000)) as any,
       position: trade.decision.action_type === 'BUY' ? 'belowBar' : 'aboveBar',
-      color: trade.decision.action_type === 'BUY' ? '#00ff00' : '#ff0000',
+      color: trade.decision.action_type === 'BUY' ? candleUp : candleDown,
       shape: trade.decision.action_type === 'BUY' ? 'circle' : 'square',
       text: `EXECUTED: ${trade.quantity} @ ${trade.decision.price ?? close}`,
       id: `exec-${trade.executedAt}`,
@@ -211,56 +235,58 @@ export default function TradingChart() {
   }, [liveDecisions]);
 
   return (
-    <div className="relative flex h-full min-h-0 w-full flex-col rounded-2xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(15,23,42,0.08)]">
-      <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="truncate text-sm font-semibold text-slate-900">Live Market Tape</div>
-          <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-600 ring-1 ring-emerald-200">
-            {liveDecisions.length} decisions
-          </span>
+    <div className="relative flex h-full min-h-0 w-full flex-col rounded-2xl border border-border-default bg-card">
+      {showHeader && (
+        <div className="flex items-center justify-between gap-4 border-b border-border-default bg-surface px-5 py-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="truncate text-sm font-semibold text-text-primary">Live Market Tape</div>
+            <span className="rounded-full border border-border-default bg-elevated px-2.5 py-1 text-xs font-semibold text-text-secondary">
+              {liveDecisions.length} decisions
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-3 text-xs text-text-secondary">
+            <span className="flex items-center gap-1">
+              <span className="h-2.5 w-2.5 rounded-full bg-bull" /> Up
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="h-2.5 w-2.5 rounded-full bg-bear" /> Down
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="h-2.5 w-2.5 rounded-full bg-neutral" /> Hold
+            </span>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-3 text-xs text-slate-500">
-          <span className="flex items-center gap-1">
-            <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> Up
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="h-2.5 w-2.5 rounded-full bg-red-500" /> Down
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="h-2.5 w-2.5 rounded-full bg-slate-400" /> Hold
-          </span>
-        </div>
-      </div>
+      )}
 
       <div
         ref={chartContainerRef}
-        className="h-full w-full flex-1 overflow-hidden rounded-b-2xl"
-        style={{ minHeight: '560px' }}
+        className="h-full w-full flex-1 overflow-hidden rounded-b-2xl bg-chart-bg"
+        style={{ minHeight: showHeader ? '420px' : '320px' }}
       />
 
       {!hoveredDecision && liveDecisions.length === 0 && (
-        <div className="absolute inset-0 flex items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white/70 text-sm text-slate-500 backdrop-blur-sm">
+        <div className="absolute inset-0 flex items-center justify-center rounded-2xl border border-dashed border-border-default bg-card text-sm text-text-secondary">
           Waiting for backend decisions...
         </div>
       )}
 
       {hoveredDecision && (
-        <div className="pointer-events-none absolute left-5 top-5 z-10 rounded-2xl border border-slate-200 bg-white/95 p-4 text-slate-900 shadow-xl backdrop-blur-md transition-opacity duration-200">
-          <h3 className="mb-2 text-base font-semibold text-emerald-600">AI Decision: {hoveredDecision.action_type}</h3>
-          <div className="space-y-1 text-sm text-slate-600">
+        <div className="pointer-events-none absolute left-5 top-5 z-10 rounded-2xl border border-border-default bg-card p-4 text-text-primary transition-opacity duration-200">
+          <h3 className={`mb-2 text-base font-semibold ${decisionTone}`}>AI Decision: {hoveredDecision.action_type}</h3>
+          <div className="space-y-1 text-sm text-text-secondary">
             <p>
-              <span className="text-slate-500">Conviction:</span>{' '}
+              <span className="text-text-secondary">Conviction:</span>{' '}
               <span className="font-semibold">{hoveredDecision.final_conviction_score}%</span>
             </p>
             <p>
-              <span className="text-slate-500">Technical Weight:</span>{' '}
+              <span className="text-text-secondary">Technical Weight:</span>{' '}
               <span className="font-semibold">{(hoveredDecision.technical_weight_used * 100).toFixed(0)}%</span>
             </p>
             <p>
-              <span className="text-slate-500">Sentiment Weight:</span>{' '}
+              <span className="text-text-secondary">Sentiment Weight:</span>{' '}
               <span className="font-semibold">{(hoveredDecision.sentiment_weight_used * 100).toFixed(0)}%</span>
             </p>
-            <p className="mt-2 max-w-xs border-t border-slate-200 pt-2 text-xs italic text-slate-500">
+            <p className="mt-2 max-w-xs border-t border-border-default pt-2 text-xs italic text-text-muted">
               &quot;{hoveredDecision.reasoning || 'Live backend decision'}&quot;
             </p>
           </div>

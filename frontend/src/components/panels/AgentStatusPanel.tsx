@@ -6,6 +6,17 @@ import { useTradeStore } from '../../store/useTradeStore';
 
 export default function AgentStatusPanel() {
   const connectionStatus = useTradeStore((state) => state.connectionStatus);
+  const getStatusColor = (status: string) => {
+    if (status === 'LIVE' || status === 'CONNECTED') return 'text-status-live';
+    if (status === 'CONNECTING') return 'text-status-warning';
+    return 'text-status-error';
+  };
+
+  const getStatusDot = (status: string) => {
+    if (status === 'LIVE' || status === 'CONNECTED') return 'bg-status-live';
+    if (status === 'CONNECTING') return 'bg-status-warning';
+    return 'bg-status-error';
+  };
 
   const agents = [
     { name: 'Ingestion Engine', icon: Activity, status: 'LIVE' },
@@ -15,19 +26,19 @@ export default function AgentStatusPanel() {
   ];
 
   return (
-    <div className="flex shrink-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
-        <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">AI Swarm Status</h2>
+    <div className="flex shrink-0 flex-col overflow-hidden rounded-2xl border border-border-default bg-card">
+      <div className="border-b border-border-default bg-elevated px-4 py-3">
+        <h2 className="text-xs font-bold uppercase tracking-widest text-text-secondary">AI Swarm Status</h2>
       </div>
       <div className="flex flex-col gap-3 p-4">
         {agents.map((agent, index) => (
-          <div key={index} className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <div key={index} className="flex items-center justify-between rounded-xl border border-border-default bg-surface p-3">
             <div className="flex items-center gap-3">
-              <agent.icon size={18} className={agent.status === 'CONNECTED' || agent.status === 'LIVE' ? 'text-emerald-500' : 'text-blue-500'} />
-              <span className="text-sm font-medium text-slate-800">{agent.name}</span>
+              <agent.icon size={18} className={getStatusColor(agent.status)} />
+              <span className="text-sm font-medium text-text-primary">{agent.name}</span>
             </div>
-            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
-              <span className={`h-2.5 w-2.5 rounded-full ${agent.status === 'CONNECTED' || agent.status === 'LIVE' ? 'bg-emerald-500' : 'bg-yellow-500'}`} />
+            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-text-secondary">
+              <span className={`h-2.5 w-2.5 rounded-full ${getStatusDot(agent.status)}`} />
               <span>{agent.status}</span>
             </div>
           </div>
