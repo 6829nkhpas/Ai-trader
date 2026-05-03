@@ -14,7 +14,7 @@ let _client = null;
  */
 export function getRedisClient() {
   if (!_client) {
-    const url = process.env.REDIS_URL || 'redis://localhost:6379';
+    const url = process.env.REDIS_URL;
     _client = new Redis(url, {
       maxRetriesPerRequest: 3,
       retryStrategy(times) {
