@@ -9,6 +9,8 @@ import { closePool } from './db.js';
 import { closeRedis } from './redis.client.js';
 import { registerAuthRoutes } from './routes/auth.routes.js';
 import { registerKycRoutes } from './routes/kyc.routes.js';
+import { registerWebhookRoutes } from './routes/webhook.routes.js';
+import { registerTradeRoutes } from './routes/trade.routes.js';
 import { registerErrorHandler } from './middleware/error.handler.js';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
@@ -29,6 +31,8 @@ registerErrorHandler(app);
 // ── Routes ──────────────────────────────────────────────────
 registerAuthRoutes(app);
 registerKycRoutes(app);
+registerWebhookRoutes(app);
+registerTradeRoutes(app);
 
 // ── Startup ─────────────────────────────────────────────────
 const start = async () => {

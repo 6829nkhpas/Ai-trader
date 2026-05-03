@@ -48,7 +48,7 @@ export async function upsertUserProfile(client, data) {
        residential_address = EXCLUDED.residential_address,
        aadhaar_metadata = EXCLUDED.aadhaar_metadata,
        updated_at = NOW()
-     RETURNING id, user_id, legal_name, pan_number, residential_address, aadhaar_metadata, created_at, updated_at`,
+     RETURNING id, user_id, legal_name, pan_number, residential_address, aadhaar_metadata, kyc_status, created_at, updated_at`,
     [
       data.userId,
       encrypted.legalName,
@@ -70,7 +70,7 @@ export async function upsertUserProfile(client, data) {
  */
 export async function findUserProfileByUserId(client, userId) {
   const result = await client.query(
-    `SELECT id, user_id, legal_name, pan_number, residential_address, aadhaar_metadata, created_at, updated_at
+    `SELECT id, user_id, legal_name, pan_number, residential_address, aadhaar_metadata, kyc_status, created_at, updated_at
      FROM user_profiles
      WHERE user_id = $1`,
     [userId]
@@ -87,11 +87,26 @@ export async function findUserProfileByUserId(client, userId) {
  */
 export async function getRawUserProfileCiphertext(client, userId) {
   const result = await client.query(
-    `SELECT id, user_id, legal_name, pan_number, residential_address, aadhaar_metadata, created_at, updated_at
+    `SELECT id, user_id, legal_name, pan_number, residential_address, aadhaar_metadata, kyc_status, created_at, updated_at
      FROM user_profiles
      WHERE user_id = $1`,
     [userId]
   );
   
   return result.rows[0] || null;
+}
+
+/**
+ * Updates the KYC status for a user profile.
+ * @param {import('pg').PoolClient} client
+ * @param {string} userId
+ * @param {string} newStatus
+ */
+export async function updateKycStatus(client, userId, newStatus) {
+  await client.query(
+    `UPDATE user_profiles 
+     SET kyc_status = $1, updated_at = NOW() 
+     WHERE user_id = $2`,
+    [newStatus, userId]
+  );
 }
