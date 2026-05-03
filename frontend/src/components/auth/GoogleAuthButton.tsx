@@ -81,11 +81,13 @@ export default function GoogleAuthButton({ mode = 'login' }: GoogleAuthButtonPro
       }
 
       // If backend completed inline (e.g. ID token exchange), handle user directly
-      const { user, mfa_required } = res.data as {
+      const { user, accessToken, mfa_required, mfa_setup_required } = res.data as {
         user: User;
+        accessToken: string;
         mfa_required: boolean;
+        mfa_setup_required?: boolean;
       };
-      onLoginSuccess(user, mfa_required);
+      onLoginSuccess(user, mfa_required, accessToken, mfa_setup_required);
     } catch (err: unknown) {
       const axErr = err as { response?: { data?: { message?: string } } };
       setError(

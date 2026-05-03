@@ -133,7 +133,7 @@ export interface SignupPayload {
 }
 
 export interface MfaVerifyPayload {
-  code: string;
+  token: string;
 }
 
 export interface GoogleOAuthPayload {
@@ -154,10 +154,19 @@ export const authApi = {
 
   session: () => apiClient.get('/api/auth/session'),
 
-  mfaVerify: (payload: MfaVerifyPayload) =>
-    apiClient.post('/api/auth/mfa/verify', payload),
+  mfaVerify: (payload: MfaVerifyPayload, accessToken: string) =>
+    apiClient.post('/api/auth/mfa/verify', payload, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    }),
 
-  mfaSetup: () => apiClient.post('/api/auth/mfa/setup'),
+  mfaSetup: (accessToken: string) =>
+    apiClient.post('/api/auth/mfa/generate', {}, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    }),
 
   googleOAuth: (payload: GoogleOAuthPayload) =>
     apiClient.post('/api/auth/oauth/google', payload),

@@ -7,7 +7,7 @@ import React, {
   useEffect,
   useState,
 } from 'react';
-import { apiClient } from '@/lib/api-client';
+import { apiClient, authApi } from '@/lib/api-client';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -37,9 +37,16 @@ interface AuthContextValue {
   isAuthenticated: boolean;
   isLoading: boolean;
   /** Call after successful credential login — backend sets HttpOnly cookie */
-  onLoginSuccess: (user: User, requiresMfa: boolean) => void;
+  onLoginSuccess: (
+    user: User,
+    requiresMfa: boolean,
+    accessToken?: string,
+    mfaSetupRequired?: boolean
+  ) => void;
+  mfaSetupRequired: boolean;
+  generateMfaSetup: () => Promise<{ qrCodeDataURL: string; manualSecret: string }>;
   /** Submit the 6-digit TOTP code */
-  submitMfa: (code: string) => Promise<void>;
+  submitMfa: (token: string) => Promise<void>;
   logout: () => Promise<void>;
   /** Force a session refresh (called by api-client interceptor on 401) */
   refreshSession: () => Promise<boolean>;
@@ -58,6 +65,8 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [authState, setAuthState] = useState<AuthState>('idle');
+  const [pendingAccessToken, setPendingAccessToken] = useState<string | null>(null);
+  const [mfaSetupRequired, setMfaSetupRequired] = useState(false);
 
   // ── Initial session hydration ────────────────────────────────────────────
   useEffect(() => {
@@ -70,11 +79,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         if (!cancelled) {
           setUser(res.data.user);
           setAuthState('authenticated');
+          setPendingAccessToken(null);
+          setMfaSetupRequired(false);
         }
       } catch {
         if (!cancelled) {
           setUser(null);
           setAuthState('unauthenticated');
+          setPendingAccessToken(null);
+          setMfaSetupRequired(false);
         }
       }
     }
@@ -86,17 +99,49 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // ── Called by LoginForm on credential success ───────────────────────────
-  const onLoginSuccess = useCallback((incomingUser: User, requiresMfa: boolean) => {
-    setUser(incomingUser);
-    setAuthState(requiresMfa ? 'mfa' : 'authenticated');
-  }, []);
+  const onLoginSuccess = useCallback(
+    (
+      incomingUser: User,
+      requiresMfa: boolean,
+      accessToken?: string,
+      setupRequired?: boolean
+    ) => {
+      setUser(incomingUser);
+      if (requiresMfa) {
+        setAuthState('mfa');
+        setPendingAccessToken(accessToken ?? null);
+        setMfaSetupRequired(!!setupRequired);
+        return;
+      }
+
+      setAuthState('authenticated');
+      setPendingAccessToken(null);
+      setMfaSetupRequired(false);
+    },
+    []
+  );
+
+  // ── MFA setup (generate QR / secret) ─────────────────────────────────
+  const generateMfaSetup = useCallback(async () => {
+    if (!pendingAccessToken) {
+      throw new Error('No pending MFA session. Please log in again.');
+    }
+
+    const res = await authApi.mfaSetup(pendingAccessToken);
+    return res.data as { qrCodeDataURL: string; manualSecret: string };
+  }, [pendingAccessToken]);
 
   // ── MFA submission ───────────────────────────────────────────────────────
-  const submitMfa = useCallback(async (code: string) => {
-    const res = await apiClient.post<{ user: User }>('/api/auth/mfa/verify', { code });
-    setUser(res.data.user);
+  const submitMfa = useCallback(async (token: string) => {
+    if (!pendingAccessToken) {
+      throw new Error('No pending MFA session. Please log in again.');
+    }
+
+    await authApi.mfaVerify({ token }, pendingAccessToken);
     setAuthState('authenticated');
-  }, []);
+    setPendingAccessToken(null);
+    setMfaSetupRequired(false);
+  }, [pendingAccessToken]);
 
   // ── Logout ───────────────────────────────────────────────────────────────
   const logout = useCallback(async () => {
@@ -105,6 +150,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setUser(null);
       setAuthState('unauthenticated');
+      setPendingAccessToken(null);
+      setMfaSetupRequired(false);
     }
   }, []);
 
@@ -128,6 +175,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     isAuthenticated: authState === 'authenticated',
     isLoading: authState === 'idle' || authState === 'loading',
     onLoginSuccess,
+    mfaSetupRequired,
+    generateMfaSetup,
     submitMfa,
     logout,
     refreshSession,

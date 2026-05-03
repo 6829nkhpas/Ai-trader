@@ -1,11 +1,6 @@
 'use client';
 
-import React, {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
@@ -20,13 +15,17 @@ const DIGIT_COUNT = 6;
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function MfaChallenge() {
-  const { submitMfa, logout } = useAuth();
+  const { submitMfa, logout, mfaSetupRequired, generateMfaSetup } = useAuth();
 
-  // 6 individual digit slots
   const [digits, setDigits] = useState<string[]>(Array(DIGIT_COUNT).fill(''));
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+
+  const [setupLoading, setSetupLoading] = useState(false);
+  const [setupError, setSetupError] = useState<string | null>(null);
+  const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
+  const [manualSecret, setManualSecret] = useState<string | null>(null);
 
   const inputRefs = useRef<Array<HTMLInputElement | null>>(
     Array(DIGIT_COUNT).fill(null)
@@ -37,15 +36,37 @@ export default function MfaChallenge() {
     inputRefs.current[0]?.focus();
   }, []);
 
-  // ── Auto-submit when all 6 digits are filled ───────────────────────────
+  // ── MFA setup (QR + secret) ────────────────────────────────────────────
   useEffect(() => {
-    if (submitted) return;
-    const code = digits.join('');
-    if (code.length === DIGIT_COUNT && /^\d{6}$/.test(code)) {
-      handleSubmit(code);
+    let cancelled = false;
+
+    async function loadSetup() {
+      if (!mfaSetupRequired) return;
+      setSetupLoading(true);
+      setSetupError(null);
+
+      try {
+        const data = await generateMfaSetup();
+        if (cancelled) return;
+        setQrCodeUrl(data.qrCodeDataURL);
+        setManualSecret(data.manualSecret);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Failed to load MFA setup.';
+        if (!cancelled) {
+          setSetupError(message);
+        }
+      } finally {
+        if (!cancelled) {
+          setSetupLoading(false);
+        }
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [digits]);
+
+    loadSetup();
+    return () => {
+      cancelled = true;
+    };
+  }, [mfaSetupRequired, generateMfaSetup]);
 
   // ── Submit ────────────────────────────────────────────────────────────────
   const handleSubmit = useCallback(
@@ -60,9 +81,11 @@ export default function MfaChallenge() {
         // On success, AuthContext sets authState → 'authenticated'
         // The parent route will redirect to /dashboard
       } catch (err: unknown) {
-        const axErr = err as { response?: { data?: { message?: string } } };
+        const axErr = err as { response?: { data?: { message?: string; error?: string } } };
         setError(
-          axErr?.response?.data?.message ?? 'Invalid code. Please try again.'
+          axErr?.response?.data?.error ??
+          axErr?.response?.data?.message ??
+          'Invalid code. Please try again.'
         );
         // Reset digits and focus first input on failure
         setDigits(Array(DIGIT_COUNT).fill(''));
@@ -73,6 +96,15 @@ export default function MfaChallenge() {
     },
     [isLoading, submitted, submitMfa]
   );
+
+  // ── Auto-submit when all 6 digits are filled ───────────────────────────
+  useEffect(() => {
+    if (submitted) return;
+    const code = digits.join('');
+    if (code.length === DIGIT_COUNT && /^\d{6}$/.test(code)) {
+      handleSubmit(code);
+    }
+  }, [digits, submitted, handleSubmit]);
 
   // ── Digit input change ────────────────────────────────────────────────────
   const handleChange = (index: number, value: string) => {
@@ -122,11 +154,52 @@ export default function MfaChallenge() {
 
       {/* Heading */}
       <div className="text-center space-y-1">
-        <h2 className="text-lg font-bold text-text-primary">Two-Factor Authentication</h2>
+        <h2 className="text-lg font-bold text-text-primary">
+          {mfaSetupRequired ? 'Set up two-factor authentication' : 'Two-Factor Authentication'}
+        </h2>
         <p className="text-sm text-auth-muted">
-          Enter the 6-digit code from your authenticator app.
+          {mfaSetupRequired
+            ? 'Scan the QR code in your authenticator app, then enter the 6-digit code.'
+            : 'Enter the 6-digit code from your authenticator app.'}
         </p>
       </div>
+
+      {mfaSetupRequired && (
+        <div className="w-full space-y-3 rounded-2xl border border-border-default bg-white/80 p-4">
+          <div>
+            <p className="text-sm font-semibold text-text-primary">Authenticator setup</p>
+            <p className="text-xs text-auth-muted">Use Google Authenticator, Authy, or 1Password.</p>
+          </div>
+
+          {setupLoading && (
+            <div className="flex items-center gap-2 text-sm text-auth-muted">
+              <Loader2 size={14} className="animate-spin" />
+              <span>Generating QR code…</span>
+            </div>
+          )}
+
+          {setupError && (
+            <p role="alert" className="auth-field-error">
+              {setupError}
+            </p>
+          )}
+
+          {!setupLoading && !setupError && qrCodeUrl && (
+            <div className="flex flex-col items-center gap-3">
+              <img
+                src={qrCodeUrl}
+                alt="MFA QR code"
+                className="h-36 w-36 rounded-xl border border-border-subtle bg-white p-2"
+              />
+              {manualSecret && (
+                <div className="rounded-lg border border-border-subtle bg-white px-3 py-2 text-xs text-text-secondary">
+                  Manual code: <span className="font-semibold text-text-primary">{manualSecret}</span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Digit inputs */}
       <div

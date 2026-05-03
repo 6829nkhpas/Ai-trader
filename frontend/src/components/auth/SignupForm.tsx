@@ -136,12 +136,14 @@ export default function SignupForm() {
       setIsLoading(true);
       try {
         const res = await authApi.signup({ email, password });
-        const { user, mfa_required } = res.data as {
+        const { user, accessToken, mfa_required, mfa_setup_required } = res.data as {
           user: User;
+          accessToken: string;
           mfa_required: boolean;
+          mfa_setup_required?: boolean;
         };
 
-        onLoginSuccess(user, mfa_required);
+        onLoginSuccess(user, mfa_required, accessToken, mfa_setup_required);
 
         if (!mfa_required) {
           router.replace(redirectTo);

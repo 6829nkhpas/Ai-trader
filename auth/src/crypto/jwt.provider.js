@@ -19,10 +19,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const authRoot = path.resolve(__dirname, '../..');
 
 const privateKeyPath = path.resolve(authRoot, config.jwt.privateKeyPath);
-const publicKeyPath  = path.resolve(authRoot, config.jwt.publicKeyPath);
+const publicKeyPath = path.resolve(authRoot, config.jwt.publicKeyPath);
 
 let _privateKey = null;
-let _publicKey  = null;
+let _publicKey = null;
 
 function loadPrivateKey() {
   if (!_privateKey) {
@@ -52,18 +52,18 @@ function loadPublicKey() {
 
 /**
  * Signs an RS256 access token.
- * @param {{ sub: string, email: string, role: string }} claims
+ * @param {{ sub: string, email: string, role: string, mfa_verified?: boolean }} claims
  * @returns {{ token: string, jti: string }}
  */
-export function signAccessToken({ sub, email, role }) {
+export function signAccessToken({ sub, email, role, mfa_verified = false }) {
   const jti = uuidv4();
   const token = jwt.sign(
-    { sub, email, role, jti },
+    { sub, email, role, jti, mfa_verified },
     loadPrivateKey(),
     {
-      algorithm:  'RS256',
-      expiresIn:  config.jwt.accessTtl,
-      issuer:     config.jwt.issuer,
+      algorithm: 'RS256',
+      expiresIn: config.jwt.accessTtl,
+      issuer: config.jwt.issuer,
     }
   );
   return { token, jti };
@@ -80,7 +80,7 @@ export function signAccessToken({ sub, email, role }) {
 export function verifyAccessToken(token) {
   return jwt.verify(token, loadPublicKey(), {
     algorithms: ['RS256'],
-    issuer:     config.jwt.issuer,
+    issuer: config.jwt.issuer,
   });
 }
 

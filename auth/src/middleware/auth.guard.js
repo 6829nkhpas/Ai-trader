@@ -17,14 +17,19 @@ import { isJtiBlacklisted } from './blacklist.js';
  */
 export async function authGuard(request, reply) {
   const authHeader = request.headers.authorization;
+  let token = null;
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.slice(7); // Strip "Bearer "
+  } else if (request.cookies?.access_token) {
+    token = request.cookies.access_token;
+  }
+
+  if (!token) {
     return reply.status(401).send({
       error: 'Missing or malformed Authorization header.',
     });
   }
-
-  const token = authHeader.slice(7); // Strip "Bearer "
 
   // 1. Verify RS256 signature + expiry
   let decoded;
@@ -51,10 +56,10 @@ export async function authGuard(request, reply) {
 
   // 3. Attach user identity to request
   request.user = {
-    id:           decoded.sub,
-    email:        decoded.email,
-    role:         decoded.role,
-    jti:          decoded.jti,
+    id: decoded.sub,
+    email: decoded.email,
+    role: decoded.role,
+    jti: decoded.jti,
     mfa_verified: decoded.mfa_verified === true,
   };
 }

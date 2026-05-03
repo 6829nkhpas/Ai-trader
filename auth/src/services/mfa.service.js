@@ -19,17 +19,17 @@ import { AuthenticationError } from '../errors/index.js';
 export async function generateMfa(pool, user) {
   // Generate a secret
   const secret = authenticator.generateSecret();
-  
+
   // Create otpauth URL
   // Format: otpauth://totp/Issuer:Email?secret=...&issuer=Issuer
   const otpauth = authenticator.keyuri(user.email, 'AI-Trade Platform', secret);
-  
+
   // Generate QR code data URL
   const qrCodeDataURL = await QRCode.toDataURL(otpauth);
-  
+
   // Encrypt the secret for storage
   const encryptedSecret = encryptSymmetric(secret);
-  
+
   const client = await pool.connect();
   try {
     // Store it as inactive
@@ -42,7 +42,7 @@ export async function generateMfa(pool, user) {
   } finally {
     client.release();
   }
-  
+
   return {
     qrCodeDataURL,
     manualSecret: secret
@@ -66,11 +66,11 @@ export async function verifyMfa(pool, userId, token) {
   const client = await pool.connect();
   try {
     const record = await findMfaRecord(client, userId, 'totp');
-    
+
     if (!record) {
       throw new AuthenticationError('MFA is not configured for this user.');
     }
-    
+
     // Decrypt the secret
     let secret;
     try {
@@ -78,20 +78,40 @@ export async function verifyMfa(pool, userId, token) {
     } catch (err) {
       throw new Error('Failed to decrypt MFA secret. System configuration may be invalid.');
     }
-    
+
     // Verify the token
     const isValid = authenticator.verify({ token, secret });
-    
+
     if (!isValid) {
       throw new AuthenticationError('Invalid MFA token.');
     }
-    
+
     // If it was inactive, mark it as active
     if (!record.is_active) {
       await activateMfaRecord(client, userId, 'totp');
     }
-    
+
     return true;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Returns MFA status for a user.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} userId
+ * @returns {Promise<{ exists: boolean, isActive: boolean }>}
+ */
+export async function getMfaStatus(pool, userId) {
+  const client = await pool.connect();
+  try {
+    const record = await findMfaRecord(client, userId, 'totp');
+    return {
+      exists: !!record,
+      isActive: record?.is_active === true,
+    };
   } finally {
     client.release();
   }
