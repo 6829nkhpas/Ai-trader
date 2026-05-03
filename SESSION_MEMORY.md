@@ -1397,3 +1397,26 @@ MASTER PHASE 3 INITIALIZED. ORCHESTRATION LAYER COMPLETE.
 - **MFA Guard**: Trading endpoints return `401` if the JWT claim `mfa_verified` is false.
 
 ALL AUTH PHASES COMPLETE. PROJECT ANTIGRAVITY PERIMETER IS SECURE.
+
+---
+
+### Master Phase 6 (Auth) → Billing Infrastructure → Subphases 19-27 ✅ COMPLETE THIS SESSION
+
+#### 19-21 — The Billing Schema & Product Mapping
+- Created `subscriptions` table via `005_billing_schema.sql` (Strict PCI Compliance: only `polar_customer_id` and `polar_sub_id` stored).
+- Implemented `billing.catalog.js` mapping Polar products (`Weekly`, `Monthly`, `Yearly`).
+- Built `billing.service.js` to provision Polar customers dynamically.
+
+#### 22-24 — The Upgrade/Downgrade Orchestrator
+- Upgraded `billing.catalog.js` with plan **weights** to identify upgrades vs. downgrades.
+- Built `transitionSubscription` logic in `billing.service.js`.
+- Implemented **Immediate Invoicing** (`prorate`) for upgrades.
+- Implemented **Scheduled Enforcement** for downgrades to prevent plan arbitrage.
+
+#### 25-27 — Billing Ignition (Webhooks & Trade Enforcement)
+- Deployed Polar webhook listener (`handlePolarWebhook`) with cryptographic signature verification logic.
+- Built **The Billing Guard** (`requireActiveSubscription`) middleware.
+- Activated **Revenue Lock**: Orders reject with `402 Payment Required` if the subscription is missing or expired.
+- Launched **Self-Healing Sync Engine** (`billingSyncEngine`) to catch and reconcile missed webhooks daily.
+
+ALL BILLING PHASES COMPLETE. PROJECT ANTIGRAVITY "PAY-TO-PLAY" ARCHITECTURE IS SECURE AND SYNCHRONIZED.

@@ -12,6 +12,7 @@ import { registerKycRoutes } from './routes/kyc.routes.js';
 import { registerWebhookRoutes } from './routes/webhook.routes.js';
 import { registerTradeRoutes } from './routes/trade.routes.js';
 import { registerBillingRoutes } from './routes/billing.routes.js';
+import { billingSyncEngine } from './services/billing.sync.js';
 import { registerErrorHandler } from './middleware/error.handler.js';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
@@ -41,6 +42,9 @@ const start = async () => {
   try {
     await app.listen({ port: config.authPort, host: '0.0.0.0' });
     console.log(`[AUTH] Identity vault listening on :${config.authPort}`);
+    
+    // Start self-healing sync engine
+    billingSyncEngine.start();
   } catch (err) {
     console.error('[AUTH] Failed to start:', err);
     process.exit(1);
@@ -50,6 +54,7 @@ const start = async () => {
 // ── Graceful shutdown ───────────────────────────────────────
 const shutdown = async () => {
   console.log('[AUTH] Shutting down...');
+  billingSyncEngine.stop();
   await app.close();
   await closePool();
   await closeRedis();

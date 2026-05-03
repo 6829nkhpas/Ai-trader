@@ -68,5 +68,6 @@ export const config = Object.freeze({
   polar: {
     accessToken: process.env.POLAR_ACCESS_TOKEN,
     organizationId: process.env.POLAR_ORGANIZATION_ID,
+    webhookSecret: process.env.POLAR_WEBHOOK_SECRET,
   },
 });
