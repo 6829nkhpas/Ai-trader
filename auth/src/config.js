@@ -51,4 +51,13 @@ export const config = Object.freeze({
     requireDigit:     true,
     requireSpecial:   true,
   },
+
+  // JWT Session Layer
+  jwt: {
+    privateKeyPath: process.env.JWT_PRIVATE_KEY_PATH || './keys/private.pem',
+    publicKeyPath:  process.env.JWT_PUBLIC_KEY_PATH  || './keys/public.pem',
+    accessTtl:      parseInt(process.env.JWT_ACCESS_TTL_SECONDS  || '900', 10),
+    refreshTtl:     parseInt(process.env.JWT_REFRESH_TTL_SECONDS || '604800', 10),
+    issuer:         'ai-trade-auth',
+  },
 });

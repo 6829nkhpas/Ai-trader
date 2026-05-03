@@ -4,10 +4,10 @@
 // Called by controllers — never touches HTTP request/response.
 // ──────────────────────────────────────────────────────────────
 
-import { hashPassword } from '../crypto/hasher.js';
+import { hashPassword, verifyPassword } from '../crypto/hasher.js';
 import { config } from '../config.js';
-import { PasswordComplexityError, DuplicateEmailError } from '../errors/index.js';
-import { findUserByEmail, insertUser, insertCredential } from '../repository/user.repository.js';
+import { PasswordComplexityError, DuplicateEmailError, AuthenticationError } from '../errors/index.js';
+import { findUserByEmail, insertUser, insertCredential, getPasswordHash } from '../repository/user.repository.js';
 
 // ── Password Complexity Validator ───────────────────────────
 
@@ -121,6 +121,56 @@ export async function registerUser(pool, { email, password, displayName }) {
       throw new DuplicateEmailError(normalizedEmail);
     }
     throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// ── Login Service ───────────────────────────────────────────
+
+/**
+ * Validates credentials and returns user identity.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {Object} params
+ * @param {string} params.email
+ * @param {string} params.password
+ * @returns {Promise<{id: string, email: string, role: string}>}
+ * @throws {AuthenticationError}
+ */
+export async function loginUser(pool, { email, password }) {
+  const normalizedEmail = (email || '').trim().toLowerCase();
+  if (!normalizedEmail || !password) {
+    throw new AuthenticationError('Invalid credentials.');
+  }
+
+  const client = await pool.connect();
+  try {
+    const user = await findUserByEmail(client, normalizedEmail);
+    if (!user) {
+      throw new AuthenticationError('Invalid credentials.');
+    }
+
+    const storedHash = await getPasswordHash(client, user.id);
+    if (!storedHash) {
+      throw new AuthenticationError('Invalid credentials.');
+    }
+
+    const isValid = await verifyPassword(password, storedHash);
+    if (!isValid) {
+      throw new AuthenticationError('Invalid credentials.');
+    }
+
+    // Role is not selected in findUserByEmail, so we need to fetch it or update the query.
+    // For now, let's fetch the full user details to get the role.
+    const fullUserResult = await client.query('SELECT id, email, role FROM users WHERE id = $1', [user.id]);
+    const fullUser = fullUserResult.rows[0];
+
+    return {
+      id: fullUser.id,
+      email: fullUser.email,
+      role: fullUser.role,
+    };
   } finally {
     client.release();
   }

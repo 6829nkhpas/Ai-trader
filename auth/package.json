@@ -11,12 +11,15 @@
     "test:hasher": "node --test src/crypto/hasher.test.js"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.0.2",
     "argon2": "^0.41.1",
     "dotenv": "^16.4.7",
     "fastify": "^5.3.3",
-    "pg": "^8.16.0"
+    "ioredis": "^5.10.1",
+    "jsonwebtoken": "^9.0.3",
+    "pg": "^8.16.0",
+    "uuid": "^11.1.1"
   },
-  "devDependencies": {},
   "engines": {
     "node": ">=20.0.0"
   }

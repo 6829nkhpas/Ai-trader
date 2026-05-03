@@ -19,6 +19,20 @@ export async function findUserByEmail(client, email) {
 }
 
 /**
+ * Find a user by ID.
+ * @param {import('pg').PoolClient} client
+ * @param {string} id
+ * @returns {Promise<{id: string, email: string, role: string, created_at: string} | null>}
+ */
+export async function findUserById(client, id) {
+  const result = await client.query(
+    'SELECT id, email, role, created_at FROM users WHERE id = $1',
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
+/**
  * Insert a new user record.
  * @param {import('pg').PoolClient} client
  * @param {{ email: string, displayName: string | null, role: string }} data

@@ -1350,3 +1350,25 @@ POWER PHASE 2.2 IS COMPLETE. DASHBOARD UI & TELEMETRY FULLY OPERATIONAL.
   4. Intercept SIGINT traps to trigger cleanup across all services smoothly.
 
 MASTER PHASE 3 INITIALIZED. ORCHESTRATION LAYER COMPLETE.
+
+---
+
+### Master Phase 2 (Auth) → Session Layer → Subphases 4-6 ✅ COMPLETE THIS SESSION
+
+#### 4 — JWT Engine (RS256)
+- Generated RS256 private/public key pair in `auth/keys/`
+- Implemented `crypto/jwt.provider.js` to sign/verify stateless JWT access tokens
+- Access tokens contain UUID `jti` for unique identification and expire in 15 minutes
+
+#### 5 — Stateful Refresh Rotation & Breach Detection
+- Added `migrations/002_refresh_tokens.sql` for family-based session tracking
+- Implemented `repository/token.repository.js` and `services/token.service.js`
+- Refresh tokens are opaque UUIDs passed via `HttpOnly` cookie. Only SHA-256 hashes are stored.
+- On refresh, the token is rotated (old revoked, new issued).
+- **Breach Detection**: If a revoked refresh token is reused, the entire token family and all user sessions are wiped instantly.
+
+#### 6 — Redis JTI Blacklist
+- Implemented `middleware/blacklist.js` and `middleware/auth.guard.js` using `ioredis`
+- On logout or breach, the active access token's `jti` is blacklisted in Redis with an expiration matching the remaining TTL.
+- Tested successfully: Blacklisted tokens are instantly rejected with `401 Token has been revoked.`.
+- Added login, refresh, and logout routes to `auth.controller.js` and integrated with `@fastify/cookie`.

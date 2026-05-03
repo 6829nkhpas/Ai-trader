@@ -34,3 +34,11 @@ export class NotFoundError extends Error {
     this.statusCode = 404;
   }
 }
+
+export class TokenReuseError extends Error {
+  constructor(message = 'Token reuse detected. All sessions terminated.') {
+    super(message);
+    this.name = 'TokenReuseError';
+    this.statusCode = 403;
+  }
+}
