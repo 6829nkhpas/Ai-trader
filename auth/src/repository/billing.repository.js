@@ -71,17 +71,37 @@ export class BillingRepository {
   }
 
   /**
-   * Updates an existing subscription.
+   * Retrieves a subscription by Polar ID.
    */
-  async updateSubscriptionStatus(polarSubId, status, currentPeriodEnd = null) {
+  async getSubscriptionByPolarId(polarSubId) {
+    const pool = getPool();
+    const result = await pool.query(
+      `SELECT * FROM subscriptions WHERE polar_sub_id = $1`,
+      [polarSubId]
+    );
+    return result.rows[0] || null;
+  }
+
+  /**
+   * Updates an existing subscription status, end period, and metadata.
+   */
+  async updateSubscriptionStatus(polarSubId, status, currentPeriodEnd = null, prorationMetadata = null) {
     const pool = getPool();
     
     let query = `UPDATE subscriptions SET status = $1, updated_at = NOW()`;
     const params = [status, polarSubId];
+    let paramIndex = 3;
     
     if (currentPeriodEnd) {
-      query += `, current_period_end = $3`;
+      query += `, current_period_end = $${paramIndex}`;
       params.push(currentPeriodEnd);
+      paramIndex++;
+    }
+    
+    if (prorationMetadata) {
+      query += `, proration_metadata = $${paramIndex}`;
+      params.push(JSON.stringify(prorationMetadata));
+      paramIndex++;
     }
     
     query += ` WHERE polar_sub_id = $2 RETURNING *`;

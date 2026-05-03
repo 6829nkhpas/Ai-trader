@@ -7,6 +7,7 @@ export const BILLING_CATALOG = {
   // Weekly Plan
   'price_weekly': { // Replace 'price_weekly' with actual Polar Price ID later
     tier: 'Weekly',
+    weight: 10,
     name: 'Weekly Pass',
     description: '7-day access to AI-Trade Platform',
     features: ['Real-time trading', 'Basic AI Insights']
@@ -15,6 +16,7 @@ export const BILLING_CATALOG = {
   // Monthly Plan
   'price_monthly': { // Replace 'price_monthly' with actual Polar Price ID later
     tier: 'Monthly',
+    weight: 20,
     name: 'Pro Monthly',
     description: 'Full monthly access to AI-Trade Platform',
     features: ['Real-time trading', 'Advanced AI Insights', 'Priority Support']
@@ -23,6 +25,7 @@ export const BILLING_CATALOG = {
   // Yearly Plan
   'price_yearly': { // Replace 'price_yearly' with actual Polar Price ID later
     tier: 'Yearly',
+    weight: 30,
     name: 'Pro Yearly',
     description: 'Annual access to AI-Trade Platform with a discount',
     features: ['Real-time trading', 'Advanced AI Insights', 'Priority Support', 'Dedicated Account Manager']

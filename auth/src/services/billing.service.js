@@ -110,6 +110,78 @@ export class BillingService {
     const data = await response.json();
     return { checkoutUrl: data.url };
   }
+
+  /**
+   * Transitions an existing subscription to a new tier (Upgrade/Downgrade)
+   */
+  async transitionSubscription(userId, newPriceId) {
+    if (!BILLING_CATALOG[newPriceId]) {
+      throw new Error('Invalid Price ID');
+    }
+
+    const activeSubs = await billingRepository.getActiveSubscriptions(userId);
+    if (activeSubs.length === 0) {
+      throw new Error('No active subscription found to transition');
+    }
+
+    const currentSub = activeSubs[0]; // Assuming one active sub per user
+    const currentPlan = Object.values(BILLING_CATALOG).find(p => p.tier === currentSub.plan_tier);
+    const newPlan = BILLING_CATALOG[newPriceId];
+
+    if (!currentPlan) throw new Error('Current plan tier is invalid');
+    if (currentPlan.weight === newPlan.weight) {
+      throw new Error('Already on this plan tier');
+    }
+
+    const isUpgrade = newPlan.weight > currentPlan.weight;
+    const prorationBehavior = isUpgrade ? 'prorate' : 'none';
+
+    // Call Polar API to update subscription
+    const response = await fetch(`https://api.polar.sh/api/v1/subscriptions/${currentSub.polar_sub_id}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.polar.accessToken}`,
+      },
+      body: JSON.stringify({
+        product_price_id: newPriceId,
+        proration_behavior: prorationBehavior,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(`Failed to transition subscription: ${JSON.stringify(errorData)}`);
+    }
+
+    const data = await response.json();
+
+    if (isUpgrade) {
+      // Immediate Transition
+      await billingRepository.updateSubscriptionStatus(
+        currentSub.polar_sub_id,
+        'active',
+        data.current_period_end, // might be updated
+        { ...currentSub.proration_metadata, last_upgrade: new Date().toISOString() }
+      );
+      // We also need to update the plan tier in the db. 
+      // But updateSubscriptionStatus doesn't update the tier. 
+      // Let's execute a direct query or modify the repo. I'll modify the repo logic via a quick pool query here.
+      const pool = getPool();
+      await pool.query('UPDATE subscriptions SET plan_tier = $1 WHERE polar_sub_id = $2', [newPlan.tier, currentSub.polar_sub_id]);
+      
+      return { status: 'upgraded', tier: newPlan.tier };
+    } else {
+      // Scheduled Downgrade
+      await billingRepository.updateSubscriptionStatus(
+        currentSub.polar_sub_id,
+        'active', // stays active until period ends
+        null,
+        { ...currentSub.proration_metadata, scheduled_downgrade_to: newPlan.tier }
+      );
+      return { status: 'downgrade_scheduled', scheduled_tier: newPlan.tier };
+    }
+  }
 }
 
 export const billingService = new BillingService();

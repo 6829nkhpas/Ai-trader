@@ -13,4 +13,7 @@ export function registerBillingRoutes(app) {
   // Authenticated route to initiate checkout
   // PreHandler ensures request.user is populated by JWT
   app.post('/api/billing/checkout', { preHandler: [authGuard] }, billingController.createCheckout.bind(billingController));
+
+  // Authenticated route to transition plans (Upgrade/Downgrade)
+  app.post('/api/billing/transition', { preHandler: [authGuard] }, billingController.transitionSubscription.bind(billingController));
 }

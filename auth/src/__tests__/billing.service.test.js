@@ -95,4 +95,67 @@ describe('Billing Service - Polar Integration', () => {
     assert.strictEqual(body.product_price_id, 'price_monthly');
     assert.strictEqual(body.customer_id, 'polar_cust_123');
   });
+
+  describe('Transition Logic (Upgrades & Downgrades)', () => {
+    it('should prorate an upgrade (Weekly -> Monthly)', async () => {
+      mock.method(billingRepository, 'getActiveSubscriptions', async () => [
+        { polar_sub_id: 'sub_123', plan_tier: 'Weekly', proration_metadata: {} }
+      ]);
+      mock.method(billingRepository, 'updateSubscriptionStatus', async () => {});
+      const mockPool = { query: mock.fn() };
+      mock.method(getPool(), 'query', mockPool.query);
+
+      global.fetch = mock.fn(async () => ({
+        ok: true,
+        json: async () => ({ current_period_end: '2026-06-01T00:00:00Z' })
+      }));
+
+      const result = await billingService.transitionSubscription('user_123', 'price_monthly');
+
+      assert.strictEqual(result.status, 'upgraded');
+      assert.strictEqual(result.tier, 'Monthly');
+
+      const fetchArgs = global.fetch.mock.calls[0].arguments;
+      assert.strictEqual(fetchArgs[0], 'https://api.polar.sh/api/v1/subscriptions/sub_123');
+      assert.strictEqual(fetchArgs[1].method, 'PATCH');
+      
+      const body = JSON.parse(fetchArgs[1].body);
+      assert.strictEqual(body.product_price_id, 'price_monthly');
+      assert.strictEqual(body.proration_behavior, 'prorate');
+    });
+
+    it('should schedule a downgrade (Monthly -> Weekly)', async () => {
+      mock.method(billingRepository, 'getActiveSubscriptions', async () => [
+        { polar_sub_id: 'sub_123', plan_tier: 'Monthly', proration_metadata: {} }
+      ]);
+      mock.method(billingRepository, 'updateSubscriptionStatus', async () => {});
+
+      global.fetch = mock.fn(async () => ({
+        ok: true,
+        json: async () => ({})
+      }));
+
+      const result = await billingService.transitionSubscription('user_123', 'price_weekly');
+
+      assert.strictEqual(result.status, 'downgrade_scheduled');
+      assert.strictEqual(result.scheduled_tier, 'Weekly');
+
+      const fetchArgs = global.fetch.mock.calls[0].arguments;
+      const body = JSON.parse(fetchArgs[1].body);
+      assert.strictEqual(body.proration_behavior, 'none');
+    });
+
+    it('should reject transition if already on the same tier', async () => {
+      mock.method(billingRepository, 'getActiveSubscriptions', async () => [
+        { polar_sub_id: 'sub_123', plan_tier: 'Monthly', proration_metadata: {} }
+      ]);
+
+      try {
+        await billingService.transitionSubscription('user_123', 'price_monthly');
+        assert.fail('Should have thrown error');
+      } catch (err) {
+        assert.match(err.message, /Already on this plan tier/);
+      }
+    });
+  });
 });

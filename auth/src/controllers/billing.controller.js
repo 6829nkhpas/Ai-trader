@@ -71,6 +71,50 @@ export class BillingController {
       });
     }
   }
+
+  /**
+   * POST /billing/transition
+   * Upgrades or downgrades an existing subscription.
+   * Body requires: { priceId: string }
+   */
+  async transitionSubscription(request, reply) {
+    try {
+      const { priceId } = request.body;
+      const userId = request.user.sub;
+
+      if (!priceId) {
+        return reply.status(400).send({
+          status: 'error',
+          message: 'priceId is required'
+        });
+      }
+
+      const result = await billingService.transitionSubscription(userId, priceId);
+
+      return reply.send({
+        status: 'success',
+        data: result
+      });
+    } catch (error) {
+      request.log.error(error);
+      if (error.message.includes('Invalid Price ID') || error.message.includes('Already on this plan tier')) {
+        return reply.status(400).send({
+          status: 'error',
+          message: error.message
+        });
+      }
+      if (error.message.includes('No active subscription found')) {
+        return reply.status(404).send({
+          status: 'error',
+          message: error.message
+        });
+      }
+      return reply.status(500).send({
+        status: 'error',
+        message: 'Failed to transition subscription'
+      });
+    }
+  }
 }
 
 export const billingController = new BillingController();
