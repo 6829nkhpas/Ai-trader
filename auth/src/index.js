@@ -11,6 +11,7 @@ import { registerAuthRoutes } from './routes/auth.routes.js';
 import { registerKycRoutes } from './routes/kyc.routes.js';
 import { registerWebhookRoutes } from './routes/webhook.routes.js';
 import { registerTradeRoutes } from './routes/trade.routes.js';
+import { registerBillingRoutes } from './routes/billing.routes.js';
 import { registerErrorHandler } from './middleware/error.handler.js';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
@@ -33,6 +34,7 @@ registerAuthRoutes(app);
 registerKycRoutes(app);
 registerWebhookRoutes(app);
 registerTradeRoutes(app);
+registerBillingRoutes(app);
 
 // ── Startup ─────────────────────────────────────────────────
 const start = async () => {

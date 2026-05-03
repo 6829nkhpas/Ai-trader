@@ -63,4 +63,10 @@ export const config = Object.freeze({
     refreshTtl:     parseInt(process.env.JWT_REFRESH_TTL_SECONDS || '604800', 10),
     issuer:         'ai-trade-auth',
   },
+
+  // Polar API Config
+  polar: {
+    accessToken: process.env.POLAR_ACCESS_TOKEN,
+    organizationId: process.env.POLAR_ORGANIZATION_ID,
+  },
 });
