@@ -25,8 +25,8 @@ export default function Home() {
 
   return (
     <TerminalLayout leftPanel={<LiveFeedPanel />} rightPanel={<AIPanel />}>
-      <div className="flex h-full min-h-0 w-full flex-col gap-4">
-        <div className="flex h-12 items-center justify-between gap-4 rounded-xl border border-border-default bg-surface px-4">
+      <div className="flex h-full min-h-0 w-full flex-col rounded-lg border border-border-default bg-surface panel-shadow-lg">
+        <div className="flex h-12 shrink-0 items-center justify-between gap-4 border-b border-border-default px-4 bg-surface rounded-t-lg">
           <div className="flex min-w-0 items-center gap-3">
             <div className="truncate text-sm font-semibold text-text-primary">{symbol}</div>
             <div className="text-xs text-text-secondary">{lastPrice ? `$${lastPrice.toFixed(2)}` : 'Price --'}</div>
@@ -38,9 +38,9 @@ export default function Home() {
                 key={frame}
                 type="button"
                 onClick={() => setActiveTimeframe(frame)}
-                className={`rounded-md border px-2.5 py-1 text-xs font-semibold transition-colors ${activeTimeframe === frame
-                    ? 'border-primary bg-primary text-text-primary hover:bg-primary-hover'
-                    : 'border-border-default bg-card text-text-secondary hover:bg-elevated'
+                className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${activeTimeframe === frame
+                    ? 'bg-[#ECFDF5] text-[#059669]'
+                    : 'bg-surface text-text-secondary hover:bg-elevated'
                   }`}
               >
                 {frame}
@@ -52,9 +52,9 @@ export default function Home() {
             <button
               type="button"
               onClick={() => setIndicatorsEnabled((prev) => !prev)}
-              className={`rounded-md border px-2.5 py-1 text-xs font-semibold transition-colors ${indicatorsEnabled
-                  ? 'border-primary bg-primary text-text-primary hover:bg-primary-hover'
-                  : 'border-border-default bg-surface text-text-secondary hover:bg-elevated'
+              className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${indicatorsEnabled
+                  ? 'bg-[#ECFDF5] text-[#059669]'
+                  : 'bg-surface text-text-secondary hover:bg-elevated'
                 }`}
             >
               Indicators
@@ -62,9 +62,9 @@ export default function Home() {
             <button
               type="button"
               onClick={() => setAiEnabled((prev) => !prev)}
-              className={`rounded-md border px-2.5 py-1 text-xs font-semibold transition-colors ${aiEnabled
-                  ? 'border-primary bg-primary text-text-primary hover:bg-primary-hover'
-                  : 'border-border-default bg-surface text-text-secondary hover:bg-elevated'
+              className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${aiEnabled
+                  ? 'bg-[#ECFDF5] text-[#059669]'
+                  : 'bg-surface text-text-secondary hover:bg-elevated'
                 }`}
             >
               AI
@@ -72,11 +72,11 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="min-h-0 flex-1">
+        <div className="min-h-0 flex-1 bg-surface relative">
           <TradingChart showHeader={false} />
         </div>
 
-        <div className="shrink-0">
+        <div className="shrink-0 border-t border-border-default bg-surface rounded-b-lg">
           <OrderExecutionPanel />
         </div>
       </div>

@@ -12,6 +12,7 @@ import {
   ISeriesMarkersPluginApi,
   SeriesMarker,
   Time,
+  ColorType,
 } from 'lightweight-charts';
 import { useTradeStore, AggregatedDecision } from '../store/useTradeStore';
 
@@ -124,7 +125,7 @@ export default function TradingChart({ showHeader = true }: TradingChartProps) {
         rightOffset: 12,
       },
       layout: {
-        background: { type: 'solid', color: chartBackground },
+        background: { type: ColorType.Solid, color: chartBackground },
         textColor: chartText,
       },
       grid: {
@@ -235,7 +236,7 @@ export default function TradingChart({ showHeader = true }: TradingChartProps) {
   }, [liveDecisions]);
 
   return (
-    <div className="relative flex h-full min-h-0 w-full flex-col rounded-2xl border border-border-default bg-card">
+    <div className="relative flex h-full min-h-0 w-full flex-col bg-transparent">
       {showHeader && (
         <div className="flex items-center justify-between gap-4 border-b border-border-default bg-surface px-5 py-4">
           <div className="flex min-w-0 items-center gap-3">

@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { useTradeStore } from '../../store/useTradeStore';
 
 export default function LiveFeedPanel() {
-  const { liveDecisions } = useTradeStore();
+  const { liveDecisions, activeDecision } = useTradeStore();
   const [query, setQuery] = useState('');
 
   // Create a reversed copy so the newest is at the top
@@ -15,8 +15,8 @@ export default function LiveFeedPanel() {
     : recentDecisions;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border-default bg-surface">
-      <div className="shrink-0 border-b border-border-default bg-card px-4 py-3">
+    <div className="flex h-full flex-col">
+      <div className="shrink-0 border-b border-border-default p-4">
         <h2 className="text-xs font-bold uppercase tracking-widest text-text-secondary">Stock List</h2>
         <div className="mt-3">
           <input
@@ -24,7 +24,7 @@ export default function LiveFeedPanel() {
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search symbols"
             aria-label="Search symbols"
-            className="w-full rounded-md border border-border-default bg-surface px-3 py-2 text-xs text-text-primary placeholder:text-text-muted transition-colors focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            className="h-9 w-full rounded-md border border-border-default bg-[#F8FAFC] px-3 text-xs text-text-primary placeholder:text-text-muted transition-colors focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
       </div>
@@ -34,36 +34,34 @@ export default function LiveFeedPanel() {
             {recentDecisions.length === 0 ? 'Waiting for backend decisions...' : 'No matching symbols found.'}
           </div>
         ) : (
-          filteredDecisions.map((decision, i) => (
-            <div
-              key={`${decision.timestamp_ms}-${i}`}
-              className="flex min-h-11 flex-col gap-1 rounded-lg border border-transparent px-2 py-2 text-xs text-text-secondary transition-colors hover:bg-elevated"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex min-w-0 flex-col">
-                  <span className="truncate text-sm font-semibold text-text-primary">{decision.symbol}</span>
-                  <span className="text-[11px] text-text-muted">{new Date(decision.timestamp_ms).toLocaleTimeString()}</span>
-                </div>
-                <div className="flex flex-col items-end">
-                  <span
-                    className={`text-xs font-bold ${decision.action_type === 'BUY'
-                        ? 'text-bull'
-                        : decision.action_type === 'SELL'
-                          ? 'text-bear'
-                          : 'text-neutral'
-                      }`}
-                  >
-                    {decision.action_type}
-                  </span>
-                  <span className="text-[11px] text-text-muted">Score {decision.final_conviction_score}%</span>
+          filteredDecisions.map((decision, i) => {
+            const isSelected = activeDecision?.symbol === decision.symbol && activeDecision?.timestamp_ms === decision.timestamp_ms;
+            return (
+              <div
+                key={`${decision.timestamp_ms}-${i}`}
+                className={`flex h-11 flex-col justify-center px-3 py-1 text-xs text-text-secondary transition-colors cursor-pointer ${isSelected ? 'bg-[#ECFDF5]' : 'hover:bg-elevated'}`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-sm font-semibold text-text-primary">{decision.symbol}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`text-xs font-bold ${decision.action_type === 'BUY'
+                          ? 'text-bull'
+                          : decision.action_type === 'SELL'
+                            ? 'text-bear'
+                            : 'text-neutral'
+                        }`}
+                    >
+                      {decision.action_type}
+                    </span>
+                    <span className="text-[11px] text-text-muted">{decision.final_conviction_score}%</span>
+                  </div>
                 </div>
               </div>
-              <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-text-muted">
-                <span>Tech {(decision.technical_weight_used * 100).toFixed(0)}%</span>
-                <span>Sent {(decision.sentiment_weight_used * 100).toFixed(0)}%</span>
-              </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>

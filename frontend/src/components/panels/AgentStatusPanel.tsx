@@ -26,24 +26,22 @@ export default function AgentStatusPanel() {
   ];
 
   return (
-    <div className="flex shrink-0 flex-col overflow-hidden rounded-2xl border border-border-default bg-card">
-      <div className="border-b border-border-default bg-elevated px-4 py-3">
-        <h2 className="text-xs font-bold uppercase tracking-widest text-text-secondary">AI Swarm Status</h2>
-      </div>
-      <div className="flex flex-col gap-3 p-4">
+    <section className="rounded-lg border border-border-default bg-card p-4 panel-shadow">
+      <div className="text-xs font-semibold uppercase tracking-widest text-text-secondary">AI Swarm Status</div>
+      <div className="mt-3 flex flex-col gap-2">
         {agents.map((agent, index) => (
-          <div key={index} className="flex items-center justify-between rounded-xl border border-border-default bg-surface p-3">
-            <div className="flex items-center gap-3">
-              <agent.icon size={18} className={getStatusColor(agent.status)} />
-              <span className="text-sm font-medium text-text-primary">{agent.name}</span>
+          <div key={index} className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <agent.icon size={14} className={getStatusColor(agent.status)} />
+              <span className="text-xs font-medium text-text-primary">{agent.name}</span>
             </div>
-            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-text-secondary">
-              <span className={`h-2.5 w-2.5 rounded-full ${getStatusDot(agent.status)}`} />
+            <div className="flex items-center gap-1.5 rounded-full border border-border-default bg-surface px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-text-secondary">
+              <span className={`h-1.5 w-1.5 rounded-full ${getStatusDot(agent.status)}`} />
               <span>{agent.status}</span>
             </div>
           </div>
         ))}
       </div>
-    </div>
+    </section>
   );
 }

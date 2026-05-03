@@ -10,7 +10,7 @@ export default function OrderExecutionPanel() {
 
   if (!activeDecision) {
     return (
-      <div className="flex flex-col gap-3 rounded-xl border border-border-default bg-card px-4 py-3">
+      <div className="flex flex-col gap-3 px-4 py-3">
         <div className="flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-text-secondary">
             <Briefcase size={14} /> Portfolio State
@@ -55,7 +55,7 @@ export default function OrderExecutionPanel() {
   const stopValue = '--';
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-border-default bg-card px-4 py-3">
+    <div className="flex flex-col gap-3 px-4 py-3">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-45">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-text-secondary">Trade Strip</h2>
@@ -121,7 +121,7 @@ export default function OrderExecutionPanel() {
           </button>
           <button
             onClick={() => executeTrade(activeDecision, quantity)}
-            className={`rounded-xl px-4 py-2 text-xs font-bold uppercase transition-colors ${buttonColor}`}
+            className={`rounded-lg px-4 py-2 text-xs font-bold uppercase transition-colors text-white ${isBuy ? 'bg-[#16A34A] hover:bg-[#047857]' : isHold ? 'bg-primary hover:bg-primary-hover' : 'bg-[#DC2626] hover:bg-red-800'}`}
           >
             {isHold ? 'ACKNOWLEDGE HOLD' : `${activeDecision.action_type}`}
           </button>

@@ -1,29 +1,34 @@
 @import "tailwindcss";
 
 :root {
-  --bg-main: #0f172a;
-  --bg-surface: #111827;
-  --bg-card: #1f2937;
-  --bg-elevated: #243041;
-  --border-default: #374151;
-  --border-subtle: #2a3441;
-  --text-primary: #e5e7eb;
-  --text-secondary: #9ca3af;
-  --text-muted: #6b7280;
-  --color-primary: #3b82f6;
-  --color-primary-hover: #2563eb;
-  --color-bull: #22c55e;
-  --color-bear: #ef4444;
-  --color-neutral: #f59e0b;
-  --chart-bg: #0b1220;
-  --chart-grid: #1e293b;
-  --candle-green: #22c55e;
-  --candle-red: #ef4444;
-  --status-live: #22c55e;
-  --status-warning: #f59e0b;
-  --status-error: #ef4444;
+  --bg-main: #F8FAFC;
+  --bg-surface: #FFFFFF;
+  --bg-card: #FFFFFF;
+  --bg-elevated: #F1F5F9;
+  --border-default: #E5E7EB;
+  --border-subtle: #EEF2F7;
+  --text-primary: #111827;
+  --text-secondary: #6B7280;
+  --text-muted: #9CA3AF;
+  --color-primary: #059669;
+  --color-primary-hover: #047857;
+  --color-bull: #16A34A;
+  --color-bear: #DC2626;
+  --color-neutral: #D97706;
+  --chart-bg: #FFFFFF;
+  --chart-grid: #EEF2F7;
+  --candle-green: #16A34A;
+  --candle-red: #DC2626;
+  --status-live: #16A34A;
+  --status-warning: #D97706;
+  --status-error: #DC2626;
   --background: var(--bg-main);
   --foreground: var(--text-primary);
+
+  /* Shadow tokens — calm, professional depth */
+  --shadow-sm:  0 1px 3px 0 rgba(0, 0, 0, 0.06), 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+  --shadow-md:  0 4px 12px 0 rgba(0, 0, 0, 0.07), 0 2px 4px 0 rgba(0, 0, 0, 0.04);
+  --shadow-lg:  0 8px 24px 0 rgba(0, 0, 0, 0.08), 0 3px 6px  0 rgba(0, 0, 0, 0.05);
 }
 
 @theme inline {
@@ -47,12 +52,16 @@
   --color-status-live: var(--status-live);
   --color-status-warning: var(--status-warning);
   --color-status-error: var(--status-error);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-inter);
 }
 
 body {
   background: var(--bg-main);
   color: var(--text-primary);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), sans-serif;
 }
+
+/* Reusable panel shadow utility */
+.panel-shadow    { box-shadow: var(--shadow-md); }
+.panel-shadow-sm { box-shadow: var(--shadow-sm); }
+.panel-shadow-lg { box-shadow: var(--shadow-lg); }
