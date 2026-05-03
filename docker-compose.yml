@@ -16,3 +16,23 @@ services:
     command: redpanda start --smp 1 --memory 1G --reserve-memory 0M --overprovisioned --node-id 0 --kafka-addr PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:19092 --advertise-kafka-addr PLAINTEXT://redpanda:29092,OUTSIDE://localhost:19092
     ports:
       - '19092:19092'
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ai_trade_auth
+      POSTGRES_USER: auth_admin
+      POSTGRES_PASSWORD: ${POSTGRES_AUTH_PASSWORD:-auth_secret_dev}
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./auth/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth_admin -d ai_trade_auth"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

@@ -2,13 +2,143 @@
 
 ## Session Timestamp
 
-`2026-04-24T11:29:00+05:30`
+`2026-05-03T08:54:00Z`
 
 ## Active Phase
 
-**Master Phase 1 → Power Phase 1.5 → Subphases 40-42 COMPLETE THIS SESSION**
+**Phase 1 (Auth) → Cryptographic Core → Subphases 1-3 COMPLETE THIS SESSION**
 
-## Status: ✅ SUBPHASES 40-42 COMPLETE. DYNAMIC WEIGHTING ENGINE & CONFLICT RESOLUTION OPERATIONAL.
+## Status: ✅ IDENTITY FOUNDATION COMPLETE. Argon2id + PostgreSQL + Registration Operational.
+
+---
+
+### Phase 1 Auth — Subphases 1-3: Identity Vault (Cryptographic Core) ✅ COMPLETE THIS SESSION
+
+#### Subphase 1 — Database Migration (SQL Schema)
+
+- **PostgreSQL 16** added to `docker-compose.yml` (port 5432, auto-migrates on first boot)
+- Created `auth/migrations/001_identity_vault.sql` with 3 tables:
+
+| Table | Purpose | PK |
+|---|---|---|
+| `users` | Core identity record | UUID v4 (`gen_random_uuid()`) |
+| `user_credentials` | Argon2id password hash storage | UUID v4 |
+| `user_mfa_vault` | TOTP/WebAuthn secrets (Phase 2+) | UUID v4 |
+
+- FK constraint: `user_credentials.user_id → users(id) ON DELETE CASCADE`
+- FK constraint: `user_mfa_vault.user_id → users(id) ON DELETE CASCADE`
+- Unique constraints: `uq_users_email`, `uq_user_credentials_user_type`, `uq_user_mfa_user_type`
+- Auto-update triggers: `updated_at` columns auto-set on UPDATE for all 3 tables
+- `email_verified_at` nullable column added for future email verification
+
+#### Subphase 2 — Argon2id Hashing Utility
+
+- Created `auth/src/crypto/hasher.js` — Argon2id wrapper with mandatory PEPPER
+- **PEPPER**: Loaded from `AUTH_PEPPER` env var; process exits if missing or < 32 chars
+- **PEPPER strategy**: Prepended to plaintext before hashing (not HMAC)
+- **Argon2id parameters** (OWASP 2024):
+  | Parameter | Value | Purpose |
+  |---|---|---|
+  | `memoryCost` | 65536 (64 MiB) | Memory-hard |
+  | `timeCost` | 3 | 3 iterations |
+  | `parallelism` | 4 | 4 lanes |
+  | `hashLength` | 32 | 256-bit digest |
+  | `saltLength` | 16 | 128-bit random salt per hash |
+- Exports: `hashPassword(plaintext)` and `verifyPassword(plaintext, storedHash)`
+
+#### Subphase 3 — Registration Controller
+
+- Created `auth/src/controllers/register.js` — Transaction-safe signup
+- **Password complexity**: min 12 chars, require uppercase + lowercase + digit + special, max 128
+- **Flow**: validate → normalize email → BEGIN → duplicate check → INSERT user → hash → INSERT credential → COMMIT
+- **Race condition handling**: catches PG `23505` unique violation on `uq_users_email`
+- Custom error classes: `PasswordComplexityError` (400), `DuplicateEmailError` (409)
+
+#### Supporting Modules
+
+- `auth/src/config.js` — env validation, loads `.env` from monorepo root
+- `auth/src/db.js` — PostgreSQL pool (pg), lazy singleton, graceful shutdown
+- `auth/src/index.js` — Fastify HTTP server (`POST /api/auth/register`, `GET /api/auth/health`)
+- `auth/package.json` — ES modules, argon2 ^0.41.1, fastify ^5.3.3, pg ^8.16.0
+
+#### Environment Variables Added
+
+| Variable | Value | File |
+|---|---|---|
+| `POSTGRES_AUTH_URL` | `postgresql://auth_admin:auth_secret_dev@localhost:5432/ai_trade_auth` | `.env` + `.env.example` |
+| `POSTGRES_AUTH_PASSWORD` | `auth_secret_dev` | `.env` + `.env.example` |
+| `AUTH_PEPPER` | 64-char hex (generated via `openssl rand -hex 32`) | `.env` |
+| `AUTH_PORT` | `3001` | `.env` + `.env.example` |
+
+#### Verification Matrix — ALL PASSED ✅
+
+| Check | Result |
+|---|---|
+| `\dt` shows 3 tables | ✅ `users`, `user_credentials`, `user_mfa_vault` |
+| FK constraint on `user_credentials` | ✅ `user_id → users(id) ON DELETE CASCADE` |
+| Salt check (same pw → different hashes) | ✅ Confirmed via unit test |
+| Pepper check (missing → fatal exit) | ✅ Exit code 1 with FATAL message |
+| OWASP params in hash string | ✅ `m=65536,t=3,p=4` |
+| Memory-hard timing | ✅ ~66ms per hash |
+| Weak password rejected | ✅ `PasswordComplexityError` |
+| Duplicate email blocked | ✅ `DuplicateEmailError` |
+| Hash prefix | ✅ `$argon2id$v=19$m=65536,t=3,p=4...` |
+| Hasher unit tests | ✅ 6/6 passed |
+| Integration tests | ✅ 4/4 passed |
+
+#### Module Map (Auth — Layered Architecture)
+
+```
+auth/
+├── package.json                          — ES module, argon2/fastify/pg
+├── migrations/
+│   └── 001_identity_vault.sql            — 3 tables, triggers, constraints
+└── src/
+    ├── index.js                          — Fastify bootstrap (entry point)
+    ├── config.js                         — Env validation + constants
+    ├── db.js                             — PG pool singleton
+    ├── routes/
+    │   └── auth.routes.js                — Route definitions
+    ├── controllers/
+    │   └── auth.controller.js            — HTTP request/response handlers
+    ├── services/
+    │   └── auth.service.js               — Business logic (registration)
+    ├── repository/
+    │   └── user.repository.js            — Raw SQL data access layer
+    ├── middleware/
+    │   └── error.handler.js              — Global error handler
+    ├── crypto/
+    │   ├── hasher.js                     — Argon2id + PEPPER wrapper
+    │   └── hasher.test.js                — 6 unit tests
+    ├── errors/
+    │   └── index.js                      — Domain error classes
+    └── __tests__/
+        └── integration_test.js           — 4 integration tests
+```
+
+#### All Files (Auth — Phase 1)
+
+| File | Status |
+|---|---|
+| `docker-compose.yml` | ✅ UPDATED (postgres service + pgdata volume) |
+| `.env` | ✅ UPDATED (4 auth vars added) |
+| `.env.example` | ✅ UPDATED (4 auth var templates added) |
+| `auth/package.json` | ✅ NEW (ES module, argon2/fastify/pg) |
+| `auth/migrations/001_identity_vault.sql` | ✅ NEW (3 tables, triggers, constraints) |
+| `auth/src/index.js` | ✅ NEW (Fastify bootstrap) |
+| `auth/src/config.js` | ✅ NEW (env validation + constants) |
+| `auth/src/db.js` | ✅ NEW (PG pool singleton) |
+| `auth/src/routes/auth.routes.js` | ✅ NEW (route definitions) |
+| `auth/src/controllers/auth.controller.js` | ✅ NEW (HTTP handler layer) |
+| `auth/src/services/auth.service.js` | ✅ NEW (business logic) |
+| `auth/src/repository/user.repository.js` | ✅ NEW (SQL data access) |
+| `auth/src/middleware/error.handler.js` | ✅ NEW (global error handler) |
+| `auth/src/crypto/hasher.js` | ✅ NEW (Argon2id + PEPPER) |
+| `auth/src/crypto/hasher.test.js` | ✅ NEW (6 unit tests) |
+| `auth/src/errors/index.js` | ✅ NEW (domain error classes) |
+| `auth/src/__tests__/integration_test.js` | ✅ NEW (4 integration tests) |
+
+PHASE 1 AUTH — IDENTITY FOUNDATION IS COMPLETE.
 
 ---
 

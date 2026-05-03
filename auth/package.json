@@ -1,0 +1,23 @@
+{
+  "name": "ai-trade-auth",
+  "version": "0.1.0",
+  "description": "Identity vault & auth service for the AI-Trade Platform — Argon2id, PostgreSQL, MFA-ready",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test src/**/*.test.js",
+    "test:hasher": "node --test src/crypto/hasher.test.js"
+  },
+  "dependencies": {
+    "argon2": "^0.41.1",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.3.3",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
