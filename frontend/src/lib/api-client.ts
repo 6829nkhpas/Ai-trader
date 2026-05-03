@@ -22,8 +22,9 @@ import axios, {
 // Base configuration
 // ─────────────────────────────────────────────────────────────────────────────
 
+const isServer = typeof window === 'undefined';
 const AUTH_BASE_URL =
-  process.env.NEXT_PUBLIC_AUTH_API_URL ?? 'http://localhost:3001';
+  process.env.NEXT_PUBLIC_AUTH_API_URL ?? (isServer ? 'http://localhost:3001' : '');
 
 export const apiClient: AxiosInstance = axios.create({
   baseURL: AUTH_BASE_URL,
@@ -110,7 +111,9 @@ apiClient.interceptors.response.use(
 
       // Session is dead — redirect to login
       if (typeof window !== 'undefined') {
-        window.location.href = '/auth/login?reason=session_expired';
+        if (!window.location.pathname.startsWith('/auth/')) {
+          window.location.href = '/auth/login?reason=session_expired';
+        }
       }
 
       return Promise.reject(refreshError);
