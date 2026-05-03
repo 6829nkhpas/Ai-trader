@@ -4,6 +4,8 @@
 
 import { verifyPan } from '../adapters/kyc/pan.adapter.js';
 import { generatePresignedUploadUrl } from '../services/s3.service.js';
+import { getPool } from '../db.js';
+import { upsertUserProfile, findUserProfileByUserId } from '../repository/user_profile.repository.js';
 
 export async function handleVerifyPan(req, reply) {
   const { panNumber } = req.body || {};
@@ -57,5 +59,48 @@ export async function handleGetUploadUrl(req, reply) {
   } catch (err) {
     req.log.error(err);
     return reply.status(500).send({ error: 'Failed to generate upload URL' });
+  }
+}
+
+export async function handleUpsertProfile(req, reply) {
+  const { legalName, panNumber, residentialAddress, aadhaarMetadata } = req.body || {};
+  const userId = req.user.id;
+
+  const pool = getPool();
+  const client = await pool.connect();
+
+  try {
+    const profile = await upsertUserProfile(client, {
+      userId,
+      legalName,
+      panNumber,
+      residentialAddress,
+      aadhaarMetadata
+    });
+    return reply.status(200).send({ message: 'Profile updated successfully', profile });
+  } catch (err) {
+    req.log.error(err);
+    return reply.status(500).send({ error: 'Failed to update profile' });
+  } finally {
+    client.release();
+  }
+}
+
+export async function handleGetProfile(req, reply) {
+  const userId = req.user.id;
+  const pool = getPool();
+  const client = await pool.connect();
+
+  try {
+    const profile = await findUserProfileByUserId(client, userId);
+    if (!profile) {
+      return reply.status(404).send({ error: 'Profile not found' });
+    }
+    return reply.status(200).send({ profile });
+  } catch (err) {
+    req.log.error(err);
+    return reply.status(500).send({ error: 'Failed to fetch profile' });
+  } finally {
+    client.release();
   }
 }
