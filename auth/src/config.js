@@ -42,6 +42,9 @@ export const config = Object.freeze({
   // HTTP server
   authPort: parseInt(process.env.AUTH_PORT || '3001', 10),
 
+  // OAuth
+  googleClientId: process.env.GOOGLE_CLIENT_ID,
+
   // Password complexity defaults
   password: {
     minLength:       12,

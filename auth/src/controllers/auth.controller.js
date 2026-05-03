@@ -6,6 +6,8 @@
 
 import { registerUser, loginUser } from '../services/auth.service.js';
 import { issueTokenPair, rotateRefreshToken, revokeSession } from '../services/token.service.js';
+import { loginWithGoogle } from '../services/oauth.service.js';
+import { generateMfa, verifyMfa } from '../services/mfa.service.js';
 import { getPool } from '../db.js';
 import { PasswordComplexityError, DuplicateEmailError, AuthenticationError } from '../errors/index.js';
 import { config } from '../config.js';
@@ -105,6 +107,70 @@ export async function handleLogout(request, reply) {
     reply.clearCookie('refresh_token', { path: '/api/auth' });
     return reply.status(200).send({ ok: true });
   } catch (err) {
+    request.log.error(err);
+    return reply.status(500).send({ error: 'Internal server error.' });
+  }
+}
+
+/**
+ * POST /api/auth/oauth/google
+ */
+export async function handleGoogleLogin(request, reply) {
+  const { idToken } = request.body || {};
+
+  try {
+    const user = await loginWithGoogle(getPool(), idToken);
+    // Google logins still issue mfa_verified=false tokens if MFA is mandatory.
+    // They must verify TOTP next.
+    const { accessToken, refreshToken } = await issueTokenPair(getPool(), user, false);
+
+    reply.setCookie('refresh_token', refreshToken, COOKIE_OPTS);
+    return reply.status(200).send({ ok: true, accessToken, user });
+  } catch (err) {
+    if (err instanceof AuthenticationError) {
+      return reply.status(err.statusCode).send({ error: err.message });
+    }
+    request.log.error(err);
+    return reply.status(500).send({ error: 'Internal server error.' });
+  }
+}
+
+/**
+ * POST /api/auth/mfa/generate
+ */
+export async function handleGenerateMfa(request, reply) {
+  try {
+    const data = await generateMfa(getPool(), request.user);
+    return reply.status(200).send({ ok: true, ...data });
+  } catch (err) {
+    request.log.error(err);
+    return reply.status(500).send({ error: 'Internal server error.' });
+  }
+}
+
+/**
+ * POST /api/auth/mfa/verify
+ */
+export async function handleVerifyMfa(request, reply) {
+  const { token } = request.body || {};
+
+  try {
+    await verifyMfa(getPool(), request.user.id, token);
+    
+    // Issue a new token pair with mfa_verified: true
+    // Because user parameter requires {id, email, role}, we have them in request.user
+    const { accessToken, refreshToken } = await issueTokenPair(getPool(), {
+      id: request.user.id,
+      email: request.user.email,
+      role: request.user.role
+    }, true);
+
+    reply.setCookie('refresh_token', refreshToken, COOKIE_OPTS);
+    return reply.status(200).send({ ok: true, accessToken });
+  } catch (err) {
+    if (err instanceof AuthenticationError) {
+      return reply.status(err.statusCode).send({ error: err.message });
+    }
     request.log.error(err);
     return reply.status(500).send({ error: 'Internal server error.' });
   }

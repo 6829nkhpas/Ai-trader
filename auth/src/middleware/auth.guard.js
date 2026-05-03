@@ -51,9 +51,10 @@ export async function authGuard(request, reply) {
 
   // 3. Attach user identity to request
   request.user = {
-    id:    decoded.sub,
-    email: decoded.email,
-    role:  decoded.role,
-    jti:   decoded.jti,
+    id:           decoded.sub,
+    email:        decoded.email,
+    role:         decoded.role,
+    jti:          decoded.jti,
+    mfa_verified: decoded.mfa_verified === true,
   };
 }

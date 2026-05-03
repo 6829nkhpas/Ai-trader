@@ -4,7 +4,7 @@
 // Separates route wiring from controller logic.
 // ──────────────────────────────────────────────────────────────
 
-import { handleRegister, handleHealth, handleLogin, handleRefresh, handleLogout } from '../controllers/auth.controller.js';
+import { handleRegister, handleHealth, handleLogin, handleRefresh, handleLogout, handleGoogleLogin, handleGenerateMfa, handleVerifyMfa, handleRequestPasswordReset, handleResetPassword } from '../controllers/auth.controller.js';
 import { authGuard } from '../middleware/auth.guard.js';
 
 /**
@@ -17,4 +17,13 @@ export function registerAuthRoutes(app) {
   app.post('/api/auth/refresh', handleRefresh);
   app.post('/api/auth/logout', { preHandler: [authGuard] }, handleLogout);
   app.get('/api/auth/health', handleHealth);
+  
+  // Password Reset endpoints
+  app.post('/api/auth/password/reset-request', handleRequestPasswordReset);
+  app.post('/api/auth/password/reset', handleResetPassword);
+
+  // Phase 3 endpoints
+  app.post('/api/auth/oauth/google', handleGoogleLogin);
+  app.post('/api/auth/mfa/generate', { preHandler: [authGuard] }, handleGenerateMfa);
+  app.post('/api/auth/mfa/verify', { preHandler: [authGuard] }, handleVerifyMfa);
 }

@@ -34,9 +34,10 @@ function hashToken(token) {
  * 
  * @param {import('pg').Pool} pool 
  * @param {{ id: string, email: string, role: string }} user 
+ * @param {boolean} [mfaVerified=false]
  * @returns {Promise<{ accessToken: string, refreshToken: string, accessTokenJti: string }>}
  */
-export async function issueTokenPair(pool, user) {
+export async function issueTokenPair(pool, user, mfaVerified = false) {
   const client = await pool.connect();
   try {
     const rawRefreshToken = uuidv4();
@@ -49,6 +50,7 @@ export async function issueTokenPair(pool, user) {
       sub: user.id,
       email: user.email,
       role: user.role,
+      mfa_verified: mfaVerified
     });
 
     // Store stateful refresh token
@@ -137,6 +139,7 @@ export async function rotateRefreshToken(pool, oldRefreshToken) {
       sub: user.id,
       email: user.email,
       role: user.role,
+      mfa_verified: true // Assuming valid refresh token = authenticated session
     });
 
     await insertRefreshToken(client, {

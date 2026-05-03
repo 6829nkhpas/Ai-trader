@@ -11,6 +11,7 @@ import { registerAuthRoutes } from './routes/auth.routes.js';
 import { registerErrorHandler } from './middleware/error.handler.js';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
+import helmet from '@fastify/helmet';
 
 const app = Fastify({ logger: true });
 
@@ -21,6 +22,7 @@ app.register(cookie, {
 });
 
 // ── Middleware ───────────────────────────────────────────────
+app.register(helmet); // Security headers (HSTS, CSP, XSS, etc.)
 registerErrorHandler(app);
 
 // ── Routes ──────────────────────────────────────────────────

@@ -1372,3 +1372,28 @@ MASTER PHASE 3 INITIALIZED. ORCHESTRATION LAYER COMPLETE.
 - On logout or breach, the active access token's `jti` is blacklisted in Redis with an expiration matching the remaining TTL.
 - Tested successfully: Blacklisted tokens are instantly rejected with `401 Token has been revoked.`.
 - Added login, refresh, and logout routes to `auth.controller.js` and integrated with `@fastify/cookie`.
+
+---
+
+### Master Phase 3 (Auth) → Perimeter Hardening → Subphases 7-9 ✅ COMPLETE THIS SESSION
+
+#### 7 — Google OAuth 2.0 Integration
+- Integrated `google-auth-library`.
+- Implemented `oauth.service.js` for ID token verification and auto-registration of users.
+- Plumbed `handleGoogleLogin` into `auth.controller.js` and wired `/api/auth/oauth/google`.
+
+#### 8 — Mandatory TOTP MFA (MFA Guard)
+- Added `mfa.service.js` powered by `otplib` and `qrcode`.
+- Stored secrets are encrypted using AES-256-GCM and `AUTH_PEPPER`.
+- Implemented `mfaGuard` middleware ensuring trading endpoints return `401` if JWT claim `mfa_verified` is false.
+- Auth payload now includes `mfa_verified` claim, validated on every route via `authGuard`.
+
+#### 9 — Ownership Guard & Security Headers
+- Implemented `owner.guard.js` to prevent cross-user data leakage (returns `403 Forbidden`).
+- Applied `@fastify/helmet` globally to enforce HSTS, CSP, and XSS protection.
+
+#### The Health-Check Matrix (Validation Criteria met)
+- **Ownership Guard**: Attempting to access User B's data with User A's token returns `403 Forbidden`.
+- **MFA Guard**: Trading endpoints return `401` if the JWT claim `mfa_verified` is false.
+
+ALL AUTH PHASES COMPLETE. PROJECT ANTIGRAVITY PERIMETER IS SECURE.
