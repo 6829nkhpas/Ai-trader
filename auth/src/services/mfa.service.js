@@ -3,7 +3,7 @@
 // Handles generation, QR code rendering, and verification.
 // ──────────────────────────────────────────────────────────────
 
-import { authenticator } from 'otplib';
+import { generateSecret, generateURI, verify } from 'otplib';
 import QRCode from 'qrcode';
 import { findMfaRecord, upsertMfaRecord, activateMfaRecord } from '../repository/mfa.repository.js';
 import { encryptSymmetric, decryptSymmetric } from '../crypto/encryption.js';
@@ -18,11 +18,15 @@ import { AuthenticationError } from '../errors/index.js';
  */
 export async function generateMfa(pool, user) {
   // Generate a secret
-  const secret = authenticator.generateSecret();
+  const secret = generateSecret();
 
   // Create otpauth URL
   // Format: otpauth://totp/Issuer:Email?secret=...&issuer=Issuer
-  const otpauth = authenticator.keyuri(user.email, 'AI-Trade Platform', secret);
+  const otpauth = generateURI({
+    issuer: 'AI-Trader',
+    label: user.email,
+    secret
+  });
 
   // Generate QR code data URL
   const qrCodeDataURL = await QRCode.toDataURL(otpauth);
@@ -80,7 +84,8 @@ export async function verifyMfa(pool, userId, token) {
     }
 
     // Verify the token
-    const isValid = authenticator.verify({ token, secret });
+    const result = await verify({ token, secret });
+    const isValid = result.valid;
 
     if (!isValid) {
       throw new AuthenticationError('Invalid MFA token.');
