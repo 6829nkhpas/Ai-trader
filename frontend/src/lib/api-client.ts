@@ -125,14 +125,11 @@ apiClient.interceptors.response.use(
 export interface LoginPayload {
   email: string;
   password: string;
-  /** When true, sets long-lived cookie maxAge on the server (30 days vs 15 min) */
-  keepAlive: boolean;
 }
 
 export interface SignupPayload {
   email: string;
   password: string;
-  displayName?: string;
 }
 
 export interface MfaVerifyPayload {

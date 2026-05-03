@@ -2,11 +2,12 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Eye, EyeOff, Loader2, ShieldCheck } from 'lucide-react';
 import { authApi } from '@/lib/api-client';
 import { useAuth } from '@/context/AuthContext';
 import type { User } from '@/context/AuthContext';
+import { resolveAuthRedirect } from '@/lib/auth-redirect';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Validation
@@ -29,27 +30,28 @@ function validatePassword(password: string): string | null {
 
 export default function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectTo = resolveAuthRedirect(searchParams);
   const { onLoginSuccess } = useAuth();
 
-  const [email, setEmail]           = useState('');
-  const [password, setPassword]     = useState('');
-  const [keepAlive, setKeepAlive]   = useState(false);
-  const [showPass, setShowPass]     = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPass, setShowPass] = useState(false);
 
-  const [emailErr, setEmailErr]     = useState<string | null>(null);
-  const [passwordErr, setPassErr]   = useState<string | null>(null);
-  const [serverErr, setServerErr]   = useState<string | null>(null);
+  const [emailErr, setEmailErr] = useState<string | null>(null);
+  const [passwordErr, setPassErr] = useState<string | null>(null);
+  const [serverErr, setServerErr] = useState<string | null>(null);
 
-  const [isLoading, setIsLoading]   = useState(false);
-  const emailRef                    = useRef<HTMLInputElement>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const emailRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     emailRef.current?.focus();
   }, []);
 
   // ── Field blur validation ─────────────────────────────────────────────────
-  const handleEmailBlur  = () => setEmailErr(validateEmail(email));
-  const handlePassBlur   = () => setPassErr(validatePassword(password));
+  const handleEmailBlur = () => setEmailErr(validateEmail(email));
+  const handlePassBlur = () => setPassErr(validatePassword(password));
 
   // ── Submit ────────────────────────────────────────────────────────────────
   const handleSubmit = useCallback(
@@ -65,7 +67,7 @@ export default function LoginForm() {
 
       setIsLoading(true);
       try {
-        const res = await authApi.login({ email, password, keepAlive });
+        const res = await authApi.login({ email, password });
         const { user, mfa_required } = res.data as {
           user: User;
           mfa_required: boolean;
@@ -74,20 +76,22 @@ export default function LoginForm() {
         onLoginSuccess(user, mfa_required);
 
         if (!mfa_required) {
-          router.push('/dashboard');
+          router.replace(redirectTo);
         }
         // If MFA is required, the AuthContext will set authState = 'mfa'
         // and the parent page will swap to <MfaChallenge />
       } catch (err: unknown) {
-        const axErr = err as { response?: { data?: { message?: string } } };
+        const axErr = err as { response?: { data?: { message?: string; error?: string } } };
         setServerErr(
-          axErr?.response?.data?.message ?? 'Login failed. Check your credentials.'
+          axErr?.response?.data?.error ??
+          axErr?.response?.data?.message ??
+          'Login failed. Check your credentials.'
         );
       } finally {
         setIsLoading(false);
       }
     },
-    [email, password, keepAlive, onLoginSuccess, router]
+    [email, password, onLoginSuccess, router, redirectTo]
   );
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -178,23 +182,6 @@ export default function LoginForm() {
         )}
       </div>
 
-      {/* ── Keep me logged in ─────────────────────────────────────────────── */}
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          id="login-keep-alive-toggle"
-          role="switch"
-          aria-checked={keepAlive}
-          onClick={() => setKeepAlive((v) => !v)}
-          className={`auth-toggle${keepAlive ? ' auth-toggle--on' : ''}`}
-        >
-          <span className={`auth-toggle-thumb${keepAlive ? ' auth-toggle-thumb--on' : ''}`} />
-        </button>
-        <span className="text-sm text-auth-muted select-none">
-          Keep me logged in
-        </span>
-      </div>
-
       {/* ── Submit ───────────────────────────────────────────────────────── */}
       <button
         type="submit"
@@ -210,7 +197,7 @@ export default function LoginForm() {
         ) : (
           <>
             <ShieldCheck size={16} />
-            <span>Sign in securely</span>
+            <span>Sign in</span>
           </>
         )}
       </button>

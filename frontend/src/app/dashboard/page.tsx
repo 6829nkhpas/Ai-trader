@@ -9,7 +9,7 @@
 import { redirect } from 'next/navigation';
 
 export const metadata = {
-  title: 'Trivx — Dashboard',
+  title: 'AI Trader - Dashboard',
 };
 
 export default function DashboardPage() {

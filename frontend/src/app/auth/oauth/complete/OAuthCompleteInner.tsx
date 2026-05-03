@@ -6,6 +6,7 @@ import { Loader2, XCircle } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
 import { useAuth } from '@/context/AuthContext';
 import type { User } from '@/context/AuthContext';
+import { resolveAuthRedirect } from '@/lib/auth-redirect';
 
 /**
  * OAuthCompleteInner — Client Component
@@ -16,9 +17,10 @@ import type { User } from '@/context/AuthContext';
  * useSearchParams().
  */
 export default function OAuthCompleteInner() {
-  const router         = useRouter();
-  const searchParams   = useSearchParams();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { onLoginSuccess } = useAuth();
+  const redirectTo = resolveAuthRedirect(searchParams);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -40,7 +42,11 @@ export default function OAuthCompleteInner() {
         );
         const { user, mfa_required = false } = res.data;
         onLoginSuccess(user, mfa_required);
-        router.replace(mfa_required ? '/auth/login' : '/dashboard');
+        router.replace(
+          mfa_required
+            ? `/auth/login?redirect=${encodeURIComponent(redirectTo)}`
+            : redirectTo
+        );
       } catch {
         setError('Could not verify your session. Please sign in again.');
       }
@@ -54,7 +60,7 @@ export default function OAuthCompleteInner() {
     return (
       <div className="flex flex-col items-center gap-4 py-4 text-center">
         <XCircle size={40} className="text-red-400" />
-        <p className="text-sm" style={{ color: 'rgba(255,255,255,0.38)' }}>{error}</p>
+        <p className="text-sm" style={{ color: 'var(--auth-muted)' }}>{error}</p>
         <a href="/auth/login" className="auth-link text-sm font-semibold">
           Back to sign in
         </a>
@@ -64,8 +70,8 @@ export default function OAuthCompleteInner() {
 
   return (
     <div className="flex flex-col items-center gap-4 py-8">
-      <Loader2 size={32} className="animate-spin" style={{ color: '#6366f1' }} />
-      <p className="text-sm" style={{ color: 'rgba(255,255,255,0.38)' }}>
+      <Loader2 size={32} className="animate-spin" style={{ color: 'var(--color-primary)' }} />
+      <p className="text-sm" style={{ color: 'var(--auth-muted)' }}>
         Completing sign-in…
       </p>
     </div>

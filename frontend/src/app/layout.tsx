@@ -9,7 +9,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Trivx — AI Trade Terminal",
+  title: "AI Trader - Trade Terminal",
   description: "Institutional-grade AI-powered trading, secured by design.",
 };
 

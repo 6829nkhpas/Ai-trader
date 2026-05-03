@@ -24,7 +24,7 @@ export default function MfaChallenge() {
 
   // 6 individual digit slots
   const [digits, setDigits] = useState<string[]>(Array(DIGIT_COUNT).fill(''));
-  const [error, setError]   = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
@@ -116,13 +116,13 @@ export default function MfaChallenge() {
   return (
     <div className="flex flex-col items-center gap-6" role="region" aria-label="MFA verification">
       {/* Icon */}
-      <div className="flex size-16 items-center justify-center rounded-2xl bg-trivx-glow/10 border border-trivx-glow/20 shadow-[0_0_32px_rgba(99,102,241,0.15)]">
-        <ShieldCheck size={32} className="text-trivx-glow" />
+      <div className="auth-mfa-icon size-16">
+        <ShieldCheck size={32} className="auth-mfa-icon-glyph" />
       </div>
 
       {/* Heading */}
       <div className="text-center space-y-1">
-        <h2 className="text-lg font-bold text-white">Two-Factor Authentication</h2>
+        <h2 className="text-lg font-bold text-text-primary">Two-Factor Authentication</h2>
         <p className="text-sm text-auth-muted">
           Enter the 6-digit code from your authenticator app.
         </p>
@@ -148,9 +148,8 @@ export default function MfaChallenge() {
             onKeyDown={(e) => handleKeyDown(i, e)}
             disabled={isLoading}
             aria-label={`Digit ${i + 1}`}
-            className={`mfa-digit-input${error ? ' mfa-digit-input--error' : ''}${
-              digit ? ' mfa-digit-input--filled' : ''
-            }`}
+            className={`mfa-digit-input${error ? ' mfa-digit-input--error' : ''}${digit ? ' mfa-digit-input--filled' : ''
+              }`}
           />
         ))}
       </div>
@@ -187,7 +186,7 @@ export default function MfaChallenge() {
         type="button"
         id="mfa-cancel-btn"
         onClick={logout}
-        className="text-xs text-auth-muted hover:text-white/70 transition-colors underline underline-offset-2"
+        className="text-xs text-auth-muted hover:text-text-primary transition-colors underline underline-offset-2"
       >
         Cancel and sign out
       </button>

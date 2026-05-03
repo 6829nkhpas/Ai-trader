@@ -1,20 +1,20 @@
 import type { Metadata } from 'next';
 import React from 'react';
-import { Inter, Outfit } from 'next/font/google';
+import { Manrope, Space_Grotesk } from 'next/font/google';
 
 export const metadata: Metadata = {
-  title: 'Trivx — Identity Gateway',
-  description: 'Sign in or create your Trivx AI-Trade account.',
+  title: 'AI Trader - Identity Gateway',
+  description: 'Sign in or create your AI Trader account.',
 };
 
-const outfit = Outfit({
-  variable: '--font-outfit',
+const spaceGrotesk = Space_Grotesk({
+  variable: '--font-space',
   subsets: ['latin'],
   display: 'swap',
 });
 
-const inter = Inter({
-  variable: '--font-inter',
+const manrope = Manrope({
+  variable: '--font-manrope',
   subsets: ['latin'],
   display: 'swap',
 });
@@ -26,7 +26,7 @@ export default function AuthLayout({
 }) {
   return (
     <div
-      className={`${outfit.variable} ${inter.variable} auth-shell`}
+      className={`${spaceGrotesk.variable} ${manrope.variable} auth-shell`}
       suppressHydrationWarning
     >
       {/* ── Ambient glow orbs ─────────────────────────────────────────── */}
@@ -45,25 +45,25 @@ export default function AuthLayout({
             <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
               <path
                 d="M14 2L26 8V20L14 26L2 20V8L14 2Z"
-                stroke="url(#trivxGrad)"
+                stroke="url(#aiTraderGrad)"
                 strokeWidth="1.5"
                 fill="none"
               />
               <path
                 d="M14 7L21 11V18L14 22L7 18V11L14 7Z"
-                fill="url(#trivxGrad)"
+                fill="url(#aiTraderGrad)"
                 opacity="0.25"
               />
-              <circle cx="14" cy="14" r="3" fill="url(#trivxGrad)" />
+              <circle cx="14" cy="14" r="3" fill="url(#aiTraderGrad)" />
               <defs>
-                <linearGradient id="trivxGrad" x1="2" y1="2" x2="26" y2="26">
-                  <stop offset="0%" stopColor="#818cf8" />
-                  <stop offset="100%" stopColor="#06b6d4" />
+                <linearGradient id="aiTraderGrad" x1="2" y1="2" x2="26" y2="26">
+                  <stop offset="0%" stopColor="#059669" />
+                  <stop offset="100%" stopColor="#0f766e" />
                 </linearGradient>
               </defs>
             </svg>
           </div>
-          <span className="auth-logo-text">Trivx</span>
+          <span className="auth-logo-text">AI Trader</span>
         </div>
 
         {/* Form card */}
@@ -73,7 +73,7 @@ export default function AuthLayout({
 
         {/* Footer */}
         <p className="auth-footer">
-          © {new Date().getFullYear()} Trivx Technologies. All rights reserved.
+          © {new Date().getFullYear()} AI Trader. All rights reserved.
           &nbsp;·&nbsp;
           <a href="#" className="auth-link">Privacy</a>
           &nbsp;·&nbsp;

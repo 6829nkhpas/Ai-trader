@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   CheckCircle2,
   Eye,
@@ -13,6 +13,7 @@ import {
 import { authApi } from '@/lib/api-client';
 import { useAuth } from '@/context/AuthContext';
 import type { User } from '@/context/AuthContext';
+import { resolveAuthRedirect } from '@/lib/auth-redirect';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Password-complexity rules (mirrors backend Argon2id config)
@@ -25,11 +26,11 @@ interface PasswordRule {
 }
 
 const PASSWORD_RULES: PasswordRule[] = [
-  { id: 'len',     label: 'At least 12 characters',        test: (p) => p.length >= 12       },
-  { id: 'upper',   label: 'One uppercase letter (A–Z)',     test: (p) => /[A-Z]/.test(p)      },
-  { id: 'lower',   label: 'One lowercase letter (a–z)',     test: (p) => /[a-z]/.test(p)      },
-  { id: 'digit',   label: 'One digit (0–9)',                test: (p) => /\d/.test(p)         },
-  { id: 'special', label: 'One special character (!@#…)',   test: (p) => /[^A-Za-z0-9]/.test(p) },
+  { id: 'len', label: 'At least 12 characters', test: (p) => p.length >= 12 },
+  { id: 'upper', label: 'One uppercase letter (A–Z)', test: (p) => /[A-Z]/.test(p) },
+  { id: 'lower', label: 'One lowercase letter (a–z)', test: (p) => /[a-z]/.test(p) },
+  { id: 'digit', label: 'One digit (0–9)', test: (p) => /\d/.test(p) },
+  { id: 'special', label: 'One special character (!@#…)', test: (p) => /[^A-Za-z0-9]/.test(p) },
 ];
 
 function validateEmail(email: string): string | null {
@@ -46,12 +47,6 @@ function validatePassword(password: string): string | null {
   return null;
 }
 
-function validateConfirm(password: string, confirm: string): string | null {
-  if (!confirm) return 'Please confirm your password.';
-  if (password !== confirm) return 'Passwords do not match.';
-  return null;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Password strength meter
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,12 +54,12 @@ function validateConfirm(password: string, confirm: string): string | null {
 function PasswordStrengthMeter({ password }: { password: string }) {
   if (!password) return null;
   const passed = PASSWORD_RULES.filter((r) => r.test(password)).length;
-  const pct    = Math.round((passed / PASSWORD_RULES.length) * 100);
-  const color  =
+  const pct = Math.round((passed / PASSWORD_RULES.length) * 100);
+  const color =
     pct <= 20 ? '#ef4444'
-    : pct <= 60 ? '#f97316'
-    : pct <= 80 ? '#eab308'
-    : '#22c55e';
+      : pct <= 60 ? '#f97316'
+        : pct <= 80 ? '#eab308'
+          : '#22c55e';
 
   return (
     <div className="mt-2 space-y-2">
@@ -103,31 +98,28 @@ function PasswordStrengthMeter({ password }: { password: string }) {
 
 export default function SignupForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectTo = resolveAuthRedirect(searchParams);
   const { onLoginSuccess } = useAuth();
 
-  const [email, setEmail]         = useState('');
-  const [displayName, setName]    = useState('');
-  const [password, setPassword]   = useState('');
-  const [confirm, setConfirm]     = useState('');
-  const [showPass, setShowPass]   = useState(false);
-  const [showConf, setShowConf]   = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPass, setShowPass] = useState(false);
 
-  const [emailErr, setEmailErr]   = useState<string | null>(null);
-  const [passErr, setPassErr]     = useState<string | null>(null);
-  const [confErr, setConfErr]     = useState<string | null>(null);
+  const [emailErr, setEmailErr] = useState<string | null>(null);
+  const [passErr, setPassErr] = useState<string | null>(null);
   const [serverErr, setServerErr] = useState<string | null>(null);
 
   const [isLoading, setIsLoading] = useState(false);
-  const emailRef                  = useRef<HTMLInputElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     emailRef.current?.focus();
   }, []);
 
   // ── Field blur validation ─────────────────────────────────────────────────
-  const handleEmailBlur   = () => setEmailErr(validateEmail(email));
-  const handlePassBlur    = () => setPassErr(validatePassword(password));
-  const handleConfirmBlur = () => setConfErr(validateConfirm(password, confirm));
+  const handleEmailBlur = () => setEmailErr(validateEmail(email));
+  const handlePassBlur = () => setPassErr(validatePassword(password));
 
   // ── Submit ────────────────────────────────────────────────────────────────
   const handleSubmit = useCallback(
@@ -137,19 +129,13 @@ export default function SignupForm() {
 
       const eErr = validateEmail(email);
       const pErr = validatePassword(password);
-      const cErr = validateConfirm(password, confirm);
       setEmailErr(eErr);
       setPassErr(pErr);
-      setConfErr(cErr);
-      if (eErr || pErr || cErr) return;
+      if (eErr || pErr) return;
 
       setIsLoading(true);
       try {
-        const res = await authApi.signup({
-          email,
-          password,
-          displayName: displayName.trim() || undefined,
-        });
+        const res = await authApi.signup({ email, password });
         const { user, mfa_required } = res.data as {
           user: User;
           mfa_required: boolean;
@@ -158,19 +144,20 @@ export default function SignupForm() {
         onLoginSuccess(user, mfa_required);
 
         if (!mfa_required) {
-          router.push('/dashboard');
+          router.replace(redirectTo);
         }
       } catch (err: unknown) {
-        const axErr = err as { response?: { data?: { message?: string } } };
+        const axErr = err as { response?: { data?: { message?: string; error?: string } } };
         setServerErr(
+          axErr?.response?.data?.error ??
           axErr?.response?.data?.message ??
-            'Registration failed. Please try again.'
+          'Registration failed. Please try again.'
         );
       } finally {
         setIsLoading(false);
       }
     },
-    [email, password, confirm, displayName, onLoginSuccess, router]
+    [email, password, onLoginSuccess, router, redirectTo]
   );
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -189,22 +176,6 @@ export default function SignupForm() {
           {serverErr}
         </div>
       )}
-
-      {/* ── Display name ─────────────────────────────────────────────────── */}
-      <div className="auth-field-group">
-        <label htmlFor="signup-name" className="auth-label">
-          Display name <span className="text-auth-muted">(optional)</span>
-        </label>
-        <input
-          id="signup-name"
-          type="text"
-          autoComplete="name"
-          value={displayName}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Yash"
-          className="auth-input"
-        />
-      </div>
 
       {/* ── Email ────────────────────────────────────────────────────────── */}
       <div className="auth-field-group">
@@ -266,42 +237,6 @@ export default function SignupForm() {
         {passErr && (
           <p id="signup-password-error" role="alert" className="auth-field-error">
             {passErr}
-          </p>
-        )}
-      </div>
-
-      {/* ── Confirm password ─────────────────────────────────────────────── */}
-      <div className="auth-field-group">
-        <label htmlFor="signup-confirm" className="auth-label">
-          Confirm password
-        </label>
-        <div className="relative">
-          <input
-            id="signup-confirm"
-            type={showConf ? 'text' : 'password'}
-            autoComplete="new-password"
-            value={confirm}
-            onChange={(e) => { setConfirm(e.target.value); setConfErr(null); }}
-            onBlur={handleConfirmBlur}
-            placeholder="Repeat your password"
-            aria-invalid={!!confErr}
-            aria-describedby={confErr ? 'signup-confirm-error' : undefined}
-            className={`auth-input pr-10${confErr ? ' auth-input--error' : ''}`}
-          />
-          <button
-            type="button"
-            id="signup-toggle-confirm"
-            aria-label={showConf ? 'Hide password' : 'Show password'}
-            onClick={() => setShowConf((v) => !v)}
-            className="auth-eye-btn"
-            tabIndex={-1}
-          >
-            {showConf ? <EyeOff size={16} /> : <Eye size={16} />}
-          </button>
-        </div>
-        {confErr && (
-          <p id="signup-confirm-error" role="alert" className="auth-field-error">
-            {confErr}
           </p>
         )}
       </div>

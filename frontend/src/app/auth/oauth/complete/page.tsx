@@ -14,8 +14,8 @@ export default function OAuthCompletePage() {
     <Suspense
       fallback={
         <div className="flex flex-col items-center gap-4 py-8">
-          <Loader2 size={32} className="animate-spin text-[#6366f1]" />
-          <p className="text-sm" style={{ color: 'rgba(255,255,255,0.38)' }}>
+          <Loader2 size={32} className="animate-spin" style={{ color: 'var(--color-primary)' }} />
+          <p className="text-sm" style={{ color: 'var(--auth-muted)' }}>
             Completing sign-in…
           </p>
         </div>

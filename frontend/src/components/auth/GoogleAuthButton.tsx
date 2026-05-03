@@ -47,8 +47,8 @@ interface GoogleAuthButtonProps {
 
 export default function GoogleAuthButton({ mode = 'login' }: GoogleAuthButtonProps) {
   const { onLoginSuccess } = useAuth();
-  const [isLoading, setIsLoading]   = useState(false);
-  const [error, setError]           = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   /**
    * Initiates the Google OAuth 2.0 PKCE handshake via the backend.
@@ -106,7 +106,7 @@ export default function GoogleAuthButton({ mode = 'login' }: GoogleAuthButtonPro
         className="google-auth-btn"
       >
         {isLoading ? (
-          <Loader2 size={18} className="animate-spin text-white/60" />
+          <Loader2 size={18} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
         ) : (
           <GoogleIcon />
         )}
