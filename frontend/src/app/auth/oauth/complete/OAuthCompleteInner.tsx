@@ -6,7 +6,7 @@ import { Loader2, XCircle } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
 import { useAuth } from '@/context/AuthContext';
 import type { User } from '@/context/AuthContext';
-import { resolveAuthRedirect } from '@/lib/auth-redirect';
+import { resolvePostAuthDestination } from '@/lib/onboarding';
 
 /**
  * OAuthCompleteInner — Client Component
@@ -20,7 +20,6 @@ export default function OAuthCompleteInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { onLoginSuccess } = useAuth();
-  const redirectTo = resolveAuthRedirect(searchParams);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -42,11 +41,13 @@ export default function OAuthCompleteInner() {
         );
         const { user, mfa_required = false } = res.data;
         onLoginSuccess(user, mfa_required);
-        router.replace(
-          mfa_required
-            ? `/auth/login?redirect=${encodeURIComponent(redirectTo)}`
-            : redirectTo
-        );
+        if (mfa_required) {
+          router.replace('/auth/login');
+          return;
+        }
+
+        const target = await resolvePostAuthDestination();
+        router.replace(target);
       } catch {
         setError('Could not verify your session. Please sign in again.');
       }

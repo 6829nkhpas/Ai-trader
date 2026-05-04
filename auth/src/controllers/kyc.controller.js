@@ -6,6 +6,7 @@ import { verifyPan } from '../adapters/kyc/pan.adapter.js';
 import { generatePresignedUploadUrl } from '../services/s3.service.js';
 import { getPool } from '../db.js';
 import { upsertUserProfile, findUserProfileByUserId } from '../repository/user_profile.repository.js';
+import { KYC_STATES } from '../utils/kyc.state.js';
 
 export async function handleVerifyPan(req, reply) {
   const { panNumber } = req.body || {};
@@ -26,14 +27,14 @@ export async function handleVerifyPan(req, reply) {
 
 export async function handleLivenessCheck(req, reply) {
   const { blobBase64 } = req.body || {};
-  
+
   if (!blobBase64) {
     return reply.status(400).send({ error: 'Missing selfie blob payload' });
   }
 
   // Simulate liveness detection
   const livenessScore = Math.random() * 100;
-  
+
   if (livenessScore < 85) {
     return reply.status(403).send({ error: 'Liveness Check Failed', details: { score: livenessScore.toFixed(2) } });
   }
@@ -70,12 +71,19 @@ export async function handleUpsertProfile(req, reply) {
   const client = await pool.connect();
 
   try {
+    const existingProfile = await findUserProfileByUserId(client, userId);
+    const nextStatus =
+      !existingProfile || existingProfile.kyc_status === KYC_STATES.PENDING
+        ? KYC_STATES.BASIC_INFO_DONE
+        : null;
+
     const profile = await upsertUserProfile(client, {
       userId,
       legalName,
       panNumber,
       residentialAddress,
-      aadhaarMetadata
+      aadhaarMetadata,
+      kycStatus: nextStatus
     });
     return reply.status(200).send({ message: 'Profile updated successfully', profile });
   } catch (err) {

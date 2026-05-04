@@ -33,20 +33,21 @@ function decryptProfileData(row) {
 /**
  * Insert or Update a user profile with encrypted PII.
  * @param {import('pg').PoolClient} client
- * @param {{ userId: string, legalName?: string, panNumber?: string, residentialAddress?: string, aadhaarMetadata?: object }} data
+ * @param {{ userId: string, legalName?: string, panNumber?: string, residentialAddress?: string, aadhaarMetadata?: object, kycStatus?: string | null }} data
  * @returns {Promise<object>}
  */
 export async function upsertUserProfile(client, data) {
   const encrypted = encryptProfileData(data);
-  
+
   const result = await client.query(
-    `INSERT INTO user_profiles (user_id, legal_name, pan_number, residential_address, aadhaar_metadata)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO user_profiles (user_id, legal_name, pan_number, residential_address, aadhaar_metadata, kyc_status)
+     VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'PENDING'))
      ON CONFLICT (user_id) DO UPDATE SET
        legal_name = EXCLUDED.legal_name,
        pan_number = EXCLUDED.pan_number,
        residential_address = EXCLUDED.residential_address,
        aadhaar_metadata = EXCLUDED.aadhaar_metadata,
+        kyc_status = COALESCE($6, user_profiles.kyc_status),
        updated_at = NOW()
      RETURNING id, user_id, legal_name, pan_number, residential_address, aadhaar_metadata, kyc_status, created_at, updated_at`,
     [
@@ -54,10 +55,11 @@ export async function upsertUserProfile(client, data) {
       encrypted.legalName,
       encrypted.panNumber,
       encrypted.residentialAddress,
-      data.aadhaarMetadata ? JSON.stringify(data.aadhaarMetadata) : null
+      data.aadhaarMetadata ? JSON.stringify(data.aadhaarMetadata) : null,
+      data.kycStatus ?? null
     ]
   );
-  
+
   // Return decrypted data back to the business layer
   return decryptProfileData(result.rows[0]);
 }
@@ -75,7 +77,7 @@ export async function findUserProfileByUserId(client, userId) {
      WHERE user_id = $1`,
     [userId]
   );
-  
+
   return decryptProfileData(result.rows[0]);
 }
 
@@ -92,7 +94,7 @@ export async function getRawUserProfileCiphertext(client, userId) {
      WHERE user_id = $1`,
     [userId]
   );
-  
+
   return result.rows[0] || null;
 }
 

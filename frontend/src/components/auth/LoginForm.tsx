@@ -2,12 +2,10 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
 import { Eye, EyeOff, Loader2, ShieldCheck } from 'lucide-react';
 import { authApi } from '@/lib/api-client';
 import { useAuth } from '@/context/AuthContext';
 import type { User } from '@/context/AuthContext';
-import { resolveAuthRedirect } from '@/lib/auth-redirect';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Validation
@@ -29,9 +27,6 @@ function validatePassword(password: string): string | null {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function LoginForm() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const redirectTo = resolveAuthRedirect(searchParams);
   const { onLoginSuccess } = useAuth();
 
   const [email, setEmail] = useState('');
@@ -77,9 +72,7 @@ export default function LoginForm() {
 
         onLoginSuccess(user, mfa_required, accessToken, mfa_setup_required);
 
-        if (!mfa_required) {
-          router.replace(redirectTo);
-        }
+        // The parent page handles post-auth redirects (onboarding vs dashboard).
         // If MFA is required, the AuthContext will set authState = 'mfa'
         // and the parent page will swap to <MfaChallenge />
       } catch (err: unknown) {
@@ -93,7 +86,7 @@ export default function LoginForm() {
         setIsLoading(false);
       }
     },
-    [email, password, onLoginSuccess, router, redirectTo]
+    [email, password, onLoginSuccess]
   );
 
   // ─────────────────────────────────────────────────────────────────────────

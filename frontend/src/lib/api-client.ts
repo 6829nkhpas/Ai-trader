@@ -144,6 +144,13 @@ export interface GoogleOAuthPayload {
   idToken: string;
 }
 
+export interface KycProfilePayload {
+  legalName: string;
+  panNumber: string;
+  residentialAddress: string;
+  aadhaarMetadata?: Record<string, unknown> | null;
+}
+
 export const authApi = {
   login: (payload: LoginPayload) =>
     apiClient.post('/api/auth/login', payload),
@@ -173,6 +180,12 @@ export const authApi = {
 
   googleOAuth: (payload: GoogleOAuthPayload) =>
     apiClient.post('/api/auth/oauth/google', payload),
+} as const;
+
+export const kycApi = {
+  getProfile: () => apiClient.get('/api/kyc/profile'),
+  upsertProfile: (payload: KycProfilePayload) =>
+    apiClient.post('/api/kyc/profile', payload),
 } as const;
 
 export type { AxiosRequestConfig };

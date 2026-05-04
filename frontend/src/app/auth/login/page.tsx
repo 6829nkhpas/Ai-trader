@@ -1,26 +1,41 @@
 'use client';
 
-import React from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect } from 'react';
+import React, { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import LoginForm from '@/components/auth/LoginForm';
 import GoogleAuthButton from '@/components/auth/GoogleAuthButton';
 import MfaChallenge from '@/components/auth/MfaChallenge';
 import { useAuth } from '@/context/AuthContext';
-import { resolveAuthRedirect } from '@/lib/auth-redirect';
+import { resolvePostAuthDestination } from '@/lib/onboarding';
 
 export default function LoginPage() {
   const { authState } = useAuth();
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const redirectTo = resolveAuthRedirect(searchParams);
 
-  // If already authenticated, go straight to dashboard
+  // If already authenticated, go to onboarding or dashboard
   useEffect(() => {
     if (authState === 'authenticated') {
-      router.replace(redirectTo);
+      let cancelled = false;
+
+      async function route() {
+        try {
+          const target = await resolvePostAuthDestination();
+          if (!cancelled) {
+            router.replace(target);
+          }
+        } catch {
+          if (!cancelled) {
+            router.replace('/auth/login?reason=session_expired');
+          }
+        }
+      }
+
+      route();
+      return () => {
+        cancelled = true;
+      };
     }
-  }, [authState, router, redirectTo]);
+  }, [authState, router]);
 
   // ── MFA gate ───────────────────────────────────────────────────────────
   if (authState === 'mfa') {

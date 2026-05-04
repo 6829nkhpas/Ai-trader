@@ -1,24 +1,40 @@
 'use client';
 
 import React, { useEffect } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import SignupForm from '@/components/auth/SignupForm';
 import GoogleAuthButton from '@/components/auth/GoogleAuthButton';
 import MfaChallenge from '@/components/auth/MfaChallenge';
 import { useAuth } from '@/context/AuthContext';
-import { resolveAuthRedirect } from '@/lib/auth-redirect';
+import { resolvePostAuthDestination } from '@/lib/onboarding';
 
 export default function SignupPage() {
   const { authState } = useAuth();
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const redirectTo = resolveAuthRedirect(searchParams);
 
   useEffect(() => {
     if (authState === 'authenticated') {
-      router.replace(redirectTo);
+      let cancelled = false;
+
+      async function route() {
+        try {
+          const target = await resolvePostAuthDestination();
+          if (!cancelled) {
+            router.replace(target);
+          }
+        } catch {
+          if (!cancelled) {
+            router.replace('/auth/login?reason=session_expired');
+          }
+        }
+      }
+
+      route();
+      return () => {
+        cancelled = true;
+      };
     }
-  }, [authState, router, redirectTo]);
+  }, [authState, router]);
 
   if (authState === 'mfa') {
     return <MfaChallenge />;

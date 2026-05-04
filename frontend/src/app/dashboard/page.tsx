@@ -6,13 +6,12 @@
  * target while the full trading terminal lives at the root (/). In a future
  * phase this will be replaced with a proper dashboard hub.
  */
-import { redirect } from 'next/navigation';
+import DashboardRedirect from './DashboardRedirect';
 
 export const metadata = {
   title: 'AI Trader - Dashboard',
 };
 
 export default function DashboardPage() {
-  // Redirect to the trading terminal at root (existing page.tsx)
-  redirect('/');
+  return <DashboardRedirect />;
 }

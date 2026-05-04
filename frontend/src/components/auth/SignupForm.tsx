@@ -2,7 +2,6 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
 import {
   CheckCircle2,
   Eye,
@@ -13,7 +12,6 @@ import {
 import { authApi } from '@/lib/api-client';
 import { useAuth } from '@/context/AuthContext';
 import type { User } from '@/context/AuthContext';
-import { resolveAuthRedirect } from '@/lib/auth-redirect';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Password-complexity rules (mirrors backend Argon2id config)
@@ -97,9 +95,6 @@ function PasswordStrengthMeter({ password }: { password: string }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function SignupForm() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const redirectTo = resolveAuthRedirect(searchParams);
   const { onLoginSuccess } = useAuth();
 
   const [email, setEmail] = useState('');
@@ -145,9 +140,7 @@ export default function SignupForm() {
 
         onLoginSuccess(user, mfa_required, accessToken, mfa_setup_required);
 
-        if (!mfa_required) {
-          router.replace(redirectTo);
-        }
+        // The parent page handles post-auth redirects (onboarding vs dashboard).
       } catch (err: unknown) {
         const axErr = err as { response?: { data?: { message?: string; error?: string } } };
         setServerErr(
@@ -159,7 +152,7 @@ export default function SignupForm() {
         setIsLoading(false);
       }
     },
-    [email, password, onLoginSuccess, router, redirectTo]
+    [email, password, onLoginSuccess]
   );
 
   // ─────────────────────────────────────────────────────────────────────────

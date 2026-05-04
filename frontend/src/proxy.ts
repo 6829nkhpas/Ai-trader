@@ -21,7 +21,7 @@ const SESSION_COOKIE = 'access_token';
 const REFRESH_COOKIE = 'refresh_token';
 
 // Routes that require an authenticated session
-const PROTECTED_PREFIXES = ['/dashboard', '/trade', '/portfolio', '/settings'];
+const PROTECTED_PREFIXES = ['/dashboard', '/trade', '/portfolio', '/settings', '/auth/onboarding'];
 
 // Routes that should redirect to /dashboard if already authenticated
 const AUTH_PREFIXES = ['/auth/login', '/auth/signup'];
@@ -36,9 +36,10 @@ function hasSession(req: NextRequest): boolean {
 export function proxy(req: NextRequest): NextResponse {
   const { pathname } = req.nextUrl;
   const authenticated = hasSession(req);
+  const isRoot = pathname === '/';
 
   // ── Guard: protected route without session → /auth/login ──────────────
-  const isProtected = PROTECTED_PREFIXES.some((p) => pathname.startsWith(p));
+  const isProtected = isRoot || PROTECTED_PREFIXES.some((p) => pathname.startsWith(p));
   if (isProtected && !authenticated) {
     const loginUrl = req.nextUrl.clone();
     loginUrl.pathname = '/auth/login';
