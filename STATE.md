@@ -6,9 +6,9 @@
 
 **Current Objective:** Phase 6.0 - Build the AI Predictive Engine.
 
-**Current Status:** Phase 6.1 and 6.2 Complete and Documented. The Predictive Agent (Rolling Linear Regression) is fully operational and broadcasting to Kafka.
+**Current Status:** Phase 6.3 Complete. Predictive WS (8082) is active. The Next.js Glass-Box successfully renders AI forward-projections as dashed Ghost Lines.
 
-**Next Steps:** Phase 6.3: UI Ghost Candles - Establish the predictive WebSocket on port 8082 and render forward-looking projections in the Next.js Glass-Box UI.
+**Next Steps:** Phase 7.1: The Edge Terminal - Bypassing the browser to initialize the native Tauri Rust desktop wrapper for zero-latency rendering.
 
 **Deprecated:**
 Explicitly note that `MASTER_CONTEXT.md` and `SESSION_MEMORY.md` are now obsolete and should be ignored entirely by the system.

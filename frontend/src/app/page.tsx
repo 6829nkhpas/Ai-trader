@@ -14,7 +14,7 @@ import { isOnboardingComplete } from '@/lib/onboarding';
 
 export default function Home() {
   const router = useRouter();
-  const { connectWebSocket, connectAlphaWebSocket, activeDecision, liveDecisions } = useTradeStore();
+  const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, activeDecision, liveDecisions } = useTradeStore();
   const [activeTimeframe, setActiveTimeframe] = useState('1m');
   const [indicatorsEnabled, setIndicatorsEnabled] = useState(true);
   const [aiEnabled, setAiEnabled] = useState(true);
@@ -55,7 +55,8 @@ export default function Home() {
 
   useEffect(() => {
     connectAlphaWebSocket('ws://127.0.0.1:8081');
-  }, [connectAlphaWebSocket]);
+    connectPredictiveWebSocket('ws://127.0.0.1:8082');
+  }, [connectAlphaWebSocket, connectPredictiveWebSocket]);
 
   if (isChecking) {
     return (

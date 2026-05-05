@@ -9,10 +9,12 @@
   - **Math Engine:** Uses a 14-period rolling window of 10-minute closing prices.
   - **Algorithm:** Standard Least-Squares Linear Regression to project the $n+1$ candle (the next 10-minute close).
   - **Confidence Score:** Calculated using the $R^2$ (Coefficient of Determination) mapped to a 1-100 scale.
+  - **WebSocket:** Port 8082 — broadcasts PredictiveSignal JSON for frontend Ghost Line rendering.
 - `/aggregator` - Core decision fusion engine
 - `/alpha-terminal` - V2 Predictive Engine (Rust, WebSocket port 8081)
 - `/frontend` - Glass-Box trading UI
   - Features the V2 Alpha Predictive Chart, which ingests `OhlcCandle` data directly from the V2 WebSocket on port 8081, operating completely parallel to the V1 Aggregator feed on port 8080.
+  - Renders AI forward-projections as dashed Ghost Lines using `PredictiveSignal` data from the Predictive WebSocket on port 8082.
 - `/shared_protos` - Universal Protobuf data contracts
 
 ## Tech Stack

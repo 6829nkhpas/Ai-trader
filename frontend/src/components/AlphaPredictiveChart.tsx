@@ -1,14 +1,17 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
-import { createChart, ColorType, Time } from 'lightweight-charts';
+import { createChart, ColorType, Time, IChartApi, ISeriesApi, LineSeries, CandlestickSeries } from 'lightweight-charts';
 import { useTradeStore } from '../store/useTradeStore';
 
 export default function AlphaPredictiveChart() {
   const chartContainerRef = useRef<HTMLDivElement>(null);
-  const { ohlcCandles } = useTradeStore();
-  const seriesRef = useRef<any>(null);
+  const { ohlcCandles, predictiveSignals } = useTradeStore();
+  const chartRef = useRef<IChartApi | null>(null);
+  const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const ghostLineRef = useRef<ISeriesApi<'Line'> | null>(null);
 
+  // ── Chart initialisation ─────────────────────────────────────────────
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -21,7 +24,7 @@ export default function AlphaPredictiveChart() {
       height: chartContainerRef.current.clientHeight,
     });
 
-    const series = chart.addCandlestickSeries({
+    const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#22c55e',
       downColor: '#ef4444',
       borderVisible: false,
@@ -29,7 +32,17 @@ export default function AlphaPredictiveChart() {
       wickDownColor: '#ef4444',
     });
 
-    seriesRef.current = series;
+    // Ghost Line — dashed purple projection into the future
+    const ghostLine = chart.addSeries(LineSeries, {
+      color: '#c084fc',
+      lineWidth: 2,
+      lineStyle: 2, // Dashed
+      crosshairMarkerVisible: true,
+    });
+
+    chartRef.current = chart;
+    candleSeriesRef.current = candleSeries;
+    ghostLineRef.current = ghostLine;
 
     const handleResize = () => {
       if (chartContainerRef.current) {
@@ -48,23 +61,51 @@ export default function AlphaPredictiveChart() {
     };
   }, []);
 
+  // ── Data synchronisation ─────────────────────────────────────────────
   useEffect(() => {
-    if (seriesRef.current && ohlcCandles) {
-      const mappedData = ohlcCandles.map((candle) => ({
-        time: Math.floor(candle.start_timestamp_ms / 1000) as Time,
-        open: candle.open,
-        high: candle.high,
-        low: candle.low,
-        close: candle.close,
-      }));
+    if (!candleSeriesRef.current) return;
 
-      // lightweight-charts requires strictly ascending time order and unique times
-      const uniqueData = Array.from(new Map(mappedData.map(item => [item.time, item])).values());
-      uniqueData.sort((a, b) => (a.time as number) - (b.time as number));
+    // Map OHLCCandles to lightweight-charts format
+    const mappedData = (ohlcCandles ?? []).map((candle) => ({
+      time: Math.floor(candle.start_timestamp_ms / 1000) as Time,
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+    }));
 
-      seriesRef.current.setData(uniqueData);
+    // De-duplicate and sort ascending
+    const uniqueData = Array.from(new Map(mappedData.map(item => [item.time, item])).values());
+    uniqueData.sort((a, b) => (a.time as number) - (b.time as number));
+
+    candleSeriesRef.current.setData(uniqueData);
+
+    // ── Ghost projection ───────────────────────────────────────────────
+    if (ghostLineRef.current && uniqueData.length > 0) {
+      const latestCandle = ohlcCandles[ohlcCandles.length - 1];
+
+      // Find the latest PredictiveSignal matching the active symbol
+      const matchingSignals = (predictiveSignals ?? []).filter(
+        (s) => s.symbol === latestCandle.symbol
+      );
+      const latestSignal = matchingSignals[matchingSignals.length - 1];
+
+      if (latestSignal) {
+        const point1 = {
+          time: Math.floor(latestCandle.start_timestamp_ms / 1000) as Time,
+          value: latestCandle.close,
+        };
+        const point2 = {
+          time: Math.floor(latestSignal.target_timestamp_ms / 1000) as Time,
+          value: latestSignal.predicted_close_price,
+        };
+
+        ghostLineRef.current.setData([point1, point2]);
+      } else {
+        ghostLineRef.current.setData([]);
+      }
     }
-  }, [ohlcCandles]);
+  }, [ohlcCandles, predictiveSignals]);
 
   return (
     <div

@@ -36,6 +36,14 @@ export interface OhlcCandle {
   volume: number;
 }
 
+export interface PredictiveSignal {
+  symbol: string;
+  timestamp_ms: number;
+  target_timestamp_ms: number;
+  predicted_close_price: number;
+  confidence_score: number;
+}
+
 export interface ExecutedTrade {
   decision: AggregatedDecision;
   quantity: number;
@@ -50,10 +58,12 @@ interface TradeStore {
   executedTrades: ExecutedTrade[];
   latencyMs: number;
   ohlcCandles: OhlcCandle[];
+  predictiveSignals: PredictiveSignal[];
   connectionStatus: 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED';
   wsStatus: 'disconnected' | 'connecting' | 'connected' | 'error';
   connectWebSocket: () => void;
   connectAlphaWebSocket: (url: string) => void;
+  connectPredictiveWebSocket: (url: string) => void;
   executeTrade: (decision: AggregatedDecision, quantity: number) => void;
   rejectTrade: (decision: AggregatedDecision) => void;
   resetSession: () => void;
@@ -107,6 +117,7 @@ export const useTradeStore = create<TradeStore>((set) => {
     executedTrades: [],
     latencyMs: 0,
     ohlcCandles: [],
+    predictiveSignals: [],
     connectionStatus: 'DISCONNECTED',
     wsStatus: 'disconnected',
 
@@ -124,6 +135,20 @@ export const useTradeStore = create<TradeStore>((set) => {
           });
         } catch (e) {
           console.error('Error parsing Alpha OhlcCandle WS message:', e);
+        }
+      };
+    },
+
+    connectPredictiveWebSocket: (url: string) => {
+      const predictiveWs = new WebSocket(url);
+      predictiveWs.onmessage = (event) => {
+        try {
+          const signal: PredictiveSignal = JSON.parse(event.data);
+          set((state) => ({
+            predictiveSignals: [...state.predictiveSignals, signal].slice(-100),
+          }));
+        } catch (e) {
+          console.error('Error parsing PredictiveSignal WS message:', e);
         }
       };
     },

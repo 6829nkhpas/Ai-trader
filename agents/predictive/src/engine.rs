@@ -1,12 +1,13 @@
 // engine.rs — Kafka Consumer & Producer loop for the Predictive Agent.
 //
-// Phase 6.2 — Alpha Suite Event Loop.
+// Phase 6.3 — Alpha Suite Event Loop + WebSocket Broadcast.
 //
 // Pipeline:
 //   1. Consume Protobuf-encoded OHLCCandle messages from `market.ohlc.10m`.
 //   2. Feed each candle's `close` price into `PredictionEngine::add_close_price()`.
 //   3. Call `predict_next()` — if a prediction is generated, construct a
 //      `PredictiveSignal` and publish it to `signals.predictive`.
+//   4. Serialize the signal to JSON and broadcast over the WS channel (port 8082).
 //
 // The consumer uses `auto.offset.reset = "latest"` so only real-time candles
 // are processed (no historical replay).  The producer uses low-latency
@@ -24,6 +25,7 @@ pub mod engine {
     use rdkafka::message::Message as KafkaMessage;
     use rdkafka::producer::{FutureProducer, FutureRecord};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use tokio::sync::broadcast;
 
     // ── Constants ────────────────────────────────────────────────────────────
     /// 10 minutes in milliseconds — offset added to `end_timestamp_ms` to
@@ -123,12 +125,13 @@ pub mod engine {
             .as_millis() as u64
     }
 
-    /// Entry point for the Kafka consume → predict → produce loop.
+    /// Entry point for the Kafka consume → predict → produce → broadcast loop.
     ///
     /// This function blocks indefinitely, processing each incoming candle
-    /// on the `market.ohlc.10m` topic. Call from `main()` inside a Tokio
-    /// runtime.
-    pub async fn run(prediction_engine: &mut PredictionEngine) {
+    /// on the `market.ohlc.10m` topic.  After publishing each prediction
+    /// to Kafka, the signal is serialized to JSON and sent through `ws_tx`
+    /// for WebSocket fan-out on port 8082.
+    pub async fn run(prediction_engine: &mut PredictionEngine, ws_tx: broadcast::Sender<String>) {
         // ── Configuration ────────────────────────────────────────────────
         let brokers = std::env::var("KAFKA_BROKER_URL")
             .unwrap_or_else(|_| "localhost:9092".to_string());
@@ -204,6 +207,20 @@ pub mod engine {
                                 signal.confidence_score,
                                 signal.target_timestamp_ms,
                             );
+
+                            // ── Broadcast over WebSocket ─────────────────
+                            // Serialize to JSON for the frontend Ghost Line.
+                            let json = serde_json::json!({
+                                "symbol": signal.symbol,
+                                "timestamp_ms": signal.timestamp_ms,
+                                "target_timestamp_ms": signal.target_timestamp_ms,
+                                "predicted_close_price": signal.predicted_close_price,
+                                "confidence_score": signal.confidence_score,
+                                "model_version": signal.model_version,
+                            });
+
+                            // Best-effort WS broadcast — receivers may be absent.
+                            let _ = ws_tx.send(json.to_string());
 
                             // Fire-and-forget publish in a spawned task so
                             // producer latency doesn't stall the consume loop.
