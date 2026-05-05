@@ -44,7 +44,7 @@ export default function ProfileSwitcher() {
                 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60
                 ${
                   isActive
-                    ? 'bg-[#ECFDF5] text-[#059669]'
+                    ? 'bg-emerald-500/15 text-emerald-400'
                     : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
                 }
               `}

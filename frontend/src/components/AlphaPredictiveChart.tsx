@@ -24,8 +24,10 @@ export default function AlphaPredictiveChart({ activeProfile = 'INTRADAY' }: Alp
 
     const chart = createChart(chartContainerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: '#ffffff' },
-        textColor: '#64748b',
+        background: { type: ColorType.Solid, color: 'transparent' },
+        textColor: '#94a3b8',
+        fontSize: 12,
+        fontFamily: "'Inter', sans-serif",
       },
       width: chartContainerRef.current.clientWidth,
       height: chartContainerRef.current.clientHeight,

@@ -1,27 +1,27 @@
 @import "tailwindcss";
 
 :root {
-  --bg-main: #f8fafc;
-  --bg-surface: #ffffff;
-  --bg-card: #ffffff;
-  --bg-elevated: #f1f5f9;
-  --border-default: #e5e7eb;
-  --border-subtle: #eef2f7;
-  --text-primary: #111827;
-  --text-secondary: #6b7280;
-  --text-muted: #9ca3af;
-  --color-primary: #059669;
-  --color-primary-hover: #047857;
-  --color-bull: #16a34a;
-  --color-bear: #dc2626;
-  --color-neutral: #d97706;
-  --chart-bg: #ffffff;
-  --chart-grid: #eef2f7;
-  --candle-green: #16a34a;
-  --candle-red: #dc2626;
-  --status-live: #16a34a;
-  --status-warning: #d97706;
-  --status-error: #dc2626;
+  --bg-main: #1e293b;        /* slate-900 */
+  --bg-surface: #1e293b;     /* slate-800 */
+  --bg-card: #1e293b;        /* slate-800 */
+  --bg-elevated: #334155;    /* slate-700 */
+  --border-default: #334155; /* slate-700 */
+  --border-subtle: #1e293b;  /* slate-800 */
+  --text-primary: #f8fafc;   /* slate-50 */
+  --text-secondary: #94a3b8; /* slate-400 */
+  --text-muted: #64748b;     /* slate-500 */
+  --color-primary: #10b981;  /* emerald-500 */
+  --color-primary-hover: #34d399; /* emerald-400 */
+  --color-bull: #22c55e;
+  --color-bear: #ef4444;
+  --color-neutral: #f59e0b;
+  --chart-bg: #1e293b;
+  --chart-grid: #334155;
+  --candle-green: #22c55e;
+  --candle-red: #ef4444;
+  --status-live: #22c55e;
+  --status-warning: #f59e0b;
+  --status-error: #ef4444;
   --background: var(--bg-main);
   --foreground: var(--text-primary);
 
@@ -81,23 +81,23 @@ body {
 /* ── Auth color tokens ───────────────────────────────────────────────────── */
 :root {
   --auth-bg-base: var(--bg-main);
-  --auth-bg-tint: #ecfdf5;
-  --auth-card-bg: rgba(255, 255, 255, 0.92);
-  --auth-card-border: rgba(148, 163, 184, 0.35);
-  --auth-input-bg: #ffffff;
+  --auth-bg-tint: #022c22;
+  --auth-card-bg: rgba(30, 41, 59, 0.92);
+  --auth-card-border: rgba(51, 65, 85, 0.5);
+  --auth-input-bg: #0f172a;
   --auth-input-border: var(--border-default);
-  --auth-input-focus: rgba(5, 150, 105, 0.4);
-  --auth-input-error: rgba(220, 38, 38, 0.35);
+  --auth-input-focus: rgba(16, 185, 129, 0.4);
+  --auth-input-error: rgba(239, 68, 68, 0.35);
   --auth-text: var(--text-primary);
   --auth-muted: var(--text-secondary);
-  --auth-label: #475569;
+  --auth-label: #cbd5e1;
   --auth-link: var(--color-primary);
   --auth-accent: var(--color-primary);
-  --auth-accent-soft: rgba(5, 150, 105, 0.12);
-  --auth-accent-strong: rgba(5, 150, 105, 0.3);
-  --orb-a: rgba(5, 150, 105, 0.35);
-  --orb-b: rgba(16, 185, 129, 0.25);
-  --orb-c: rgba(217, 119, 6, 0.2);
+  --auth-accent-soft: rgba(16, 185, 129, 0.12);
+  --auth-accent-strong: rgba(16, 185, 129, 0.3);
+  --orb-a: rgba(16, 185, 129, 0.15);
+  --orb-b: rgba(52, 211, 153, 0.1);
+  --orb-c: rgba(245, 158, 11, 0.1);
 }
 
 /* ── Full-screen shell ───────────────────────────────────────────────────── */
@@ -110,15 +110,15 @@ body {
   background:
     radial-gradient(
       120% 80% at 10% -10%,
-      rgba(5, 150, 105, 0.2) 0%,
-      rgba(248, 250, 252, 0.95) 55%
+      rgba(16, 185, 129, 0.1) 0%,
+      rgba(15, 23, 42, 0.95) 55%
     ),
     radial-gradient(
       100% 70% at 90% 10%,
-      rgba(217, 119, 6, 0.12) 0%,
-      rgba(248, 250, 252, 0.95) 60%
+      rgba(245, 158, 11, 0.05) 0%,
+      rgba(15, 23, 42, 0.95) 60%
     ),
-    linear-gradient(180deg, #f8fafc 0%, #f1f5f9 70%, #ecfdf5 100%);
+    linear-gradient(180deg, #0f172a 0%, #1e293b 70%, #022c22 100%);
   overflow: hidden;
   padding: 2rem 1rem;
   font-family: var(--font-manrope), var(--font-inter), sans-serif;
@@ -412,21 +412,22 @@ body {
   width: 100%;
   height: 2.875rem;
   border-radius: 0.875rem;
+  background: #1e293b;
   border: 1px solid var(--border-default);
-  background: #ffffff;
+  background: #0f172a;
   color: var(--auth-text);
   font-size: 0.9375rem;
   font-weight: 500;
   cursor: pointer;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
   transition:
     background 0.2s ease,
     border-color 0.2s ease,
     transform 0.15s ease;
 }
 .google-auth-btn:hover:not(:disabled) {
-  background: #f8fafc;
-  border-color: #cbd5e1;
+  background: #1e293b;
+  border-color: #475569;
   transform: translateY(-1px);
 }
 .google-auth-btn:disabled {

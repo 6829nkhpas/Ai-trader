@@ -20,12 +20,12 @@ export default function IntradayLayout({ activeProfile = 'INTRADAY' }: IntradayL
             <h2 className="text-sm font-semibold text-text-primary tracking-wide">
               V2 Predictive Engine
             </h2>
-            <span className="rounded bg-[#ECFDF5] px-1.5 py-px text-[9px] font-bold text-[#059669] uppercase tracking-widest">
+            <span className="rounded bg-emerald-500/10 px-1.5 py-px text-[9px] font-bold text-emerald-400 uppercase tracking-widest">
               10m OHLC
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="rounded-md border border-emerald-300 bg-[#ECFDF5] px-2 py-0.5 text-[10px] font-bold text-[#059669] uppercase tracking-widest">
+            <span className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-400 uppercase tracking-widest">
               Intraday Scalp
             </span>
             <span className="relative flex h-1.5 w-1.5">

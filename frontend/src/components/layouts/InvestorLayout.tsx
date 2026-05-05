@@ -79,7 +79,7 @@ function MacroSentimentPanel() {
           <span className="text-xs font-semibold text-text-primary tracking-wide">
             Macro Intelligence
           </span>
-          <span className="rounded bg-[#ECFDF5] px-1.5 py-px text-[9px] font-bold text-[#059669] uppercase tracking-widest">
+          <span className="rounded bg-emerald-500/10 px-1.5 py-px text-[9px] font-bold text-emerald-400 uppercase tracking-widest">
             Investor
           </span>
         </div>
@@ -178,7 +178,7 @@ export default function InvestorLayout({ activeProfile = 'INVESTOR' }: InvestorL
             <h2 className="text-sm font-semibold text-text-primary tracking-wide">
               Macro Allocation Engine
             </h2>
-            <span className="rounded bg-[#ECFDF5] px-1.5 py-px text-[9px] font-bold text-[#059669] uppercase tracking-widest">
+            <span className="rounded bg-emerald-500/10 px-1.5 py-px text-[9px] font-bold text-emerald-400 uppercase tracking-widest">
               1D–1W
             </span>
           </div>

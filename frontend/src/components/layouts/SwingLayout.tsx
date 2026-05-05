@@ -107,7 +107,7 @@ function SwingConfluencePanel() {
           <span className="text-xs font-semibold text-text-primary tracking-wide">
             Confluence
           </span>
-          <span className="rounded bg-[#ECFDF5] px-1.5 py-px text-[9px] font-bold text-[#059669] uppercase tracking-widest">
+          <span className="rounded bg-emerald-500/10 px-1.5 py-px text-[9px] font-bold text-emerald-400 uppercase tracking-widest">
             Swing
           </span>
         </div>
@@ -234,7 +234,7 @@ export default function SwingLayout({ activeProfile = 'SWING' }: SwingLayoutProp
             <h2 className="text-sm font-semibold text-text-primary tracking-wide">
               Swing Confluence Engine
             </h2>
-            <span className="rounded bg-[#ECFDF5] px-1.5 py-px text-[9px] font-bold text-[#059669] uppercase tracking-widest">
+            <span className="rounded bg-emerald-500/10 px-1.5 py-px text-[9px] font-bold text-emerald-400 uppercase tracking-widest">
               1H–4H
             </span>
           </div>

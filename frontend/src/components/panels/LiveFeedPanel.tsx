@@ -24,7 +24,7 @@ export default function LiveFeedPanel() {
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search symbols"
             aria-label="Search symbols"
-            className="h-9 w-full rounded-md border border-border-default bg-[#F8FAFC] px-3 text-xs text-text-primary placeholder:text-text-muted transition-colors focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            className="h-9 w-full rounded-md border border-border-default bg-surface px-3 text-xs text-text-primary placeholder:text-text-muted transition-colors focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
       </div>
@@ -39,7 +39,7 @@ export default function LiveFeedPanel() {
             return (
               <div
                 key={`${decision.timestamp_ms}-${i}`}
-                className={`flex h-11 flex-col justify-center px-3 py-1 text-xs text-text-secondary transition-colors cursor-pointer ${isSelected ? 'bg-[#ECFDF5]' : 'hover:bg-elevated'}`}
+                className={`flex h-11 flex-col justify-center px-3 py-1 text-xs text-text-secondary transition-colors cursor-pointer ${isSelected ? 'bg-emerald-500/15' : 'hover:bg-elevated'}`}
               >
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-2">

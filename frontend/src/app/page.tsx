@@ -77,9 +77,9 @@ export default function Home() {
   const timeframes = ['1m', '5m', '15m', '1h', '1D'];
 
   const profileBadgeConfig: Record<TradeProfile, { label: string; color: string }> = {
-    INTRADAY: { label: 'INTRADAY MODE', color: 'bg-[#ECFDF5] text-[#059669] border-emerald-300' },
-    SWING: { label: 'SWING MODE', color: 'bg-amber-50 text-amber-600 border-amber-300' },
-    INVESTOR: { label: 'INVESTOR MODE', color: 'bg-cyan-50 text-cyan-600 border-cyan-300' },
+    INTRADAY: { label: 'INTRADAY MODE', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' },
+    SWING: { label: 'SWING MODE', color: 'bg-amber-500/10 text-amber-400 border-amber-500/30' },
+    INVESTOR: { label: 'INVESTOR MODE', color: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30' },
   };
   const badge = profileBadgeConfig[activeProfile];
 
@@ -130,7 +130,7 @@ export default function Home() {
                     onClick={() => setActiveTimeframe(frame)}
                     className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
                       activeTimeframe === frame
-                        ? 'bg-[#ECFDF5] text-[#059669]'
+                        ? 'bg-emerald-500/15 text-emerald-400'
                         : 'bg-surface text-text-secondary hover:bg-elevated'
                     }`}
                   >
@@ -145,7 +145,7 @@ export default function Home() {
                   onClick={() => setIndicatorsEnabled((prev) => !prev)}
                   className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
                     indicatorsEnabled
-                      ? 'bg-[#ECFDF5] text-[#059669]'
+                      ? 'bg-emerald-500/15 text-emerald-400'
                       : 'bg-surface text-text-secondary hover:bg-elevated'
                   }`}
                 >
@@ -156,7 +156,7 @@ export default function Home() {
                   onClick={() => setAiEnabled((prev) => !prev)}
                   className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
                     aiEnabled
-                      ? 'bg-[#ECFDF5] text-[#059669]'
+                      ? 'bg-emerald-500/15 text-emerald-400'
                       : 'bg-surface text-text-secondary hover:bg-elevated'
                   }`}
                 >

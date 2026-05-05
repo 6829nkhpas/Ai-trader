@@ -137,7 +137,7 @@ export default function OrderBook() {
       <div className="flex shrink-0 items-center justify-between border-b border-border-default px-3 py-2">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-text-primary tracking-wide">Order Book</span>
-          <span className="rounded bg-[#ECFDF5] px-1.5 py-px text-[9px] font-bold text-[#059669] uppercase tracking-widest">
+          <span className="rounded bg-emerald-500/10 px-1.5 py-px text-[9px] font-bold text-emerald-400 uppercase tracking-widest">
             L2 DOM
           </span>
         </div>
@@ -151,7 +151,7 @@ export default function OrderBook() {
       </div>
 
       {/* ── Column Headers ──────────────────────────────────── */}
-      <div className="grid shrink-0 grid-cols-3 gap-0 border-b border-border-default bg-slate-50 px-3 py-1.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+      <div className="grid shrink-0 grid-cols-3 gap-0 border-b border-border-default bg-elevated/30 px-3 py-1.5 text-[10px] font-semibold text-text-muted uppercase tracking-wider">
         <span>Price</span>
         <span className="text-right">Size</span>
         <span className="text-right">Total</span>
@@ -183,7 +183,7 @@ export default function OrderBook() {
       </div>
 
       {/* ── Spread Bar ──────────────────────────────────────── */}
-      <div className="flex shrink-0 items-center justify-between border-y border-border-default bg-slate-50 px-3 py-1.5">
+      <div className="flex shrink-0 items-center justify-between border-y border-border-default bg-elevated/20 px-3 py-1.5">
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-bold tabular-nums text-text-primary">
             {book.midPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -226,7 +226,7 @@ export default function OrderBook() {
       </div>
 
       {/* ── Footer Stats ────────────────────────────────────── */}
-      <div className="flex shrink-0 items-center justify-between border-t border-border-default bg-slate-50 px-3 py-1.5 text-[9px] text-slate-500">
+      <div className="flex shrink-0 items-center justify-between border-t border-border-default bg-elevated/20 px-3 py-1.5 text-[9px] text-text-muted">
         <span>
           Ask Vol:{' '}
           <span className="text-red-400/70 tabular-nums font-medium">
