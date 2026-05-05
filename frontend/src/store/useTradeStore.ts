@@ -26,6 +26,16 @@ interface BackendDecisionPayload {
   price?: number | string;
 }
 
+export interface OhlcCandle {
+  symbol: string;
+  start_timestamp_ms: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
 export interface ExecutedTrade {
   decision: AggregatedDecision;
   quantity: number;
@@ -39,9 +49,11 @@ interface TradeStore {
   positions: Record<string, number>;
   executedTrades: ExecutedTrade[];
   latencyMs: number;
+  ohlcCandles: OhlcCandle[];
   connectionStatus: 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED';
   wsStatus: 'disconnected' | 'connecting' | 'connected' | 'error';
   connectWebSocket: () => void;
+  connectAlphaWebSocket: (url: string) => void;
   executeTrade: (decision: AggregatedDecision, quantity: number) => void;
   rejectTrade: (decision: AggregatedDecision) => void;
   resetSession: () => void;
@@ -94,8 +106,27 @@ export const useTradeStore = create<TradeStore>((set) => {
     positions: {},
     executedTrades: [],
     latencyMs: 0,
+    ohlcCandles: [],
     connectionStatus: 'DISCONNECTED',
     wsStatus: 'disconnected',
+
+    connectAlphaWebSocket: (url: string) => {
+      const alphaWs = new WebSocket(url);
+      alphaWs.onmessage = (event) => {
+        try {
+          const candle: OhlcCandle = JSON.parse(event.data);
+          set((state) => {
+            const newCandles = [...state.ohlcCandles, candle];
+            if (newCandles.length > 500) {
+              return { ohlcCandles: newCandles.slice(-500) };
+            }
+            return { ohlcCandles: newCandles };
+          });
+        } catch (e) {
+          console.error('Error parsing Alpha OhlcCandle WS message:', e);
+        }
+      };
+    },
 
     executeTrade: (decision: AggregatedDecision, quantity: number) => {
       set((state) => {

@@ -6,8 +6,9 @@ use rdkafka::consumer::{Consumer, StreamConsumer};
 use rdkafka::Message as KafkaMessage;
 use rdkafka::ClientConfig;
 use rdkafka::producer::FutureProducer;
+use serde_json::json;
 
-pub async fn run_consumer(brokers: &str, topic: &str, producer: FutureProducer, ohlc_topic: &str) {
+pub async fn run_consumer(brokers: &str, topic: &str, producer: FutureProducer, ohlc_topic: &str, tx: tokio::sync::broadcast::Sender<String>) {
     let consumer: StreamConsumer = ClientConfig::new()
         .set("group.id", "alpha-terminal-group")
         .set("bootstrap.servers", brokers)
@@ -54,6 +55,17 @@ pub async fn run_consumer(brokers: &str, topic: &str, producer: FutureProducer, 
                         tokio::spawn(async move {
                             crate::kafka_producer::publish_candle(&producer_clone, &ohlc_topic_clone, &closed_candle).await;
                         });
+
+                        let json_value = json!({
+                            "symbol": closed_candle.symbol,
+                            "start_timestamp_ms": closed_candle.start_timestamp_ms,
+                            "open": closed_candle.open,
+                            "high": closed_candle.high,
+                            "low": closed_candle.low,
+                            "close": closed_candle.close,
+                            "volume": closed_candle.volume
+                        });
+                        let _ = tx.send(json_value.to_string());
                     }
                 } else {
                     log::warn!("Error parsing Protobuf tick");
