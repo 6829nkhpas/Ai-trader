@@ -1,21 +1,8 @@
-// ──────────────────────────────────────────────────────────────
-// services/auth.service.js — Business logic layer
-// Orchestrates validation, hashing, and DB operations.
-// Called by controllers — never touches HTTP request/response.
-// ──────────────────────────────────────────────────────────────
-
 import { hashPassword, verifyPassword } from '../crypto/hasher.js';
 import { config } from '../config.js';
 import { PasswordComplexityError, DuplicateEmailError, AuthenticationError } from '../errors/index.js';
 import { findUserByEmail, insertUser, insertCredential, getPasswordHash } from '../repository/user.repository.js';
 
-// ── Password Complexity Validator ───────────────────────────
-
-/**
- * Validates password against configured complexity rules.
- * @param {string} password — Plaintext password
- * @throws {PasswordComplexityError}
- */
 export function validatePasswordComplexity(password) {
   const rules = config.password;
 
@@ -47,131 +34,81 @@ export function validatePasswordComplexity(password) {
     throw new PasswordComplexityError('Must contain at least one digit.');
   }
 
-  if (rules.requireSpecial && !/[!@#$%^&*()_+\-=\[\]{};':",./<>?\\|`~]/.test(password)) {
+  if (rules.requireSpecial && !/[!@#$%^&*()_+\-=\[\]{};':\",./<>?\\|~]/.test(password)) {
     throw new PasswordComplexityError(
       'Must contain at least one special character (!@#$%^&*()_+-=[]{};\':\",./<>?).'
     );
   }
 }
 
-// ── Registration Service ────────────────────────────────────
-
-/**
- * Transaction-safe user registration.
- *
- * @param {import('pg').Pool} pool — PostgreSQL connection pool
- * @param {Object} params
- * @param {string} params.email
- * @param {string} params.password
- * @param {string} [params.displayName]
- * @returns {Promise<{id: string, email: string, role: string, created_at: string}>}
- * @throws {PasswordComplexityError}
- * @throws {DuplicateEmailError}
- */
-export async function registerUser(pool, { email, password, displayName }) {
-  // 1. Validate password complexity
+export async function registerUser(prisma, { email, password, displayName }) {
   validatePasswordComplexity(password);
 
-  // 2. Normalize email
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail || !normalizedEmail.includes('@')) {
     throw new PasswordComplexityError('Invalid email format.');
   }
 
-  // 3. Begin transaction
-  const client = await pool.connect();
-
   try {
-    await client.query('BEGIN');
+    return await prisma.$transaction(async (tx) => {
+      const existing = await findUserByEmail(tx, normalizedEmail);
+      if (existing) {
+        throw new DuplicateEmailError(normalizedEmail);
+      }
 
-    // 4. Advisory duplicate check (constraint is the real guard)
-    const existing = await findUserByEmail(client, normalizedEmail);
-    if (existing) {
-      throw new DuplicateEmailError(normalizedEmail);
-    }
+      const user = await insertUser(tx, {
+        email: normalizedEmail,
+        displayName: displayName || null,
+      });
 
-    // 5. Insert user
-    const user = await insertUser(client, {
-      email: normalizedEmail,
-      displayName: displayName || null,
+      const passwordHash = await hashPassword(password);
+      await insertCredential(tx, { userId: user.id, passwordHash });
+
+      console.log(`[AUTH] User registered: ${user.id} (${user.email})`);
+      return {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        created_at: user.created_at,
+      };
     });
-
-    // 6. Hash password with Argon2id + PEPPER
-    const passwordHash = await hashPassword(password);
-
-    // 7. Insert credential
-    await insertCredential(client, { userId: user.id, passwordHash });
-
-    // 8. Commit
-    await client.query('COMMIT');
-
-    console.log(`[AUTH] User registered: ${user.email} (${user.id})`);
-    return {
-      id:         user.id,
-      email:      user.email,
-      role:       user.role,
-      created_at: user.created_at,
-    };
-
   } catch (err) {
-    await client.query('ROLLBACK');
-
-    // Race condition: unique constraint violation on email
-    if (err.code === '23505' && err.constraint === 'uq_users_email') {
+    if (err.code === 'P2002' && err.meta?.target?.includes('email')) {
       throw new DuplicateEmailError(normalizedEmail);
     }
     throw err;
-  } finally {
-    client.release();
   }
 }
 
-// ── Login Service ───────────────────────────────────────────
-
-/**
- * Validates credentials and returns user identity.
- *
- * @param {import('pg').Pool} pool
- * @param {Object} params
- * @param {string} params.email
- * @param {string} params.password
- * @returns {Promise<{id: string, email: string, role: string}>}
- * @throws {AuthenticationError}
- */
-export async function loginUser(pool, { email, password }) {
+export async function loginUser(prisma, { email, password }) {
   const normalizedEmail = (email || '').trim().toLowerCase();
   if (!normalizedEmail || !password) {
     throw new AuthenticationError('Invalid credentials.');
   }
 
-  const client = await pool.connect();
-  try {
-    const user = await findUserByEmail(client, normalizedEmail);
-    if (!user) {
-      throw new AuthenticationError('Invalid credentials.');
-    }
-
-    const storedHash = await getPasswordHash(client, user.id);
-    if (!storedHash) {
-      throw new AuthenticationError('Invalid credentials.');
-    }
-
-    const isValid = await verifyPassword(password, storedHash);
-    if (!isValid) {
-      throw new AuthenticationError('Invalid credentials.');
-    }
-
-    // Role is not selected in findUserByEmail, so we need to fetch it or update the query.
-    // For now, let's fetch the full user details to get the role.
-    const fullUserResult = await client.query('SELECT id, email, role FROM users WHERE id = $1', [user.id]);
-    const fullUser = fullUserResult.rows[0];
-
-    return {
-      id: fullUser.id,
-      email: fullUser.email,
-      role: fullUser.role,
-    };
-  } finally {
-    client.release();
+  const user = await findUserByEmail(prisma, normalizedEmail);
+  if (!user) {
+    throw new AuthenticationError('Invalid credentials.');
   }
+
+  const storedHash = await getPasswordHash(prisma, user.id);
+  if (!storedHash) {
+    throw new AuthenticationError('Invalid credentials.');
+  }
+
+  const isValid = await verifyPassword(password, storedHash);
+  if (!isValid) {
+    throw new AuthenticationError('Invalid credentials.');
+  }
+
+  const fullUser = await prisma.users.findUnique({
+    where: { id: user.id },
+    select: { id: true, email: true, role: true }
+  });
+
+  return {
+    id: fullUser.id,
+    email: fullUser.email,
+    role: fullUser.role,
+  };
 }

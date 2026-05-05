@@ -16,25 +16,22 @@ export async function requireVerified(req, reply) {
   }
 
   const pool = getPool();
-  const client = await pool.connect();
-  
+
   try {
-    const profile = await findUserProfileByUserId(client, req.user.id);
-    
+    const profile = await findUserProfileByUserId(pool, req.user.id);
+
     const currentStatus = profile ? profile.kyc_status : KYC_STATES.PENDING;
 
     if (currentStatus !== KYC_STATES.VERIFIED) {
-      return reply.status(403).send({ 
-        error: 'Precondition Failed', 
+      return reply.status(403).send({
+        error: 'Precondition Failed',
         details: 'KYC must be VERIFIED to perform this action',
-        currentStatus 
+        currentStatus
       });
     }
 
   } catch (err) {
     req.log.error(err);
     return reply.status(500).send({ error: 'Failed to verify KYC status' });
-  } finally {
-    client.release();
   }
 }

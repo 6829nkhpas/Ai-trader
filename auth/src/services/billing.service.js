@@ -27,11 +27,10 @@ export class BillingService {
       return polarCustomerId;
     }
 
-    const pool = getPool();
-    const client = await pool.connect();
-    
+    const prisma = getPool();
+
     try {
-      const user = await findUserById(client, userId);
+      const user = await findUserById(prisma, userId);
       if (!user) {
         throw new Error('User not found');
       }
@@ -64,8 +63,8 @@ export class BillingService {
       await billingRepository.setPolarCustomerId(userId, polarCustomerId);
 
       return polarCustomerId;
-    } finally {
-      client.release();
+    } catch (err) {
+      throw err;
     }
   }
 
@@ -166,10 +165,10 @@ export class BillingService {
       );
       // We also need to update the plan tier in the db. 
       // But updateSubscriptionStatus doesn't update the tier. 
-      // Let's execute a direct query or modify the repo. I'll modify the repo logic via a quick pool query here.
-      const pool = getPool();
-      await pool.query('UPDATE subscriptions SET plan_tier = $1 WHERE polar_sub_id = $2', [newPlan.tier, currentSub.polar_sub_id]);
-      
+      // Let's execute a direct query.
+      const prisma = getPool();
+      await prisma.$executeRawUnsafe('UPDATE subscriptions SET plan_tier = $1 WHERE polar_sub_id = $2', newPlan.tier, currentSub.polar_sub_id);
+
       return { status: 'upgraded', tier: newPlan.tier };
     } else {
       // Scheduled Downgrade

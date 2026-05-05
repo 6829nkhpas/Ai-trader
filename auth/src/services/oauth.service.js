@@ -42,7 +42,7 @@ export async function loginWithGoogle(pool, idToken) {
     if (config.googleClientId) {
       verifyOpts.audience = config.googleClientId;
     }
-    
+
     const ticket = await client.verifyIdToken(verifyOpts);
     payload = ticket.getPayload();
   } catch (err) {
@@ -58,15 +58,14 @@ export async function loginWithGoogle(pool, idToken) {
     throw new AuthenticationError('Google account email must be verified.');
   }
 
-  const dbClient = await pool.connect();
   try {
-    let user = await findUserByEmail(dbClient, email);
+    let user = await findUserByEmail(pool, email);
 
     if (!user) {
       // Auto-register
       console.log(`[AUTH] Auto-registering Google user: ${email}`);
-      const newUser = await insertUser(dbClient, { email, displayName, role: 'user' });
-      
+      const newUser = await insertUser(pool, { email, displayName, role: 'user' });
+
       // Note: We don't insert a password credential for OAuth users yet.
       // If we expand user_credentials, we could insert an 'oauth_google' credential.
       user = newUser;
@@ -74,8 +73,8 @@ export async function loginWithGoogle(pool, idToken) {
 
     // Role is needed for token issuance, let's fetch it if missing
     if (!user.role) {
-      const fullUserResult = await dbClient.query('SELECT id, email, role FROM users WHERE id = $1', [user.id]);
-      user = fullUserResult.rows[0];
+      const fullUserResult = await pool.users.findUnique({ where: { id: user.id }, select: { id: true, email: true, role: true } });
+      user = fullUserResult;
     }
 
     return {
@@ -83,7 +82,7 @@ export async function loginWithGoogle(pool, idToken) {
       email: user.email,
       role: user.role,
     };
-  } finally {
-    dbClient.release();
+  } catch (err) {
+    throw err;
   }
 }

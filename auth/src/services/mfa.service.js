@@ -34,18 +34,13 @@ export async function generateMfa(pool, user) {
   // Encrypt the secret for storage
   const encryptedSecret = encryptSymmetric(secret);
 
-  const client = await pool.connect();
-  try {
-    // Store it as inactive
-    await upsertMfaRecord(client, {
-      userId: user.id,
-      mfaType: 'totp',
-      secretEncrypted: encryptedSecret,
-      isActive: false
-    });
-  } finally {
-    client.release();
-  }
+  // Store it as inactive
+  await upsertMfaRecord(pool, {
+    userId: user.id,
+    mfaType: 'totp',
+    secretEncrypted: encryptedSecret,
+    isActive: false
+  });
 
   return {
     qrCodeDataURL,
@@ -67,39 +62,34 @@ export async function verifyMfa(pool, userId, token) {
     throw new AuthenticationError('MFA token is required.');
   }
 
-  const client = await pool.connect();
-  try {
-    const record = await findMfaRecord(client, userId, 'totp');
+  const record = await findMfaRecord(pool, userId, 'totp');
 
-    if (!record) {
-      throw new AuthenticationError('MFA is not configured for this user.');
-    }
-
-    // Decrypt the secret
-    let secret;
-    try {
-      secret = decryptSymmetric(record.secret_encrypted);
-    } catch (err) {
-      throw new Error('Failed to decrypt MFA secret. System configuration may be invalid.');
-    }
-
-    // Verify the token
-    const result = await verify({ token, secret });
-    const isValid = result.valid;
-
-    if (!isValid) {
-      throw new AuthenticationError('Invalid MFA token.');
-    }
-
-    // If it was inactive, mark it as active
-    if (!record.is_active) {
-      await activateMfaRecord(client, userId, 'totp');
-    }
-
-    return true;
-  } finally {
-    client.release();
+  if (!record) {
+    throw new AuthenticationError('MFA is not configured for this user.');
   }
+
+  // Decrypt the secret
+  let secret;
+  try {
+    secret = decryptSymmetric(record.secret_encrypted);
+  } catch (err) {
+    throw new Error('Failed to decrypt MFA secret. System configuration may be invalid.');
+  }
+
+  // Verify the token
+  // (In otplib, verify often returns boolean, but keeping existing logic structure)
+  const isValid = await verify({ token, secret });
+
+  if (!isValid) {
+    throw new AuthenticationError('Invalid MFA token.');
+  }
+
+  // If it was inactive, mark it as active
+  if (!record.is_active) {
+    await activateMfaRecord(pool, userId, 'totp');
+  }
+
+  return true;
 }
 
 /**
@@ -110,14 +100,9 @@ export async function verifyMfa(pool, userId, token) {
  * @returns {Promise<{ exists: boolean, isActive: boolean }>}
  */
 export async function getMfaStatus(pool, userId) {
-  const client = await pool.connect();
-  try {
-    const record = await findMfaRecord(client, userId, 'totp');
-    return {
-      exists: !!record,
-      isActive: record?.is_active === true,
-    };
-  } finally {
-    client.release();
-  }
+  const record = await findMfaRecord(pool, userId, 'totp');
+  return {
+    exists: !!record,
+    isActive: record?.is_active === true,
+  };
 }

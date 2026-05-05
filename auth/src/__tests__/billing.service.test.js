@@ -7,7 +7,7 @@ import { describe, it, mock, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { billingService } from '../services/billing.service.js';
 import { billingRepository } from '../repository/billing.repository.js';
-import { getPool } from '../db.js';
+import * as dbModule from '../db.js';
 import * as userRepository from '../repository/user.repository.js';
 
 describe('Billing Service - Polar Integration', () => {
@@ -19,14 +19,14 @@ describe('Billing Service - Polar Integration', () => {
   it('should provision a new Polar customer if one does not exist', async () => {
     // Mock DB queries
     mock.method(billingRepository, 'getPolarCustomerId', async () => null);
-    mock.method(billingRepository, 'setPolarCustomerId', async () => {});
-    
-    // Mock user repository
-    mock.method(userRepository, 'findUserById', async () => ({ email: 'test@example.com' }));
-    
-    // Mock DB Pool
-    const mockClient = { release: () => {} };
-    mock.method(getPool(), 'connect', async () => mockClient);
+    mock.method(billingRepository, 'setPolarCustomerId', async () => { });
+
+    // Mock Prisma Client
+    const prisma = dbModule.getPool();
+    Object.defineProperty(prisma, 'users', {
+      value: { findUnique: mock.fn(async () => ({ email: 'test@example.com' })) },
+      configurable: true
+    });
 
     // Mock fetch for Polar API
     global.fetch = mock.fn(async () => {
@@ -37,14 +37,14 @@ describe('Billing Service - Polar Integration', () => {
     });
 
     const customerId = await billingService.getOrProvisionCustomer('user_123');
-    
+
     assert.strictEqual(customerId, 'polar_cust_123');
     assert.strictEqual(global.fetch.mock.calls.length, 1);
-    
+
     const fetchArgs = global.fetch.mock.calls[0].arguments;
     assert.strictEqual(fetchArgs[0], 'https://api.polar.sh/api/v1/customers');
     assert.strictEqual(fetchArgs[1].method, 'POST');
-    
+
     const body = JSON.parse(fetchArgs[1].body);
     assert.strictEqual(body.email, 'test@example.com');
   });
@@ -54,14 +54,14 @@ describe('Billing Service - Polar Integration', () => {
     global.fetch = mock.fn(); // Should not be called
 
     const customerId = await billingService.getOrProvisionCustomer('user_123');
-    
+
     assert.strictEqual(customerId, 'existing_polar_123');
     assert.strictEqual(global.fetch.mock.calls.length, 0);
   });
 
   it('should prevent creating checkout if active subscription exists for same product', async () => {
     mock.method(billingService, 'getOrProvisionCustomer', async () => 'polar_cust_123');
-    
+
     // Mock active subscriptions to simulate an existing Weekly plan
     mock.method(billingRepository, 'getActiveSubscriptions', async () => [
       { plan_tier: 'Weekly', status: 'active' }
@@ -78,19 +78,19 @@ describe('Billing Service - Polar Integration', () => {
   it('should create checkout session if no active subscription exists', async () => {
     mock.method(billingService, 'getOrProvisionCustomer', async () => 'polar_cust_123');
     mock.method(billingRepository, 'getActiveSubscriptions', async () => []);
-    
+
     global.fetch = mock.fn(async () => ({
       ok: true,
       json: async () => ({ url: 'https://checkout.polar.sh/some-session' })
     }));
 
     const result = await billingService.createCheckoutSession('user_123', 'price_monthly');
-    
+
     assert.strictEqual(result.checkoutUrl, 'https://checkout.polar.sh/some-session');
-    
+
     const fetchArgs = global.fetch.mock.calls[0].arguments;
     assert.strictEqual(fetchArgs[0], 'https://api.polar.sh/api/v1/checkouts/custom');
-    
+
     const body = JSON.parse(fetchArgs[1].body);
     assert.strictEqual(body.product_price_id, 'price_monthly');
     assert.strictEqual(body.customer_id, 'polar_cust_123');
@@ -101,9 +101,13 @@ describe('Billing Service - Polar Integration', () => {
       mock.method(billingRepository, 'getActiveSubscriptions', async () => [
         { polar_sub_id: 'sub_123', plan_tier: 'Weekly', proration_metadata: {} }
       ]);
-      mock.method(billingRepository, 'updateSubscriptionStatus', async () => {});
-      const mockPool = { query: mock.fn() };
-      mock.method(getPool(), 'query', mockPool.query);
+      mock.method(billingRepository, 'updateSubscriptionStatus', async () => { });
+
+      const prisma = dbModule.getPool();
+      Object.defineProperty(prisma, '$executeRawUnsafe', {
+        value: mock.fn(async () => { }),
+        configurable: true
+      });
 
       global.fetch = mock.fn(async () => ({
         ok: true,
@@ -118,7 +122,7 @@ describe('Billing Service - Polar Integration', () => {
       const fetchArgs = global.fetch.mock.calls[0].arguments;
       assert.strictEqual(fetchArgs[0], 'https://api.polar.sh/api/v1/subscriptions/sub_123');
       assert.strictEqual(fetchArgs[1].method, 'PATCH');
-      
+
       const body = JSON.parse(fetchArgs[1].body);
       assert.strictEqual(body.product_price_id, 'price_monthly');
       assert.strictEqual(body.proration_behavior, 'prorate');
@@ -128,7 +132,7 @@ describe('Billing Service - Polar Integration', () => {
       mock.method(billingRepository, 'getActiveSubscriptions', async () => [
         { polar_sub_id: 'sub_123', plan_tier: 'Monthly', proration_metadata: {} }
       ]);
-      mock.method(billingRepository, 'updateSubscriptionStatus', async () => {});
+      mock.method(billingRepository, 'updateSubscriptionStatus', async () => { });
 
       global.fetch = mock.fn(async () => ({
         ok: true,

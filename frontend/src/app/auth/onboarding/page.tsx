@@ -214,7 +214,7 @@ export default function OnboardingPage() {
             aria-invalid={!!errors.residentialAddress}
             aria-describedby={errors.residentialAddress ? 'onboarding-address-error' : undefined}
             placeholder="Street, city, state, postal code"
-            className={`auth-input min-h-[96px] resize-none${errors.residentialAddress ? ' auth-input--error' : ''}`}
+            className={`auth-input min-h-24 resize-none${errors.residentialAddress ? ' auth-input--error' : ''}`}
           />
           {errors.residentialAddress && (
             <p id="onboarding-address-error" role="alert" className="auth-field-error">
@@ -250,8 +250,7 @@ export default function OnboardingPage() {
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
-          Your details are encrypted and stored securely. Completing onboarding is required before
-          you can access the dashboard.
+          Your details are encrypted and stored securely. Completing onboarding is required before you can access the Platform.
         </div>
 
         <button

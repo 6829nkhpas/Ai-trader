@@ -1,8 +1,3 @@
-// ──────────────────────────────────────────────────────────────
-// billing.repository.js — Database operations for Billing
-// Handles the subscriptions table and polar_customer_id
-// ──────────────────────────────────────────────────────────────
-
 import { getPool } from '../db.js';
 
 export class BillingRepository {
@@ -10,34 +5,35 @@ export class BillingRepository {
    * Links a Polar Customer ID to a user.
    */
   async setPolarCustomerId(userId, polarCustomerId) {
-    const pool = getPool();
-    const result = await pool.query(
-      `UPDATE users 
-       SET polar_customer_id = $1, updated_at = NOW() 
-       WHERE id = $2 
-       RETURNING id, polar_customer_id`,
-      [polarCustomerId, userId]
-    );
-    return result.rows[0];
+    const prisma = getPool();
+    const user = await prisma.users.update({
+      where: { id: userId },
+      data: {
+        polar_customer_id: polarCustomerId,
+        updated_at: new Date()
+      },
+      select: { id: true, polar_customer_id: true }
+    });
+    return user;
   }
 
   /**
    * Gets the Polar Customer ID for a user.
    */
   async getPolarCustomerId(userId) {
-    const pool = getPool();
-    const result = await pool.query(
-      `SELECT polar_customer_id FROM users WHERE id = $1`,
-      [userId]
-    );
-    return result.rows[0]?.polar_customer_id || null;
+    const prisma = getPool();
+    const user = await prisma.users.findUnique({
+      where: { id: userId },
+      select: { polar_customer_id: true }
+    });
+    return user?.polar_customer_id || null;
   }
 
   /**
    * Creates a new subscription record.
    */
   async createSubscription(subData) {
-    const pool = getPool();
+    const prisma = getPool();
     const {
       userId,
       polarSubId,
@@ -47,67 +43,69 @@ export class BillingRepository {
       prorationMetadata = {}
     } = subData;
 
-    const result = await pool.query(
-      `INSERT INTO subscriptions 
-        (user_id, polar_sub_id, plan_tier, current_period_end, status, proration_metadata)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING *`,
-      [userId, polarSubId, planTier, currentPeriodEnd, status, JSON.stringify(prorationMetadata)]
-    );
-    return result.rows[0];
+    const sub = await prisma.subscriptions.create({
+      data: {
+        user_id: userId,
+        polar_sub_id: polarSubId,
+        plan_tier: planTier,
+        current_period_end: new Date(currentPeriodEnd),
+        status: status,
+        proration_metadata: prorationMetadata
+      }
+    });
+    return sub;
   }
 
   /**
    * Retrieves active subscriptions for a user to prevent duplicates.
    */
   async getActiveSubscriptions(userId) {
-    const pool = getPool();
-    const result = await pool.query(
-      `SELECT * FROM subscriptions 
-       WHERE user_id = $1 AND status = 'active'`,
-      [userId]
-    );
-    return result.rows;
+    const prisma = getPool();
+    const subs = await prisma.subscriptions.findMany({
+      where: {
+        user_id: userId,
+        status: 'active'
+      }
+    });
+    return subs;
   }
 
   /**
    * Retrieves a subscription by Polar ID.
    */
   async getSubscriptionByPolarId(polarSubId) {
-    const pool = getPool();
-    const result = await pool.query(
-      `SELECT * FROM subscriptions WHERE polar_sub_id = $1`,
-      [polarSubId]
-    );
-    return result.rows[0] || null;
+    const prisma = getPool();
+    const sub = await prisma.subscriptions.findUnique({
+      where: { polar_sub_id: polarSubId }
+    });
+    return sub || null;
   }
 
   /**
    * Updates an existing subscription status, end period, and metadata.
    */
   async updateSubscriptionStatus(polarSubId, status, currentPeriodEnd = null, prorationMetadata = null) {
-    const pool = getPool();
+    const prisma = getPool();
     
-    let query = `UPDATE subscriptions SET status = $1, updated_at = NOW()`;
-    const params = [status, polarSubId];
-    let paramIndex = 3;
+    const data = {
+      status,
+      updated_at: new Date()
+    };
     
     if (currentPeriodEnd) {
-      query += `, current_period_end = $${paramIndex}`;
-      params.push(currentPeriodEnd);
-      paramIndex++;
+      data.current_period_end = new Date(currentPeriodEnd);
     }
     
     if (prorationMetadata) {
-      query += `, proration_metadata = $${paramIndex}`;
-      params.push(JSON.stringify(prorationMetadata));
-      paramIndex++;
+      data.proration_metadata = prorationMetadata;
     }
     
-    query += ` WHERE polar_sub_id = $2 RETURNING *`;
+    const sub = await prisma.subscriptions.update({
+      where: { polar_sub_id: polarSubId },
+      data
+    });
     
-    const result = await pool.query(query, params);
-    return result.rows[0];
+    return sub;
   }
 }
 

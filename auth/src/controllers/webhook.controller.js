@@ -14,34 +14,29 @@ export async function handleKycVendorWebhook(req, reply) {
   }
 
   const pool = getPool();
-  const client = await pool.connect();
 
   try {
-    await client.query('BEGIN');
+    const newState = await pool.$transaction(async (tx) => {
+      const profile = await findUserProfileByUserId(tx, userId);
+      if (!profile) {
+        throw new Error(`Profile not found for userId: ${userId}`);
+      }
 
-    const profile = await findUserProfileByUserId(client, userId);
-    if (!profile) {
-      throw new Error(`Profile not found for userId: ${userId}`);
-    }
+      // Enforce state transition guard
+      const nextState = transitionState(profile.kyc_status, status);
 
-    // Enforce state transition guard
-    const newState = transitionState(profile.kyc_status, status);
+      // Persist new state
+      await updateKycStatus(tx, userId, nextState);
+      return nextState;
+    });
 
-    // Persist new state
-    await updateKycStatus(client, userId, newState);
-
-    await client.query('COMMIT');
-    
     return reply.status(200).send({ message: 'Webhook processed successfully', newState });
   } catch (err) {
-    await client.query('ROLLBACK');
     req.log.error(err);
-    
+
     if (err.message.includes('Invalid state transition')) {
       return reply.status(400).send({ error: err.message });
     }
     return reply.status(500).send({ error: 'Internal Server Error processing webhook' });
-  } finally {
-    client.release();
   }
 }

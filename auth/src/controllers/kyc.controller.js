@@ -68,16 +68,15 @@ export async function handleUpsertProfile(req, reply) {
   const userId = req.user.id;
 
   const pool = getPool();
-  const client = await pool.connect();
 
   try {
-    const existingProfile = await findUserProfileByUserId(client, userId);
+    const existingProfile = await findUserProfileByUserId(pool, userId);
     const nextStatus =
       !existingProfile || existingProfile.kyc_status === KYC_STATES.PENDING
         ? KYC_STATES.BASIC_INFO_DONE
         : null;
 
-    const profile = await upsertUserProfile(client, {
+    const profile = await upsertUserProfile(pool, {
       userId,
       legalName,
       panNumber,
@@ -89,18 +88,15 @@ export async function handleUpsertProfile(req, reply) {
   } catch (err) {
     req.log.error(err);
     return reply.status(500).send({ error: 'Failed to update profile' });
-  } finally {
-    client.release();
   }
 }
 
 export async function handleGetProfile(req, reply) {
   const userId = req.user.id;
   const pool = getPool();
-  const client = await pool.connect();
 
   try {
-    const profile = await findUserProfileByUserId(client, userId);
+    const profile = await findUserProfileByUserId(pool, userId);
     if (!profile) {
       return reply.status(404).send({ error: 'Profile not found' });
     }
@@ -108,7 +104,5 @@ export async function handleGetProfile(req, reply) {
   } catch (err) {
     req.log.error(err);
     return reply.status(500).send({ error: 'Failed to fetch profile' });
-  } finally {
-    client.release();
   }
 }
