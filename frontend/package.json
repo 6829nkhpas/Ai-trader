@@ -12,6 +12,7 @@
     "tauri:build": "tauri build"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.11.0",
     "axios": "^1.16.0",
     "lightweight-charts": "^5.2.0",
     "lucide-react": "^1.11.0",

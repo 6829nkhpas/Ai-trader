@@ -1,7 +1,6 @@
-use tauri::Manager;
+use tauri::Emitter;
 use futures_util::StreamExt;
 use tokio_tungstenite::connect_async;
-use url::Url;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -17,8 +16,7 @@ pub fn run() {
 
       let app_handle = app.handle().clone();
       tauri::async_runtime::spawn(async move {
-          let url = Url::parse("ws://127.0.0.1:8081").unwrap();
-          if let Ok((ws_stream, _)) = connect_async(url).await {
+          if let Ok((ws_stream, _)) = connect_async("ws://127.0.0.1:8081").await {
               let (_, mut read) = ws_stream.split();
               while let Some(message) = read.next().await {
                   if let Ok(msg) = message {
@@ -34,8 +32,7 @@ pub fn run() {
 
       let app_handle_2 = app.handle().clone();
       tauri::async_runtime::spawn(async move {
-          let url = Url::parse("ws://127.0.0.1:8082").unwrap();
-          if let Ok((ws_stream, _)) = connect_async(url).await {
+          if let Ok((ws_stream, _)) = connect_async("ws://127.0.0.1:8082").await {
               let (_, mut read) = ws_stream.split();
               while let Some(message) = read.next().await {
                   if let Ok(msg) = message {
