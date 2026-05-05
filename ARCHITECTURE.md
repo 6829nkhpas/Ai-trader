@@ -34,3 +34,7 @@
 ## V2 Objective
 
 **Transitioning from Reactive (V1) to Predictive (V2 Alpha Suite).**
+
+## Phase 7: The Edge Terminal
+
+The `/frontend` is now a hybrid architecture. It can run as a standard Next.js web app, OR as a native desktop executable wrapped by Tauri (`/frontend/src-tauri`).
