@@ -46,3 +46,19 @@ Charts bypass React State. WebSockets push data directly via the lightweight-cha
 ### IPC Data Bridge
 
 Frontend no longer makes network requests. Tauri Rust core handles WebSockets/Kafka and streams data to the UI entirely via native IPC emit_all events for zero-latency rendering.
+
+## Phase 8: Universal Market Profiles
+
+The UI layout and data subscriptions are governed by a global `TradeProfile` state (`Intraday`, `Swing`, `Investor`), allowing hot-swapping of terminal layouts.
+
+### State Engine
+
+A Zustand-managed `activeProfile: TradeProfile` slice drives the entire terminal mode. Switching profiles reconfigures:
+
+- **Intraday (Scalp):** High-frequency 1m/5m charts, Order Book DOM, volatility heatmaps.
+- **Swing (1H-4H):** Medium-term candlestick analysis, momentum oscillators, trend overlays.
+- **Investor (Macro):** Daily/Weekly timeframes, macro sentiment dashboards, portfolio allocation views.
+
+### Profile Switcher UI
+
+A segmented control bar (`ProfileSwitcher.tsx`) is permanently mounted at the top of the terminal, acting as the master mode selector. Active profile is indicated with a neon-purple highlight and animated glow dot. Each chart section displays a color-coded mode badge reflecting the current profile.

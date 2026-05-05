@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 
+export type TradeProfile = 'INTRADAY' | 'SWING' | 'INVESTOR';
+
 type BackendAction = 'BUY' | 'SELL' | 'HOLD';
 
 export interface AggregatedDecision {
@@ -61,6 +63,8 @@ interface TradeStore {
   predictiveSignals: PredictiveSignal[];
   connectionStatus: 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED';
   wsStatus: 'disconnected' | 'connecting' | 'connected' | 'error';
+  activeProfile: TradeProfile;
+  setActiveProfile: (profile: TradeProfile) => void;
   connectWebSocket: () => void;
   connectAlphaWebSocket: (url: string) => void;
   connectPredictiveWebSocket: (url: string) => void;
@@ -120,6 +124,11 @@ export const useTradeStore = create<TradeStore>((set) => {
     predictiveSignals: [],
     connectionStatus: 'DISCONNECTED',
     wsStatus: 'disconnected',
+    activeProfile: 'INTRADAY',
+
+    setActiveProfile: (profile: TradeProfile) => {
+      set({ activeProfile: profile });
+    },
 
     connectAlphaWebSocket: (url: string) => {
       const alphaWs = new WebSocket(url);

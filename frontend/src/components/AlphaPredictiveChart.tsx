@@ -3,8 +3,13 @@
 import React, { useEffect, useRef } from 'react';
 import { createChart, ColorType, Time, IChartApi, ISeriesApi } from 'lightweight-charts';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { TradeProfile } from '../store/useTradeStore';
 
-export default function AlphaPredictiveChart() {
+interface AlphaPredictiveChartProps {
+  activeProfile?: TradeProfile;
+}
+
+export default function AlphaPredictiveChart({ activeProfile = 'INTRADAY' }: AlphaPredictiveChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
