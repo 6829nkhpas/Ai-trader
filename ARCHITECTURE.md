@@ -5,7 +5,10 @@
 - `/ingestion` - Market data ingestion services
 - `/agents/technical` - Quantitative technical analysis agent
 - `/agents/sentiment` - NLP/LLM-based news sentiment agent
-- `/agents/predictive` - Consumes market.ohlc.10m, runs predictive math/ML, and outputs future price targets to signals.predictive.
+- `/agents/predictive` - Consumes `market.ohlc.10m`, runs predictive math/ML, and outputs future price targets to `signals.predictive`.
+  - **Math Engine:** Uses a 14-period rolling window of 10-minute closing prices.
+  - **Algorithm:** Standard Least-Squares Linear Regression to project the $n+1$ candle (the next 10-minute close).
+  - **Confidence Score:** Calculated using the $R^2$ (Coefficient of Determination) mapped to a 1-100 scale.
 - `/aggregator` - Core decision fusion engine
 - `/alpha-terminal` - V2 Predictive Engine (Rust, WebSocket port 8081)
 - `/frontend` - Glass-Box trading UI
@@ -22,6 +25,7 @@
 
 - `live_ticks` → **Technical Agent** → `technical_signals`
 - `live_ticks` / `news_feed` → **Sentiment Agent** → `sentiment_signals`
+- `market.ohlc.10m` → **Predictive Agent** → `signals.predictive`
 - `technical_signals` + `sentiment_signals` → **Aggregator Engine** → `aggregated_decisions`
 - `aggregated_decisions` → **Frontend (via WebSocket)** / **Execution Layer**
 
