@@ -40,7 +40,7 @@ export async function issueTokenPair(prisma, user, mfaVerified = false) {
 }
 
 export async function rotateRefreshToken(prisma, oldRefreshToken) {
-  if (!oldRefreshToken) throw new AuthenticationError('No refresh token provided.');
+if (!oldRefreshToken) throw new AuthenticationError('No refresh token provided.');
 
   const tokenHash = hashToken(oldRefreshToken);
 
