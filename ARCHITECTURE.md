@@ -62,3 +62,7 @@ A Zustand-managed `activeProfile: TradeProfile` slice drives the entire terminal
 ### Profile Switcher UI
 
 A segmented control bar (`ProfileSwitcher.tsx`) is permanently mounted at the top of the terminal, acting as the master mode selector. Active profile is indicated with a neon-purple highlight and animated glow dot. Each chart section displays a color-coded mode badge reflecting the current profile.
+
+### Intraday Mode
+
+Features a Level-2 Order Book DOM (`OrderBook.tsx`) alongside the primary WebGL charts in a dedicated 12-column grid layout (`IntradayLayout.tsx`), designed for high-frequency scalping. The Order Book runs a 100ms mock simulation engine for UI stress-testing with proper cleanup on unmount. The grid allocates 9 columns to the predictive chart and 3 columns to the order book sidebar.
