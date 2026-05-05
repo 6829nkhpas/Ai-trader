@@ -61,8 +61,21 @@ A Zustand-managed `activeProfile: TradeProfile` slice drives the entire terminal
 
 ### Profile Switcher UI
 
-A segmented control bar (`ProfileSwitcher.tsx`) is permanently mounted at the top of the terminal, acting as the master mode selector. Active profile is indicated with a neon-purple highlight and animated glow dot. Each chart section displays a color-coded mode badge reflecting the current profile.
+A segmented control bar (`ProfileSwitcher.tsx`) is permanently mounted at the top of the terminal, acting as the master mode selector. Active profile is indicated with an emerald-green highlight. Each chart section displays a color-coded mode badge reflecting the current profile.
 
 ### Intraday Mode
 
 Features a Level-2 Order Book DOM (`OrderBook.tsx`) alongside the primary WebGL charts in a dedicated 12-column grid layout (`IntradayLayout.tsx`), designed for high-frequency scalping. The Order Book runs a 100ms mock simulation engine for UI stress-testing with proper cleanup on unmount. The grid allocates 9 columns to the predictive chart and 3 columns to the order book sidebar.
+
+### Swing Mode
+
+Features a `SwingConfluencePanel` alongside the predictive chart in a 12-column grid layout (`SwingLayout.tsx`). The confluence panel provides:
+  - **Multi-Timeframe Trend:** Displays trend bias (Bullish/Neutral/Bearish) with strength bars across 1H, 4H, 1D, and 1W timeframes.
+  - **AI News Sentiment:** Scrollable feed of recent market news articles with per-item sentiment indicators (positive/negative/neutral dots) and an aggregate sentiment score (0–100) with a Fear/Greed gauge bar.
+
+### Investor Mode
+
+Features a `MacroSentimentPanel` alongside the predictive chart in a 12-column grid layout (`InvestorLayout.tsx`). The macro panel provides:
+  - **Macro Indicators:** Real-time display of key economic metrics (Fed Funds Rate, Core CPI, 10Y Treasury, DXY, VIX, GDP) with directional change indicators.
+  - **Portfolio Risk Metrics:** Key quantitative portfolio measures (Sharpe Ratio, Max Drawdown, Beta, Alpha).
+  - **Quant-RAG Outlook:** AI-generated long-term sectoral analysis and allocation recommendations with probability-weighted scenario forecasting.

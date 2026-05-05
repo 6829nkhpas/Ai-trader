@@ -137,7 +137,7 @@ export default function OrderBook() {
       <div className="flex shrink-0 items-center justify-between border-b border-border-default px-3 py-2">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-text-primary tracking-wide">Order Book</span>
-          <span className="rounded bg-purple-500/15 px-1.5 py-px text-[9px] font-bold text-purple-400 uppercase tracking-widest">
+          <span className="rounded bg-[#ECFDF5] px-1.5 py-px text-[9px] font-bold text-[#059669] uppercase tracking-widest">
             L2 DOM
           </span>
         </div>
