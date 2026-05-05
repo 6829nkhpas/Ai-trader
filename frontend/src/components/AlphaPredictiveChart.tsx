@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef } from 'react';
 import { createChart, ColorType, Time, IChartApi, ISeriesApi } from 'lightweight-charts';
+import { listen, UnlistenFn } from '@tauri-apps/api/event';
 
 export default function AlphaPredictiveChart() {
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -56,67 +57,66 @@ export default function AlphaPredictiveChart() {
 
     window.addEventListener('resize', handleResize);
 
-    // Initialise Direct WebSockets for Zero-Latency Rendering
-    const ws1 = new WebSocket('ws://127.0.0.1:8081'); // Historical & Live OHLC
-    const ws2 = new WebSocket('ws://127.0.0.1:8082'); // Predictive Ghost Lines
+    // Initialise Native IPC Listeners for Zero-Latency Rendering
+    let unlistenOhlc: UnlistenFn | undefined;
+    let unlistenPredict: UnlistenFn | undefined;
 
-    ws1.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        const candles = Array.isArray(data) ? data : [data];
+    const setupListeners = async () => {
+      unlistenOhlc = await listen<any>('ohlc-tick', (event) => {
+        try {
+          const data = event.payload;
+          const candles = Array.isArray(data) ? data : [data];
 
-        candles.forEach(candle => {
-          const time = Math.floor(candle.start_timestamp_ms / 1000) as Time;
-          const mappedData = {
-            time,
-            open: candle.open,
-            high: candle.high,
-            low: candle.low,
-            close: candle.close,
-          };
+          candles.forEach(candle => {
+            const time = Math.floor(candle.start_timestamp_ms / 1000) as Time;
+            const mappedData = {
+              time,
+              open: candle.open,
+              high: candle.high,
+              low: candle.low,
+              close: candle.close,
+            };
 
-          // Directly mutate the canvas, bypassing React state
-          candleSeries.update(mappedData);
+            candleSeries.update(mappedData);
+            lastCloseRef.current = { time, value: candle.close };
+          });
+        } catch (error) {
+          console.error('Error handling IPC OHLC data', error);
+        }
+      });
 
-          // Update our anchor for the predictive line
-          lastCloseRef.current = { time, value: candle.close };
-        });
-      } catch (error) {
-        console.error('Error parsing WS1 OHLC data', error);
-      }
+      unlistenPredict = await listen<any>('predictive-tick', (event) => {
+        try {
+          const data = event.payload;
+          const signals = Array.isArray(data) ? data : [data];
+
+          signals.forEach(signal => {
+            if (lastCloseRef.current) {
+              const targetTime = Math.floor(signal.target_timestamp_ms / 1000) as Time;
+
+              ghostLine.update({
+                time: lastCloseRef.current.time,
+                value: lastCloseRef.current.value
+              });
+
+              ghostLine.update({
+                time: targetTime,
+                value: signal.predicted_close_price
+              });
+            }
+          });
+        } catch (error) {
+          console.error('Error handling IPC Predictive data', error);
+        }
+      });
     };
 
-    ws2.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        const signals = Array.isArray(data) ? data : [data];
-
-        signals.forEach(signal => {
-          if (lastCloseRef.current) {
-            const targetTime = Math.floor(signal.target_timestamp_ms / 1000) as Time;
-
-            // Anchor point from the latest close
-            ghostLine.update({
-              time: lastCloseRef.current.time,
-              value: lastCloseRef.current.value
-            });
-
-            // Target prediction point
-            ghostLine.update({
-              time: targetTime,
-              value: signal.predicted_close_price
-            });
-          }
-        });
-      } catch (error) {
-        console.error('Error parsing WS2 Predictive data', error);
-      }
-    };
+    setupListeners();
 
     return () => {
       window.removeEventListener('resize', handleResize);
-      ws1.close();
-      ws2.close();
+      if (unlistenOhlc) unlistenOhlc();
+      if (unlistenPredict) unlistenPredict();
       chart.remove();
     };
   }, []);

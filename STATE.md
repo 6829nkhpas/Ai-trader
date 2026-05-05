@@ -6,9 +6,9 @@
 
 **Current Objective:** Phase 6.0 - Build the AI Predictive Engine.
 
-**Current Status:** Phase 7.3 Complete. AlphaPredictiveChart refactored for Zero-Latency rendering, directly mutating the canvas API.
+**Current Status:** Phase 7.4 Complete. WebSockets ripped out of the frontend. Data flows via Tauri Rust IPC directly into the Canvas.
 
-**Next Steps:** Phase 7.4: Native IPC Data Streaming - Ripping out HTTP WebSockets and routing Kafka feeds directly through the Tauri Rust core into the UI.
+**Next Steps:** Phase 8.0: Universal Market Profiles - Implementing Intraday, Swing, and Investor UI terminal modes.
 
 **Deprecated:**
 Explicitly note that `MASTER_CONTEXT.md` and `SESSION_MEMORY.md` are now obsolete and should be ignored entirely by the system.

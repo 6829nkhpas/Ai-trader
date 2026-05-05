@@ -1,3 +1,8 @@
+use tauri::Manager;
+use futures_util::StreamExt;
+use tokio_tungstenite::connect_async;
+use url::Url;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -9,6 +14,41 @@ pub fn run() {
             .build(),
         )?;
       }
+
+      let app_handle = app.handle().clone();
+      tauri::async_runtime::spawn(async move {
+          let url = Url::parse("ws://127.0.0.1:8081").unwrap();
+          if let Ok((ws_stream, _)) = connect_async(url).await {
+              let (_, mut read) = ws_stream.split();
+              while let Some(message) = read.next().await {
+                  if let Ok(msg) = message {
+                      if let Ok(text) = msg.into_text() {
+                          if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                              let _ = app_handle.emit("ohlc-tick", json);
+                          }
+                      }
+                  }
+              }
+          }
+      });
+
+      let app_handle_2 = app.handle().clone();
+      tauri::async_runtime::spawn(async move {
+          let url = Url::parse("ws://127.0.0.1:8082").unwrap();
+          if let Ok((ws_stream, _)) = connect_async(url).await {
+              let (_, mut read) = ws_stream.split();
+              while let Some(message) = read.next().await {
+                  if let Ok(msg) = message {
+                      if let Ok(text) = msg.into_text() {
+                          if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                              let _ = app_handle_2.emit("predictive-tick", json);
+                          }
+                      }
+                  }
+              }
+          }
+      });
+
       Ok(())
     })
     .run(tauri::generate_context!())
