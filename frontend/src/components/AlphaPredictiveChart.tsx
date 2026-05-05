@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
-import { createChart, ColorType, Time, IChartApi, ISeriesApi } from 'lightweight-charts';
+import { createChart, ColorType, Time, IChartApi, ISeriesApi, CandlestickSeries, LineSeries } from 'lightweight-charts';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { TradeProfile } from '../store/useTradeStore';
 
@@ -31,7 +31,7 @@ export default function AlphaPredictiveChart({ activeProfile = 'INTRADAY' }: Alp
       height: chartContainerRef.current.clientHeight,
     });
 
-    const candleSeries = chart.addCandlestickSeries({
+    const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#22c55e',
       downColor: '#ef4444',
       borderVisible: false,
@@ -40,7 +40,7 @@ export default function AlphaPredictiveChart({ activeProfile = 'INTRADAY' }: Alp
     });
 
     // Ghost Line — dashed purple projection into the future
-    const ghostLine = chart.addLineSeries({
+    const ghostLine = chart.addSeries(LineSeries, {
       color: '#c084fc',
       lineWidth: 2,
       lineStyle: 2, // Dashed
