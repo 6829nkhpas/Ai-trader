@@ -8,6 +8,7 @@
 - `/aggregator` - Core decision fusion engine
 - `/alpha-terminal` - V2 Predictive Engine (Rust, WebSocket port 8081)
 - `/frontend` - Glass-Box trading UI
+  - Features the V2 Alpha Predictive Chart, which ingests `OhlcCandle` data directly from the V2 WebSocket on port 8081, operating completely parallel to the V1 Aggregator feed on port 8080.
 - `/shared_protos` - Universal Protobuf data contracts
 
 ## Tech Stack

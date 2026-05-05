@@ -8,12 +8,13 @@ import TerminalLayout from '../components/layout/TerminalLayout';
 import LiveFeedPanel from '../components/panels/LiveFeedPanel';
 import AIPanel from '../components/panels/AIPanel';
 import OrderExecutionPanel from '../components/panels/OrderExecutionPanel';
+import AlphaPredictiveChart from '../components/AlphaPredictiveChart';
 import { useTradeStore } from '../store/useTradeStore';
 import { isOnboardingComplete } from '@/lib/onboarding';
 
 export default function Home() {
   const router = useRouter();
-  const { connectWebSocket, activeDecision, liveDecisions } = useTradeStore();
+  const { connectWebSocket, connectAlphaWebSocket, activeDecision, liveDecisions } = useTradeStore();
   const [activeTimeframe, setActiveTimeframe] = useState('1m');
   const [indicatorsEnabled, setIndicatorsEnabled] = useState(true);
   const [aiEnabled, setAiEnabled] = useState(true);
@@ -51,6 +52,10 @@ export default function Home() {
       connectWebSocket();
     }
   }, [connectWebSocket, isChecking]);
+
+  useEffect(() => {
+    connectAlphaWebSocket('ws://127.0.0.1:8081');
+  }, [connectAlphaWebSocket]);
 
   if (isChecking) {
     return (
@@ -115,8 +120,15 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 bg-surface relative">
-          <TradingChart showHeader={false} />
+        <div className="min-h-0 flex-1 bg-surface relative flex flex-col gap-4 p-4 overflow-y-auto">
+          <div>
+            <h2 className="text-sm font-semibold text-text-primary mb-2">V2 Predictive Engine (10m OHLC)</h2>
+            <AlphaPredictiveChart />
+          </div>
+          <div className="h-[400px] relative">
+            <h2 className="text-sm font-semibold text-text-primary mb-2">V1 Reactive Feed</h2>
+            <TradingChart showHeader={false} />
+          </div>
         </div>
 
         <div className="shrink-0 border-t border-border-default bg-surface rounded-b-lg">
