@@ -15,9 +15,9 @@ export default function IntradayLayout({ activeProfile = 'INTRADAY' }: IntradayL
       {/* ── Primary Chart Area ──────────────────────────────── */}
       <div className="col-span-9 flex flex-col gap-3 min-h-0">
         {/* Chart Header Bar */}
-        <div className="flex shrink-0 items-center justify-between rounded-lg border border-slate-800 bg-slate-950 px-4 py-2">
+        <div className="flex shrink-0 items-center justify-between rounded-lg border border-border-default bg-surface px-4 py-2">
           <div className="flex items-center gap-2.5">
-            <h2 className="text-sm font-semibold text-slate-200 tracking-wide">
+            <h2 className="text-sm font-semibold text-text-primary tracking-wide">
               V2 Predictive Engine
             </h2>
             <span className="rounded bg-purple-500/15 px-1.5 py-px text-[9px] font-bold text-purple-400 uppercase tracking-widest">
@@ -36,7 +36,7 @@ export default function IntradayLayout({ activeProfile = 'INTRADAY' }: IntradayL
         </div>
 
         {/* Chart Canvas */}
-        <div className="flex-1 min-h-0 rounded-lg border border-slate-800 bg-slate-950 overflow-hidden">
+        <div className="flex-1 min-h-0 rounded-lg border border-border-default bg-surface overflow-hidden">
           <AlphaPredictiveChart activeProfile={activeProfile} />
         </div>
       </div>

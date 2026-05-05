@@ -131,12 +131,12 @@ export default function OrderBook() {
   return (
     <div
       id="order-book-dom"
-      className="flex h-full flex-col rounded-lg border border-slate-800 bg-slate-950 font-mono text-[11px] select-none overflow-hidden"
+      className="flex h-full flex-col rounded-lg border border-border-default bg-surface font-mono text-[11px] select-none overflow-hidden"
     >
       {/* ── Header ──────────────────────────────────────────── */}
-      <div className="flex shrink-0 items-center justify-between border-b border-slate-800/60 px-3 py-2">
+      <div className="flex shrink-0 items-center justify-between border-b border-border-default px-3 py-2">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-slate-300 tracking-wide">Order Book</span>
+          <span className="text-xs font-semibold text-text-primary tracking-wide">Order Book</span>
           <span className="rounded bg-purple-500/15 px-1.5 py-px text-[9px] font-bold text-purple-400 uppercase tracking-widest">
             L2 DOM
           </span>
@@ -151,7 +151,7 @@ export default function OrderBook() {
       </div>
 
       {/* ── Column Headers ──────────────────────────────────── */}
-      <div className="grid shrink-0 grid-cols-3 gap-0 border-b border-slate-800/40 px-3 py-1.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+      <div className="grid shrink-0 grid-cols-3 gap-0 border-b border-border-default bg-slate-50 px-3 py-1.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
         <span>Price</span>
         <span className="text-right">Size</span>
         <span className="text-right">Total</span>
@@ -183,9 +183,9 @@ export default function OrderBook() {
       </div>
 
       {/* ── Spread Bar ──────────────────────────────────────── */}
-      <div className="flex shrink-0 items-center justify-between border-y border-slate-700/50 bg-slate-900/80 px-3 py-1.5">
+      <div className="flex shrink-0 items-center justify-between border-y border-border-default bg-slate-50 px-3 py-1.5">
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-bold tabular-nums text-slate-200">
+          <span className="text-[11px] font-bold tabular-nums text-text-primary">
             {book.midPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </span>
           <span className="text-[9px] text-slate-500 font-medium">MID</span>
@@ -226,7 +226,7 @@ export default function OrderBook() {
       </div>
 
       {/* ── Footer Stats ────────────────────────────────────── */}
-      <div className="flex shrink-0 items-center justify-between border-t border-slate-800/40 px-3 py-1.5 text-[9px] text-slate-600">
+      <div className="flex shrink-0 items-center justify-between border-t border-border-default bg-slate-50 px-3 py-1.5 text-[9px] text-slate-500">
         <span>
           Ask Vol:{' '}
           <span className="text-red-400/70 tabular-nums font-medium">

@@ -24,8 +24,8 @@ export default function AlphaPredictiveChart({ activeProfile = 'INTRADAY' }: Alp
 
     const chart = createChart(chartContainerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: '#020617' },
-        textColor: '#94a3b8',
+        background: { type: ColorType.Solid, color: '#ffffff' },
+        textColor: '#64748b',
       },
       width: chartContainerRef.current.clientWidth,
       height: chartContainerRef.current.clientHeight,
@@ -39,9 +39,9 @@ export default function AlphaPredictiveChart({ activeProfile = 'INTRADAY' }: Alp
       wickDownColor: '#ef4444',
     });
 
-    // Ghost Line — dashed purple projection into the future
+    // Ghost Line — dashed blue projection into the future
     const ghostLine = chart.addSeries(LineSeries, {
-      color: '#c084fc',
+      color: '#0ea5e9', // sky-500
       lineWidth: 2,
       lineStyle: 2, // Dashed
       crosshairMarkerVisible: true,
@@ -129,7 +129,7 @@ export default function AlphaPredictiveChart({ activeProfile = 'INTRADAY' }: Alp
   return (
     <div
       ref={chartContainerRef}
-      className="h-[400px] w-full border border-slate-800 rounded-lg overflow-hidden"
+      className="h-full w-full outline-none"
     />
   );
 }

@@ -16,20 +16,20 @@ export default function ProfileSwitcher() {
   return (
     <div
       id="profile-switcher-bar"
-      className="flex w-full items-center justify-between border-b border-slate-800/80 bg-slate-950 px-4 py-2"
+      className="flex w-full items-center justify-between border-b border-border-default bg-surface px-4 py-2"
     >
       {/* ── Brand Mark ─────────────────────────────────────── */}
       <div className="flex items-center gap-2.5 select-none">
-        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-gradient-to-br from-purple-600 to-indigo-500 shadow-[0_0_12px_rgba(139,92,246,0.35)]">
+        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-gradient-to-br from-[#059669] to-emerald-400 shadow-sm">
           <span className="text-xs font-black text-white tracking-tight">A</span>
         </div>
-        <span className="text-sm font-semibold tracking-wide text-slate-300">
+        <span className="text-sm font-semibold tracking-wide text-text-primary">
           Alpha Suite
         </span>
       </div>
 
       {/* ── Segmented Profile Control ──────────────────────── */}
-      <div className="flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-900/70 p-0.5 backdrop-blur-sm">
+      <div className="flex items-center gap-1 rounded-lg border border-border-default bg-surface p-0.5 shadow-sm">
         {PROFILES.map(({ key, label, shortcut }) => {
           const isActive = activeProfile === key;
           return (
@@ -41,24 +41,24 @@ export default function ProfileSwitcher() {
               className={`
                 relative flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-xs font-semibold
                 transition-all duration-200 ease-out select-none
-                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500/60
+                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60
                 ${
                   isActive
-                    ? 'bg-slate-800 text-purple-400 shadow-[0_0_10px_rgba(192,132,252,0.15)]'
-                    : 'text-slate-500 hover:bg-slate-800/40 hover:text-slate-300'
+                    ? 'bg-[#ECFDF5] text-[#059669]'
+                    : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
                 }
               `}
             >
               {/* Active glow dot */}
               {isActive && (
-                <span className="absolute -top-px right-2 h-1 w-1 rounded-full bg-purple-400 shadow-[0_0_6px_rgba(192,132,252,0.7)] animate-pulse" />
+                <span className="absolute -top-px right-2 h-1.5 w-1.5 rounded-full bg-[#059669]" />
               )}
               <span>{label}</span>
               <span
                 className={`rounded px-1 py-px text-[10px] font-medium leading-none ${
                   isActive
-                    ? 'bg-purple-500/15 text-purple-400'
-                    : 'bg-slate-800 text-slate-600'
+                    ? 'bg-emerald-500/10 text-[#059669]'
+                    : 'bg-elevated text-text-secondary'
                 }`}
               >
                 {shortcut}
@@ -69,7 +69,7 @@ export default function ProfileSwitcher() {
       </div>
 
       {/* ── Status Indicator ───────────────────────────────── */}
-      <div className="flex items-center gap-2 text-[11px] font-medium text-slate-500">
+      <div className="flex items-center gap-2 text-[11px] font-medium text-text-secondary">
         <span className="relative flex h-2 w-2">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-40" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
