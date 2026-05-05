@@ -38,3 +38,7 @@
 ## Phase 7: The Edge Terminal
 
 The `/frontend` is now a hybrid architecture. It can run as a standard Next.js web app, OR as a native desktop executable wrapped by Tauri (`/frontend/src-tauri`).
+
+### Zero-Latency Rendering Pipeline
+
+Charts bypass React State. WebSockets push data directly via the lightweight-charts .update() API to prevent DOM reconciliation bottlenecks.
