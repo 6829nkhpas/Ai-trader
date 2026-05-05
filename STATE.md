@@ -6,9 +6,9 @@
 
 **Current Objective:** Phase 4.1 - Build the 10-Minute Timeframe Engine in Rust (Aggregating ticks into OHLC candles).
 
-**Current Status:** Phase 5.1 Complete. Alpha Terminal WebSocket server running on port 8081 and Next.js useTradeStore wired to ingest OHLC candles.
+**Current Status:** Phases 4.1 through 5.1 Complete. Alpha Terminal OHLC engine operational, Kafka Producer broadcasting, and Next.js WebSocket on port 8081 integrated.
 
-**Next Steps:** Phase 5.2: UI Implementation - Render the V2 OHLC predictive candles using Lightweight Charts in the Glass-Box Dashboard.
+**Next Steps:** Phase 5.2: UI Implementation - Render the V2 predictive candles using Lightweight Charts.
 
 **Deprecated:**
 Explicitly note that `MASTER_CONTEXT.md` and `SESSION_MEMORY.md` are now obsolete and should be ignored entirely by the system.
