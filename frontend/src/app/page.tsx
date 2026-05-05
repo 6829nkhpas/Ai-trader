@@ -9,7 +9,6 @@ import LiveFeedPanel from '../components/panels/LiveFeedPanel';
 import AIPanel from '../components/panels/AIPanel';
 import OrderExecutionPanel from '../components/panels/OrderExecutionPanel';
 import AlphaPredictiveChart from '../components/AlphaPredictiveChart';
-import ProfileSwitcher from '../components/ProfileSwitcher';
 import IntradayLayout from '../components/layouts/IntradayLayout';
 import SwingLayout from '../components/layouts/SwingLayout';
 import InvestorLayout from '../components/layouts/InvestorLayout';
@@ -102,9 +101,6 @@ export default function Home() {
 
   return (
     <div className="flex h-full flex-col bg-background">
-      {/* ── Master Profile Control Bar ─────────────────────── */}
-      <ProfileSwitcher />
-
       {/* ── Profile-Driven Terminal ────────────────────────── */}
       <div className="min-h-0 flex-1">
         <TerminalLayout leftPanel={<LiveFeedPanel />} rightPanel={<AIPanel />}>

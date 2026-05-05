@@ -21,7 +21,13 @@ import {
   Layers,
 } from 'lucide-react';
 import NetworkMetrics from '../panels/NetworkMetrics';
-import { useTradeStore } from '../../store/useTradeStore';
+import { useTradeStore, TradeProfile } from '../../store/useTradeStore';
+
+const PROFILES: { key: TradeProfile; label: string; shortcut: string }[] = [
+  { key: 'INTRADAY', label: 'Intraday', shortcut: 'Scalp' },
+  { key: 'SWING', label: 'Swing', shortcut: '1H-4H' },
+  { key: 'INVESTOR', label: 'Investor', shortcut: 'Macro' },
+];
 
 interface TerminalLayoutProps {
   children: React.ReactNode;
@@ -48,21 +54,63 @@ const toolOptions = [
 ];
 
 export default function TerminalLayout({ children, leftPanel, rightPanel }: TerminalLayoutProps) {
-  const resetSession = useTradeStore((state) => state.resetSession);
+  const { activeProfile, setActiveProfile, resetSession } = useTradeStore();
   const [activeTool, setActiveTool] = useState<string>(toolOptions[0].id);
 
   return (
     <div className="flex h-screen flex-col bg-background font-sans text-text-primary">
       {/* Header */}
       <header className="z-10 flex shrink-0 items-center gap-4 border-b border-border-default bg-surface px-4 py-3 panel-shadow-sm">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-1 items-center gap-3">
           <Activity className="text-primary" size={22} />
           <div>
             <h1 className="text-lg font-semibold tracking-tight text-text-primary">AI-TRADE TERMINAL</h1>
             <p className="text-xs text-text-secondary">Live market decisions, signal flow, and execution review</p>
           </div>
         </div>
-        <div className="ml-auto flex items-center gap-3">
+
+        {/* ── Segmented Profile Control ──────────────────────── */}
+        <div className="flex shrink-0 items-center justify-center">
+          <div className="flex items-center gap-1 rounded-lg border border-border-default bg-surface p-0.5 shadow-sm">
+            {PROFILES.map(({ key, label, shortcut }) => {
+              const isActive = activeProfile === key;
+              return (
+                <button
+                  key={key}
+                  id={`profile-btn-${key.toLowerCase()}`}
+                  type="button"
+                  onClick={() => setActiveProfile(key)}
+                  className={`
+                    relative flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-xs font-semibold
+                    transition-all duration-200 ease-out select-none
+                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60
+                    ${
+                      isActive
+                        ? 'bg-emerald-500/15 text-emerald-400'
+                        : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
+                    }
+                  `}
+                >
+                  {/* Active glow dot */}
+                  {isActive && (
+                    <span className="absolute -top-px right-2 h-1.5 w-1.5 rounded-full bg-[#059669]" />
+                  )}
+                  <span>{label}</span>
+                  <span
+                    className={`rounded px-1 py-px text-[10px] font-medium leading-none ${
+                      isActive
+                        ? 'bg-emerald-500/10 text-[#059669]'
+                        : 'bg-elevated text-text-secondary'
+                    }`}
+                  >
+                    {shortcut}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="flex flex-1 items-center justify-end gap-3">
           <button
             onClick={resetSession}
             className="flex items-center gap-2 rounded-full border border-border-default bg-card px-3 py-1.5 text-xs font-semibold text-text-secondary transition-colors hover:bg-elevated"
