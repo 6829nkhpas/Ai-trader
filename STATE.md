@@ -6,9 +6,9 @@
 
 **Current Objective:** Phase 6.0 - Build the AI Predictive Engine.
 
-**Current Status:** Phase 6.0 Complete. Predictive Protobuf contracts defined and /agents/predictive Rust service scaffolded.
+**Current Status:** Phase 6.1 and 6.2 Complete. The Predictive Agent is actively running Linear Regression on 10-minute candles and broadcasting PredictiveSignals to Kafka.
 
-**Next Steps:** Phase 6.1: Implement Kafka consumer for OHLC topic and build the baseline predictive math engine.
+**Next Steps:** Phase 6.3: UI Ghost Candles - Updating the Next.js Glass-Box to ingest signals.predictive and render forward-looking ghost candles.
 
 **Deprecated:**
 Explicitly note that `MASTER_CONTEXT.md` and `SESSION_MEMORY.md` are now obsolete and should be ignored entirely by the system.
