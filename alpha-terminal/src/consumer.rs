@@ -5,8 +5,9 @@ use prost::Message as ProstMessage;
 use rdkafka::consumer::{Consumer, StreamConsumer};
 use rdkafka::Message as KafkaMessage;
 use rdkafka::ClientConfig;
+use rdkafka::producer::FutureProducer;
 
-pub async fn run_consumer(brokers: &str, topic: &str) {
+pub async fn run_consumer(brokers: &str, topic: &str, producer: FutureProducer, ohlc_topic: &str) {
     let consumer: StreamConsumer = ClientConfig::new()
         .set("group.id", "alpha-terminal-group")
         .set("bootstrap.servers", brokers)
@@ -46,6 +47,13 @@ pub async fn run_consumer(brokers: &str, topic: &str) {
                             closed_candle.close,
                             closed_candle.volume
                         );
+                        
+                        let producer_clone = producer.clone();
+                        let ohlc_topic_clone = ohlc_topic.to_string();
+                        
+                        tokio::spawn(async move {
+                            crate::kafka_producer::publish_candle(&producer_clone, &ohlc_topic_clone, &closed_candle).await;
+                        });
                     }
                 } else {
                     log::warn!("Error parsing Protobuf tick");
