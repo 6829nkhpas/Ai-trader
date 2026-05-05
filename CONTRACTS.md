@@ -48,3 +48,14 @@ Absolute serialization truth mapped from `/shared_protos`.
 - `uint64 volume`
 
 **Target Kafka Topic:** `market.ohlc.10m`
+
+## 6. PredictiveSignal (`predictive_data.proto`)
+
+- `string symbol`
+- `uint64 timestamp_ms`
+- `uint64 target_timestamp_ms`
+- `double predicted_close_price`
+- `double confidence_score`
+- `string model_version`
+
+**Target Kafka Topic:** `signals.predictive` (Producer: `agents/predictive`)

@@ -5,6 +5,7 @@
 - `/ingestion` - Market data ingestion services
 - `/agents/technical` - Quantitative technical analysis agent
 - `/agents/sentiment` - NLP/LLM-based news sentiment agent
+- `/agents/predictive` - Consumes market.ohlc.10m, runs predictive math/ML, and outputs future price targets to signals.predictive.
 - `/aggregator` - Core decision fusion engine
 - `/alpha-terminal` - V2 Predictive Engine (Rust, WebSocket port 8081)
 - `/frontend` - Glass-Box trading UI
