@@ -36,7 +36,7 @@ import { createClient }                            from 'redis';
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
-const SYMBOLS = (process.env.SENTIMENT_SYMBOLS ?? 'TATA,RELIANCE')
+const SYMBOLS = (process.env.SENTIMENT_SYMBOLS ?? 'SBILIFE,BHARTIARTL')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);

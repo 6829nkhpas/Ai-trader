@@ -58,6 +58,10 @@ pub mod consumer {
             .set("auto.offset.reset", "latest")
             .set("enable.auto.commit", "true")
             .set("session.timeout.ms", "6000")
+            // Allow subscription to topics that don't exist yet — the broker
+            // will create them when the first producer publishes, and the
+            // consumer will start receiving messages at that point.
+            .set("allow.auto.create.topics", "true")
             .create()
             .expect("Failed to create Kafka StreamConsumer — check broker address and CMake build");
 

@@ -69,53 +69,62 @@ export default function AlphaPredictiveChart({ activeProfile = 'INTRADAY' }: Alp
     let unlistenPredict: UnlistenFn | undefined;
 
     const setupListeners = async () => {
-      unlistenOhlc = await listen<any>('ohlc-tick', (event) => {
-        try {
-          const data = event.payload;
-          const candles = Array.isArray(data) ? data : [data];
+      if (typeof window !== 'undefined' && !('__TAURI_INTERNALS__' in window)) {
+        console.warn('Tauri environment not detected. Skipping IPC listeners.');
+        return;
+      }
 
-          candles.forEach(candle => {
-            const time = Math.floor(candle.start_timestamp_ms / 1000) as Time;
-            const mappedData = {
-              time,
-              open: candle.open,
-              high: candle.high,
-              low: candle.low,
-              close: candle.close,
-            };
+      try {
+        unlistenOhlc = await listen<any>('ohlc-tick', (event) => {
+          try {
+            const data = event.payload;
+            const candles = Array.isArray(data) ? data : [data];
 
-            candleSeries.update(mappedData);
-            lastCloseRef.current = { time, value: candle.close };
-          });
-        } catch (error) {
-          console.error('Error handling IPC OHLC data', error);
-        }
-      });
+            candles.forEach(candle => {
+              const time = Math.floor(candle.start_timestamp_ms / 1000) as Time;
+              const mappedData = {
+                time,
+                open: candle.open,
+                high: candle.high,
+                low: candle.low,
+                close: candle.close,
+              };
 
-      unlistenPredict = await listen<any>('predictive-tick', (event) => {
-        try {
-          const data = event.payload;
-          const signals = Array.isArray(data) ? data : [data];
+              candleSeries.update(mappedData);
+              lastCloseRef.current = { time, value: candle.close };
+            });
+          } catch (error) {
+            console.error('Error handling IPC OHLC data', error);
+          }
+        });
 
-          signals.forEach(signal => {
-            if (lastCloseRef.current) {
-              const targetTime = Math.floor(signal.target_timestamp_ms / 1000) as Time;
+        unlistenPredict = await listen<any>('predictive-tick', (event) => {
+          try {
+            const data = event.payload;
+            const signals = Array.isArray(data) ? data : [data];
 
-              ghostLine.update({
-                time: lastCloseRef.current.time,
-                value: lastCloseRef.current.value
-              });
+            signals.forEach(signal => {
+              if (lastCloseRef.current) {
+                const targetTime = Math.floor(signal.target_timestamp_ms / 1000) as Time;
 
-              ghostLine.update({
-                time: targetTime,
-                value: signal.predicted_close_price
-              });
-            }
-          });
-        } catch (error) {
-          console.error('Error handling IPC Predictive data', error);
-        }
-      });
+                ghostLine.update({
+                  time: lastCloseRef.current.time,
+                  value: lastCloseRef.current.value
+                });
+
+                ghostLine.update({
+                  time: targetTime,
+                  value: signal.predicted_close_price
+                });
+              }
+            });
+          } catch (error) {
+            console.error('Error handling IPC Predictive data', error);
+          }
+        });
+      } catch (err) {
+        console.warn('Failed to setup Tauri IPC listeners:', err);
+      }
     };
 
     setupListeners();

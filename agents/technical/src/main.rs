@@ -49,7 +49,7 @@ async fn main() {
         .unwrap_or_else(|_| "technical-agent-group".to_string());
 
     let signal_topic = std::env::var("KAFKA_TOPIC_SIGNALS")
-        .unwrap_or_else(|_| "signals.technical".to_string());
+        .unwrap_or_else(|_| "technical_signals".to_string());
 
     log::info!("Kafka broker   : {}", brokers);
     log::info!("Consumer group : {}", group_id);

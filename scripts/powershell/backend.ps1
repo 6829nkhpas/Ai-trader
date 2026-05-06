@@ -21,16 +21,16 @@ if (Test-Path ".env") {
 }
 
 Write-Host "Starting Rust Ingestion Service..."
-$jobsList += Start-Process powershell -ArgumentList "cd ingestion; cargo run --release" -PassThru
+$jobsList += Start-Process powershell -ArgumentList "-Command `"cd ingestion; cargo run --release`"" -NoNewWindow -PassThru
 
 Write-Host "Starting Rust Technical Agent..."
-$jobsList += Start-Process powershell -ArgumentList "cd agents/technical; cargo run --release" -PassThru
+$jobsList += Start-Process powershell -ArgumentList "-Command `"cd agents/technical; cargo run --release`"" -NoNewWindow -PassThru
 
 Write-Host "Starting Node Sentiment Agent..."
-$jobsList += Start-Process powershell -ArgumentList "cd agents/sentiment; npm start" -PassThru
+$jobsList += Start-Process powershell -ArgumentList "-Command `"cd agents/sentiment; npm start`"" -NoNewWindow -PassThru
 
 Write-Host "Starting Rust Aggregator..."
-$jobsList += Start-Process powershell -ArgumentList "cd aggregator; cargo run --release" -PassThru
+$jobsList += Start-Process powershell -ArgumentList "-Command `"cd aggregator; cargo run --release`"" -NoNewWindow -PassThru
 
 Write-Host "Backend services are running. Press Ctrl+C to stop."
 

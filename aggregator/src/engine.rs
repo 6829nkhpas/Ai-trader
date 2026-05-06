@@ -233,8 +233,8 @@ mod tests {
 
     #[test]
     fn sell_action_on_bearish_blend() {
-        let tech = make_tech("TATASTEEL", 20);
-        let sentiment = make_sentiment("TATASTEEL", 30);
+        let tech = make_tech("SBILIFE", 20);
+        let sentiment = make_sentiment("SBILIFE", 30);
         let decision = calculate_decision(&tech, Some(&sentiment));
 
         // 20 * 0.70 + 30 * 0.30 = 14 + 9 = 23
