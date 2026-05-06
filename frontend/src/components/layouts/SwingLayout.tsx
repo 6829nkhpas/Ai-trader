@@ -237,7 +237,7 @@ export default function SwingLayout({ activeProfile = 'SWING', timeframe = '1h' 
               Swing Confluence Engine
             </h2>
             <span className="rounded bg-emerald-500/10 px-1.5 py-px text-[9px] font-bold text-emerald-400 uppercase tracking-widest">
-              1H–4H
+              {timeframe} OHLC
             </span>
           </div>
           <div className="flex items-center gap-2">

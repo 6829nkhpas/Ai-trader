@@ -352,7 +352,7 @@
     "hash": "dfa1f5f6a7037bf39dc510f30b180002"
   },
   "D:\\projects\\Ai-trader\\frontend\\next-env.d.ts": {
-    "mtime": 1778043846.8436418,
+    "mtime": 1778050277.7104127,
     "hash": "d0f8375ae1199dc7acd3977fc33b78b8"
   },
   "D:\\projects\\Ai-trader\\frontend\\next.config.ts": {
@@ -408,8 +408,8 @@
     "hash": "4983e478596aba769e2f199dadd5116f"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\AlphaPredictiveChart.tsx": {
-    "mtime": 1778048802.860206,
-    "hash": "0fc9afc22f6b2332abc457c413cc1706"
+    "mtime": 1778050138.5211644,
+    "hash": "4175223516822a7fd3644759d75f2998"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\OrderBook.tsx": {
     "mtime": 1778016160.8946314,
@@ -444,12 +444,12 @@
     "hash": "39b04ac3eca87915cb55ece4aca7111c"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\layouts\\InvestorLayout.tsx": {
-    "mtime": 1778048859.5448177,
-    "hash": "1746d567f129f9278a1f02ec35d53c7f"
+    "mtime": 1778050161.550912,
+    "hash": "40707a3527e9027d9f428f595f753039"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\layouts\\SwingLayout.tsx": {
-    "mtime": 1778048846.346779,
-    "hash": "b97c9c5014ca7c35038495cabdaab9a8"
+    "mtime": 1778050154.0127733,
+    "hash": "97e40d80cc373d9ae6a49763465d8d3b"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\panels\\AgentStatusPanel.tsx": {
     "mtime": 1777818960.2493775,

@@ -181,7 +181,7 @@ export default function InvestorLayout({ activeProfile = 'INVESTOR', timeframe =
               Macro Allocation Engine
             </h2>
             <span className="rounded bg-emerald-500/10 px-1.5 py-px text-[9px] font-bold text-emerald-400 uppercase tracking-widest">
-              1D–1W
+              {timeframe} OHLC
             </span>
           </div>
           <div className="flex items-center gap-2">
