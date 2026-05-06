@@ -2,14 +2,16 @@
 
 import React from 'react';
 import AlphaPredictiveChart from '../AlphaPredictiveChart';
+import type { Timeframe } from '../AlphaPredictiveChart';
 import OrderBook from '../OrderBook';
 import { TradeProfile } from '../../store/useTradeStore';
 
 interface IntradayLayoutProps {
   activeProfile?: TradeProfile;
+  timeframe?: string;
 }
 
-export default function IntradayLayout({ activeProfile = 'INTRADAY' }: IntradayLayoutProps) {
+export default function IntradayLayout({ activeProfile = 'INTRADAY', timeframe = '1m' }: IntradayLayoutProps) {
   return (
     <div id="intraday-hud" className="grid h-full grid-cols-12 gap-3 p-3">
       {/* ── Primary Chart Area ──────────────────────────────── */}
@@ -21,7 +23,7 @@ export default function IntradayLayout({ activeProfile = 'INTRADAY' }: IntradayL
               V2 Predictive Engine
             </h2>
             <span className="rounded bg-emerald-500/10 px-1.5 py-px text-[9px] font-bold text-emerald-400 uppercase tracking-widest">
-              10m OHLC
+              {timeframe} OHLC
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -37,7 +39,7 @@ export default function IntradayLayout({ activeProfile = 'INTRADAY' }: IntradayL
 
         {/* Chart Canvas */}
         <div className="flex-1 min-h-0 rounded-lg border border-border-default bg-surface overflow-hidden">
-          <AlphaPredictiveChart activeProfile={activeProfile} />
+          <AlphaPredictiveChart activeProfile={activeProfile} timeframe={timeframe as Timeframe} />
         </div>
       </div>
 

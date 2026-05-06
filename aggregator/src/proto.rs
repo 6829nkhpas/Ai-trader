@@ -26,3 +26,9 @@ pub mod sentiment_data {
 pub mod decision {
     include!(concat!(env!("OUT_DIR"), "/ai_trade.decision.rs"));
 }
+
+/// Generated Rust structs from `shared_protos/market_data.proto`.
+/// Primary types: `Tick` (raw market tick), `OhlcCandle` (aggregated candle).
+pub mod market_data {
+    include!(concat!(env!("OUT_DIR"), "/ai_trade.market_data.rs"));
+}

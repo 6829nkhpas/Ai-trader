@@ -2,11 +2,13 @@
 
 import React from 'react';
 import AlphaPredictiveChart from '../AlphaPredictiveChart';
+import type { Timeframe } from '../AlphaPredictiveChart';
 import { TradeProfile } from '../../store/useTradeStore';
 
 // ── Types ──────────────────────────────────────────────────────────────
 interface SwingLayoutProps {
   activeProfile?: TradeProfile;
+  timeframe?: string;
 }
 
 type TrendBias = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
@@ -223,7 +225,7 @@ function SwingConfluencePanel() {
 }
 
 // ── Main Layout ────────────────────────────────────────────────────────
-export default function SwingLayout({ activeProfile = 'SWING' }: SwingLayoutProps) {
+export default function SwingLayout({ activeProfile = 'SWING', timeframe = '1h' }: SwingLayoutProps) {
   return (
     <div id="swing-hud" className="grid h-full grid-cols-12 gap-3 p-3">
       {/* ── Primary Chart Area ──────────────────────────────── */}
@@ -251,7 +253,7 @@ export default function SwingLayout({ activeProfile = 'SWING' }: SwingLayoutProp
 
         {/* Chart Canvas */}
         <div className="flex-1 min-h-0 rounded-lg border border-border-default bg-surface overflow-hidden">
-          <AlphaPredictiveChart activeProfile={activeProfile} />
+          <AlphaPredictiveChart activeProfile={activeProfile} timeframe={timeframe as Timeframe} />
         </div>
       </div>
 

@@ -28,6 +28,7 @@ fn main() {
             "../shared_protos/technical_data.proto",  // TechSignal — inbound from Kafka
             "../shared_protos/sentiment_data.proto",  // NewsSentiment — inbound from Kafka
             "../shared_protos/decision.proto",        // AggregatedDecision — outbound to Kafka
+            "../shared_protos/market_data.proto",     // Tick — inbound for OHLC aggregation
         ],
         &["../shared_protos/"], // include path (resolves proto imports)
     )

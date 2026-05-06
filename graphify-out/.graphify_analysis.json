@@ -1,0 +1,590 @@
+{
+  "communities": {
+    "0": [
+      "agents_sentiment_src_protoloader_js",
+      "agents_technical_src_kafka_consumer_rs",
+      "aggregator_src_consumer_rs",
+      "aggregator_src_engine_rs",
+      "frontend_src_tauri_src_lib_rs",
+      "ingestion_src_kafka_producer_rs",
+      "ingestion_src_kite_ws_rs",
+      "src_consumer_run_consumer",
+      "src_consumer_run_consumer_loop",
+      "src_engine_base_case_no_sentiment_100pct_tech",
+      "src_engine_base_weights_70_30_normal",
+      "src_engine_calculate_decision",
+      "src_engine_conflict_resolution_penalizes_toward_neutral",
+      "src_engine_conflict_with_conviction_override_trusts_news",
+      "src_engine_conviction_override_inverts_weights",
+      "src_engine_hold_action_on_neutral_blend",
+      "src_engine_init_consumer",
+      "src_engine_init_producer",
+      "src_engine_make_sentiment",
+      "src_engine_make_tech",
+      "src_engine_now_ms",
+      "src_engine_publish_signal",
+      "src_engine_score_clamped_to_valid_range",
+      "src_engine_sell_action_on_bearish_blend",
+      "src_kafka_consumer_run_listener",
+      "src_kafka_producer_kafkaproducer_flush",
+      "src_kafka_producer_kafkaproducer_send_tick",
+      "src_kafka_producer_publish_candle",
+      "src_kafka_producer_publish_decision",
+      "src_kafkaproducer_connectproducer",
+      "src_kite_ws_parse_frame",
+      "src_kite_ws_parse_packet",
+      "src_lib_run",
+      "src_protoloader_encodenewssentiment",
+      "src_protoloader_loadnewssentimenttype"
+    ],
+    "1": [
+      "agents_sentiment_src_analyzer_js",
+      "agents_sentiment_src_cache_js",
+      "agents_sentiment_src_claude_js",
+      "agents_sentiment_src_fetcher_js",
+      "auth_src_db_js",
+      "auth_src_index_js",
+      "auth_src_middleware_error_handler_js",
+      "auth_src_services_billing_sync_js",
+      "auth_src_tests_integration_test_js",
+      "errors_index_authenticationerror",
+      "errors_index_duplicateemailerror",
+      "errors_index_notfounderror",
+      "errors_index_notfounderror_constructor",
+      "errors_index_passwordcomplexityerror",
+      "errors_index_tokenreuseerror",
+      "middleware_error_handler_registererrorhandler",
+      "routes_auth_routes_registerauthroutes",
+      "services_billing_sync_billingsyncengine",
+      "services_billing_sync_billingsyncengine_runsynctask",
+      "services_billing_sync_billingsyncengine_stop",
+      "src_analyzer_analyzesentiment",
+      "src_cache_getclient",
+      "src_cache_isarticleprocessed",
+      "src_cache_markarticleprocessed",
+      "src_claude_scorearticle",
+      "src_db_closepool",
+      "src_engine_ohlcengine",
+      "src_fetcher_fetchlatestnews",
+      "src_index_processticker",
+      "src_index_shutdown",
+      "src_index_start",
+      "src_kafkaproducer_publishsentiment",
+      "src_redis_client_closeredis"
+    ],
+    "2": [
+      "app_layout_rootlayout",
+      "app_page_gate",
+      "app_page_renderprofilecontent",
+      "auth_googleauthbutton_googleicon",
+      "auth_layout_authlayout",
+      "auth_loginform_handleemailblur",
+      "auth_loginform_handlepassblur",
+      "auth_loginform_validateemail",
+      "auth_loginform_validatepassword",
+      "auth_mfachallenge_handlechange",
+      "auth_mfachallenge_handlekeydown",
+      "auth_mfachallenge_loadsetup",
+      "complete_oauthcompleteinner_oauthcompleteinner",
+      "complete_page_oauthcompletepage",
+      "context_authcontext_sessionprovider",
+      "context_authcontext_useauth",
+      "dashboard_dashboardredirect_dashboardredirect",
+      "dashboard_page_dashboardpage",
+      "frontend_src_app_layout_tsx",
+      "frontend_src_app_page_tsx",
+      "frontend_src_components_auth_googleauthbutton_tsx",
+      "frontend_src_components_auth_loginform_tsx",
+      "frontend_src_components_auth_mfachallenge_tsx",
+      "frontend_src_components_auth_signupform_tsx",
+      "frontend_src_context_authcontext_tsx",
+      "frontend_src_lib_onboarding_ts",
+      "lib_onboarding_isonboardingcomplete",
+      "lib_onboarding_resolvepostauthdestination",
+      "login_page_loginpage",
+      "onboarding_page_checkstatus",
+      "onboarding_page_geterrors",
+      "onboarding_page_handlesubmit",
+      "signup_page_signuppage"
+    ],
+    "3": [
+      "agents_technical_src_indicators_rs",
+      "ingestion_build_rs",
+      "ingestion_src_kite_auth_rs",
+      "ingestion_src_kite_client_rs",
+      "ingestion_src_main_rs",
+      "ingestion_src_parser_rs",
+      "ingestion_src_questdb_sink_rs",
+      "ingestion_src_questdb_writer_rs",
+      "src_indicators_rsi_warm_up_gating",
+      "src_indicators_update_rsi",
+      "src_indicators_update_vwap",
+      "src_indicators_vwap_basic_calculation",
+      "src_indicators_vwap_no_volume_returns_none",
+      "src_kafka_producer_publish_tick",
+      "src_kite_auth_generate_access_token",
+      "src_kite_auth_kitesessiondata",
+      "src_kite_auth_kitesessionresponse",
+      "src_kite_client_connect_ticker",
+      "src_main_main",
+      "src_parser_make_ltp_packet",
+      "src_parser_parse_binary_frame",
+      "src_parser_parse_binary_tick",
+      "src_parser_test_frame_with_no_packets",
+      "src_parser_test_ltp_mode_parsing",
+      "src_parser_test_packet_too_short",
+      "src_questdb_sink_create_table_if_not_exists",
+      "src_questdb_sink_init_pool",
+      "src_questdb_sink_insert_tick",
+      "src_questdb_writer_questdbwriter_connect",
+      "src_questdb_writer_questdbwriter_reconnect",
+      "src_questdb_writer_questdbwriter_write_tick"
+    ],
+    "4": [
+      "auth_src_controllers_auth_controller_js",
+      "auth_src_controllers_billing_controller_js",
+      "auth_src_repository_billing_repository_js",
+      "auth_src_routes_auth_routes_js",
+      "auth_src_services_billing_service_js",
+      "controllers_auth_controller_handlegeneratemfa",
+      "controllers_auth_controller_handlegooglelogin",
+      "controllers_auth_controller_handlehealth",
+      "controllers_auth_controller_handlelogin",
+      "controllers_auth_controller_handlelogout",
+      "controllers_auth_controller_handlerefresh",
+      "controllers_auth_controller_handleregister",
+      "controllers_auth_controller_handlesession",
+      "controllers_auth_controller_handleverifymfa",
+      "crypto_jwt_provider_signaccesstoken",
+      "repository_billing_repository_billingrepository_createsubscription",
+      "repository_billing_repository_billingrepository_getactivesubscriptions",
+      "repository_billing_repository_billingrepository_getsubscriptionbypolarid",
+      "repository_billing_repository_billingrepository_setpolarcustomerid",
+      "repository_billing_repository_billingrepository_updatesubscriptionstatus",
+      "repository_user_repository_finduserbyid",
+      "services_billing_service_billingservice_createcheckoutsession",
+      "services_billing_service_billingservice_getorprovisioncustomer",
+      "services_billing_service_billingservice_getplans",
+      "services_billing_service_billingservice_transitionsubscription",
+      "services_mfa_service_getmfastatus",
+      "src_db_getpool"
+    ],
+    "5": [
+      "agents_predictive_src_math_rs",
+      "aggregator_src_ohlc_server_rs",
+      "aggregator_src_state_rs",
+      "src_math_confidence_is_clamped",
+      "src_math_flat_prices_yield_high_confidence",
+      "src_math_predictionengine",
+      "src_math_predictionengine_add_close_price",
+      "src_math_predictionengine_predict_next",
+      "src_math_returns_none_when_window_incomplete",
+      "src_math_returns_prediction_at_full_window",
+      "src_math_window_never_exceeds_capacity",
+      "src_ohlc_server_candleaccumulator",
+      "src_ohlc_server_candleaccumulator_to_json",
+      "src_ohlc_server_candleaccumulator_update",
+      "src_ohlc_server_init_tick_consumer",
+      "src_ohlc_server_run_ohlc_pipeline",
+      "src_ohlc_server_start_ohlc_ws_server",
+      "src_state_aggregatorstate",
+      "src_state_aggregatorstate_get_sentiment",
+      "src_state_aggregatorstate_update_sentiment",
+      "src_state_marketstate",
+      "src_state_marketstate_shared",
+      "src_state_symbolstate",
+      "src_state_symbolstate_default",
+      "src_state_symbolstate_new",
+      "src_state_symbolstate_rsi_warmed_up"
+    ],
+    "6": [
+      "auth_src_adapters_kyc_pan_adapter_js",
+      "auth_src_controllers_kyc_controller_js",
+      "auth_src_controllers_webhook_controller_js",
+      "auth_src_middleware_kyc_guard_js",
+      "auth_src_repository_user_profile_repository_js",
+      "auth_src_routes_kyc_routes_js",
+      "auth_src_services_s3_service_js",
+      "auth_src_utils_kyc_state_js",
+      "controllers_kyc_controller_handlegetprofile",
+      "controllers_kyc_controller_handlegetuploadurl",
+      "controllers_kyc_controller_handlelivenesscheck",
+      "controllers_kyc_controller_handleupsertprofile",
+      "controllers_kyc_controller_handleverifypan",
+      "kyc_pan_adapter_verifypan",
+      "middleware_kyc_guard_requireverified",
+      "middleware_mfa_guard_mfaguard",
+      "repository_user_profile_repository_encryptprofiledata",
+      "repository_user_profile_repository_finduserprofilebyuserid",
+      "repository_user_profile_repository_getrawuserprofileciphertext",
+      "repository_user_profile_repository_updatekycstatus",
+      "repository_user_profile_repository_upsertuserprofile",
+      "routes_kyc_routes_registerkycroutes",
+      "services_s3_service_generatepresigneduploadurl",
+      "services_s3_service_gets3client",
+      "utils_kyc_state_transitionstate"
+    ],
+    "7": [
+      "auth_src_crypto_hasher_js",
+      "auth_src_crypto_hasher_test_js",
+      "auth_src_repository_user_repository_js",
+      "auth_src_services_auth_service_js",
+      "crypto_hasher_hashpassword",
+      "crypto_hasher_verifypassword",
+      "repository_user_repository_finduserbyemail",
+      "repository_user_repository_getpasswordhash",
+      "repository_user_repository_insertcredential",
+      "repository_user_repository_insertuser",
+      "services_auth_service_loginuser",
+      "services_auth_service_registeruser",
+      "services_auth_service_validatepasswordcomplexity",
+      "services_oauth_service_loginwithgoogle"
+    ],
+    "8": [
+      "auth_src_crypto_jwt_provider_js",
+      "auth_src_middleware_auth_guard_js",
+      "auth_src_middleware_blacklist_js",
+      "auth_src_redis_client_js",
+      "auth_src_routes_billing_routes_js",
+      "crypto_jwt_provider_decodetokenunsafe",
+      "crypto_jwt_provider_loadprivatekey",
+      "crypto_jwt_provider_loadpublickey",
+      "crypto_jwt_provider_verifyaccesstoken",
+      "middleware_auth_guard_authguard",
+      "middleware_blacklist_isjtiblacklisted",
+      "routes_billing_routes_registerbillingroutes",
+      "src_redis_client_getredisclient"
+    ],
+    "9": [
+      "auth_src_controllers_billing_webhook_controller_js",
+      "auth_src_middleware_billing_guard_js",
+      "auth_src_routes_trade_routes_js",
+      "auth_src_routes_webhook_routes_js",
+      "auth_src_tests_billing_webhook_test_js",
+      "controllers_billing_webhook_controller_handlepolarwebhook",
+      "controllers_billing_webhook_controller_verifysignature",
+      "controllers_webhook_controller_handlekycvendorwebhook",
+      "middleware_billing_guard_requireactivesubscription",
+      "routes_trade_routes_registertraderoutes",
+      "routes_webhook_routes_registerwebhookroutes"
+    ],
+    "10": [
+      "auth_src_crypto_encryption_js",
+      "auth_src_repository_mfa_repository_js",
+      "auth_src_services_mfa_service_js",
+      "crypto_encryption_encryptsymmetric",
+      "crypto_encryption_getkey",
+      "repository_mfa_repository_activatemfarecord",
+      "repository_mfa_repository_findmfarecord",
+      "repository_mfa_repository_upsertmfarecord",
+      "services_mfa_service_generatemfa",
+      "services_mfa_service_verifymfa"
+    ],
+    "11": [
+      "agents_technical_src_signal_engine_rs",
+      "src_signal_engine_evaluate_signal",
+      "src_signal_engine_fields_propagated_correctly",
+      "src_signal_engine_neutral_signal",
+      "src_signal_engine_overbought_above_vwap",
+      "src_signal_engine_oversold_below_vwap",
+      "src_signal_engine_strong_bearish_signal",
+      "src_signal_engine_strong_bullish_signal",
+      "src_signal_engine_vwap_distance_calculation"
+    ],
+    "12": [
+      "auth_src_adapters_kyc_aadhaar_adapter_js",
+      "auth_src_utils_circuit_breaker_js",
+      "kyc_aadhaar_adapter_verifyaadhaar",
+      "utils_circuit_breaker_circuitbreaker_fire",
+      "utils_circuit_breaker_circuitbreaker_onfailure",
+      "utils_circuit_breaker_circuitbreaker_onsuccess"
+    ],
+    "13": [
+      "frontend_src_components_layouts_swinglayout_tsx",
+      "layouts_swinglayout_biascolor",
+      "layouts_swinglayout_sentimentdotcolor",
+      "layouts_swinglayout_sentimentscorecolor",
+      "layouts_swinglayout_strengthbarwidth"
+    ],
+    "14": [
+      "components_orderbook_depthpercent",
+      "components_orderbook_generateinitialbook",
+      "components_orderbook_perturbbook",
+      "frontend_src_components_orderbook_tsx"
+    ],
+    "15": [
+      "auth_src_config_billing_catalog_js",
+      "config_billing_catalog_getplanbypriceid",
+      "config_billing_catalog_isvalidpriceid"
+    ],
+    "16": [
+      "frontend_src_proxy_ts",
+      "src_proxy_hassession",
+      "src_proxy_proxy"
+    ],
+    "17": [
+      "components_tradingchart_buildchartdata",
+      "components_tradingchart_handlecrosshairmove",
+      "frontend_src_components_tradingchart_tsx"
+    ],
+    "18": [
+      "frontend_src_components_layouts_investorlayout_tsx",
+      "layouts_investorlayout_directioncolor",
+      "layouts_investorlayout_directionicon"
+    ],
+    "19": [
+      "frontend_src_components_panels_agentstatuspanel_tsx",
+      "panels_agentstatuspanel_getstatuscolor",
+      "panels_agentstatuspanel_getstatusdot"
+    ],
+    "20": [
+      "frontend_src_lib_api_client_ts",
+      "lib_api_client_notifysubscribers",
+      "lib_api_client_subscribetokenrefresh"
+    ],
+    "21": [
+      "aggregator_src_ws_server_rs",
+      "src_ws_server_start_server"
+    ],
+    "22": [
+      "auth_src_middleware_owner_guard_js",
+      "middleware_owner_guard_isowner"
+    ],
+    "23": [
+      "components_alphapredictivechart_aggregatecandles",
+      "frontend_src_components_alphapredictivechart_tsx"
+    ],
+    "24": [
+      "frontend_src_components_panels_aipanel_tsx",
+      "panels_aipanel_clampscore"
+    ],
+    "25": [
+      "panels_networkmetrics_getlatencycolor",
+      "panels_networkmetrics_networkmetrics"
+    ],
+    "26": [
+      "frontend_src_lib_auth_redirect_ts",
+      "lib_auth_redirect_resolveauthredirect"
+    ],
+    "27": [
+      "ingestion_src_types_rs",
+      "src_types_parsedtick"
+    ],
+    "28": [
+      "powershell_start_system_cleanup",
+      "scripts_powershell_start_system_ps1"
+    ],
+    "29": [
+      "auth_prisma_config_ts"
+    ],
+    "30": [
+      "auth_src_config_js"
+    ],
+    "31": [
+      "frontend_eslint_config_mjs"
+    ],
+    "32": [
+      "frontend_next_env_d_ts"
+    ],
+    "33": [
+      "frontend_next_config_ts"
+    ],
+    "34": [
+      "frontend_postcss_config_mjs"
+    ],
+    "35": [
+      "frontend_src_components_layout_terminallayout_tsx"
+    ],
+    "36": [
+      "layouts_intradaylayout_intradaylayout"
+    ],
+    "37": [
+      "frontend_src_components_panels_livefeedpanel_tsx"
+    ],
+    "38": [
+      "frontend_src_components_panels_orderexecutionpanel_tsx"
+    ],
+    "39": [
+      "frontend_src_store_usetradestore_ts"
+    ],
+    "40": [
+      "ingestion_src_proto_rs"
+    ],
+    "41": [
+      "scripts_powershell_auth_ps1"
+    ],
+    "42": [
+      "scripts_powershell_backend_ps1"
+    ],
+    "43": [
+      "scripts_powershell_frontend_ps1"
+    ],
+    "44": [
+      "scripts_powershell_infra_ps1"
+    ],
+    "45": [
+      "scripts_powershell_stop_infra_ps1"
+    ]
+  },
+  "cohesion": {
+    "0": 0.12,
+    "1": 0.1,
+    "2": 0.08,
+    "3": 0.09,
+    "4": 0.18,
+    "5": 0.14,
+    "6": 0.13,
+    "7": 0.26,
+    "8": 0.21,
+    "9": 0.2,
+    "10": 0.38,
+    "11": 0.42,
+    "12": 0.47,
+    "13": 0.4,
+    "14": 0.5,
+    "15": 0.67,
+    "16": 1.0,
+    "17": 0.67,
+    "18": 0.67,
+    "19": 0.67,
+    "20": 0.67,
+    "21": 1.0,
+    "22": 1.0,
+    "23": 1.0,
+    "24": 1.0,
+    "25": 1.0,
+    "26": 1.0,
+    "27": 1.0,
+    "28": 1.0,
+    "29": 1.0,
+    "30": 1.0,
+    "31": 1.0,
+    "32": 1.0,
+    "33": 1.0,
+    "34": 1.0,
+    "35": 1.0,
+    "36": 1.0,
+    "37": 1.0,
+    "38": 1.0,
+    "39": 1.0,
+    "40": 1.0,
+    "41": 1.0,
+    "42": 1.0,
+    "43": 1.0,
+    "44": 1.0,
+    "45": 1.0
+  },
+  "gods": [
+    {
+      "id": "src_db_getpool",
+      "label": "getPool()",
+      "degree": 29
+    },
+    {
+      "id": "src_main_main",
+      "label": "main()",
+      "degree": 17
+    },
+    {
+      "id": "src_lib_run",
+      "label": "run()",
+      "degree": 14
+    },
+    {
+      "id": "src_engine_calculate_decision",
+      "label": "calculate_decision()",
+      "degree": 10
+    },
+    {
+      "id": "src_cache_getclient",
+      "label": "getClient()",
+      "degree": 9
+    },
+    {
+      "id": "src_signal_engine_evaluate_signal",
+      "label": "evaluate_signal()",
+      "degree": 9
+    },
+    {
+      "id": "src_engine_make_tech",
+      "label": "make_tech()",
+      "degree": 9
+    },
+    {
+      "id": "context_authcontext_useauth",
+      "label": "useAuth()",
+      "degree": 9
+    },
+    {
+      "id": "src_engine_make_sentiment",
+      "label": "make_sentiment()",
+      "degree": 8
+    },
+    {
+      "id": "repository_user_profile_repository_finduserprofilebyuserid",
+      "label": "findUserProfileByUserId()",
+      "degree": 8
+    }
+  ],
+  "surprises": [
+    {
+      "source": "main()",
+      "target": "run_ohlc_pipeline()",
+      "source_files": [
+        "agents/predictive/src/main.rs",
+        "aggregator/src/ohlc_server.rs"
+      ],
+      "confidence": "INFERRED",
+      "relation": "calls",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
+    },
+    {
+      "source": "main()",
+      "target": "run_consumer_loop()",
+      "source_files": [
+        "agents/predictive/src/main.rs",
+        "aggregator/src/consumer.rs"
+      ],
+      "confidence": "INFERRED",
+      "relation": "calls",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
+    },
+    {
+      "source": "main()",
+      "target": "run_consumer()",
+      "source_files": [
+        "agents/predictive/src/main.rs",
+        "alpha-terminal/src/consumer.rs"
+      ],
+      "confidence": "INFERRED",
+      "relation": "calls",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
+    },
+    {
+      "source": "main()",
+      "target": "generate_access_token()",
+      "source_files": [
+        "agents/predictive/src/main.rs",
+        "ingestion/src/kite_auth.rs"
+      ],
+      "confidence": "INFERRED",
+      "relation": "calls",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; peripheral node `generate_access_token()` unexpectedly reaches hub `main()`"
+    },
+    {
+      "source": "main()",
+      "target": "init_pool()",
+      "source_files": [
+        "agents/predictive/src/main.rs",
+        "ingestion/src/questdb_sink.rs"
+      ],
+      "confidence": "INFERRED",
+      "relation": "calls",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; peripheral node `init_pool()` unexpectedly reaches hub `main()`"
+    }
+  ],
+  "tokens": {
+    "input": 0,
+    "output": 0
+  }
+}

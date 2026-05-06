@@ -2,11 +2,13 @@
 
 import React from 'react';
 import AlphaPredictiveChart from '../AlphaPredictiveChart';
+import type { Timeframe } from '../AlphaPredictiveChart';
 import { TradeProfile } from '../../store/useTradeStore';
 
 // ── Types ──────────────────────────────────────────────────────────────
 interface InvestorLayoutProps {
   activeProfile?: TradeProfile;
+  timeframe?: string;
 }
 
 interface MacroIndicator {
@@ -167,7 +169,7 @@ function MacroSentimentPanel() {
 }
 
 // ── Main Layout ────────────────────────────────────────────────────────
-export default function InvestorLayout({ activeProfile = 'INVESTOR' }: InvestorLayoutProps) {
+export default function InvestorLayout({ activeProfile = 'INVESTOR', timeframe = '1D' }: InvestorLayoutProps) {
   return (
     <div id="investor-hud" className="grid h-full grid-cols-12 gap-3 p-3">
       {/* ── Primary Chart Area ──────────────────────────────── */}
@@ -195,7 +197,7 @@ export default function InvestorLayout({ activeProfile = 'INVESTOR' }: InvestorL
 
         {/* Chart Canvas */}
         <div className="flex-1 min-h-0 rounded-lg border border-border-default bg-surface overflow-hidden">
-          <AlphaPredictiveChart activeProfile={activeProfile} />
+          <AlphaPredictiveChart activeProfile={activeProfile} timeframe={timeframe as Timeframe} />
         </div>
       </div>
 

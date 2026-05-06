@@ -19,6 +19,7 @@
 mod consumer;
 mod engine;
 mod kafka_producer;
+mod ohlc_server;
 mod proto;
 mod state;
 mod ws_server;
@@ -85,6 +86,16 @@ async fn main() {
         log::info!("Kafka FutureProducer initialised (decision publisher ready)");
 
         let consumer = init_consumer(&brokers, &group_id).await;
+
+        // ── OHLC Pipeline ────────────────────────────────────────────────────
+        // Spawns a second Kafka consumer for market.ticks, aggregates ticks into
+        // 10s OHLC candles, and broadcasts them via WebSocket on port 8081.
+        // The Tauri frontend connects here for live candlestick chart data.
+        let ohlc_brokers = brokers.clone();
+        tokio::spawn(async move {
+            ohlc_server::ohlc_server::run_ohlc_pipeline(&ohlc_brokers).await;
+        });
+        log::info!("OHLC candle pipeline spawned (market.ticks → :8081)");
 
         log::info!("All subsystems initialised. Entering aggregator consumer loop...");
         log::info!("─────────────────────────────────────────────────────────");

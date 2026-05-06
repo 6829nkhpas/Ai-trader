@@ -86,13 +86,13 @@ export default function Home() {
   const renderProfileContent = () => {
     switch (activeProfile) {
       case 'INTRADAY':
-        return <IntradayLayout activeProfile={activeProfile} />;
+        return <IntradayLayout activeProfile={activeProfile} timeframe={activeTimeframe} />;
 
       case 'SWING':
-        return <SwingLayout activeProfile={activeProfile} />;
+        return <SwingLayout activeProfile={activeProfile} timeframe={activeTimeframe} />;
 
       case 'INVESTOR':
-        return <InvestorLayout activeProfile={activeProfile} />;
+        return <InvestorLayout activeProfile={activeProfile} timeframe={activeTimeframe} />;
 
       default:
         return null;
