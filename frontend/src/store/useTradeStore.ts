@@ -46,6 +46,15 @@ export interface PredictiveSignal {
   confidence_score: number;
 }
 
+export interface MarketInsight {
+  symbol: string;
+  timestamp_ms: number;
+  headline: string;
+  analysis_text: string;
+  sentiment_score: number;
+  anomaly_pct: number;
+}
+
 export interface ExecutedTrade {
   decision: AggregatedDecision;
   quantity: number;
@@ -61,13 +70,16 @@ interface TradeStore {
   latencyMs: number;
   ohlcCandles: OhlcCandle[];
   predictiveSignals: PredictiveSignal[];
+  latestInsight: MarketInsight | null;
   connectionStatus: 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED';
   wsStatus: 'disconnected' | 'connecting' | 'connected' | 'error';
   activeProfile: TradeProfile;
   setActiveProfile: (profile: TradeProfile) => void;
+  setLatestInsight: (insight: MarketInsight) => void;
   connectWebSocket: () => void;
   connectAlphaWebSocket: (url: string) => void;
   connectPredictiveWebSocket: (url: string) => void;
+  connectInsightWebSocket: (url: string) => void;
   executeTrade: (decision: AggregatedDecision, quantity: number) => void;
   rejectTrade: (decision: AggregatedDecision) => void;
   resetSession: () => void;
@@ -122,12 +134,17 @@ export const useTradeStore = create<TradeStore>((set) => {
     latencyMs: 0,
     ohlcCandles: [],
     predictiveSignals: [],
+    latestInsight: null,
     connectionStatus: 'DISCONNECTED',
     wsStatus: 'disconnected',
     activeProfile: 'INTRADAY',
 
     setActiveProfile: (profile: TradeProfile) => {
       set({ activeProfile: profile });
+    },
+
+    setLatestInsight: (insight: MarketInsight) => {
+      set({ latestInsight: insight });
     },
 
     connectAlphaWebSocket: (url: string) => {
@@ -172,6 +189,30 @@ export const useTradeStore = create<TradeStore>((set) => {
           console.error('Error parsing PredictiveSignal WS message:', e);
         }
       };
+    },
+
+    connectInsightWebSocket: (url: string) => {
+      let destroyed = false;
+
+      const connect = () => {
+        if (destroyed) return;
+        const insightWs = new WebSocket(url);
+
+        insightWs.onmessage = (event) => {
+          try {
+            const insight: MarketInsight = JSON.parse(event.data);
+            set({ latestInsight: insight });
+          } catch (e) {
+            console.error('Error parsing MarketInsight WS message:', e);
+          }
+        };
+
+        insightWs.onclose = () => {
+          if (!destroyed) setTimeout(connect, 3000);
+        };
+      };
+
+      connect();
     },
 
     executeTrade: (decision: AggregatedDecision, quantity: number) => {

@@ -1,17 +1,39 @@
+// main.rs — Quant-RAG Agent entry point.
+//
+// Phase 9.2 — Anomaly Detection + Gemini LLM + WS Broadcast (8083).
+//
+// Pipeline:
+//   1. Consume Protobuf-encoded OHLCCandle messages from `market.ohlc.10m`
+//   2. Detect anomalies (>= 2% absolute price change)
+//   3. Invoke Google Gemini 1.5 Flash for AI-generated insight
+//   4. Publish MarketInsight to Kafka `signals.insights`
+//   5. Broadcast the same insight as JSON over WebSocket on port 8083
+
+mod engine;
 mod llm;
+mod proto;
+mod ws_server;
 
 use llm::LlmClient;
 use log::{error, info};
 
 #[tokio::main]
 async fn main() {
-    // Load .env from the monorepo root (two levels up from agents/quant-rag/)
+    // ── Environment ──────────────────────────────────────────────────────
+    // Load .env from the monorepo root (two levels up from agents/quant-rag/).
+    // Silently ignore a missing .env — Docker injects variables via env_file.
     dotenvy::from_path("../../.env").ok();
-    env_logger::init();
 
-    info!("🚀 Quant-RAG Agent starting (Gemini 1.5 Flash)...");
+    // Structured logging; set RUST_LOG=info (or debug) in .env or shell.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let client = match LlmClient::new() {
+    info!("╔══════════════════════════════════════════════════╗");
+    info!("║  Quant-RAG Agent — Gemini 1.5 Flash Engine       ║");
+    info!("║  Phase 9.2 — Anomaly → Insight Pipeline (8083)   ║");
+    info!("╚══════════════════════════════════════════════════╝");
+
+    // ── Initialise the LLM client ────────────────────────────────────────
+    let llm_client = match LlmClient::new() {
         Ok(c) => {
             info!("✅ LlmClient initialized — GEMINI_API_KEY loaded");
             c
@@ -22,25 +44,31 @@ async fn main() {
         }
     };
 
-    // Phase 9.1 — Smoke test: generate a sample insight
-    info!("📡 Running Gemini API smoke test...");
-    match client.generate_insight("NIFTY50", -2.35).await {
-        Ok((headline, analysis, sentiment)) => {
-            info!("── Gemini Insight ──────────────────────────────");
-            info!("  Headline:  {}", headline);
-            info!("  Analysis:  {}", analysis);
-            info!("  Sentiment: {}/100", sentiment);
-            info!("────────────────────────────────────────────────");
-            info!("✅ Phase 9.1 smoke test passed.");
-        }
-        Err(e) => {
-            error!("❌ Gemini API call failed: {}", e);
-            error!("   Verify GEMINI_API_KEY is set correctly in .env");
-            std::process::exit(1);
-        }
+    // ── Broadcast channel for WebSocket fan-out ──────────────────────────
+    let (ws_tx, _) = tokio::sync::broadcast::channel::<String>(100);
+
+    // ── Spawn the WebSocket server on port 8083 ──────────────────────────
+    let ws_tx_clone = ws_tx.clone();
+    tokio::spawn(async move {
+        ws_server::start_server(8083, ws_tx_clone.subscribe()).await;
+    });
+
+    // ── Kafka-gated block ────────────────────────────────────────────────
+    #[cfg(feature = "kafka")]
+    {
+        engine::engine::run(&llm_client, ws_tx).await;
     }
 
-    // Phase 9.2 will add: Kafka consumer loop on `anomalies` topic
-    // and broadcast insights to `insights` topic / Edge Terminal WebSocket.
-    info!("⏸️  Agent idle — Kafka consumer loop will be wired in Phase 9.2.");
+    #[cfg(not(feature = "kafka"))]
+    {
+        let _ = ws_tx; // suppress unused-variable warning
+        info!("⚠️  Binary built WITHOUT the 'kafka' feature (--no-default-features).");
+        info!("   Run with `cargo run` (default features enabled) for full functionality.");
+        info!("   LLM client is ready — Kafka consumer loop is disabled.");
+
+        // Keep the process alive so the WS server keeps running for testing.
+        info!("⏸️  Agent idle — serving WebSocket on port 8083 only.");
+        tokio::signal::ctrl_c().await.ok();
+        info!("Shutting down.");
+    }
 }

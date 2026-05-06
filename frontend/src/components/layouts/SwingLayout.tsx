@@ -3,7 +3,7 @@
 import React from 'react';
 import AlphaPredictiveChart from '../AlphaPredictiveChart';
 import type { Timeframe } from '../AlphaPredictiveChart';
-import { TradeProfile } from '../../store/useTradeStore';
+import { TradeProfile, useTradeStore } from '../../store/useTradeStore';
 
 // ── Types ──────────────────────────────────────────────────────────────
 interface SwingLayoutProps {
@@ -19,49 +19,13 @@ interface TimeframeTrend {
   strength: number; // 0-100
 }
 
-interface NewsSentimentItem {
-  headline: string;
-  source: string;
-  sentiment: 'positive' | 'negative' | 'neutral';
-  timestamp: string;
-}
-
-// ── Mock Data ──────────────────────────────────────────────────────────
+// ── Mock Data (Multi-Timeframe Trends remain mock until Phase 10) ──────
 const TIMEFRAME_TRENDS: TimeframeTrend[] = [
   { timeframe: '1H', bias: 'BULLISH', strength: 72 },
   { timeframe: '4H', bias: 'NEUTRAL', strength: 50 },
   { timeframe: '1D', bias: 'BULLISH', strength: 84 },
   { timeframe: '1W', bias: 'BULLISH', strength: 91 },
 ];
-
-const NEWS_ITEMS: NewsSentimentItem[] = [
-  {
-    headline: 'Fed signals potential rate pause amid cooling inflation data',
-    source: 'Reuters',
-    sentiment: 'positive',
-    timestamp: '12m ago',
-  },
-  {
-    headline: 'Tech earnings beat estimates across major indices',
-    source: 'Bloomberg',
-    sentiment: 'positive',
-    timestamp: '34m ago',
-  },
-  {
-    headline: 'Geopolitical tensions escalate in South China Sea',
-    source: 'AP News',
-    sentiment: 'negative',
-    timestamp: '1h ago',
-  },
-  {
-    headline: 'Manufacturing PMI holds steady at 51.2 for March',
-    source: 'ISM',
-    sentiment: 'neutral',
-    timestamp: '2h ago',
-  },
-];
-
-const OVERALL_SENTIMENT_SCORE = 78;
 
 // ── Helpers ────────────────────────────────────────────────────────────
 function biasColor(bias: TrendBias): string {
@@ -75,17 +39,6 @@ function biasColor(bias: TrendBias): string {
   }
 }
 
-function sentimentDotColor(sentiment: NewsSentimentItem['sentiment']): string {
-  switch (sentiment) {
-    case 'positive':
-      return 'bg-bull';
-    case 'negative':
-      return 'bg-bear';
-    case 'neutral':
-      return 'bg-neutral';
-  }
-}
-
 function strengthBarWidth(strength: number): string {
   return `${Math.min(Math.max(strength, 0), 100)}%`;
 }
@@ -96,8 +49,18 @@ function sentimentScoreColor(score: number): string {
   return 'text-bear';
 }
 
+function sentimentBarColor(score: number): string {
+  if (score >= 70) return 'bg-bull';
+  if (score >= 40) return 'bg-neutral';
+  return 'bg-bear';
+}
+
 // ── Swing Confluence Panel ─────────────────────────────────────────────
 function SwingConfluencePanel() {
+  const latestInsight = useTradeStore((s) => s.latestInsight);
+
+  const sentimentScore = latestInsight?.sentiment_score ?? null;
+
   return (
     <div
       id="swing-confluence-panel"
@@ -115,11 +78,11 @@ function SwingConfluencePanel() {
         </div>
         <div className="flex items-center gap-1.5">
           <span className="relative flex h-1.5 w-1.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-50" />
-            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-50 ${latestInsight ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            <span className={`relative inline-flex h-1.5 w-1.5 rounded-full ${latestInsight ? 'bg-emerald-500' : 'bg-amber-500'}`} />
           </span>
           <span className="text-[9px] font-medium text-text-muted uppercase tracking-widest">
-            Live
+            {latestInsight ? 'Live' : 'Awaiting'}
           </span>
         </div>
       </div>
@@ -160,33 +123,37 @@ function SwingConfluencePanel() {
         </div>
       </div>
 
-      {/* ── AI News Sentiment ─────────────────────────────── */}
+      {/* ── AI News Sentiment (Live from Quant-RAG) ─────────── */}
       <div className="flex flex-1 min-h-0 flex-col">
         <div className="flex shrink-0 items-center justify-between px-4 pt-3 pb-1.5">
           <h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">
             AI News Sentiment
           </h3>
           <div className="flex items-center gap-1.5">
-            <span className={`text-sm font-bold tabular-nums ${sentimentScoreColor(OVERALL_SENTIMENT_SCORE)}`}>
-              {OVERALL_SENTIMENT_SCORE}
-            </span>
-            <span className="text-[9px] text-text-muted font-medium">/ 100</span>
+            {sentimentScore !== null ? (
+              <>
+                <span className={`text-sm font-bold tabular-nums ${sentimentScoreColor(sentimentScore)}`}>
+                  {sentimentScore}
+                </span>
+                <span className="text-[9px] text-text-muted font-medium">/ 100</span>
+              </>
+            ) : (
+              <span className="text-[9px] text-text-muted font-medium italic">—</span>
+            )}
           </div>
         </div>
 
         {/* Sentiment gauge bar */}
         <div className="mx-4 mb-2">
           <div className="h-1.5 w-full rounded-full bg-elevated overflow-hidden">
-            <div
-              className={`h-1.5 rounded-full transition-all duration-500 ${
-                OVERALL_SENTIMENT_SCORE >= 70
-                  ? 'bg-bull'
-                  : OVERALL_SENTIMENT_SCORE >= 40
-                  ? 'bg-neutral'
-                  : 'bg-bear'
-              }`}
-              style={{ width: `${OVERALL_SENTIMENT_SCORE}%` }}
-            />
+            {sentimentScore !== null ? (
+              <div
+                className={`h-1.5 rounded-full transition-all duration-500 ${sentimentBarColor(sentimentScore)}`}
+                style={{ width: `${sentimentScore}%` }}
+              />
+            ) : (
+              <div className="h-1.5 w-0 rounded-full" />
+            )}
           </div>
           <div className="flex justify-between mt-0.5 text-[8px] text-text-muted">
             <span>Fear</span>
@@ -194,30 +161,54 @@ function SwingConfluencePanel() {
           </div>
         </div>
 
-        {/* News feed list */}
+        {/* Insight content — live from Quant-RAG or awaiting state */}
         <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-3">
-          <div className="flex flex-col gap-2.5">
-            {NEWS_ITEMS.map((item, i) => (
-              <div
-                key={i}
-                className="flex gap-2 rounded-md border border-border-subtle bg-elevated/50 p-2.5 transition-colors hover:bg-elevated"
-              >
+          {latestInsight ? (
+            <div className="flex flex-col gap-2.5">
+              {/* Headline card */}
+              <div className="flex gap-2 rounded-md border border-border-subtle bg-elevated/50 p-2.5 transition-colors hover:bg-elevated">
                 <div className="mt-1 shrink-0">
-                  <span className={`inline-flex h-2 w-2 rounded-full ${sentimentDotColor(item.sentiment)}`} />
+                  <span className={`inline-flex h-2 w-2 rounded-full ${
+                    latestInsight.sentiment_score >= 60 ? 'bg-bull' :
+                    latestInsight.sentiment_score >= 40 ? 'bg-neutral' : 'bg-bear'
+                  }`} />
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-[11px] font-medium text-text-primary leading-snug line-clamp-2">
-                    {item.headline}
+                    {latestInsight.headline}
                   </p>
                   <div className="mt-1 flex items-center gap-2 text-[9px] text-text-muted">
-                    <span className="font-medium">{item.source}</span>
+                    <span className="font-medium">Gemini AI</span>
                     <span>·</span>
-                    <span>{item.timestamp}</span>
+                    <span>{latestInsight.symbol}</span>
+                    <span>·</span>
+                    <span>{latestInsight.anomaly_pct.toFixed(1)}% anomaly</span>
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
+
+              {/* Analysis card */}
+              <div className="rounded-md border border-border-subtle bg-elevated/50 p-2.5">
+                <p className="text-[11px] leading-relaxed text-text-secondary whitespace-pre-line">
+                  {latestInsight.analysis_text}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="flex h-full items-center justify-center">
+              <div className="flex flex-col items-center gap-2 text-center">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-elevated">
+                  <span className="text-sm">🧠</span>
+                </div>
+                <p className="text-[11px] text-text-muted leading-snug">
+                  Awaiting Market Anomalies...
+                </p>
+                <p className="text-[9px] text-text-muted/60">
+                  Insights appear when a ≥2% price swing is detected
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

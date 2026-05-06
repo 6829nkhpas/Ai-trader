@@ -3,7 +3,7 @@
 import React from 'react';
 import AlphaPredictiveChart from '../AlphaPredictiveChart';
 import type { Timeframe } from '../AlphaPredictiveChart';
-import { TradeProfile } from '../../store/useTradeStore';
+import { TradeProfile, useTradeStore } from '../../store/useTradeStore';
 
 // ── Types ──────────────────────────────────────────────────────────────
 interface InvestorLayoutProps {
@@ -18,7 +18,7 @@ interface MacroIndicator {
   direction?: 'up' | 'down' | 'flat';
 }
 
-// ── Mock Data ──────────────────────────────────────────────────────────
+// ── Mock Data (Macro indicators remain mock until external feed integration) ──
 const MACRO_INDICATORS: MacroIndicator[] = [
   { label: 'Fed Funds Rate', value: '5.25%', change: '+25 bps', direction: 'up' },
   { label: 'Core CPI (YoY)', value: '3.8%', change: '-0.2%', direction: 'down' },
@@ -27,16 +27,6 @@ const MACRO_INDICATORS: MacroIndicator[] = [
   { label: 'VIX', value: '14.82', change: '-1.2', direction: 'down' },
   { label: 'GDP Growth (Q1)', value: '2.1%', change: '+0.3%', direction: 'up' },
 ];
-
-const QUANT_RAG_OUTLOOK = `Based on current macro-regime analysis, the model identifies a late-cycle expansionary environment with moderating inflation pressure. The Federal Reserve's rate trajectory suggests a terminal plateau, which historically correlates with a 6–12 month equity tailwind across growth-sensitive sectors.
-
-Key sector allocations recommended:
-• Technology (+12% overweight) — AI capex cycle acceleration
-• Healthcare (+8% overweight) — Defensive rotation hedge
-• Energy (−5% underweight) — Peak demand concerns
-• Consumer Discretionary (neutral) — Bifurcated consumer signals
-
-The Quant-RAG model assigns a 73% probability to a soft-landing scenario. Portfolio beta should target 1.05–1.15 with a 60/30/10 equity-bond-alternative allocation framework for optimal risk-adjusted returns over the next fiscal quarter.`;
 
 const PORTFOLIO_METRICS = [
   { label: 'Sharpe Ratio', value: '1.42' },
@@ -70,6 +60,8 @@ function directionColor(direction?: 'up' | 'down' | 'flat'): string {
 
 // ── Macro Sentiment Panel ──────────────────────────────────────────────
 function MacroSentimentPanel() {
+  const latestInsight = useTradeStore((s) => s.latestInsight);
+
   return (
     <div
       id="macro-sentiment-panel"
@@ -87,11 +79,11 @@ function MacroSentimentPanel() {
         </div>
         <div className="flex items-center gap-1.5">
           <span className="relative flex h-1.5 w-1.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-50" />
-            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-50 ${latestInsight ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            <span className={`relative inline-flex h-1.5 w-1.5 rounded-full ${latestInsight ? 'bg-emerald-500' : 'bg-amber-500'}`} />
           </span>
           <span className="text-[9px] font-medium text-text-muted uppercase tracking-widest">
-            Live
+            {latestInsight ? 'Live' : 'Awaiting'}
           </span>
         </div>
       </div>
@@ -146,22 +138,65 @@ function MacroSentimentPanel() {
         </div>
       </div>
 
-      {/* ── Quant-RAG Outlook ─────────────────────────────── */}
+      {/* ── Quant-RAG Outlook (Live from Gemini AI) ─────────── */}
       <div className="flex flex-1 min-h-0 flex-col">
         <div className="flex shrink-0 items-center justify-between px-4 pt-3 pb-1.5">
           <h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">
             Quant-RAG Outlook
           </h3>
-          <span className="rounded bg-cyan-500/10 px-1.5 py-px text-[9px] font-bold text-cyan-600 uppercase tracking-widest">
-            AI Generated
+          <span className={`rounded px-1.5 py-px text-[9px] font-bold uppercase tracking-widest ${
+            latestInsight ? 'bg-cyan-500/10 text-cyan-600' : 'bg-amber-500/10 text-amber-500'
+          }`}>
+            {latestInsight ? 'AI Generated' : 'Standby'}
           </span>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-3">
-          <div className="rounded-md border border-border-subtle bg-elevated/50 p-3">
-            <p className="text-[11px] leading-relaxed text-text-secondary whitespace-pre-line">
-              {QUANT_RAG_OUTLOOK}
-            </p>
-          </div>
+          {latestInsight ? (
+            <div className="flex flex-col gap-2.5">
+              {/* Headline */}
+              <div className="rounded-md border border-border-subtle bg-elevated/50 p-3">
+                <div className="flex items-start gap-2">
+                  <span className={`mt-0.5 inline-flex h-2 w-2 shrink-0 rounded-full ${
+                    latestInsight.sentiment_score >= 60 ? 'bg-bull' :
+                    latestInsight.sentiment_score >= 40 ? 'bg-neutral' : 'bg-bear'
+                  }`} />
+                  <div>
+                    <p className="text-[12px] font-semibold text-text-primary leading-snug">
+                      {latestInsight.headline}
+                    </p>
+                    <div className="mt-1 flex items-center gap-2 text-[9px] text-text-muted">
+                      <span className="font-medium">{latestInsight.symbol}</span>
+                      <span>·</span>
+                      <span>{latestInsight.anomaly_pct.toFixed(1)}% anomaly</span>
+                      <span>·</span>
+                      <span>Sentiment: {latestInsight.sentiment_score}/100</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Analysis */}
+              <div className="rounded-md border border-border-subtle bg-elevated/50 p-3">
+                <p className="text-[11px] leading-relaxed text-text-secondary whitespace-pre-line">
+                  {latestInsight.analysis_text}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="flex h-full items-center justify-center">
+              <div className="flex flex-col items-center gap-2 text-center">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-elevated">
+                  <span className="text-sm">🧠</span>
+                </div>
+                <p className="text-[11px] text-text-muted leading-snug">
+                  Awaiting Market Anomalies...
+                </p>
+                <p className="text-[9px] text-text-muted/60">
+                  AI outlook appears when a ≥2% price swing is detected
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

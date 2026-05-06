@@ -26,7 +26,7 @@ dotenvy = "0.15"
 log = "0.4"
 env_logger = "0.11"
 
-# Kafka consumer — builds librdkafka from source via CMake.
+# Kafka consumer/producer — builds librdkafka from source via CMake.
 # Gated behind the 'kafka' feature so `cargo check --no-default-features` works
 # on Windows without requiring CMake. Enabled by default for production.
 rdkafka = { version = "0.36", features = ["cmake-build"], optional = true }
@@ -34,8 +34,11 @@ rdkafka = { version = "0.36", features = ["cmake-build"], optional = true }
 # Async stream combinators — StreamExt for iterating rdkafka::StreamConsumer
 futures-util = "0.3"
 
-# Protobuf deserialization — decodes incoming anomaly messages
+# Protobuf deserialization — decodes incoming OHLCCandle, encodes MarketInsight
 prost = "0.12"
+
+# WebSocket server — broadcasts JSON insight payloads to connected clients on port 8083
+tokio-tungstenite = "0.20"
 
 # ===========================================================================
 # Build-time Dependencies (proto compilation)

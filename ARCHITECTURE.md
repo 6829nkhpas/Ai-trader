@@ -12,7 +12,9 @@
   - **WebSocket:** Port 8082 — broadcasts PredictiveSignal JSON for frontend Ghost Line rendering.
 - `/agents/quant-rag` - Serverless AI insights agent (Rust)
   - **LLM Backend:** Google Gemini 1.5 Flash REST API via `reqwest` with `application/json` strict schema generation (`responseMimeType`).
-  - **Pipeline:** Consumes market anomalies → generates LLM-powered headline, analysis, and sentiment score (1–100) → broadcasts insights to the Edge Terminal.
+  - **Anomaly Trigger:** Monitors `market.ohlc.10m` for absolute price swings >= 2.0%. Computes `|close − open| / open × 100` per candle.
+  - **Pipeline:** Anomaly detected → Gemini LLM generates headline, analysis, and sentiment score (1–100) → publishes `MarketInsight` Protobuf to Kafka `signals.insights` → broadcasts JSON via WebSocket port 8083.
+  - **WebSocket:** Port 8083 — broadcasts MarketInsight JSON for Swing/Investor HUD rendering.
   - **JSON Mode:** Uses Gemini's native `generationConfig.responseMimeType: "application/json"` to enforce structured JSON output without regex post-processing.
 - `/aggregator` - Core decision fusion engine
 - `/alpha-terminal` - V2 Predictive Engine (Rust, WebSocket port 8081)
@@ -32,8 +34,10 @@
 - `live_ticks` → **Technical Agent** → `technical_signals`
 - `live_ticks` / `news_feed` → **Sentiment Agent** → `sentiment_signals`
 - `market.ohlc.10m` → **Predictive Agent** → `signals.predictive`
+- `market.ohlc.10m` → **Quant-RAG Agent** (≥2% anomaly) → `signals.insights`
 - `technical_signals` + `sentiment_signals` → **Aggregator Engine** → `aggregated_decisions`
 - `aggregated_decisions` → **Frontend (via WebSocket)** / **Execution Layer**
+- `signals.insights` → **Frontend (via WS 8083 / Tauri IPC `insight-tick`)**
 
 ## V2 Objective
 

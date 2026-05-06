@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package ai_trade.insight_data;
+
+// AI-generated market insight produced by the Quant-RAG agent
+// when a >= 2% absolute price anomaly is detected on any OHLC candle.
+message MarketInsight {
+  string symbol           = 1;  // NSE symbol that triggered the anomaly (e.g., "RELIANCE")
+  uint64 timestamp_ms     = 2;  // Unix epoch milliseconds — when the insight was generated
+  string headline         = 3;  // One-liner headline from Gemini (e.g., "Flash Crash in BANKNIFTY")
+  string analysis_text    = 4;  // 2-sentence AI-generated analysis
+  int32  sentiment_score  = 5;  // 1–100 scale (1 = bearish, 100 = bullish)
+  double anomaly_pct      = 6;  // Absolute percentage change that triggered the anomaly
+}

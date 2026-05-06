@@ -46,6 +46,23 @@ pub fn run() {
           }
       });
 
+      // ── Quant-RAG Insight WS → IPC Bridge (port 8083) ──────────────
+      let app_handle_3 = app.handle().clone();
+      tauri::async_runtime::spawn(async move {
+          if let Ok((ws_stream, _)) = connect_async("ws://127.0.0.1:8083").await {
+              let (_, mut read) = ws_stream.split();
+              while let Some(message) = read.next().await {
+                  if let Ok(msg) = message {
+                      if let Ok(text) = msg.into_text() {
+                          if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                              let _ = app_handle_3.emit("insight-tick", json);
+                          }
+                      }
+                  }
+              }
+          }
+      });
+
       Ok(())
     })
     .run(tauri::generate_context!())
