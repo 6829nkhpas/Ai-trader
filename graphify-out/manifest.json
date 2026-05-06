@@ -23,6 +23,14 @@
     "mtime": 1778011899.1311955,
     "hash": "d9b226ee9c9320c75e3ec8c9be8a296f"
   },
+  "D:\\projects\\Ai-trader\\agents\\quant-rag\\src\\llm.rs": {
+    "mtime": 1778052033.7387192,
+    "hash": "406e2a369d1949f659f82f9658f47470"
+  },
+  "D:\\projects\\Ai-trader\\agents\\quant-rag\\src\\main.rs": {
+    "mtime": 1778052035.750013,
+    "hash": "e71f1265ef756d92a2838605eab3564a"
+  },
   "D:\\projects\\Ai-trader\\agents\\sentiment\\src\\analyzer.js": {
     "mtime": 1776894093.692682,
     "hash": "b60991ff60999cad5a8935abe069872c"
@@ -572,8 +580,8 @@
     "hash": "276eb38f527e74792b9489212bb4a0f1"
   },
   "D:\\projects\\Ai-trader\\ARCHITECTURE.md": {
-    "mtime": 1778015791.4533806,
-    "hash": "a641d7e37d36fbd67bc3e83f6b2e5a85"
+    "mtime": 1778052067.939263,
+    "hash": "1a3b896ceb5b5ecbbf2eaa7f26dbbd08"
   },
   "D:\\projects\\Ai-trader\\CONTRACTS.md": {
     "mtime": 1778011199.4740665,
@@ -596,8 +604,8 @@
     "hash": "75f4c337a037f6db287d0c717dc0b305"
   },
   "D:\\projects\\Ai-trader\\STATE.md": {
-    "mtime": 1778015793.4637654,
-    "hash": "f68b2d043b35ce1a467453835c63ba11"
+    "mtime": 1778052069.9528024,
+    "hash": "d60c28f4b311e5918e36ed9380a6da42"
   },
   "D:\\projects\\Ai-trader\\frontend\\AGENTS.md": {
     "mtime": 1777053779.352195,

@@ -10,6 +10,10 @@
   - **Algorithm:** Standard Least-Squares Linear Regression to project the $n+1$ candle (the next 10-minute close).
   - **Confidence Score:** Calculated using the $R^2$ (Coefficient of Determination) mapped to a 1-100 scale.
   - **WebSocket:** Port 8082 — broadcasts PredictiveSignal JSON for frontend Ghost Line rendering.
+- `/agents/quant-rag` - Serverless AI insights agent (Rust)
+  - **LLM Backend:** Google Gemini 1.5 Flash REST API via `reqwest` with `application/json` strict schema generation (`responseMimeType`).
+  - **Pipeline:** Consumes market anomalies → generates LLM-powered headline, analysis, and sentiment score (1–100) → broadcasts insights to the Edge Terminal.
+  - **JSON Mode:** Uses Gemini's native `generationConfig.responseMimeType: "application/json"` to enforce structured JSON output without regex post-processing.
 - `/aggregator` - Core decision fusion engine
 - `/alpha-terminal` - V2 Predictive Engine (Rust, WebSocket port 8081)
 - `/frontend` - Glass-Box trading UI
