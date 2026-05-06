@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import {
   createChart,
   ColorType,
@@ -12,7 +12,8 @@ import {
   LineSeries,
   CrosshairMode,
 } from 'lightweight-charts';
-import { useTradeStore, TradeProfile } from '../store/useTradeStore';
+import { useTradeStore, OhlcCandle, TradeProfile } from '../store/useTradeStore';
+import { Maximize2, Minimize2 } from 'lucide-react';
 
 // ── Exported Types ────────────────────────────────────────────────────────
 
@@ -21,17 +22,9 @@ export type Timeframe = '1m' | '5m' | '15m' | '1h' | '1D';
 interface AlphaPredictiveChartProps {
   activeProfile?: TradeProfile;
   timeframe?: Timeframe;
-}
-
-/** Raw 1-minute candle from the OHLC WebSocket server. */
-interface RawCandle {
-  symbol: string;
-  start_timestamp_ms: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
+  /** External fullscreen toggle (controlled by parent layout). */
+  isExpanded?: boolean;
+  onToggleExpand?: () => void;
 }
 
 /** Lightweight-charts compatible candle with numeric time. */
@@ -60,49 +53,38 @@ const TIMEFRAME_MS: Record<Timeframe, number> = {
   '1D': 24 * 60 * 60_000,
 };
 
-const MAX_RAW_CANDLES = 3000;
-
 const COLORS = {
   up: '#22c55e',
   down: '#ef4444',
-  upAlpha: 'rgba(34, 197, 94, 0.25)',
-  downAlpha: 'rgba(239, 68, 68, 0.25)',
-  grid: 'rgba(30, 41, 59, 0.35)',
+  upAlpha: 'rgba(34, 197, 94, 0.2)',
+  downAlpha: 'rgba(239, 68, 68, 0.2)',
+  grid: 'rgba(30, 41, 59, 0.3)',
   crosshair: '#475569',
   labelBg: '#1e293b',
   border: '#1e293b',
   text: '#94a3b8',
-  textMuted: '#64748b',
   ghostLine: '#0ea5e9',
 };
 
 // ── Aggregation ───────────────────────────────────────────────────────────
 
-/**
- * Aggregates raw 1-minute candles into the target timeframe.
- * Produces chart-ready candle + volume data, sorted by time.
- * Filters by symbol so only candles for the active instrument are shown.
- */
 function aggregateCandles(
-  rawCandles: RawCandle[],
+  rawCandles: OhlcCandle[],
   timeframe: Timeframe,
   symbol: string
 ): { candles: ChartCandle[]; volumes: VolumeBar[] } {
   const intervalMs = TIMEFRAME_MS[timeframe];
 
-  // Filter by symbol (case-insensitive)
   const filtered = symbol
     ? rawCandles.filter(
         (c) => c.symbol.toUpperCase() === symbol.toUpperCase()
       )
     : rawCandles;
 
-  // Sort by timestamp
   const sorted = [...filtered].sort(
     (a, b) => a.start_timestamp_ms - b.start_timestamp_ms
   );
 
-  // Group into time buckets
   const buckets = new Map<
     number,
     { open: number; high: number; low: number; close: number; volume: number }
@@ -131,8 +113,6 @@ function aggregateCandles(
 
   const candles: ChartCandle[] = [];
   const volumes: VolumeBar[] = [];
-
-  // Sort bucket keys to ensure strictly ascending times
   const keys = Array.from(buckets.keys()).sort((a, b) => a - b);
 
   for (const key of keys) {
@@ -140,19 +120,8 @@ function aggregateCandles(
     const timeSec = Math.floor(key / 1000);
     const isUp = b.close >= b.open;
 
-    candles.push({
-      time: timeSec,
-      open: b.open,
-      high: b.high,
-      low: b.low,
-      close: b.close,
-    });
-
-    volumes.push({
-      time: timeSec,
-      value: b.volume,
-      color: isUp ? COLORS.upAlpha : COLORS.downAlpha,
-    });
+    candles.push({ time: timeSec, open: b.open, high: b.high, low: b.low, close: b.close });
+    volumes.push({ time: timeSec, value: b.volume, color: isUp ? COLORS.upAlpha : COLORS.downAlpha });
   }
 
   return { candles, volumes };
@@ -163,6 +132,8 @@ function aggregateCandles(
 export default function AlphaPredictiveChart({
   activeProfile = 'INTRADAY',
   timeframe = '1m',
+  isExpanded = false,
+  onToggleExpand,
 }: AlphaPredictiveChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -170,17 +141,13 @@ export default function AlphaPredictiveChart({
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const ghostLineRef = useRef<ISeriesApi<'Line'> | null>(null);
 
-  // Raw 1-minute candle buffer, keyed by symbol for efficient filtering.
-  const rawCandlesRef = useRef<RawCandle[]>([]);
+  // ── Read OHLC data from the PERSISTED Zustand store ─────────────────
+  // The store's connectAlphaWebSocket() (called once in page.tsx) handles the
+  // WebSocket connection and stores candles in ohlcCandles[]. This data
+  // persists across component remounts, profile switches, etc.
+  const ohlcCandles = useTradeStore((s) => s.ohlcCandles);
 
-  // Track the current active timeframe and symbol via refs (avoids re-creating WS).
-  const timeframeRef = useRef<Timeframe>(timeframe);
-  timeframeRef.current = timeframe;
-
-  // Ghost line anchor
-  const lastCloseRef = useRef<{ time: number; value: number } | null>(null);
-
-  // Get active symbol from trade store decisions
+  // Active symbol from trade decisions
   const activeDecision = useTradeStore((s) => s.activeDecision);
   const liveDecisions = useTradeStore((s) => s.liveDecisions);
 
@@ -189,40 +156,25 @@ export default function AlphaPredictiveChart({
     return d?.symbol ?? '';
   }, [activeDecision, liveDecisions]);
 
-  const activeSymbolRef = useRef(activeSymbol);
-  activeSymbolRef.current = activeSymbol;
-
-  // ── Full redraw (timeframe change, symbol change) ───────────────────────
-  const redrawChart = useCallback(() => {
-    if (!candleSeriesRef.current || !volumeSeriesRef.current) return;
-
-    const { candles, volumes } = aggregateCandles(
-      rawCandlesRef.current,
-      timeframeRef.current,
-      activeSymbolRef.current
+  // OHLC info for the header watermark
+  const latestCandle = useMemo(() => {
+    if (!activeSymbol || ohlcCandles.length === 0) return null;
+    const symbolCandles = ohlcCandles.filter(
+      (c) => c.symbol.toUpperCase() === activeSymbol.toUpperCase()
     );
+    return symbolCandles.length > 0 ? symbolCandles[symbolCandles.length - 1] : null;
+  }, [ohlcCandles, activeSymbol]);
 
-    // setData() expects strictly ascending times — our aggregation guarantees this.
-    candleSeriesRef.current.setData(candles as Array<{ time: Time; open: number; high: number; low: number; close: number }>);
-    volumeSeriesRef.current.setData(volumes as Array<{ time: Time; value: number; color: string }>);
+  // ── Aggregated data (memoized) ──────────────────────────────────────
+  const { candles: chartData, volumes: volumeData } = useMemo(
+    () => aggregateCandles(ohlcCandles, timeframe, activeSymbol),
+    [ohlcCandles, timeframe, activeSymbol]
+  );
 
-    if (candles.length > 0) {
-      chartRef.current?.timeScale().scrollToRealTime();
-      const last = candles[candles.length - 1];
-      lastCloseRef.current = { time: last.time, value: last.close };
-    }
-  }, []);
-
-  // Redraw when timeframe or symbol changes.
-  useEffect(() => {
-    redrawChart();
-  }, [timeframe, activeSymbol, redrawChart]);
-
-  // ── Chart initialisation & data pipeline ──────────────────────────────
+  // ── Chart init ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    // ── Create chart ────────────────────────────────────────────────────
     const chart = createChart(chartContainerRef.current, {
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
@@ -241,7 +193,7 @@ export default function AlphaPredictiveChart({
       },
       rightPriceScale: {
         borderColor: COLORS.border,
-        scaleMargins: { top: 0.05, bottom: 0.25 }, // Leave space for volume at bottom
+        scaleMargins: { top: 0.05, bottom: 0.22 },
       },
       timeScale: {
         borderColor: COLORS.border,
@@ -256,7 +208,6 @@ export default function AlphaPredictiveChart({
       height: chartContainerRef.current.clientHeight || 400,
     });
 
-    // ── Candlestick series ──────────────────────────────────────────────
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: COLORS.up,
       downColor: COLORS.down,
@@ -268,17 +219,14 @@ export default function AlphaPredictiveChart({
       priceFormat: { type: 'price', precision: 2, minMove: 0.05 },
     });
 
-    // ── Volume histogram (overlaid at bottom) ───────────────────────────
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
-      priceScaleId: '',  // Overlay on main pane
+      priceScaleId: '',
     });
-
     volumeSeries.priceScale().applyOptions({
-      scaleMargins: { top: 0.8, bottom: 0 },
+      scaleMargins: { top: 0.82, bottom: 0 },
     });
 
-    // ── Ghost prediction line ───────────────────────────────────────────
     const ghostLine = chart.addSeries(LineSeries, {
       color: COLORS.ghostLine,
       lineWidth: 2,
@@ -293,7 +241,6 @@ export default function AlphaPredictiveChart({
     volumeSeriesRef.current = volumeSeries;
     ghostLineRef.current = ghostLine;
 
-    // ── Responsive resize ───────────────────────────────────────────────
     const resizeObserver = new ResizeObserver(() => {
       if (chartContainerRef.current) {
         const rect = chartContainerRef.current.getBoundingClientRect();
@@ -302,171 +249,8 @@ export default function AlphaPredictiveChart({
     });
     resizeObserver.observe(chartContainerRef.current);
 
-    // ── Data Pipeline ───────────────────────────────────────────────────
-    let cleanupFn: (() => void) | null = null;
-
-    const isTauri =
-      typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-
-    /**
-     * Shared handler: receives a raw 1-minute candle from any data source,
-     * stores it, and updates the chart using setData() for correctness.
-     *
-     * We use setData() (full redraw of current symbol/timeframe) instead of
-     * update() to avoid "Cannot update oldest data" errors caused by
-     * interleaved multi-symbol candles arriving out of time order.
-     */
-    const handleCandleData = (candle: RawCandle) => {
-      // Validate the candle has required fields
-      if (
-        !candle.symbol ||
-        !Number.isFinite(candle.start_timestamp_ms) ||
-        candle.start_timestamp_ms <= 0 ||
-        !Number.isFinite(candle.open)
-      ) {
-        return;
-      }
-
-      // Store in the raw buffer
-      rawCandlesRef.current.push(candle);
-
-      // Cap buffer size
-      if (rawCandlesRef.current.length > MAX_RAW_CANDLES) {
-        rawCandlesRef.current = rawCandlesRef.current.slice(-MAX_RAW_CANDLES);
-      }
-
-      // Only update chart if this candle's symbol matches the active symbol
-      const sym = activeSymbolRef.current;
-      if (sym && candle.symbol.toUpperCase() !== sym.toUpperCase()) {
-        return;
-      }
-
-      // Re-aggregate and set full data (safe, no time ordering issues)
-      const { candles, volumes } = aggregateCandles(
-        rawCandlesRef.current,
-        timeframeRef.current,
-        sym
-      );
-
-      if (candles.length > 0 && candleSeriesRef.current && volumeSeriesRef.current) {
-        candleSeriesRef.current.setData(candles as Array<{ time: Time; open: number; high: number; low: number; close: number }>);
-        volumeSeriesRef.current.setData(volumes as Array<{ time: Time; value: number; color: string }>);
-        chart.timeScale().scrollToRealTime();
-
-        const last = candles[candles.length - 1];
-        lastCloseRef.current = { time: last.time, value: last.close };
-      }
-    };
-
-    if (isTauri) {
-      // ── Tauri IPC Path ──────────────────────────────────────────────
-      let unlistenOhlc: (() => void) | undefined;
-      let unlistenPredict: (() => void) | undefined;
-
-      const setupTauriListeners = async () => {
-        try {
-          const { listen } = await import('@tauri-apps/api/event');
-
-          unlistenOhlc = await listen<RawCandle>('ohlc-tick', (event) => {
-            try {
-              const data = event.payload;
-              const candles = Array.isArray(data) ? data : [data];
-              candles.forEach(handleCandleData);
-            } catch (error) {
-              console.error('[Chart] IPC OHLC error:', error);
-            }
-          });
-
-          unlistenPredict = await listen<Record<string, unknown>>(
-            'predictive-tick',
-            (event) => {
-              try {
-                const data = event.payload;
-                const signals = Array.isArray(data) ? data : [data];
-                signals.forEach((signal: Record<string, unknown>) => {
-                  if (lastCloseRef.current) {
-                    const targetTime = Math.floor(
-                      (signal.target_timestamp_ms as number) / 1000
-                    );
-                    ghostLine.setData([
-                      { time: lastCloseRef.current.time as Time, value: lastCloseRef.current.value },
-                      { time: targetTime as Time, value: signal.predicted_close_price as number },
-                    ]);
-                  }
-                });
-              } catch (error) {
-                console.error('[Chart] IPC Predictive error:', error);
-              }
-            }
-          );
-        } catch (err) {
-          console.warn('[Chart] Tauri IPC setup failed:', err);
-        }
-      };
-
-      setupTauriListeners();
-      cleanupFn = () => {
-        if (unlistenOhlc) unlistenOhlc();
-        if (unlistenPredict) unlistenPredict();
-      };
-    } else {
-      // ── WebSocket Fallback (browser / Next.js dev) ──────────────────
-      const ohlcWsUrl =
-        process.env.NEXT_PUBLIC_OHLC_WS_URL || 'ws://127.0.0.1:8081';
-
-      let ohlcWs: WebSocket | null = null;
-      let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-      let destroyed = false;
-
-      const connectOhlcWs = () => {
-        if (destroyed) return;
-        try {
-          ohlcWs = new WebSocket(ohlcWsUrl);
-
-          ohlcWs.onopen = () => {
-            console.log('[Chart] OHLC WS connected →', ohlcWsUrl);
-          };
-
-          ohlcWs.onmessage = (event) => {
-            try {
-              const candle: RawCandle = JSON.parse(event.data);
-              handleCandleData(candle);
-            } catch (e) {
-              console.error('[Chart] OHLC WS parse error:', e);
-            }
-          };
-
-          ohlcWs.onclose = () => {
-            if (!destroyed) {
-              reconnectTimer = setTimeout(connectOhlcWs, 3000);
-            }
-          };
-
-          ohlcWs.onerror = () => {
-            // onclose will fire after this, triggering reconnect
-          };
-        } catch {
-          if (!destroyed) {
-            reconnectTimer = setTimeout(connectOhlcWs, 3000);
-          }
-        }
-      };
-
-      connectOhlcWs();
-
-      cleanupFn = () => {
-        destroyed = true;
-        if (reconnectTimer) clearTimeout(reconnectTimer);
-        if (ohlcWs) {
-          ohlcWs.onclose = null;
-          ohlcWs.close();
-        }
-      };
-    }
-
     return () => {
       resizeObserver.disconnect();
-      if (cleanupFn) cleanupFn();
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
@@ -475,7 +259,21 @@ export default function AlphaPredictiveChart({
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Update time scale settings when timeframe changes (show seconds only for 1m)
+  // ── Sync chart data when store data / timeframe / symbol changes ────
+  useEffect(() => {
+    if (!candleSeriesRef.current || !volumeSeriesRef.current) return;
+
+    candleSeriesRef.current.setData(
+      chartData as Array<{ time: Time; open: number; high: number; low: number; close: number }>
+    );
+    volumeSeriesRef.current.setData(
+      volumeData as Array<{ time: Time; value: number; color: string }>
+    );
+
+    chartRef.current?.timeScale().scrollToRealTime();
+  }, [chartData, volumeData]);
+
+  // ── Update time scale on timeframe change ──────────────────────────
   useEffect(() => {
     chartRef.current?.timeScale().applyOptions({
       secondsVisible: timeframe === '1m',
@@ -483,7 +281,74 @@ export default function AlphaPredictiveChart({
     });
   }, [timeframe]);
 
+  // ── Resize chart when expand/collapse toggle fires ─────────────────
+  useEffect(() => {
+    if (chartRef.current && chartContainerRef.current) {
+      const rect = chartContainerRef.current.getBoundingClientRect();
+      chartRef.current.resize(Math.floor(rect.width), Math.floor(rect.height));
+    }
+  }, [isExpanded]);
+
+  // ── Chart info watermark ───────────────────────────────────────────
+  const ohlcLabel = latestCandle
+    ? `O ${latestCandle.open.toFixed(2)}  H ${latestCandle.high.toFixed(2)}  L ${latestCandle.low.toFixed(2)}  C ${latestCandle.close.toFixed(2)}`
+    : '';
+
+  const candleCount = chartData.length;
+
   return (
-    <div ref={chartContainerRef} className="h-full w-full outline-none" />
+    <div className="relative flex h-full w-full flex-col outline-none">
+      {/* ── Chart Control Bar ─────────────────────────────────────── */}
+      <div className="flex shrink-0 items-center justify-between px-3 py-1.5 border-b border-white/5">
+        {/* OHLC watermark */}
+        <div className="flex items-center gap-3 text-[11px] tabular-nums">
+          {activeSymbol && (
+            <span className="font-semibold text-text-primary">{activeSymbol}</span>
+          )}
+          {ohlcLabel && (
+            <span className="text-text-muted">{ohlcLabel}</span>
+          )}
+          {candleCount > 0 && (
+            <span className="text-text-muted opacity-60">
+              {candleCount} candles
+            </span>
+          )}
+        </div>
+
+        {/* Expand/Collapse toggle */}
+        <div className="flex items-center gap-1">
+          {onToggleExpand && (
+            <button
+              type="button"
+              onClick={onToggleExpand}
+              className="rounded p-1 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
+              title={isExpanded ? 'Collapse chart' : 'Expand chart'}
+            >
+              {isExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ── Chart Canvas ──────────────────────────────────────────── */}
+      <div
+        ref={chartContainerRef}
+        className="flex-1 min-h-0 w-full"
+      />
+
+      {/* ── Empty state ───────────────────────────────────────────── */}
+      {chartData.length === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="flex flex-col items-center gap-2 text-text-muted">
+            <div className="h-8 w-8 animate-pulse rounded-full border-2 border-text-muted/30" />
+            <span className="text-xs">
+              {activeSymbol
+                ? `Waiting for ${activeSymbol} candle data…`
+                : 'Waiting for market data…'}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

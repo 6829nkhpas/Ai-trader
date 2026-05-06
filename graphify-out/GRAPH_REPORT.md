@@ -1,7 +1,7 @@
 # Graph Report - Ai-trader  (2026-05-06)
 
 ## Corpus Check
-- 143 files · ~68,674 words
+- 143 files · ~68,322 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -10,7 +10,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `7e254ce8`
+- Built from commit: `f51d60fc`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -30,7 +30,7 @@
 - [[_COMMUNITY_Community 13|Community 13]]
 - [[_COMMUNITY_Community 16|Community 16]]
 - [[_COMMUNITY_Community 21|Community 21]]
-- [[_COMMUNITY_Community 32|Community 32]]
+- [[_COMMUNITY_Community 31|Community 31]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `getPool()` - 30 edges

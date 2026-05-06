@@ -226,10 +226,12 @@ function SwingConfluencePanel() {
 
 // ── Main Layout ────────────────────────────────────────────────────────
 export default function SwingLayout({ activeProfile = 'SWING', timeframe = '1h' }: SwingLayoutProps) {
+  const [isChartExpanded, setIsChartExpanded] = React.useState(false);
+
   return (
     <div id="swing-hud" className="grid h-full grid-cols-12 gap-3 p-3">
       {/* ── Primary Chart Area ──────────────────────────────── */}
-      <div className="col-span-9 flex flex-col gap-3 min-h-0">
+      <div className={`flex flex-col gap-3 min-h-0 transition-all duration-300 ${isChartExpanded ? 'col-span-12' : 'col-span-9'}`}>
         {/* Chart Header Bar */}
         <div className="flex shrink-0 items-center justify-between rounded-lg border border-border-default bg-surface px-4 py-2">
           <div className="flex items-center gap-2.5">
@@ -253,14 +255,21 @@ export default function SwingLayout({ activeProfile = 'SWING', timeframe = '1h' 
 
         {/* Chart Canvas */}
         <div className="flex-1 min-h-0 rounded-lg border border-border-default bg-surface overflow-hidden">
-          <AlphaPredictiveChart activeProfile={activeProfile} timeframe={timeframe as Timeframe} />
+          <AlphaPredictiveChart
+            activeProfile={activeProfile}
+            timeframe={timeframe as Timeframe}
+            isExpanded={isChartExpanded}
+            onToggleExpand={() => setIsChartExpanded((prev) => !prev)}
+          />
         </div>
       </div>
 
-      {/* ── Confluence Sidebar ──────────────────────────────── */}
-      <div className="col-span-3 min-h-0">
-        <SwingConfluencePanel />
-      </div>
+      {/* ── Confluence Sidebar (hidden when expanded) ──────────── */}
+      {!isChartExpanded && (
+        <div className="col-span-3 min-h-0">
+          <SwingConfluencePanel />
+        </div>
+      )}
     </div>
   );
 }

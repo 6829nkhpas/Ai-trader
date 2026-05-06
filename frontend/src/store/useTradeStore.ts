@@ -131,21 +131,33 @@ export const useTradeStore = create<TradeStore>((set) => {
     },
 
     connectAlphaWebSocket: (url: string) => {
-      const alphaWs = new WebSocket(url);
-      alphaWs.onmessage = (event) => {
-        try {
-          const candle: OhlcCandle = JSON.parse(event.data);
-          set((state) => {
-            const newCandles = [...state.ohlcCandles, candle];
-            if (newCandles.length > 500) {
-              return { ohlcCandles: newCandles.slice(-500) };
-            }
-            return { ohlcCandles: newCandles };
-          });
-        } catch (e) {
-          console.error('Error parsing Alpha OhlcCandle WS message:', e);
-        }
+      let destroyed = false;
+
+      const connect = () => {
+        if (destroyed) return;
+        const alphaWs = new WebSocket(url);
+
+        alphaWs.onmessage = (event) => {
+          try {
+            const candle: OhlcCandle = JSON.parse(event.data);
+            set((state) => {
+              const newCandles = [...state.ohlcCandles, candle];
+              if (newCandles.length > 3000) {
+                return { ohlcCandles: newCandles.slice(-3000) };
+              }
+              return { ohlcCandles: newCandles };
+            });
+          } catch (e) {
+            console.error('Error parsing Alpha OhlcCandle WS message:', e);
+          }
+        };
+
+        alphaWs.onclose = () => {
+          if (!destroyed) setTimeout(connect, 3000);
+        };
       };
+
+      connect();
     },
 
     connectPredictiveWebSocket: (url: string) => {

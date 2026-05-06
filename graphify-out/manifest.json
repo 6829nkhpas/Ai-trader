@@ -352,7 +352,7 @@
     "hash": "dfa1f5f6a7037bf39dc510f30b180002"
   },
   "D:\\projects\\Ai-trader\\frontend\\next-env.d.ts": {
-    "mtime": 1778050277.7104127,
+    "mtime": 1778051115.9316823,
     "hash": "d0f8375ae1199dc7acd3977fc33b78b8"
   },
   "D:\\projects\\Ai-trader\\frontend\\next.config.ts": {
@@ -408,8 +408,8 @@
     "hash": "4983e478596aba769e2f199dadd5116f"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\AlphaPredictiveChart.tsx": {
-    "mtime": 1778050138.5211644,
-    "hash": "4175223516822a7fd3644759d75f2998"
+    "mtime": 1778050846.4962804,
+    "hash": "1dd082165f5e260caafbeca9e87d6629"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\OrderBook.tsx": {
     "mtime": 1778016160.8946314,
@@ -440,16 +440,16 @@
     "hash": "c38be590a99215604b7e520f333f099f"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\layouts\\IntradayLayout.tsx": {
-    "mtime": 1778048835.3171022,
-    "hash": "39b04ac3eca87915cb55ece4aca7111c"
+    "mtime": 1778051410.253676,
+    "hash": "f691ad3eaf2ca7aa81ef251af9017c68"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\layouts\\InvestorLayout.tsx": {
-    "mtime": 1778050161.550912,
-    "hash": "40707a3527e9027d9f428f595f753039"
+    "mtime": 1778050919.9507308,
+    "hash": "cb25b05b6d3a4cf3fa6dbce4ebeb09f9"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\layouts\\SwingLayout.tsx": {
-    "mtime": 1778050154.0127733,
-    "hash": "97e40d80cc373d9ae6a49763465d8d3b"
+    "mtime": 1778050892.051543,
+    "hash": "931452bf8c63e93b6a9e31c1c66692f2"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\panels\\AgentStatusPanel.tsx": {
     "mtime": 1777818960.2493775,
@@ -488,8 +488,8 @@
     "hash": "3fada3806d8be3469602e299b94a6dbf"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\store\\useTradeStore.ts": {
-    "mtime": 1778013219.9139936,
-    "hash": "3647eb42074e4e3c6fb7f0f74fbf8db8"
+    "mtime": 1778050788.4072225,
+    "hash": "9bae92780a9b3990ef346ef8a9f3c26e"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\build.rs": {
     "mtime": 1778012051.5296266,
