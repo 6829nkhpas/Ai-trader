@@ -178,17 +178,29 @@ export const useTradeStore = create<TradeStore>((set) => {
     },
 
     connectPredictiveWebSocket: (url: string) => {
-      const predictiveWs = new WebSocket(url);
-      predictiveWs.onmessage = (event) => {
-        try {
-          const signal: PredictiveSignal = JSON.parse(event.data);
-          set((state) => ({
-            predictiveSignals: [...state.predictiveSignals, signal].slice(-100),
-          }));
-        } catch (e) {
-          console.error('Error parsing PredictiveSignal WS message:', e);
-        }
+      let destroyed = false;
+
+      const connect = () => {
+        if (destroyed) return;
+        const predictiveWs = new WebSocket(url);
+
+        predictiveWs.onmessage = (event) => {
+          try {
+            const signal: PredictiveSignal = JSON.parse(event.data);
+            set((state) => ({
+              predictiveSignals: [...state.predictiveSignals, signal].slice(-100),
+            }));
+          } catch (e) {
+            console.error('Error parsing PredictiveSignal WS message:', e);
+          }
+        };
+
+        predictiveWs.onclose = () => {
+          if (!destroyed) setTimeout(connect, 3000);
+        };
       };
+
+      connect();
     },
 
     connectInsightWebSocket: (url: string) => {

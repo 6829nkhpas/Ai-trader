@@ -38,7 +38,7 @@ try {
     # publish their first message and trigger auto-create.
     Write-Host "Pre-creating Kafka topics via rpk..." -ForegroundColor Cyan
 
-    $topics = @("market.ticks", "technical_signals", "sentiment_signals", "trade_decisions")
+    $topics = @("market.ticks", "market.ohlc.10m", "technical_signals", "sentiment_signals", "trade_decisions", "signals.predictive", "signals.insights")
     foreach ($topic in $topics) {
         docker exec ai-trader-redpanda-1 rpk topic create $topic --partitions 3 2>$null
         if ($LASTEXITCODE -eq 0) {
@@ -83,12 +83,24 @@ try {
     # Give producers a moment to publish their first messages
     Start-Sleep -Seconds 3
 
-    Write-Host "Starting Rust Aggregator (signals → decisions → WebSocket)..." -ForegroundColor Cyan
+    Write-Host "Starting Rust Aggregator (signals → decisions → WS 8080 + OHLC → WS 8081)..." -ForegroundColor Cyan
     Push-Location aggregator
     $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --release"
     Pop-Location
 
     # Give aggregator time to start WS server before frontend connects
+    Start-Sleep -Seconds 3
+
+    Write-Host "Starting Predictive Agent (OHLC → LinReg → WS 8082)..." -ForegroundColor Cyan
+    Push-Location agents/predictive
+    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --release"
+    Pop-Location
+
+    Write-Host "Starting Quant-RAG Agent (anomalies → Gemini → WS 8083)..." -ForegroundColor Cyan
+    Push-Location agents/quant-rag
+    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --release"
+    Pop-Location
+
     Start-Sleep -Seconds 3
 
     Write-Host "Starting Next.js Frontend (Tauri)..." -ForegroundColor Cyan

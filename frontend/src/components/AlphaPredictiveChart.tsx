@@ -273,6 +273,45 @@ export default function AlphaPredictiveChart({
     chartRef.current?.timeScale().scrollToRealTime();
   }, [chartData, volumeData]);
 
+  // ── Ghost Line: render latest predictive forward projection ─────────
+  const predictiveSignals = useTradeStore((s) => s.predictiveSignals);
+
+  useEffect(() => {
+    if (!ghostLineRef.current) return;
+
+    // Only use the LATEST prediction for the active symbol
+    const symbolSignals = activeSymbol
+      ? predictiveSignals.filter(
+          (s) => s.symbol.toUpperCase() === activeSymbol.toUpperCase()
+        )
+      : predictiveSignals;
+
+    const latest = symbolSignals.length > 0
+      ? symbolSignals[symbolSignals.length - 1]
+      : null;
+
+    // Need both a candle anchor point AND a prediction to draw the ghost line
+    if (!latest || chartData.length === 0) {
+      ghostLineRef.current.setData([]);
+      return;
+    }
+
+    const lastCandle = chartData[chartData.length - 1];
+    const targetTimeSec = Math.floor(latest.target_timestamp_ms / 1000);
+
+    // Only project forward — skip if prediction is in the past
+    if (targetTimeSec <= lastCandle.time) {
+      ghostLineRef.current.setData([]);
+      return;
+    }
+
+    // 2-point ghost line: current close → predicted close
+    ghostLineRef.current.setData([
+      { time: lastCandle.time as Time, value: lastCandle.close },
+      { time: targetTimeSec as Time, value: latest.predicted_close_price },
+    ]);
+  }, [predictiveSignals, activeSymbol, chartData]);
+
   // ── Update time scale on timeframe change ──────────────────────────
   useEffect(() => {
     chartRef.current?.timeScale().applyOptions({

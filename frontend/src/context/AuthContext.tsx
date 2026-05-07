@@ -8,6 +8,7 @@ import React, {
   useState,
 } from 'react';
 import { apiClient, authApi } from '@/lib/api-client';
+import { redirect } from 'next/navigation';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -153,6 +154,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       setPendingAccessToken(null);
       setMfaSetupRequired(false);
     }
+    redirect('/auth/login');
   }, []);
 
   // ── Token refresh (called by interceptor on 401) ─────────────────────────

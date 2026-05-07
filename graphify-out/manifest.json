@@ -204,7 +204,7 @@
     "hash": "3a4c8caf04069d5cfc8f04bfcbd2eb3e"
   },
   "D:\\projects\\Ai-trader\\auth\\src\\index.js": {
-    "mtime": 1777818960.2182934,
+    "mtime": 1778069526.9169939,
     "hash": "121b00cb246e92e347de6ef168c651fc"
   },
   "D:\\projects\\Ai-trader\\auth\\src\\redis.client.js": {
@@ -300,8 +300,8 @@
     "hash": "8eb6a39c9a7c252a9bf4c0ecc79e1e61"
   },
   "D:\\projects\\Ai-trader\\auth\\src\\repository\\user.repository.js": {
-    "mtime": 1777979620.229164,
-    "hash": "72bb297c01d3297e855e553b8385d645"
+    "mtime": 1778070853.4378219,
+    "hash": "caa29646d6edcd9b964c90c1809ac614"
   },
   "D:\\projects\\Ai-trader\\auth\\src\\repository\\user_profile.repository.js": {
     "mtime": 1777979620.229164,
@@ -328,8 +328,8 @@
     "hash": "d316e1c842aff5a27590090955c8e2f5"
   },
   "D:\\projects\\Ai-trader\\auth\\src\\services\\auth.service.js": {
-    "mtime": 1777980288.0008702,
-    "hash": "5d41a501d13c1910b10ca13e7a292dc9"
+    "mtime": 1778070879.1861708,
+    "hash": "5e20d6d1b3c4254cf2fe85235f1199b0"
   },
   "D:\\projects\\Ai-trader\\auth\\src\\services\\billing.service.js": {
     "mtime": 1777980170.5427446,
@@ -344,8 +344,8 @@
     "hash": "50cf01f8f112cc3237cd86efc474fb1e"
   },
   "D:\\projects\\Ai-trader\\auth\\src\\services\\oauth.service.js": {
-    "mtime": 1777980668.8438215,
-    "hash": "ce0aeef282dd3f1288223fbb099251e4"
+    "mtime": 1778070888.460958,
+    "hash": "feaa735dcd6e4478da987bad8e92dd7b"
   },
   "D:\\projects\\Ai-trader\\auth\\src\\services\\s3.service.js": {
     "mtime": 1777818960.2338617,
@@ -380,7 +380,7 @@
     "hash": "d0f8375ae1199dc7acd3977fc33b78b8"
   },
   "D:\\projects\\Ai-trader\\frontend\\next.config.ts": {
-    "mtime": 1778046740.0761552,
+    "mtime": 1778069534.3132834,
     "hash": "ccfcddaa6c7d7386a048ad236045f853"
   },
   "D:\\projects\\Ai-trader\\frontend\\postcss.config.mjs": {
@@ -396,8 +396,8 @@
     "hash": "62c2bb2fa103d5d8556c48a6bc55084c"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\app\\page.tsx": {
-    "mtime": 1778048816.2780342,
-    "hash": "f7334f4ec98b838497e18d6812082081"
+    "mtime": 1778068082.4014618,
+    "hash": "825f430cd3fd635747671793cfccb000"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\app\\auth\\layout.tsx": {
     "mtime": 1777819675.428254,
@@ -432,8 +432,8 @@
     "hash": "4983e478596aba769e2f199dadd5116f"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\AlphaPredictiveChart.tsx": {
-    "mtime": 1778050846.4962804,
-    "hash": "1dd082165f5e260caafbeca9e87d6629"
+    "mtime": 1778056330.8471642,
+    "hash": "f99f76df5d691583638c3c2483749156"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\OrderBook.tsx": {
     "mtime": 1778016160.8946314,
@@ -460,20 +460,20 @@
     "hash": "93900a91be4367393d9d45b4ab27ec11"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\layout\\TerminalLayout.tsx": {
-    "mtime": 1778016540.85646,
-    "hash": "c38be590a99215604b7e520f333f099f"
+    "mtime": 1778070734.5914204,
+    "hash": "6aac9d71653e165eb67dd3b0db4603ff"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\layouts\\IntradayLayout.tsx": {
-    "mtime": 1778051410.253676,
-    "hash": "f691ad3eaf2ca7aa81ef251af9017c68"
+    "mtime": 1778072367.5771067,
+    "hash": "2eb5305a77e79bf6a731b8bd3ec379a7"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\layouts\\InvestorLayout.tsx": {
-    "mtime": 1778052574.6208153,
-    "hash": "20dd941e6e238906b7bdf166a75c4e5e"
+    "mtime": 1778072352.3844762,
+    "hash": "166c8714482a00ab3434d5a88f792173"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\layouts\\SwingLayout.tsx": {
-    "mtime": 1778052572.6107242,
-    "hash": "19f7130ffa59654ad6bd1a05d33cf8ce"
+    "mtime": 1778072361.8346975,
+    "hash": "a944211415a6c1237880230865ede1b1"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\panels\\AgentStatusPanel.tsx": {
     "mtime": 1777818960.2493775,
@@ -484,7 +484,7 @@
     "hash": "d910f0ad0fd8da105e085ed34e03a9da"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\panels\\LiveFeedPanel.tsx": {
-    "mtime": 1778016225.4671142,
+    "mtime": 1778069534.3072627,
     "hash": "bf4c3f3613c7c54b83da37e0adfa9397"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\panels\\NetworkMetrics.tsx": {
@@ -496,8 +496,8 @@
     "hash": "829f04f70b01d32d78fcb1d5f55f8c9f"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\context\\AuthContext.tsx": {
-    "mtime": 1777821465.5707471,
-    "hash": "48995b1c8ce782b5b3f7e86953c24024"
+    "mtime": 1778071698.6382082,
+    "hash": "422415d7907958741d008843a288232b"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\lib\\api-client.ts": {
     "mtime": 1777899928.875381,
@@ -512,8 +512,8 @@
     "hash": "3fada3806d8be3469602e299b94a6dbf"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\store\\useTradeStore.ts": {
-    "mtime": 1778052485.9761431,
-    "hash": "c9dec026ba76a8e0820fc22d49acb9bf"
+    "mtime": 1778056347.8068209,
+    "hash": "88e79abbac3af5dabe213f0a18721762"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\build.rs": {
     "mtime": 1778012051.5296266,
@@ -588,16 +588,24 @@
     "hash": "25c9b43eb216306ba03eca66afd02e0b"
   },
   "D:\\projects\\Ai-trader\\scripts\\powershell\\start_system.ps1": {
-    "mtime": 1778047622.3615186,
-    "hash": "bb8da8fecfd80f15ee336487eac7dfdc"
+    "mtime": 1778054254.1091475,
+    "hash": "93f02ab8274f330496e083a40a41ec43"
   },
   "D:\\projects\\Ai-trader\\scripts\\powershell\\stop-infra.ps1": {
     "mtime": 1777823165.246313,
     "hash": "276eb38f527e74792b9489212bb4a0f1"
   },
+  "D:\\projects\\Ai-trader\\tools\\load_tester\\build.rs": {
+    "mtime": 1778052954.2840292,
+    "hash": "42225157c477437c6c8c5b071a1a6381"
+  },
+  "D:\\projects\\Ai-trader\\tools\\load_tester\\src\\main.rs": {
+    "mtime": 1778056404.036795,
+    "hash": "63efe1db3883360726476bb7e51f2910"
+  },
   "D:\\projects\\Ai-trader\\ARCHITECTURE.md": {
-    "mtime": 1778052606.6047077,
-    "hash": "dc198c0f9de897ea9ea91c7fac27480c"
+    "mtime": 1778053013.9166253,
+    "hash": "0416f93a4fc26f646b8b7356eb822a1a"
   },
   "D:\\projects\\Ai-trader\\CONTRACTS.md": {
     "mtime": 1778011199.4740665,
@@ -620,8 +628,8 @@
     "hash": "75f4c337a037f6db287d0c717dc0b305"
   },
   "D:\\projects\\Ai-trader\\STATE.md": {
-    "mtime": 1778052608.6150546,
-    "hash": "4f2fce635b8adc8aeb1061a324742b4d"
+    "mtime": 1778052987.8310792,
+    "hash": "e9a7be3f00173022784ecc9304b0c958"
   },
   "D:\\projects\\Ai-trader\\frontend\\AGENTS.md": {
     "mtime": 1777053779.352195,

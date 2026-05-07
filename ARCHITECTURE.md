@@ -22,6 +22,7 @@
   - Features the V2 Alpha Predictive Chart, which ingests `OhlcCandle` data directly from the V2 WebSocket on port 8081, operating completely parallel to the V1 Aggregator feed on port 8080.
   - Renders AI forward-projections as dashed Ghost Lines using `PredictiveSignal` data from the Predictive WebSocket on port 8082.
 - `/shared_protos` - Universal Protobuf data contracts
+- `/tools/load_tester` - Chaos Engine: high-frequency Kafka load tester with anomaly injection for end-to-end stress testing
 
 ## Tech Stack
 
@@ -87,3 +88,19 @@ Features a `MacroSentimentPanel` alongside the predictive chart in a 12-column g
   - **Macro Indicators:** Real-time display of key economic metrics (Fed Funds Rate, Core CPI, 10Y Treasury, DXY, VIX, GDP) with directional change indicators.
   - **Portfolio Risk Metrics:** Key quantitative portfolio measures (Sharpe Ratio, Max Drawdown, Beta, Alpha).
   - **Quant-RAG Outlook:** AI-generated long-term sectoral analysis and allocation recommendations with probability-weighted scenario forecasting.
+
+## Phase 9: Serverless AI (Quant-RAG)
+
+### Phase 9.1 — Gemini API Client
+Google Gemini 1.5 Flash REST API client (`llm.rs`) with `application/json` strict schema generation. Replaces all previous LLM providers for the quant-rag agent.
+
+### Phase 9.2 — Anomaly Detection Engine
+Kafka consumer loop monitoring `market.ohlc.10m` for ≥2% absolute price swings. On anomaly detection, invokes Gemini for AI-generated headline, analysis, and sentiment score. Publishes `MarketInsight` protobuf to `signals.insights` and broadcasts JSON via WebSocket port 8083.
+
+### Phase 9.3 — End-to-End Stress Test (The Crucible)
+The `/tools/load_tester` Chaos Engine validates all pipelines under extreme institutional load.
+
+- **Firehose:** Publishes 100 synthetic `OHLCCandle` messages/sec to `market.ohlc.10m` using a geometric random walk price engine.
+- **Anomaly Injection:** Every 500th candle, injects a massive ±5% flash crash to force the Gemini LLM to trigger while charts are rendering at maximum throughput.
+- **Pipeline Coverage:** Simultaneously exercises the Predictive Agent (LinReg math), Quant-RAG Agent (Gemini LLM), Alpha Terminal (OHLC WS), and Tauri Edge Terminal (60 FPS Canvas rendering).
+- **CLI:** `cargo run -- --rate 100 --anomaly-every 500 --symbol BTC/USD --anomaly-pct 5.0`

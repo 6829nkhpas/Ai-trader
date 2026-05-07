@@ -223,26 +223,6 @@ export default function SwingLayout({ activeProfile = 'SWING', timeframe = '1h' 
     <div id="swing-hud" className="grid h-full grid-cols-12 gap-3 p-3">
       {/* ── Primary Chart Area ──────────────────────────────── */}
       <div className={`flex flex-col gap-3 min-h-0 transition-all duration-300 ${isChartExpanded ? 'col-span-12' : 'col-span-9'}`}>
-        {/* Chart Header Bar */}
-        <div className="flex shrink-0 items-center justify-between rounded-lg border border-border-default bg-surface px-4 py-2">
-          <div className="flex items-center gap-2.5">
-            <h2 className="text-sm font-semibold text-text-primary tracking-wide">
-              Swing Confluence Engine
-            </h2>
-            <span className="rounded bg-emerald-500/10 px-1.5 py-px text-[9px] font-bold text-emerald-400 uppercase tracking-widest">
-              {timeframe} OHLC
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-600 uppercase tracking-widest">
-              Swing Mode
-            </span>
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-40" />
-              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            </span>
-          </div>
-        </div>
 
         {/* Chart Canvas */}
         <div className="flex-1 min-h-0 rounded-lg border border-border-default bg-surface overflow-hidden">

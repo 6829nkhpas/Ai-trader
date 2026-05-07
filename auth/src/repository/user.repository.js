@@ -19,9 +19,13 @@ export async function findUserByEmail(client, email) {
 export async function findUserById(client, id) {
   const user = await client.users.findUnique({
     where: { id },
-    select: { id: true, email: true, role: true, created_at: true }
+    select: { id: true, email: true, role: true, created_at: true, display_name: true }
   });
-  return user;
+  if (!user) return null;
+  return {
+    ...user,
+    displayName: user.display_name
+  };
 }
 
 /**
@@ -36,9 +40,12 @@ export async function insertUser(client, { email, displayName, role = 'user' }) 
       display_name: displayName,
       role
     },
-    select: { id: true, email: true, role: true, created_at: true }
+    select: { id: true, email: true, role: true, created_at: true, display_name: true }
   });
-  return user;
+  return {
+    ...user,
+    displayName: user.display_name
+  };
 }
 
 /**

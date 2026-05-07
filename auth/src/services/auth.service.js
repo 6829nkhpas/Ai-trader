@@ -70,6 +70,7 @@ export async function registerUser(prisma, { email, password, displayName }) {
         email: user.email,
         role: user.role,
         created_at: user.created_at,
+        displayName: user.displayName,
       };
     });
   } catch (err) {
@@ -103,12 +104,13 @@ export async function loginUser(prisma, { email, password }) {
 
   const fullUser = await prisma.users.findUnique({
     where: { id: user.id },
-    select: { id: true, email: true, role: true }
+    select: { id: true, email: true, role: true, display_name: true }
   });
 
   return {
     id: fullUser.id,
     email: fullUser.email,
     role: fullUser.role,
+    displayName: fullUser.display_name,
   };
 }

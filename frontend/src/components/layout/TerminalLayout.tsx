@@ -19,9 +19,14 @@ import {
   Eye,
   Trash2,
   Layers,
+  Bell,
+  User as UserIcon,
+  LogOut,
+  HelpCircle,
+  ChevronDown,
 } from 'lucide-react';
-import NetworkMetrics from '../panels/NetworkMetrics';
 import { useTradeStore, TradeProfile } from '../../store/useTradeStore';
+import { useAuth } from '../../context/AuthContext';
 
 const PROFILES: { key: TradeProfile; label: string; shortcut: string }[] = [
   { key: 'INTRADAY', label: 'Intraday', shortcut: 'Scalp' },
@@ -32,7 +37,6 @@ const PROFILES: { key: TradeProfile; label: string; shortcut: string }[] = [
 interface TerminalLayoutProps {
   children: React.ReactNode;
   leftPanel: React.ReactNode;
-  rightPanel: React.ReactNode;
 }
 
 const toolOptions = [
@@ -53,9 +57,11 @@ const toolOptions = [
   { id: 'layers', label: 'Layers', icon: Layers },
 ];
 
-export default function TerminalLayout({ children, leftPanel, rightPanel }: TerminalLayoutProps) {
+export default function TerminalLayout({ children, leftPanel }: TerminalLayoutProps) {
   const { activeProfile, setActiveProfile, resetSession } = useTradeStore();
+  const { user, logout } = useAuth();
   const [activeTool, setActiveTool] = useState<string>(toolOptions[0].id);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
 
   return (
     <div className="flex h-screen flex-col bg-background font-sans text-text-primary">
@@ -110,16 +116,69 @@ export default function TerminalLayout({ children, leftPanel, rightPanel }: Term
             })}
           </div>
         </div>
-        <div className="flex flex-1 items-center justify-end gap-3">
+        <div className="flex flex-1 items-center justify-end gap-4 relative">
           <button
             onClick={resetSession}
-            className="flex items-center gap-2 rounded-full border border-border-default bg-card px-3 py-1.5 text-xs font-semibold text-text-secondary transition-colors hover:bg-elevated"
+            className="flex items-center gap-2 rounded-full border border-border-default bg-card px-3 py-1.5 text-xs font-semibold text-text-secondary transition-colors hover:bg-elevated mr-2"
             title="Reset Session and Clear Orders"
           >
             <RefreshCcw size={14} />
             Reset Session
           </button>
-          <NetworkMetrics />
+          
+          <button className="relative text-text-secondary hover:text-text-primary transition-colors">
+            <Bell size={18} />
+            <span className="absolute top-0 right-0 h-2 w-2 rounded-full bg-red-500 border border-surface"></span>
+          </button>
+
+          <div className="relative">
+            <button
+              onClick={() => setIsProfileOpen(!isProfileOpen)}
+              className="flex items-center gap-2 rounded-full border border-border-default bg-surface px-2 py-1 transition-colors hover:bg-elevated"
+            >
+              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/20 text-primary">
+                <UserIcon size={14} />
+              </div>
+              <ChevronDown size={14} className="text-text-secondary" />
+            </button>
+
+            {isProfileOpen && (
+              <>
+                <div 
+                  className="fixed inset-0 z-40" 
+                  onClick={() => setIsProfileOpen(false)}
+                />
+                
+                <div className="absolute right-0 top-full z-50 mt-2 w-56 rounded-lg border border-border-default bg-surface py-2 shadow-lg panel-shadow">
+                  <div className="border-b border-border-default px-4 pb-3 pt-2">
+                    <p className="text-sm font-medium text-text-primary">
+                      {user?.displayName || 'User'}
+                    </p>
+                    <p className="text-xs text-text-secondary truncate">
+                      {user?.email || 'user@example.com'}
+                    </p>
+                  </div>
+                  
+                  <div className="flex flex-col py-1">
+                    <button className="flex items-center gap-3 px-4 py-2 text-sm text-text-secondary hover:bg-elevated hover:text-text-primary text-left">
+                      <HelpCircle size={16} />
+                      Customer Support
+                    </button>
+                    <button 
+                      onClick={async () => {
+                        await logout();
+                        setIsProfileOpen(false);
+                      }}
+                      className="flex items-center gap-3 px-4 py-2 text-sm text-red-500 hover:bg-elevated hover:text-red-400 text-left"
+                    >
+                      <LogOut size={16} />
+                      Logout
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
@@ -159,10 +218,6 @@ export default function TerminalLayout({ children, leftPanel, rightPanel }: Term
           {children}
         </main>
 
-        {/* AI Panel */}
-        <aside className="flex w-80 shrink-0 min-h-0 flex-col gap-4 overflow-y-auto bg-transparent">
-          {rightPanel}
-        </aside>
       </div>
     </div>
   );

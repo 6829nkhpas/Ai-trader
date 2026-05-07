@@ -71,16 +71,23 @@ export async function loginWithGoogle(pool, idToken) {
       user = newUser;
     }
 
-    // Role is needed for token issuance, let's fetch it if missing
-    if (!user.role) {
-      const fullUserResult = await pool.users.findUnique({ where: { id: user.id }, select: { id: true, email: true, role: true } });
-      user = fullUserResult;
+    // Role or display_name might be needed for token issuance/frontend
+    if (!user.role || user.displayName === undefined) {
+      const fullUserResult = await pool.users.findUnique({ 
+        where: { id: user.id }, 
+        select: { id: true, email: true, role: true, display_name: true } 
+      });
+      user = {
+        ...fullUserResult,
+        displayName: fullUserResult.display_name
+      };
     }
 
     return {
       id: user.id,
       email: user.email,
       role: user.role,
+      displayName: user.displayName,
     };
   } catch (err) {
     throw err;
