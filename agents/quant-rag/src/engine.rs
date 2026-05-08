@@ -30,7 +30,9 @@ pub mod engine {
     // ── Constants ────────────────────────────────────────────────────────────
 
     /// Anomaly threshold — absolute % change required to trigger an LLM insight.
-    const ANOMALY_THRESHOLD_PCT: f64 = 2.0;
+    /// For live Indian equities (e.g. RELIANCE), a 10-minute candle rarely moves
+    /// more than 0.3–0.5%.  The load-tester injects 5%+ anomalies.
+    const ANOMALY_THRESHOLD_PCT: f64 = 0.3;
 
     // ── Consumer initialisation ──────────────────────────────────────────────
 
@@ -131,7 +133,8 @@ pub mod engine {
     pub async fn run(llm_client: &LlmClient, ws_tx: broadcast::Sender<String>) {
         // ── Configuration ────────────────────────────────────────────────
         let brokers = std::env::var("KAFKA_BROKER_URL")
-            .unwrap_or_else(|_| "localhost:9092".to_string());
+            .or_else(|_| std::env::var("KAFKA_BROKERS"))
+            .unwrap_or_else(|_| "localhost:19092".to_string());
 
         let group_id = std::env::var("QUANT_RAG_GROUP_ID")
             .unwrap_or_else(|_| "quant-rag-agent-group".to_string());
@@ -186,7 +189,7 @@ pub mod engine {
 
                         let change_pct = ((candle.close - candle.open) / candle.open).abs() * 100.0;
 
-                        log::debug!(
+                        log::info!(
                             "[engine] candle: symbol={} open={:.2} close={:.2} change={:.2}%",
                             candle.symbol,
                             candle.open,

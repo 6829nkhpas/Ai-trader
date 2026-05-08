@@ -134,7 +134,8 @@ pub mod engine {
     pub async fn run(prediction_engine: &mut PredictionEngine, ws_tx: broadcast::Sender<String>) {
         // ── Configuration ────────────────────────────────────────────────
         let brokers = std::env::var("KAFKA_BROKER_URL")
-            .unwrap_or_else(|_| "localhost:9092".to_string());
+            .or_else(|_| std::env::var("KAFKA_BROKERS"))
+            .unwrap_or_else(|_| "localhost:19092".to_string());
 
         let group_id = std::env::var("PREDICTIVE_AGENT_GROUP_ID")
             .unwrap_or_else(|_| "predictive-agent-group".to_string());

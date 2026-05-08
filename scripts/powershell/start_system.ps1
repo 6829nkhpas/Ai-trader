@@ -27,7 +27,9 @@ try {
     }
 
     Write-Host "Starting infrastructure (Kafka/Redpanda, QuestDB, Redis, Postgres)..." -ForegroundColor Cyan
-    docker-compose up -d
+    # Only start infrastructure containers — application services run locally via cargo.
+    # The full docker-compose (including Rust services) is for production deployment only.
+    docker-compose up -d redpanda questdb postgres redis
 
     Write-Host "Infrastructure started. Waiting 15 seconds for initialization..." -ForegroundColor Cyan
     Start-Sleep -Seconds 15
@@ -40,7 +42,7 @@ try {
 
     $topics = @("market.ticks", "market.ohlc.10m", "technical_signals", "sentiment_signals", "trade_decisions", "signals.predictive", "signals.insights")
     foreach ($topic in $topics) {
-        docker exec ai-trader-redpanda-1 rpk topic create $topic --partitions 3 2>$null
+        docker exec alphasuite-redpanda rpk topic create $topic --partitions 3 2>$null
         if ($LASTEXITCODE -eq 0) {
             Write-Host "  [+] Topic '$topic' created" -ForegroundColor Green
         } else {
@@ -50,7 +52,7 @@ try {
 
     # Verify topics were created
     Write-Host "Verifying Kafka topics..." -ForegroundColor Cyan
-    docker exec ai-trader-redpanda-1 rpk topic list
+    docker exec alphasuite-redpanda rpk topic list
     Write-Host "Infrastructure is ready!" -ForegroundColor Green
 
     # ── Start PRODUCERS first, then CONSUMERS ─────────────────────────────────
@@ -96,7 +98,7 @@ try {
     $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --release"
     Pop-Location
 
-    Write-Host "Starting Quant-RAG Agent (anomalies → Gemini → WS 8083)..." -ForegroundColor Cyan
+    Write-Host "Starting Quant-RAG Agent (anomalies → DeepSeek → WS 8083)..." -ForegroundColor Cyan
     Push-Location agents/quant-rag
     $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --release"
     Pop-Location

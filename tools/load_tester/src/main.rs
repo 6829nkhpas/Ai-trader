@@ -173,7 +173,8 @@ async fn main() {
 
     // ── Kafka ────────────────────────────────────────────────────────
     let brokers = std::env::var("KAFKA_BROKER_URL")
-        .unwrap_or_else(|_| "localhost:9092".to_string());
+        .or_else(|_| std::env::var("KAFKA_BROKERS"))
+        .unwrap_or_else(|_| "localhost:19092".to_string());
 
     info!("Kafka broker: {}", brokers);
     info!("Publishing to: market.ticks + market.ohlc.10m (dual-publish)");

@@ -43,7 +43,8 @@ async fn main() {
 
     // ── Configuration ────────────────────────────────────────────────────────
     let brokers = std::env::var("KAFKA_BROKER_URL")
-        .unwrap_or_else(|_| "localhost:9092".to_string());
+        .or_else(|_| std::env::var("KAFKA_BROKERS"))
+        .unwrap_or_else(|_| "localhost:19092".to_string());
 
     let group_id = std::env::var("TECHNICAL_AGENT_GROUP_ID")
         .unwrap_or_else(|_| "technical-agent-group".to_string());

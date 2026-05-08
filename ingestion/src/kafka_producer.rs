@@ -40,11 +40,11 @@ pub struct KafkaProducer {
 impl KafkaProducer {
     /// Construct a new producer from environment variables.
     ///
-    /// Reads `KAFKA_BROKERS` (default: `localhost:9092`).
+    /// Reads `KAFKA_BROKERS` (default: `localhost:19092`).
     /// Uses `message.max.bytes = 1MB` and a 1-second linger for batching.
     pub fn new() -> Result<Self, rdkafka::error::KafkaError> {
         let brokers = std::env::var("KAFKA_BROKERS")
-            .unwrap_or_else(|_| "localhost:9092".to_string());
+            .unwrap_or_else(|_| "localhost:19092".to_string());
 
         let producer: FutureProducer = ClientConfig::new()
             .set("bootstrap.servers", &brokers)

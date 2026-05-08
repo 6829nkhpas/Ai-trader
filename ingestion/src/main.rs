@@ -85,7 +85,7 @@ async fn main() {
     #[cfg_attr(not(feature = "kafka"), allow(unused_variables))]
     let kafka_broker_url = std::env::var("KAFKA_BROKER_URL")
         .or_else(|_| std::env::var("KAFKA_BROKERS"))
-        .unwrap_or_else(|_| "localhost:9092".to_string());
+        .unwrap_or_else(|_| "localhost:19092".to_string());
 
     let questdb_postgres_url = std::env::var("QUESTDB_POSTGRES_URL")
         .unwrap_or_else(|_| "postgresql://admin:quest@localhost:8812/qdb".to_string());
