@@ -1,23 +1,24 @@
 # Dynamic Sprint Board
 
-**Phase:** Perfection Phase 5 — Alpha Suite
+**Phase:** Perfection Phase 6 — Historical Data Ingestion
 
 **System Health:** V1 Core is fully operational (Ingestion, Tech, Sentiment, Aggregator, UI).
 
-**Current Objective:** Perfection Phase 5 — Production Build & Deployment.
+**Current Objective:** Perfection Phase 6 — Historical Pipeline Integration.
 
-**Current Status:** Perfection Phase 5 Complete. Backend is Dockerized. Tauri is configured for production bundling. The Alpha Suite V2 monorepo is officially complete and ready for deployment.
+**Current Status:** Historical Pipeline Integrated. QuestDB 5-Year Partitioning Active.
 
-**Key Changes (Phase 5):**
-- `docker-compose.yml` — Full production stack: Redpanda (Kafka), QuestDB, PostgreSQL, Redis + 5 Rust microservices (ingestion, alpha-terminal, aggregator, predictive-agent, quant-rag-agent).
-- Multi-stage Dockerfiles for all Rust services: `ingestion`, `alpha-terminal`, `aggregator`, `agents/predictive`, `agents/quant-rag`.
-- `tauri.conf.json` — Identifier: `com.alphasuite.terminal`, version 2.0.0, 1440×900 window with CSP, bundle targets: all (MSI/APP/DEB).
-- `PRODUCTION_SETUP.md` — Step-by-step deployment guide covering .env configuration, Docker Compose startup, Tauri build, E2E verification, and troubleshooting.
+**Key Changes (Phase 6):**
+- `backend/db/migrations/002_historical.sql` — QuestDB DDL: `historical_candles` table with `PARTITION BY YEAR`.
+- `frontend/src-tauri/src/services/history_loader.rs` — Zerodha Kite Historical API client with 365-day chunking, rate limiting, deduplication, and bulk insert.
+- `frontend/src-tauri/src/commands/charts.rs` — `get_historical_view` Tauri command: QuestDB → bincode → Uint8Array binary transfer.
+- `frontend/src-tauri/src/lib.rs` — QuestDB managed state, migration runner, command registration.
+- `frontend/src-tauri/Cargo.toml` — Added sqlx, bincode, chrono, reqwest, dotenvy dependencies.
 
-**Deployment Summary:**
-1. Configure `.env` with `NVIDIA_API_KEY`, `KITE_API_KEY`, `KITE_ACCESS_TOKEN`, `KITE_INSTRUMENT_TOKENS`.
-2. `docker-compose up -d --build` — Starts the entire backend brain.
-3. `npm run tauri build` (in /frontend) — Generates the desktop executable.
+**Historical Pipeline Summary:**
+1. On Tauri startup: QuestDB pool initialized → `historical_candles` migration executed.
+2. `history_loader::load_historical_data()` — fetches 5 years of daily candles from Kite API in 1-year chunks.
+3. `get_historical_view` command — queries QuestDB, returns bincode-serialized binary buffer to frontend.
 
 **Deprecated:**
 Explicitly note that `MASTER_CONTEXT.md` and `SESSION_MEMORY.md` are now obsolete and should be ignored entirely by the system.

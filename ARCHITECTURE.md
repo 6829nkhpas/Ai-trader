@@ -154,3 +154,47 @@ The `/tools/load_tester` Chaos Engine validates all pipelines under extreme inst
 - Stock feed (`LiveFeedPanel.tsx`) — already data-driven from Zustand store, no mocks.
 - Chart components — already driven by real WebSocket data from backend.
 - Load tester — all hardcoded `BTC/USD` references replaced with configurable NSE symbols (default: `RELIANCE`).
+
+## Perfection Phase 3: Cold-Storage Ingestion (Historical Pipeline)
+
+### QuestDB 5-Year Partitioning Strategy
+
+The `historical_candles` table stores daily OHLCV data fetched from the Zerodha Kite Historical API:
+
+```sql
+CREATE TABLE IF NOT EXISTS historical_candles (
+    symbol    SYMBOL,
+    ts        TIMESTAMP,
+    open      DOUBLE,
+    high      DOUBLE,
+    low       DOUBLE,
+    close     DOUBLE,
+    volume    LONG
+) timestamp(ts) PARTITION BY YEAR;
+```
+
+- **Partition Scheme:** `PARTITION BY YEAR` — each calendar year is stored in its own partition directory. 5 years of data = 5 partitions, enabling efficient range scans and lifecycle management.
+- **Designated Timestamp:** `ts` is the ordered timestamp — QuestDB uses it for WAL routing, partition selection, and time-series ordering.
+
+### History Loader Service (`frontend/src-tauri/src/services/history_loader.rs`)
+
+- **Chunking:** Fetches daily candles in 365-day (1-year) windows, looping 5 times for full 5-year backfill.
+- **API Endpoint:** `GET https://api.kite.trade/instruments/historical/{token}/day?from=YYYY-MM-DD&to=YYYY-MM-DD`
+- **Rate Limiting:** 350ms delay between chunk requests (Kite limit: 3 req/sec).
+- **Deduplication:** Before each chunk fetch, queries QuestDB for existing `min(ts)`/`max(ts)` range — chunks already covered are skipped entirely.
+- **Insertion:** Parameterised INSERT via QuestDB PG wire protocol (port 8812).
+
+### Binary IPC Transfer (Zero-Latency)
+
+The `get_historical_view` Tauri command (`frontend/src-tauri/src/commands/charts.rs`):
+
+1. Queries QuestDB for all daily candles matching a symbol.
+2. Serializes the result as `bincode` (compact binary format) instead of JSON.
+3. Returns `Vec<u8>` → Tauri auto-converts to `Uint8Array` on the frontend.
+4. On error, emits a `system-error` event for frontend console visibility.
+
+```
+Frontend invoke("get_historical_view", { symbol: "RELIANCE" })
+    → Tauri Command → QuestDB PG Query → bincode::serialize → Uint8Array
+```
+

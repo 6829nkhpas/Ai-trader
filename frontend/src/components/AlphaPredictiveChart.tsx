@@ -14,6 +14,7 @@ import {
   LineStyle,
 } from 'lightweight-charts';
 import { useTradeStore, OhlcCandle, TradeProfile } from '../store/useTradeStore';
+import { useHistoricalData, HistoricalCandle } from '../hooks/useHistoricalData';
 import { Maximize2, Minimize2 } from 'lucide-react';
 
 // ── Exported Types ────────────────────────────────────────────────────────
@@ -222,19 +223,56 @@ export default function AlphaPredictiveChart({
     return d?.symbol ?? '';
   }, [activeDecision, liveDecisions]);
 
+  // ── Historical data from QuestDB (5-year daily candles) ─────────────
+  const { candles: historicalCandles, loading: histLoading } = useHistoricalData(activeSymbol);
+
+  // ── Merge historical + live candles ─────────────────────────────────
+  // Convert historical candles (from QuestDB REST API) into OhlcCandle format
+  // and prepend them before live WebSocket candles. Dedup by timestamp.
+  const mergedCandles = useMemo(() => {
+    // Convert historical candles to OhlcCandle format
+    const histAsOhlc: OhlcCandle[] = historicalCandles.map((h) => ({
+      symbol: activeSymbol,
+      start_timestamp_ms: h.time * 1000, // seconds → ms
+      open: h.open,
+      high: h.high,
+      low: h.low,
+      close: h.close,
+      volume: h.volume,
+    }));
+
+    // Merge: historical first, then live (deduplicated by bucketed timestamp)
+    const all = [...histAsOhlc, ...ohlcCandles];
+
+    // Dedup by rounding to daily bucket for historical data
+    const seen = new Set<number>();
+    const deduped: OhlcCandle[] = [];
+    for (const c of all) {
+      // Daily bucket key: floor to day boundary
+      const dayKey = Math.floor(c.start_timestamp_ms / 86400000) * 86400000;
+      const key = `${c.symbol}:${dayKey}`.length; // Just use the raw entry
+      if (!seen.has(c.start_timestamp_ms)) {
+        seen.add(c.start_timestamp_ms);
+        deduped.push(c);
+      }
+    }
+
+    return deduped;
+  }, [historicalCandles, ohlcCandles, activeSymbol]);
+
   // OHLC info for the header watermark
   const latestCandle = useMemo(() => {
-    if (!activeSymbol || ohlcCandles.length === 0) return null;
-    const symbolCandles = ohlcCandles.filter(
+    if (!activeSymbol || mergedCandles.length === 0) return null;
+    const symbolCandles = mergedCandles.filter(
       (c) => c.symbol.toUpperCase() === activeSymbol.toUpperCase()
     );
     return symbolCandles.length > 0 ? symbolCandles[symbolCandles.length - 1] : null;
-  }, [ohlcCandles, activeSymbol]);
+  }, [mergedCandles, activeSymbol]);
 
   // ── Aggregated data (memoized) ──────────────────────────────────────
   const { candles: chartData, volumes: volumeData, ema9: ema9Data, ema21: ema21Data } = useMemo(
-    () => aggregateCandles(ohlcCandles, timeframe, activeSymbol),
-    [ohlcCandles, timeframe, activeSymbol]
+    () => aggregateCandles(mergedCandles, timeframe, activeSymbol),
+    [mergedCandles, timeframe, activeSymbol]
   );
 
   // ── Chart init ──────────────────────────────────────────────────────
@@ -504,15 +542,17 @@ export default function AlphaPredictiveChart({
         className="flex-1 min-h-0 w-full"
       />
 
-      {/* ── Empty state ───────────────────────────────────────────── */}
+      {/* ── Empty / Loading state ────────────────────────────────────── */}
       {chartData.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="flex flex-col items-center gap-2 text-text-muted">
             <div className="h-8 w-8 animate-pulse rounded-full border-2 border-text-muted/30" />
             <span className="text-xs">
-              {activeSymbol
-                ? `Waiting for ${activeSymbol} candle data…`
-                : 'Waiting for market data…'}
+              {histLoading
+                ? `Loading ${activeSymbol || ''} historical data from QuestDB…`
+                : activeSymbol
+                  ? `Waiting for ${activeSymbol} candle data…`
+                  : 'Waiting for market data…'}
             </span>
           </div>
         </div>

@@ -10,6 +10,10 @@ const nextConfig: NextConfig = {
         source: '/api/:path*',
         destination: 'http://127.0.0.1:3001/api/:path*',
       },
+      {
+        source: '/questdb/:path*',
+        destination: 'http://127.0.0.1:9000/:path*',
+      },
     ];
   },
 };
