@@ -11,6 +11,7 @@ import AlphaPredictiveChart from '../components/AlphaPredictiveChart';
 import IntradayLayout from '../components/layouts/IntradayLayout';
 import SwingLayout from '../components/layouts/SwingLayout';
 import InvestorLayout from '../components/layouts/InvestorLayout';
+import SystemConsole from '../components/SystemConsole';
 import { useTradeStore, TradeProfile } from '../store/useTradeStore';
 import { isOnboardingComplete } from '@/lib/onboarding';
 
@@ -171,6 +172,9 @@ export default function Home() {
           </div>
         </TerminalLayout>
       </div>
+
+      {/* ── System Status Console (Bottom Drawer) ─────── */}
+      <SystemConsole />
     </div>
   );
 }

@@ -35,6 +35,14 @@
     - **Volume Histogram:** Pinned to the bottom 20% of the chart via `priceScaleId: ''` + `scaleMargins: { top: 0.8, bottom: 0 }`. Volume bars are conditionally colored — green (`#22c55e35`) for bullish candles, red (`#ef444430`) for bearish candles.
     - **EMA 9/21 Momentum Ribbons:** Two line series overlaid on the candlestick chart — EMA 9 (cyan `#38bdf8`, lineWidth 2) and EMA 21 (pink `#f472b6`, lineWidth 2). EMAs are calculated client-side using an Exponential Moving Average engine with SMA-seeded initialization. Values update dynamically as new candles arrive via WebSocket. Current EMA values are displayed as color-coded badges in the chart header.
     - **Zero-Latency Rendering:** Charts bypass React State. Lightweight-charts `.setData()` and `.update()` are called directly from the data sync effect, preventing DOM reconciliation bottlenecks.
+  - **Modular Workspace Architecture** (`react-resizable-panels` v4.11):
+    - All three profile layouts (Intraday, Swing, Investor) use `Group` / `Panel` / `Separator` from `react-resizable-panels` for drag-to-resize split panes.
+    - Primary chart panel (75% default) and sidebar panel (25% default, 15% minimum) with a styled vertical grabber handle (`bg-slate-800` → `bg-slate-600` on hover → `bg-emerald-500/60` on active drag).
+    - Sidebar is fully collapsible via the `PanelImperativeHandle` API — `panel.collapse()` / `panel.expand()` — with a toggle button (PanelRightClose/PanelRightOpen icons). Collapse state is tracked via `onResize` callback.
+  - **System Status Console** (`SystemConsole.tsx`):
+    - A bottom drawer diagnostic panel (collapsed: 32px status bar, expanded: 192px log viewer).
+    - **Status Bar:** Displays real-time connection status for Kafka, Zerodha, and DeepSeek services with color-coded status dots (🟢 connected / 🟡 connecting / 🔴 disconnected). Also shows pipeline latency in ms.
+    - **Log Viewer:** Terminal-like monospace text area displaying a rolling log of system events (INFO/WARN/ERROR) with timestamps. Auto-scrolls to bottom. Reads from `systemLogs[]` in the Zustand store, which is populated by all WebSocket connection handlers.
 - `/shared_protos` - Universal Protobuf data contracts
 - `/tools/load_tester` - Chaos Engine: high-frequency Kafka load tester with anomaly injection for end-to-end stress testing
 

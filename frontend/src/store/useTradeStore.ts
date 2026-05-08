@@ -61,6 +61,12 @@ export interface ExecutedTrade {
   executedAt: number;
 }
 
+export interface SystemLog {
+  timestamp: number;
+  level: 'INFO' | 'WARN' | 'ERROR';
+  message: string;
+}
+
 interface TradeStore {
   liveDecisions: AggregatedDecision[];
   activeDecision: AggregatedDecision | null;
@@ -74,8 +80,10 @@ interface TradeStore {
   connectionStatus: 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED';
   wsStatus: 'disconnected' | 'connecting' | 'connected' | 'error';
   activeProfile: TradeProfile;
+  systemLogs: SystemLog[];
   setActiveProfile: (profile: TradeProfile) => void;
   setLatestInsight: (insight: MarketInsight) => void;
+  addSystemLog: (level: SystemLog['level'], message: string) => void;
   connectWebSocket: () => void;
   connectAlphaWebSocket: (url: string) => void;
   connectPredictiveWebSocket: (url: string) => void;
@@ -85,8 +93,15 @@ interface TradeStore {
   resetSession: () => void;
 }
 
-export const useTradeStore = create<TradeStore>((set) => {
+export const useTradeStore = create<TradeStore>((set, get) => {
   let ws: WebSocket | null = null;
+
+  // Helper: append a system log entry
+  const syslog = (level: SystemLog['level'], message: string) => {
+    set((state) => ({
+      systemLogs: [...state.systemLogs, { timestamp: Date.now(), level, message }].slice(-500),
+    }));
+  };
 
   const resolveActionType = (value: BackendDecisionPayload['action_type'] | BackendDecisionPayload['action']): BackendAction => {
     if (typeof value === 'string') {
@@ -138,9 +153,16 @@ export const useTradeStore = create<TradeStore>((set) => {
     connectionStatus: 'DISCONNECTED',
     wsStatus: 'disconnected',
     activeProfile: 'INTRADAY',
+    systemLogs: [],
 
     setActiveProfile: (profile: TradeProfile) => {
       set({ activeProfile: profile });
+    },
+
+    addSystemLog: (level: SystemLog['level'], message: string) => {
+      set((state) => ({
+        systemLogs: [...state.systemLogs, { timestamp: Date.now(), level, message }].slice(-500),
+      }));
     },
 
     setLatestInsight: (insight: MarketInsight) => {
@@ -153,6 +175,11 @@ export const useTradeStore = create<TradeStore>((set) => {
       const connect = () => {
         if (destroyed) return;
         const alphaWs = new WebSocket(url);
+        syslog('INFO', `Alpha OHLC WS connecting → ${url}`);
+
+        alphaWs.onopen = () => {
+          syslog('INFO', 'Alpha OHLC WS connected. Streaming candle data.');
+        };
 
         alphaWs.onmessage = (event) => {
           try {
@@ -165,12 +192,17 @@ export const useTradeStore = create<TradeStore>((set) => {
               return { ohlcCandles: newCandles };
             });
           } catch (e) {
-            console.error('Error parsing Alpha OhlcCandle WS message:', e);
+            syslog('ERROR', `Alpha OHLC parse error: ${e}`);
           }
         };
 
         alphaWs.onclose = () => {
+          syslog('WARN', 'Alpha OHLC WS disconnected. Reconnecting in 3s...');
           if (!destroyed) setTimeout(connect, 3000);
+        };
+
+        alphaWs.onerror = () => {
+          syslog('ERROR', `Alpha OHLC WS connection error → ${url}`);
         };
       };
 
@@ -183,6 +215,11 @@ export const useTradeStore = create<TradeStore>((set) => {
       const connect = () => {
         if (destroyed) return;
         const predictiveWs = new WebSocket(url);
+        syslog('INFO', `Predictive WS connecting → ${url}`);
+
+        predictiveWs.onopen = () => {
+          syslog('INFO', 'Predictive WS connected. Ghost line projections active.');
+        };
 
         predictiveWs.onmessage = (event) => {
           try {
@@ -191,12 +228,17 @@ export const useTradeStore = create<TradeStore>((set) => {
               predictiveSignals: [...state.predictiveSignals, signal].slice(-100),
             }));
           } catch (e) {
-            console.error('Error parsing PredictiveSignal WS message:', e);
+            syslog('ERROR', `Predictive signal parse error: ${e}`);
           }
         };
 
         predictiveWs.onclose = () => {
+          syslog('WARN', 'Predictive WS disconnected. Reconnecting in 3s...');
           if (!destroyed) setTimeout(connect, 3000);
+        };
+
+        predictiveWs.onerror = () => {
+          syslog('ERROR', `Predictive WS connection error → ${url}`);
         };
       };
 
@@ -209,18 +251,33 @@ export const useTradeStore = create<TradeStore>((set) => {
       const connect = () => {
         if (destroyed) return;
         const insightWs = new WebSocket(url);
+        syslog('INFO', `Insight (DeepSeek) WS connecting → ${url}`);
+
+        insightWs.onopen = () => {
+          syslog('INFO', 'Insight WS connected. DeepSeek anomaly detection active.');
+        };
 
         insightWs.onmessage = (event) => {
           try {
             const insight: MarketInsight = JSON.parse(event.data);
             set({ latestInsight: insight });
+            if (insight.headline === 'LLM API Failure') {
+              syslog('ERROR', `DeepSeek API failure: ${insight.analysis_text}`);
+            } else {
+              syslog('INFO', `Market insight received: ${insight.headline} (${insight.symbol})`);
+            }
           } catch (e) {
-            console.error('Error parsing MarketInsight WS message:', e);
+            syslog('ERROR', `Insight parse error: ${e}`);
           }
         };
 
         insightWs.onclose = () => {
+          syslog('WARN', 'Insight WS disconnected. Reconnecting in 3s...');
           if (!destroyed) setTimeout(connect, 3000);
+        };
+
+        insightWs.onerror = () => {
+          syslog('ERROR', `Insight WS connection error → ${url}`);
         };
       };
 
