@@ -1,11 +1,11 @@
 // engine.rs — Kafka Consumer & Producer loop for the Quant-RAG Agent.
 //
-// Phase 9.2 — Anomaly Detection & Gemini LLM Insight Pipeline.
+// Perfection Phase 1 — Anomaly Detection & DeepSeek v4 Pro Insight Pipeline.
 //
 // Pipeline:
 //   1. Consume Protobuf-encoded OHLCCandle messages from `market.ohlc.10m`.
 //   2. For each candle, compute absolute % change: |close − open| / open × 100.
-//   3. If change_pct >= 2.0% (anomaly threshold), invoke the Gemini LLM client.
+//   3. If change_pct >= 2.0% (anomaly threshold), invoke the DeepSeek LLM client.
 //   4. Construct a MarketInsight Protobuf payload and publish to `signals.insights`.
 //   5. Serialize the insight to JSON and broadcast over the WS channel (port 8083).
 //
@@ -125,7 +125,7 @@ pub mod engine {
     ///
     /// This function blocks indefinitely, processing each incoming candle
     /// on the `market.ohlc.10m` topic.  When an anomaly (>= 2% absolute change)
-    /// is detected, the Gemini LLM is invoked, and the resulting insight is:
+    /// is detected, the DeepSeek LLM is invoked, and the resulting insight is:
     ///   1. Published to Kafka `signals.insights` as Protobuf.
     ///   2. Serialized to JSON and sent through `ws_tx` for WebSocket fan-out on port 8083.
     pub async fn run(llm_client: &LlmClient, ws_tx: broadcast::Sender<String>) {
@@ -198,9 +198,9 @@ pub mod engine {
                             continue;
                         }
 
-                        // ── Anomaly detected! Invoke Gemini LLM ──────────
+                        // ── Anomaly detected! Invoke DeepSeek LLM ─────────
                         log::info!(
-                            "🚨 ANOMALY DETECTED: symbol={} change={:.2}% — invoking Gemini...",
+                            "🚨 ANOMALY DETECTED: symbol={} change={:.2}% — invoking DeepSeek...",
                             candle.symbol,
                             change_pct,
                         );
@@ -258,11 +258,54 @@ pub mod engine {
                                 });
                             }
                             Err(e) => {
+                                // ── Error Visibility Engine ──────────────────
+                                // DO NOT fail silently.  Construct a fallback
+                                // MarketInsight carrying the error details and
+                                // broadcast it over Kafka + WebSocket so the
+                                // frontend can display the failure.
                                 log::error!(
-                                    "❌ Gemini LLM call failed for symbol={}: {}",
+                                    "❌ DeepSeek LLM call failed for symbol={}: {}",
                                     candle.symbol,
                                     e,
                                 );
+
+                                let fallback_insight = MarketInsight {
+                                    symbol: candle.symbol.clone(),
+                                    timestamp_ms: now_ms(),
+                                    headline: "LLM API Failure".to_string(),
+                                    analysis_text: format!("DeepSeek Error: {}", e),
+                                    sentiment_score: 50,
+                                    anomaly_pct: change_pct,
+                                };
+
+                                log::warn!(
+                                    "⚠️  Broadcasting fallback error insight for symbol={}",
+                                    fallback_insight.symbol,
+                                );
+
+                                // ── Broadcast error insight over WebSocket ───
+                                let error_json = serde_json::json!({
+                                    "symbol": fallback_insight.symbol,
+                                    "timestamp_ms": fallback_insight.timestamp_ms,
+                                    "headline": fallback_insight.headline,
+                                    "analysis_text": fallback_insight.analysis_text,
+                                    "sentiment_score": fallback_insight.sentiment_score,
+                                    "anomaly_pct": fallback_insight.anomaly_pct,
+                                });
+                                let _ = ws_tx.send(error_json.to_string());
+
+                                // ── Publish error insight to Kafka ───────────
+                                let producer_clone = producer.clone();
+                                let topic_clone = produce_topic.clone();
+
+                                tokio::spawn(async move {
+                                    publish_insight(
+                                        &producer_clone,
+                                        &topic_clone,
+                                        &fallback_insight,
+                                    )
+                                    .await;
+                                });
                             }
                         }
                     }

@@ -6,7 +6,7 @@
 // Kafka with synthetic market data at configurable rates (default: 100/sec).
 //
 // Every Nth tick (default: 500th), a massive price anomaly (-5% to +5%)
-// is injected to intentionally trigger the Quant-RAG Gemini engine while
+// is injected to intentionally trigger the Quant-RAG DeepSeek engine while
 // the system is under extreme load.
 //
 // DUAL-PUBLISH STRATEGY:
@@ -19,7 +19,7 @@
 //
 //   2. `market.ohlc.10m` — OHLCCandle protos. This feeds:
 //      - Predictive Agent (LinReg → signals.predictive → WS 8082 → ghost line)
-//      - Quant-RAG Agent (anomaly detection → Gemini LLM → WS 8083 → insight HUD)
+//      - Quant-RAG Agent (anomaly detection → DeepSeek LLM → WS 8083 → insight HUD)
 //
 // Pipeline under test:
 //   load_tester → Kafka (market.ticks + market.ohlc.10m)
@@ -182,11 +182,15 @@ async fn main() {
 
     // ── Price Engine ─────────────────────────────────────────────────
     let initial_price = match args.symbol.as_str() {
-        "BTC/USD" => 67_500.0,
         "NIFTY50" | "NIFTY 50" => 22_500.0,
         "BANKNIFTY" => 48_000.0,
         "RELIANCE" => 2_950.0,
-        _ => 10_000.0,
+        "HDFCBANK" => 1_650.0,
+        "INFY" => 1_450.0,
+        "TCS" => 3_800.0,
+        "ICICIBANK" => 1_100.0,
+        "SBIN" => 780.0,
+        _ => 1_000.0,
     };
 
     let mut engine = PriceEngine::new(initial_price, 0.15);

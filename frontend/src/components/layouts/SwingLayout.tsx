@@ -19,7 +19,7 @@ interface TimeframeTrend {
   strength: number; // 0-100
 }
 
-// ── Mock Data (Multi-Timeframe Trends remain mock until Phase 10) ──────
+// ── Static Data (Multi-Timeframe Trends — will be replaced by live feed in Phase 10) ──
 const TIMEFRAME_TRENDS: TimeframeTrend[] = [
   { timeframe: '1H', bias: 'BULLISH', strength: 72 },
   { timeframe: '4H', bias: 'NEUTRAL', strength: 50 },
@@ -178,7 +178,7 @@ function SwingConfluencePanel() {
                     {latestInsight.headline}
                   </p>
                   <div className="mt-1 flex items-center gap-2 text-[9px] text-text-muted">
-                    <span className="font-medium">Gemini AI</span>
+                    <span className="font-medium">DeepSeek AI</span>
                     <span>·</span>
                     <span>{latestInsight.symbol}</span>
                     <span>·</span>

@@ -1,11 +1,11 @@
 // main.rs — Quant-RAG Agent entry point.
 //
-// Phase 9.2 — Anomaly Detection + Gemini LLM + WS Broadcast (8083).
+// Perfection Phase 1 — Anomaly Detection + DeepSeek v4 Pro + WS Broadcast (8083).
 //
 // Pipeline:
 //   1. Consume Protobuf-encoded OHLCCandle messages from `market.ohlc.10m`
 //   2. Detect anomalies (>= 2% absolute price change)
-//   3. Invoke Google Gemini 1.5 Flash for AI-generated insight
+//   3. Invoke DeepSeek v4 Pro for AI-generated insight
 //   4. Publish MarketInsight to Kafka `signals.insights`
 //   5. Broadcast the same insight as JSON over WebSocket on port 8083
 
@@ -28,14 +28,14 @@ async fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     info!("╔══════════════════════════════════════════════════╗");
-    info!("║  Quant-RAG Agent — Gemini 1.5 Flash Engine       ║");
-    info!("║  Phase 9.2 — Anomaly → Insight Pipeline (8083)   ║");
+    info!("║  Quant-RAG Agent — NVIDIA NIM × DeepSeek v4 Pro  ║");
+    info!("║  Perfection Phase 1 — Insight Pipeline (8083)    ║");
     info!("╚══════════════════════════════════════════════════╝");
 
     // ── Initialise the LLM client ────────────────────────────────────────
     let llm_client = match LlmClient::new() {
         Ok(c) => {
-            info!("✅ LlmClient initialized — GEMINI_API_KEY loaded");
+            info!("✅ LlmClient initialized — NVIDIA_API_KEY loaded");
             c
         }
         Err(e) => {

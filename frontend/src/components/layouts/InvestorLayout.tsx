@@ -18,7 +18,7 @@ interface MacroIndicator {
   direction?: 'up' | 'down' | 'flat';
 }
 
-// ── Mock Data (Macro indicators remain mock until external feed integration) ──
+// ── Static Data (Macro indicators — will be replaced by live external feeds) ──
 const MACRO_INDICATORS: MacroIndicator[] = [
   { label: 'Fed Funds Rate', value: '5.25%', change: '+25 bps', direction: 'up' },
   { label: 'Core CPI (YoY)', value: '3.8%', change: '-0.2%', direction: 'down' },
@@ -138,7 +138,7 @@ function MacroSentimentPanel() {
         </div>
       </div>
 
-      {/* ── Quant-RAG Outlook (Live from Gemini AI) ─────────── */}
+      {/* ── Quant-RAG Outlook (Live from DeepSeek AI) ─────────── */}
       <div className="flex flex-1 min-h-0 flex-col">
         <div className="flex shrink-0 items-center justify-between px-4 pt-3 pb-1.5">
           <h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">
