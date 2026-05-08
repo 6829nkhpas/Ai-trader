@@ -1,23 +1,23 @@
 # Dynamic Sprint Board
 
-**Phase:** Perfection Phase 4 — Alpha Suite
+**Phase:** Perfection Phase 5 — Alpha Suite
 
 **System Health:** V1 Core is fully operational (Ingestion, Tech, Sentiment, Aggregator, UI).
 
-**Current Objective:** Perfection Phase 4 — Institutional UI/UX Window Management.
+**Current Objective:** Perfection Phase 5 — Production Build & Deployment.
 
-**Current Status:** Perfection Phase 4 Complete. UI is now a fully modular, resizable workspace with a live system diagnostic console. All three profile layouts (Intraday, Swing, Investor) use `react-resizable-panels` v4.11 for drag-to-resize split panes with collapsible sidebars. The SystemConsole provides real-time connection monitoring and rolling event logs at the bottom of the terminal.
+**Current Status:** Perfection Phase 5 Complete. Backend is Dockerized. Tauri is configured for production bundling. The Alpha Suite V2 monorepo is officially complete and ready for deployment.
 
-**Key Changes (Phase 4):**
-- Installed `react-resizable-panels` v4.11 — `Group` / `Panel` / `Separator` component architecture.
-- All layout components rewritten: IntradayLayout, SwingLayout, InvestorLayout now use resizable horizontal panels with styled drag handles.
-- Sidebar collapse/expand via `PanelImperativeHandle` API (collapse/expand/isCollapsed).
-- New `SystemConsole.tsx` component — collapsible bottom drawer with service status bar and terminal-like log viewer.
-- `useTradeStore` extended with `systemLogs[]` state and `addSystemLog()` action.
-- All three WebSocket handlers (Alpha OHLC, Predictive, Insight) now emit system log entries for connect/disconnect/error/data events.
-- DeepSeek API failures are surfaced in both the SystemConsole logs and the Insight HUD.
+**Key Changes (Phase 5):**
+- `docker-compose.yml` — Full production stack: Redpanda (Kafka), QuestDB, PostgreSQL, Redis + 5 Rust microservices (ingestion, alpha-terminal, aggregator, predictive-agent, quant-rag-agent).
+- Multi-stage Dockerfiles for all Rust services: `ingestion`, `alpha-terminal`, `aggregator`, `agents/predictive`, `agents/quant-rag`.
+- `tauri.conf.json` — Identifier: `com.alphasuite.terminal`, version 2.0.0, 1440×900 window with CSP, bundle targets: all (MSI/APP/DEB).
+- `PRODUCTION_SETUP.md` — Step-by-step deployment guide covering .env configuration, Docker Compose startup, Tauri build, E2E verification, and troubleshooting.
 
-**Next Steps:** Final System Review & Codebase Audit before production deployment.
+**Deployment Summary:**
+1. Configure `.env` with `NVIDIA_API_KEY`, `KITE_API_KEY`, `KITE_ACCESS_TOKEN`, `KITE_INSTRUMENT_TOKENS`.
+2. `docker-compose up -d --build` — Starts the entire backend brain.
+3. `npm run tauri build` (in /frontend) — Generates the desktop executable.
 
 **Deprecated:**
 Explicitly note that `MASTER_CONTEXT.md` and `SESSION_MEMORY.md` are now obsolete and should be ignored entirely by the system.

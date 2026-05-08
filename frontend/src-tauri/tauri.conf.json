@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Alpha-Terminal",
-  "version": "0.1.0",
-  "identifier": "com.aitrader.alpha",
+  "version": "2.0.0",
+  "identifier": "com.alphasuite.terminal",
   "build": {
     "frontendDist": "../out",
     "devUrl": "http://localhost:3000",
@@ -12,15 +12,19 @@
   "app": {
     "windows": [
       {
-        "title": "Alpha Suite V2",
-        "width": 800,
-        "height": 600,
+        "title": "Alpha Suite V2 — AI Trade Terminal",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 680,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "center": true,
+        "decorations": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; connect-src 'self' ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:* https://integrate.api.nvidia.com https://api.kite.trade; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:"
     }
   },
   "bundle": {
@@ -33,8 +37,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "android": {
-      "debugApplicationIdSuffix": ".debug"
-    }
+    "windows": {
+      "wix": {
+        "language": "en-US"
+      }
+    },
+    "category": "Finance",
+    "shortDescription": "AI-Powered Institutional Trading Terminal",
+    "longDescription": "Alpha Suite V2 — A real-time AI trading terminal powered by DeepSeek v4 Pro, Zerodha Kite integration, and Kafka-driven market data pipelines. Features institutional-grade charting with EMA ribbons, volume histograms, predictive ghost lines, and modular workspace management."
   }
 }
