@@ -1,20 +1,22 @@
 # Dynamic Sprint Board
 
-**Phase:** Perfection Phase 2 — Alpha Suite
+**Phase:** Perfection Phase 3 — Alpha Suite
 
 **System Health:** V1 Core is fully operational (Ingestion, Tech, Sentiment, Aggregator, UI).
 
-**Current Objective:** Perfection Phase 2 — Live Data Hardening & Zerodha Integration.
+**Current Objective:** Perfection Phase 3 — Institutional Charting Overhaul.
 
-**Current Status:** Perfection Phase 2 Complete. Hardcoded mock data purged. Zerodha Kite API successfully mapped to the `market.ticks` Kafka pipeline. DeepSeek v4 Pro integrated via NVIDIA NIM. Global LLM error visibility enabled. All UI components now exclusively consume live backend data — no synthetic setInterval generators remain.
+**Current Status:** Perfection Phase 3 Complete. AlphaPredictiveChart upgraded with professional Volume histograms, EMA overlays, and strict institutional dark-mode styling. Volume bars are conditionally colored (green bullish / red bearish) and pinned to the bottom 20% of the chart. EMA 9 (cyan) and EMA 21 (pink) ribbon overlays provide real-time momentum analysis with client-side EMA calculation engine.
 
-**Key Changes (Phase 2):**
-- Order Book DOM: Removed 100ms mock engine. Now awaits real market depth via Tauri IPC `orderbook-update` events.
-- Load tester: Purged `BTC/USD` hardcoded symbol. Default is now `RELIANCE`. Added HDFCBANK, INFY, TCS, ICICIBANK, SBIN to the price map.
-- Gemini AI branding remnants purged from Swing and Investor layout UI labels.
-- Ingestion pipeline: Already fully integrated with Zerodha Kite WebSocket — no changes needed. Reads configurable instrument tokens from `KITE_INSTRUMENT_TOKENS` env var.
+**Key Changes (Phase 3):**
+- Canvas background: `#0F172A` (slate-900), axis text: `#CBD5E1`, grid: `rgba(51,65,85,0.4)`.
+- Crosshair: Normal mode with dashed slate lines and dark label backgrounds.
+- Volume histogram: `priceScaleId: ''` + `scaleMargins: { top: 0.8, bottom: 0 }` — bottom 20%.
+- EMA 9 (`#38bdf8`) + EMA 21 (`#f472b6`) line series with SMA-seeded EMA calculation engine.
+- EMA value badges in the chart header bar.
+- All existing IPC/WebSocket/store data flow preserved intact.
 
-**Next Steps:** Perfection Phase 3 — Live Order Book depth feed integration (Kite depth → IPC → OrderBook.tsx), production deployment, and end-to-end stress testing with live Zerodha data.
+**Next Steps:** Perfection Phase 4 — Advanced technical indicators (RSI, MACD), custom timeframe selector UI, and alert system integration.
 
 **Deprecated:**
 Explicitly note that `MASTER_CONTEXT.md` and `SESSION_MEMORY.md` are now obsolete and should be ignored entirely by the system.

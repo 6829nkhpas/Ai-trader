@@ -30,6 +30,11 @@
   - Features the V2 Alpha Predictive Chart, which ingests `OhlcCandle` data directly from the V2 WebSocket on port 8081, operating completely parallel to the V1 Aggregator feed on port 8080.
   - Renders AI forward-projections as dashed Ghost Lines using `PredictiveSignal` data from the Predictive WebSocket on port 8082.
   - **Live Data Only:** All synthetic mock data generators (setInterval random price walks, hardcoded order books) have been purged. UI components only update state when real IPC/WebSocket data arrives from the backend.
+  - **Institutional Charting Canvas** (`AlphaPredictiveChart.tsx`):
+    - **Dark-Mode Canvas:** Deep slate-900 (`#0F172A`) background with `#CBD5E1` axis text and subtle `rgba(51,65,85,0.4)` grid lines. Crosshair uses dashed slate lines with dark label backgrounds.
+    - **Volume Histogram:** Pinned to the bottom 20% of the chart via `priceScaleId: ''` + `scaleMargins: { top: 0.8, bottom: 0 }`. Volume bars are conditionally colored — green (`#22c55e35`) for bullish candles, red (`#ef444430`) for bearish candles.
+    - **EMA 9/21 Momentum Ribbons:** Two line series overlaid on the candlestick chart — EMA 9 (cyan `#38bdf8`, lineWidth 2) and EMA 21 (pink `#f472b6`, lineWidth 2). EMAs are calculated client-side using an Exponential Moving Average engine with SMA-seeded initialization. Values update dynamically as new candles arrive via WebSocket. Current EMA values are displayed as color-coded badges in the chart header.
+    - **Zero-Latency Rendering:** Charts bypass React State. Lightweight-charts `.setData()` and `.update()` are called directly from the data sync effect, preventing DOM reconciliation bottlenecks.
 - `/shared_protos` - Universal Protobuf data contracts
 - `/tools/load_tester` - Chaos Engine: high-frequency Kafka load tester with anomaly injection for end-to-end stress testing
 
