@@ -209,28 +209,6 @@ export default function Home() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIndicatorsEnabled((prev) => !prev)}
-                    className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
-                      indicatorsEnabled
-                        ? 'bg-emerald-500/15 text-emerald-400'
-                        : 'bg-surface text-text-secondary hover:bg-elevated'
-                    }`}
-                  >
-                    Indicators
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAiEnabled((prev) => !prev)}
-                    className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
-                      aiEnabled
-                        ? 'bg-emerald-500/15 text-emerald-400'
-                        : 'bg-surface text-text-secondary hover:bg-elevated'
-                    }`}
-                  >
-                    AI
-                  </button>
                   {/* Sidebar toggle button */}
                   <button
                     type="button"
