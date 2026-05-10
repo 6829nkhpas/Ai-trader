@@ -1,58 +1,122 @@
 'use client';
 
 import React from 'react';
+import { Loader2 } from 'lucide-react';
 import AlphaPredictiveChart from '../AlphaPredictiveChart';
 import type { Timeframe } from '../AlphaPredictiveChart';
 import { TradeProfile, useTradeStore } from '../../store/useTradeStore';
+import { useMacroIndicators } from '../../hooks/useMacroIndicators';
 
 interface InvestorLayoutProps { activeProfile?: TradeProfile; timeframe?: string; isExpanded?: boolean; onToggleExpand?: () => void; }
-interface MacroIndicator { label: string; value: string; change?: string; direction?: 'up' | 'down' | 'flat'; }
-
-const MACRO_INDICATORS: MacroIndicator[] = [
-  { label: 'Fed Funds Rate', value: '5.25%', change: '+25 bps', direction: 'up' },
-  { label: 'Core CPI (YoY)', value: '3.8%', change: '-0.2%', direction: 'down' },
-  { label: '10Y Treasury', value: '4.31%', change: '+5 bps', direction: 'up' },
-  { label: 'US Dollar Index', value: '104.52', change: '-0.3%', direction: 'down' },
-  { label: 'VIX', value: '14.82', change: '-1.2', direction: 'down' },
-  { label: 'GDP Growth (Q1)', value: '2.1%', change: '+0.3%', direction: 'up' },
-];
-const PORTFOLIO_METRICS = [
-  { label: 'Sharpe Ratio', value: '1.42' },
-  { label: 'Max Drawdown', value: '-8.3%' },
-  { label: 'Beta', value: '1.08' },
-  { label: 'Alpha (ann.)', value: '+3.2%' },
-];
 
 function dirIcon(d?: 'up' | 'down' | 'flat') { return d === 'up' ? '▲' : d === 'down' ? '▼' : '—'; }
 function dirColor(d?: 'up' | 'down' | 'flat') { return d === 'up' ? 'text-bull' : d === 'down' ? 'text-bear' : 'text-text-muted'; }
+
+function categoryColor(cat: string) {
+  switch (cat) {
+    case 'Benchmark': return 'bg-cyan-500/10 text-cyan-400';
+    case 'Volatility': return 'bg-rose-500/10 text-rose-400';
+    case 'Sectoral': return 'bg-amber-500/10 text-amber-400';
+    default: return 'bg-elevated text-text-muted';
+  }
+}
+
+function timeAgo(ms: number): string {
+  const secs = Math.floor((Date.now() - ms) / 1000);
+  if (secs < 5) return 'just now';
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  return `${mins}m ago`;
+}
+
+// ── Shimmer Skeleton ────────────────────────────────────────────────────────
+
+function IndicatorSkeleton() {
+  return (
+    <div className="flex flex-col gap-0 px-3 pb-2">
+      {[...Array(5)].map((_, i) => (
+        <div key={i} className="flex items-center justify-between py-1.5 border-b border-border-subtle last:border-0">
+          <div className="h-3 w-20 rounded bg-elevated/80 animate-pulse" />
+          <div className="flex items-center gap-2">
+            <div className="h-3 w-16 rounded bg-elevated/80 animate-pulse" />
+            <div className="h-3 w-10 rounded bg-elevated/60 animate-pulse" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // ── Exported Macro Sentiment Panel (used by page.tsx sidebar) ────────────
 
 export function MacroSentimentPanel() {
   const latestInsight = useTradeStore((s) => s.latestInsight);
+  const { indicators, portfolioMetrics, loading, error, lastUpdated } = useMacroIndicators();
+
   return (
     <div id="macro-sentiment-panel" className="flex h-full flex-col rounded-lg border border-border-default bg-surface text-sm select-none overflow-hidden">
       
+      {/* ── Macro Indicators (Live) ──────────────────────────────── */}
       <div className="flex flex-col border-b border-border-default">
-        <div className="px-3 pt-2 pb-1"><h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Macro Indicators</h3></div>
-        <div className="flex flex-col gap-0 px-3 pb-2">
-          {MACRO_INDICATORS.map((ind) => (
-            <div key={ind.label} className="flex items-center justify-between py-1.5 border-b border-border-subtle last:border-0">
-              <span className="text-[11px] text-text-secondary">{ind.label}</span>
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] font-semibold text-text-primary tabular-nums">{ind.value}</span>
-                {ind.change && <span className={`text-[10px] font-medium tabular-nums ${dirColor(ind.direction)}`}>{dirIcon(ind.direction)} {ind.change}</span>}
+        <div className="flex items-center justify-between px-3 pt-2 pb-1">
+          <h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Macro Indicators</h3>
+          <div className="flex items-center gap-1.5">
+            {error && (
+              <span className="text-[8px] text-red-400 font-medium">API Error</span>
+            )}
+            {lastUpdated && !loading && (
+              <span className="text-[8px] text-text-muted/60 tabular-nums">{timeAgo(lastUpdated)}</span>
+            )}
+            {loading && (
+              <Loader2 size={10} className="animate-spin text-text-muted" />
+            )}
+          </div>
+        </div>
+
+        {loading && indicators.every((i) => i.raw === null) ? (
+          <IndicatorSkeleton />
+        ) : (
+          <div className="flex flex-col gap-0 px-3 pb-2">
+            {indicators.map((ind) => (
+              <div key={ind.label} className="flex items-center justify-between py-1.5 border-b border-border-subtle last:border-0 transition-colors hover:bg-elevated/30">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-text-secondary">{ind.label}</span>
+                  <span className={`rounded px-1 py-px text-[7px] font-semibold uppercase tracking-wider ${categoryColor(ind.category)}`}>
+                    {ind.category === 'Volatility' ? 'VIX' : ind.category === 'Benchmark' ? 'IDX' : 'SEC'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold text-text-primary tabular-nums">{ind.value}</span>
+                  {ind.change && (
+                    <span className={`text-[10px] font-medium tabular-nums ${dirColor(ind.direction)}`}>
+                      {dirIcon(ind.direction)} {ind.change}
+                    </span>
+                  )}
+                </div>
               </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Portfolio Risk Metrics (Live from Store) ─────────────── */}
+      <div className="flex flex-col border-b border-border-default">
+        <div className="px-3 pt-2 pb-1"><h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Portfolio Metrics</h3></div>
+        <div className="grid grid-cols-2 gap-x-2 gap-y-1 px-3 pb-2">
+          {portfolioMetrics.map((m) => (
+            <div key={m.label} className="flex items-center justify-between" title={m.tooltip}>
+              <span className="text-[10px] text-text-muted">{m.label}</span>
+              <span className={`text-[11px] font-semibold tabular-nums ${
+                m.value.startsWith('+') ? 'text-bull' :
+                m.value.startsWith('-') ? 'text-bear' :
+                'text-text-primary'
+              }`}>{m.value}</span>
             </div>
           ))}
         </div>
       </div>
-      <div className="flex flex-col border-b border-border-default">
-        <div className="px-3 pt-2 pb-1"><h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Portfolio Risk Metrics</h3></div>
-        <div className="grid grid-cols-2 gap-x-2 gap-y-1 px-3 pb-2">
-          {PORTFOLIO_METRICS.map((m) => (<div key={m.label} className="flex items-center justify-between"><span className="text-[10px] text-text-muted">{m.label}</span><span className="text-[11px] font-semibold text-text-primary tabular-nums">{m.value}</span></div>))}
-        </div>
-      </div>
+
+      {/* ── Quant-RAG Outlook (Already Dynamic — Untouched) ──────── */}
       <div className="flex flex-1 min-h-0 flex-col">
         <div className="flex shrink-0 items-center justify-between px-3 pt-2 pb-1">
           <h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Quant-RAG Outlook</h3>
