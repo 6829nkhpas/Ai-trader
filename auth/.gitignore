@@ -3,3 +3,6 @@ node_modules
 .env
 
 /src/generated/prisma
+
+# RSA JWT keys — generated locally, never commit
+keys/

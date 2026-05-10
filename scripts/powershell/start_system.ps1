@@ -1,3 +1,6 @@
+# Ensure cargo and cmake are on PATH for this session
+$env:PATH = "$env:USERPROFILE\.cargo\bin;C:\Program Files\CMake\bin;" + $env:PATH
+
 # Store process objects to kill them later
 $script:processes = @()
 
@@ -6,7 +9,6 @@ function Cleanup {
     Write-Host "`nShutting down system..." -ForegroundColor Yellow
     foreach ($p in $script:processes) {
         if ($null -ne $p -and -not $p.HasExited) {
-            # taskkill with /T kills child processes as well, which is important for npm and cargo
             taskkill /T /F /PID $p.Id 2>$null
         }
     }
@@ -16,89 +18,121 @@ function Cleanup {
 }
 
 try {
-    Write-Host "Loading environment variables from .env..." -ForegroundColor Cyan
-    if (Test-Path .env) {
-        Get-Content .env | Where-Object { $_ -match '=' -and $_ -notmatch '^#' } | ForEach-Object {
-            $name, $value = $_ -split '=', 2
-            # Strip surrounding double quotes from the value (e.g. "738561:RELIANCE,..." → 738561:RELIANCE,...)
-            $cleanValue = $value.Trim().Trim('"').Trim("'")
-            [Environment]::SetEnvironmentVariable($name.Trim(), $cleanValue)
+    # ── Pre-flight: Kill anything occupying our ports ────────────────────────
+    # Ports: 3000=Next.js, 3001=Auth, 8080-8083=WS agents,
+    #        9000/9009=QuestDB, 5432=PG, 6379=Redis, 19092=Kafka
+    Write-Host "==> Cleaning up stale processes and ports..." -ForegroundColor Magenta
+
+    $portsToKill = @(3000, 3001, 8080, 8081, 8082, 8083, 9000, 9009, 5432, 6379, 19092)
+    foreach ($port in $portsToKill) {
+        $netstatOut = netstat -ano 2>$null
+        $matched = $netstatOut | Select-String (":$port\s")
+        foreach ($line in $matched) {
+            $parts = ("$line".Trim() -split "\s+")
+            $procId = $parts[-1]
+            if ($procId -match "^\d+$" -and [int]$procId -gt 4) {
+                taskkill /PID $procId /T /F 2>$null | Out-Null
+                Write-Host "  [killed] PID $procId on port $port" -ForegroundColor DarkGray
+            }
         }
     }
 
+    $processesToKill = @("node", "cargo", "tauri", "predictive", "aggregator", "ingestion", "technical")
+    foreach ($procName in $processesToKill) {
+        $found = Get-Process -Name $procName -ErrorAction SilentlyContinue
+        if ($found) {
+            foreach ($proc in $found) {
+                taskkill /PID $proc.Id /T /F 2>$null | Out-Null
+                Write-Host "  [killed] $procName PID $($proc.Id)" -ForegroundColor DarkGray
+            }
+        }
+    }
+    Write-Host "  Pre-flight cleanup done." -ForegroundColor Green
+    Start-Sleep -Seconds 2
+
+    # ── Load environment variables ───────────────────────────────────────────
+    Write-Host "Loading environment variables from .env..." -ForegroundColor Cyan
+    if (Test-Path .env) {
+        $envLines = Get-Content .env | Where-Object { $_ -match "=" -and $_ -notmatch "^#" }
+        foreach ($line in $envLines) {
+            $parts = $line -split "=", 2
+            $varName = $parts[0].Trim()
+            $varValue = $parts[1].Trim().Trim([char]34).Trim([char]39)
+            Set-Item -Path "Env:\$varName" -Value $varValue
+        }
+    }
+
+    # ── Start infrastructure ─────────────────────────────────────────────────
     Write-Host "Starting infrastructure (Kafka/Redpanda, QuestDB, Redis, Postgres)..." -ForegroundColor Cyan
-    # Only start infrastructure containers — application services run locally via cargo.
-    # The full docker-compose (including Rust services) is for production deployment only.
     docker-compose up -d redpanda questdb postgres redis
 
     Write-Host "Infrastructure started. Waiting 15 seconds for initialization..." -ForegroundColor Cyan
     Start-Sleep -Seconds 15
 
-    # ── Pre-create Kafka topics via Redpanda's rpk CLI ──────────────────────
-    # This eliminates the UnknownTopicOrPartition race condition:
-    # consumers can subscribe immediately without waiting for producers to
-    # publish their first message and trigger auto-create.
+    # ── Pre-create Kafka topics via rpk ─────────────────────────────────────
     Write-Host "Pre-creating Kafka topics via rpk..." -ForegroundColor Cyan
-
     $topics = @("market.ticks", "market.ohlc.10m", "technical_signals", "sentiment_signals", "trade_decisions", "signals.predictive", "signals.insights")
     foreach ($topic in $topics) {
         docker exec alphasuite-redpanda rpk topic create $topic --partitions 3 2>$null
         if ($LASTEXITCODE -eq 0) {
-            Write-Host "  [+] Topic '$topic' created" -ForegroundColor Green
+            Write-Host "  [+] Topic created: $topic" -ForegroundColor Green
         } else {
-            Write-Host "  [=] Topic '$topic' already exists (ok)" -ForegroundColor DarkGray
+            Write-Host "  [=] Topic already exists: $topic" -ForegroundColor DarkGray
         }
     }
-
-    # Verify topics were created
-    Write-Host "Verifying Kafka topics..." -ForegroundColor Cyan
     docker exec alphasuite-redpanda rpk topic list
     Write-Host "Infrastructure is ready!" -ForegroundColor Green
 
-    # ── Start PRODUCERS first, then CONSUMERS ─────────────────────────────────
-    # Order matters: ingestion → technical → sentiment → aggregator → frontend
-    # This ensures data flows downstream before consumers try to read.
+    # ── Start PRODUCERS first, then CONSUMERS ───────────────────────────────
+    # Order: ingestion -> technical -> sentiment -> aggregator -> frontend
+
+    # ── Generate JWT RSA keys if missing ────────────────────────────────────
+    if (-not (Test-Path "auth\keys\private.pem")) {
+        Write-Host "Generating RSA-2048 JWT key pair for auth service..." -ForegroundColor Cyan
+        New-Item -ItemType Directory -Path "auth\keys" -Force | Out-Null
+        node -e "const crypto = require('crypto'); const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048, publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } }); require('fs').writeFileSync('auth/keys/private.pem', privateKey); require('fs').writeFileSync('auth/keys/public.pem', publicKey); console.log('[KEYGEN] RSA key pair generated at auth/keys/');"
+        Write-Host "  [+] JWT key pair ready." -ForegroundColor Green
+    } else {
+        Write-Host "  [=] JWT key pair already exists, skipping keygen." -ForegroundColor DarkGray
+    }
 
     Write-Host "Starting Auth Service..." -ForegroundColor Cyan
     Push-Location auth
     $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cmd.exe" -ArgumentList "/c npm run dev"
     Pop-Location
 
-    Write-Host "Starting Rust Ingestion Service (Kite → Kafka)..." -ForegroundColor Cyan
+    Write-Host "Starting Rust Ingestion Service (Kite -> Kafka)..." -ForegroundColor Cyan
     Push-Location ingestion
     $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --release"
     Pop-Location
 
-    # Give ingestion a moment to connect to Kite and start publishing ticks
     Start-Sleep -Seconds 5
 
-    Write-Host "Starting Rust Technical Agent (Kafka ticks → signals)..." -ForegroundColor Cyan
+    Write-Host "Starting Rust Technical Agent (Kafka ticks -> signals)..." -ForegroundColor Cyan
     Push-Location agents/technical
     $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --release"
     Pop-Location
 
-    Write-Host "Starting Node Sentiment Agent (News → Kafka signals)..." -ForegroundColor Cyan
+    Write-Host "Starting Node Sentiment Agent (News -> Kafka signals)..." -ForegroundColor Cyan
     Push-Location agents/sentiment
     $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cmd.exe" -ArgumentList "/c npm start"
     Pop-Location
 
-    # Give producers a moment to publish their first messages
     Start-Sleep -Seconds 3
 
-    Write-Host "Starting Rust Aggregator (signals → decisions → WS 8080 + OHLC → WS 8081)..." -ForegroundColor Cyan
+    Write-Host "Starting Rust Aggregator (signals -> WS 8080 + OHLC -> WS 8081)..." -ForegroundColor Cyan
     Push-Location aggregator
     $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --release"
     Pop-Location
 
-    # Give aggregator time to start WS server before frontend connects
     Start-Sleep -Seconds 3
 
-    Write-Host "Starting Predictive Agent (OHLC → LinReg → WS 8082)..." -ForegroundColor Cyan
+    Write-Host "Starting Predictive Agent (OHLC -> LinReg -> WS 8082)..." -ForegroundColor Cyan
     Push-Location agents/predictive
     $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --release"
     Pop-Location
 
-    Write-Host "Starting Quant-RAG Agent (anomalies → DeepSeek → WS 8083)..." -ForegroundColor Cyan
+    Write-Host "Starting Quant-RAG Agent (anomalies -> DeepSeek -> WS 8083)..." -ForegroundColor Cyan
     Push-Location agents/quant-rag
     $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --release"
     Pop-Location
@@ -113,7 +147,6 @@ try {
     Write-Host "`nAll services are running! Power Phase 3.1 FULLY ENGAGED." -ForegroundColor Green
     Write-Host "Press Ctrl+C to stop all services and infrastructure." -ForegroundColor Yellow
 
-    # Wait indefinitely until user presses Ctrl+C
     while ($true) {
         Start-Sleep -Seconds 1
     }
