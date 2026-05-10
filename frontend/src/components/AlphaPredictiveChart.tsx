@@ -513,33 +513,7 @@ export default function AlphaPredictiveChart({
   return (
     <div className="relative flex h-full w-full flex-col outline-none">
       {/* ── Chart Control Bar ─────────────────────────────────────── */}
-      <div className="flex shrink-0 items-center justify-between px-3 py-1.5 border-b border-white/5">
-        {/* OHLC watermark + EMA badges */}
-        <div className="flex items-center gap-3 text-[11px] tabular-nums">
-          {activeSymbol && (
-            <span className="font-semibold text-text-primary">{activeSymbol}</span>
-          )}
-          {ohlcLabel && (
-            <span className="text-text-muted">{ohlcLabel}</span>
-          )}
-          {candleCount > 0 && (
-            <span className="text-text-muted opacity-60">
-              {candleCount} candles
-            </span>
-          )}
-          {/* EMA ribbon value badges */}
-          {latestEma9 !== null && (
-            <span className="rounded px-1.5 py-px text-[9px] font-bold tabular-nums" style={{ color: COLORS.ema9, backgroundColor: 'rgba(56, 189, 248, 0.1)' }}>
-              EMA9 {latestEma9.toFixed(2)}
-            </span>
-          )}
-          {latestEma21 !== null && (
-            <span className="rounded px-1.5 py-px text-[9px] font-bold tabular-nums" style={{ color: COLORS.ema21, backgroundColor: 'rgba(244, 114, 182, 0.1)' }}>
-              EMA21 {latestEma21.toFixed(2)}
-            </span>
-          )}
-        </div>
-
+      <div className="flex shrink-0 items-center justify-end px-3 py-1.5 border-b border-white/5">
         {/* Expand/Collapse toggle */}
         <div className="flex items-center gap-1">
           {onToggleExpand && (

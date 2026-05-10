@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { Loader2, PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import TradingChart from '../components/TradingChart';
 import TerminalLayout from '../components/layout/TerminalLayout';
 import WatchlistPanel from '../components/panels/WatchlistPanel';
@@ -30,6 +30,20 @@ export default function Home() {
   const [aiEnabled, setAiEnabled] = useState(true);
   const [isChecking, setIsChecking] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // ── Real-time Kite quote for the active symbol ────────────────────
+  interface SymbolQuote {
+    symbol: string;
+    last_price: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number; // prev close
+    change: number; // % change
+    net_change: number;
+    volume: number;
+  }
+  const [symbolQuote, setSymbolQuote] = useState<SymbolQuote | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,6 +84,31 @@ export default function Home() {
     connectInsightWebSocket('ws://127.0.0.1:8083');
   }, [connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket]);
 
+  // Derive symbol early so hooks below can reference it unconditionally
+  const latestDecision = activeDecision ?? liveDecisions[liveDecisions.length - 1] ?? null;
+  const symbol = latestDecision?.symbol ?? 'RELIANCE';
+
+  // Fetch real-time quote for the active symbol
+  const fetchSymbolQuote = useCallback(async () => {
+    if (!symbol || symbol === '---') return;
+    try {
+      const res = await fetch(`/kite/quote?i=NSE:${symbol}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.quotes && data.quotes.length > 0) {
+        setSymbolQuote(data.quotes[0]);
+      }
+    } catch (err) {
+      console.error('[Header] Quote fetch failed:', err);
+    }
+  }, [symbol]);
+
+  useEffect(() => {
+    fetchSymbolQuote();
+    const interval = setInterval(fetchSymbolQuote, 30_000);
+    return () => clearInterval(interval);
+  }, [fetchSymbolQuote]);
+
   if (isChecking) {
     return (
       <div className="flex min-h-[40vh] items-center justify-center gap-3 text-sm text-text-secondary">
@@ -79,9 +118,6 @@ export default function Home() {
     );
   }
 
-  const latestDecision = activeDecision ?? liveDecisions[liveDecisions.length - 1] ?? null;
-  const symbol = latestDecision?.symbol ?? '---';
-  const lastPrice = latestDecision?.price;
   const timeframes: ChartTimeframe[] = ['1m', '5m', '10m', '15m', '1H', '1D'];
 
   const profileBadgeConfig: Record<TradeProfile, { label: string; color: string }> = {
@@ -134,8 +170,25 @@ export default function Home() {
               <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-border-default px-3 bg-surface rounded-t-lg">
                 <div className="flex min-w-0 items-center gap-3">
                   <div className="truncate text-sm font-semibold text-text-primary">{symbol}</div>
-                  <div className="text-xs text-text-secondary">{lastPrice ? `$${lastPrice.toFixed(2)}` : 'Price --'}</div>
-                    
+                  {symbolQuote ? (
+                    <>
+                      <div className="text-sm font-semibold text-text-primary tabular-nums">
+                        ₹{symbolQuote.last_price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                      <div className={`flex items-center gap-0.5 text-xs font-medium tabular-nums ${symbolQuote.change >= 0 ? 'text-bull' : 'text-bear'}`}>
+                        {symbolQuote.change >= 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+                        {symbolQuote.change >= 0 ? '+' : ''}{symbolQuote.change.toFixed(2)}%
+                      </div>
+                      <div className="hidden sm:flex items-center gap-2 text-[10px] text-text-muted tabular-nums">
+                        <span>O <span className="text-text-secondary">{symbolQuote.open.toFixed(2)}</span></span>
+                        <span>H <span className="text-text-secondary">{symbolQuote.high.toFixed(2)}</span></span>
+                        <span>L <span className="text-text-secondary">{symbolQuote.low.toFixed(2)}</span></span>
+                        <span>C <span className="text-text-secondary">{symbolQuote.close.toFixed(2)}</span></span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-xs text-text-muted">Loading...</div>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">

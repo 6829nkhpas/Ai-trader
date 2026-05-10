@@ -2914,7 +2914,7 @@
       "label": "renderSidebarContent()",
       "file_type": "code",
       "source_file": "frontend/src/app/page.tsx",
-      "source_location": "L113",
+      "source_location": "L149",
       "id": "app_page_rendersidebarcontent",
       "community": 2,
       "norm_label": "rendersidebarcontent()"
@@ -13582,5 +13582,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "3d5221127b877d68e0bb1c0b8fa5be92b1297457"
+  "built_at_commit": "b4fd8001eb4889351a5efc45ba9a42b573bb47f2"
 }
