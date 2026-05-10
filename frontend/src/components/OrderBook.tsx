@@ -128,24 +128,6 @@ export default function OrderBook() {
       id="order-book-dom"
       className="flex h-full flex-col rounded-lg border border-border-default bg-surface font-mono text-[11px] select-none overflow-hidden"
     >
-      {/* ── Header ──────────────────────────────────────────── */}
-      <div className="flex shrink-0 items-center justify-between border-b border-border-default px-3 py-2">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-text-primary tracking-wide">Order Book</span>
-          <span className="rounded bg-emerald-500/10 px-1.5 py-px text-[9px] font-bold text-emerald-400 uppercase tracking-widest">
-            L2 DOM
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="relative flex h-1.5 w-1.5">
-            <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-50 ${isLive ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-            <span className={`relative inline-flex h-1.5 w-1.5 rounded-full ${isLive ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-          </span>
-          <span className="text-[9px] font-medium text-slate-500 uppercase tracking-widest">
-            {isLive ? 'LIVE' : 'AWAITING'}
-          </span>
-        </div>
-      </div>
 
       {/* ── Column Headers ──────────────────────────────────── */}
       <div className="grid shrink-0 grid-cols-3 gap-0 border-b border-border-default bg-elevated/30 px-3 py-1.5 text-[10px] font-semibold text-text-muted uppercase tracking-wider">

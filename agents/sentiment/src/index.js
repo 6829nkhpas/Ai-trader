@@ -6,7 +6,7 @@
 //
 // Pipeline (per tick per symbol):
 //   fetchLatestNews(symbol)
-//     ↓  raw Marketaux article array
+//     ↓  raw NewsData.io article array
 //   filter via isArticleProcessed()      → Redis EXISTS (24 h dedup window)
 //     ↓  new articles only
 //   analyzeSentiment(symbol, headlines)  → Claude conviction score + snippet
@@ -16,7 +16,7 @@
 //   markArticleProcessed(articleUrl)     → Redis SET EX 86400
 //
 // Configuration (env vars):
-//   MARKETAUX_API_KEY          — Marketaux API token         (required)
+//   NEWSDATA_API_KEY           — NewsData.io API key         (required)
 //   ANTHROPIC_API_KEY          — Anthropic Claude API key    (required)
 //   KAFKA_BROKER_URL           — Kafka broker                (default: localhost:9092)
 //   REDIS_URL                  — Redis connection string     (default: redis://localhost:6379)
@@ -36,12 +36,12 @@ import { createClient }                            from 'redis';
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
-const SYMBOLS = (process.env.SENTIMENT_SYMBOLS ?? 'SBILIFE,BHARTIARTL')
+const SYMBOLS = (process.env.SENTIMENT_SYMBOLS ?? 'RELIANCE')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
 
-const POLL_INTERVAL_MS = parseInt(process.env.SENTIMENT_POLL_INTERVAL_MS ?? '60000', 10);
+const POLL_INTERVAL_MS = parseInt(process.env.SENTIMENT_POLL_INTERVAL_MS ?? '600000', 10);
 
 // ── Redis client (for graceful shutdown reference) ────────────────────────────
 // cache.js manages its own singleton internally; we create a second reference

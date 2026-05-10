@@ -1,13 +1,12 @@
 'use client';
 
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels';
-import { PanelRightClose, PanelRightOpen, ChevronDown, Zap, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ChevronDown, Zap, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import AlphaPredictiveChart from '../AlphaPredictiveChart';
 import type { Timeframe } from '../AlphaPredictiveChart';
 import { TradeProfile, MarketInsight, useTradeStore } from '../../store/useTradeStore';
 
-interface SwingLayoutProps { activeProfile?: TradeProfile; timeframe?: string; }
+interface SwingLayoutProps { activeProfile?: TradeProfile; timeframe?: string; isExpanded?: boolean; onToggleExpand?: () => void; }
 type TrendBias = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
 interface TimeframeTrend { timeframe: string; bias: TrendBias; strength: number; }
 
@@ -137,9 +136,9 @@ function InsightCard({ insight, isNew, index }: InsightCardProps) {
   );
 }
 
-// ── Main Confluence Panel ───────────────────────────────────────────────
+// ── Exported Confluence Panel (used by page.tsx sidebar) ─────────────────
 
-function SwingConfluencePanel() {
+export function SwingConfluencePanel() {
   const latestInsight = useTradeStore((s) => s.latestInsight);
   const [insightHistory, setInsightHistory] = useState<MarketInsight[]>([]);
   const [newestId, setNewestId] = useState<number | null>(null);
@@ -175,19 +174,7 @@ function SwingConfluencePanel() {
   return (
     <div id="swing-confluence-panel" className="flex h-full flex-col rounded-lg border border-border-default bg-surface text-sm select-none overflow-hidden">
       {/* ── Header ──────────────────────────────────────────── */}
-      <div className="flex shrink-0 items-center justify-between border-b border-border-default px-4 py-3">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-text-primary tracking-wide">Confluence</span>
-          <span className="rounded bg-emerald-500/10 px-1.5 py-px text-[9px] font-bold text-emerald-400 uppercase tracking-widest">Swing</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="relative flex h-1.5 w-1.5">
-            <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-50 ${latestInsight ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-            <span className={`relative inline-flex h-1.5 w-1.5 rounded-full ${latestInsight ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-          </span>
-          <span className="text-[9px] font-medium text-text-muted uppercase tracking-widest">{latestInsight ? 'Live' : 'Awaiting'}</span>
-        </div>
-      </div>
+      
 
       {/* ── Multi-Timeframe Trend ────────────────────────────── */}
       <div className="shrink-0 flex flex-col border-b border-border-default">
@@ -299,44 +286,15 @@ function SwingConfluencePanel() {
 
 // ── Layout ──────────────────────────────────────────────────────────────
 
-export default function SwingLayout({ activeProfile = 'SWING', timeframe = '1h' }: SwingLayoutProps) {
-  const sidebarRef = usePanelRef();
-  const [isCollapsed, setIsCollapsed] = React.useState(false);
-
-  const handleToggle = () => {
-    const p = sidebarRef.current;
-    if (!p) return;
-    if (p.isCollapsed()) { p.expand(); setIsCollapsed(false); }
-    else { p.collapse(); setIsCollapsed(true); }
-  };
-
-  const handleResize = () => {
-    const p = sidebarRef.current;
-    if (p) setIsCollapsed(p.isCollapsed());
-  };
-
+export default function SwingLayout({ activeProfile = 'SWING', timeframe = '1h', isExpanded = false, onToggleExpand }: SwingLayoutProps) {
   return (
-    <div id="swing-hud" className="h-full p-3">
-      <Group orientation="horizontal">
-        <Panel defaultSize={75} minSize={40}>
-          <div className="flex h-full flex-col min-h-0 rounded-lg border border-border-default bg-surface overflow-hidden">
-            <AlphaPredictiveChart activeProfile={activeProfile} timeframe={timeframe as Timeframe} isExpanded={isCollapsed} onToggleExpand={handleToggle} />
-          </div>
-        </Panel>
-        <Separator className="group flex w-2 items-center justify-center cursor-col-resize">
-          <div className="h-full w-[3px] rounded-full bg-slate-800 transition-colors duration-150 group-hover:bg-slate-600 group-active:bg-emerald-500/60" />
-        </Separator>
-        <Panel panelRef={sidebarRef} defaultSize={25} minSize={15} collapsible collapsedSize={0} onResize={handleResize}>
-          <div className="flex h-full flex-col overflow-hidden">
-            <div className="flex shrink-0 items-center justify-end px-2 py-1">
-              <button type="button" onClick={handleToggle} className="rounded p-1 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary" title={isCollapsed ? 'Expand' : 'Collapse'}>
-                {isCollapsed ? <PanelRightOpen size={14} /> : <PanelRightClose size={14} />}
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto"><SwingConfluencePanel /></div>
-          </div>
-        </Panel>
-      </Group>
+    <div id="swing-hud" className="flex h-full flex-col min-h-0 rounded-lg border border-border-default bg-surface overflow-hidden">
+      <AlphaPredictiveChart
+        activeProfile={activeProfile}
+        timeframe={timeframe as Timeframe}
+        isExpanded={isExpanded}
+        onToggleExpand={onToggleExpand}
+      />
     </div>
   );
 }

@@ -1,13 +1,11 @@
 'use client';
 
 import React from 'react';
-import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels';
-import { PanelRightClose, PanelRightOpen } from 'lucide-react';
 import AlphaPredictiveChart from '../AlphaPredictiveChart';
 import type { Timeframe } from '../AlphaPredictiveChart';
 import { TradeProfile, useTradeStore } from '../../store/useTradeStore';
 
-interface InvestorLayoutProps { activeProfile?: TradeProfile; timeframe?: string; }
+interface InvestorLayoutProps { activeProfile?: TradeProfile; timeframe?: string; isExpanded?: boolean; onToggleExpand?: () => void; }
 interface MacroIndicator { label: string; value: string; change?: string; direction?: 'up' | 'down' | 'flat'; }
 
 const MACRO_INDICATORS: MacroIndicator[] = [
@@ -28,23 +26,13 @@ const PORTFOLIO_METRICS = [
 function dirIcon(d?: 'up' | 'down' | 'flat') { return d === 'up' ? '▲' : d === 'down' ? '▼' : '—'; }
 function dirColor(d?: 'up' | 'down' | 'flat') { return d === 'up' ? 'text-bull' : d === 'down' ? 'text-bear' : 'text-text-muted'; }
 
-function MacroSentimentPanel() {
+// ── Exported Macro Sentiment Panel (used by page.tsx sidebar) ────────────
+
+export function MacroSentimentPanel() {
   const latestInsight = useTradeStore((s) => s.latestInsight);
   return (
     <div id="macro-sentiment-panel" className="flex h-full flex-col rounded-lg border border-border-default bg-surface text-sm select-none overflow-hidden">
-      <div className="flex shrink-0 items-center justify-between border-b border-border-default px-4 py-3">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-text-primary tracking-wide">Macro Intelligence</span>
-          <span className="rounded bg-emerald-500/10 px-1.5 py-px text-[9px] font-bold text-emerald-400 uppercase tracking-widest">Investor</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="relative flex h-1.5 w-1.5">
-            <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-50 ${latestInsight ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-            <span className={`relative inline-flex h-1.5 w-1.5 rounded-full ${latestInsight ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-          </span>
-          <span className="text-[9px] font-medium text-text-muted uppercase tracking-widest">{latestInsight ? 'Live' : 'Awaiting'}</span>
-        </div>
-      </div>
+      
       <div className="flex flex-col border-b border-border-default">
         <div className="px-4 pt-3 pb-1.5"><h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Macro Indicators</h3></div>
         <div className="flex flex-col gap-0 px-4 pb-3">
@@ -93,44 +81,17 @@ function MacroSentimentPanel() {
   );
 }
 
-export default function InvestorLayout({ activeProfile = 'INVESTOR', timeframe = '1D' }: InvestorLayoutProps) {
-  const sidebarRef = usePanelRef();
-  const [isCollapsed, setIsCollapsed] = React.useState(false);
+// ── Layout ──────────────────────────────────────────────────────────────
 
-  const handleToggle = () => {
-    const p = sidebarRef.current;
-    if (!p) return;
-    if (p.isCollapsed()) { p.expand(); setIsCollapsed(false); }
-    else { p.collapse(); setIsCollapsed(true); }
-  };
-
-  const handleResize = () => {
-    const p = sidebarRef.current;
-    if (p) setIsCollapsed(p.isCollapsed());
-  };
-
+export default function InvestorLayout({ activeProfile = 'INVESTOR', timeframe = '1D', isExpanded = false, onToggleExpand }: InvestorLayoutProps) {
   return (
-    <div id="investor-hud" className="h-full p-3">
-      <Group orientation="horizontal">
-        <Panel defaultSize={75} minSize={40}>
-          <div className="flex h-full flex-col min-h-0 rounded-lg border border-border-default bg-surface overflow-hidden">
-            <AlphaPredictiveChart activeProfile={activeProfile} timeframe={timeframe as Timeframe} isExpanded={isCollapsed} onToggleExpand={handleToggle} />
-          </div>
-        </Panel>
-        <Separator className="group flex w-2 items-center justify-center cursor-col-resize">
-          <div className="h-full w-[3px] rounded-full bg-slate-800 transition-colors duration-150 group-hover:bg-slate-600 group-active:bg-emerald-500/60" />
-        </Separator>
-        <Panel panelRef={sidebarRef} defaultSize={25} minSize={15} collapsible collapsedSize={0} onResize={handleResize}>
-          <div className="flex h-full flex-col min-h-0">
-            <div className="flex shrink-0 items-center justify-end px-2 py-1">
-              <button type="button" onClick={handleToggle} className="rounded p-1 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary" title={isCollapsed ? 'Expand' : 'Collapse'}>
-                {isCollapsed ? <PanelRightOpen size={14} /> : <PanelRightClose size={14} />}
-              </button>
-            </div>
-            <div className="flex-1 min-h-0"><MacroSentimentPanel /></div>
-          </div>
-        </Panel>
-      </Group>
+    <div id="investor-hud" className="flex h-full flex-col min-h-0 rounded-lg border border-border-default bg-surface overflow-hidden">
+      <AlphaPredictiveChart
+        activeProfile={activeProfile}
+        timeframe={timeframe as Timeframe}
+        isExpanded={isExpanded}
+        onToggleExpand={onToggleExpand}
+      />
     </div>
   );
 }
