@@ -160,11 +160,15 @@ pub mod engine {
         log::info!("Anomaly detection loop started — waiting for OHLC candles...");
         log::info!("─────────────────────────────────────────────────────");
 
-        // ── Per-symbol LLM cooldown ──────────────────────────────────────
-        // Enforce a minimum interval between LLM calls to avoid hammering
-        // the NVIDIA NIM API during load-tester stress runs.
-        const LLM_COOLDOWN: Duration = Duration::from_secs(5);
-        let mut last_llm_call = Instant::now() - LLM_COOLDOWN; // allow first call immediately
+        // ── LLM Rate Limiting (NVIDIA NIM) ───────────────────────────────
+        // Enforce strict rate limiting to avoid HTTP 429 Too Many Requests.
+        // - Global cooldown: minimum 15 seconds between ANY LLM calls
+        // - Per-symbol cooldown: minimum 5 minutes between LLM calls for the SAME symbol
+        const GLOBAL_COOLDOWN: Duration = Duration::from_secs(15);
+        const SYMBOL_COOLDOWN: Duration = Duration::from_secs(300);
+        
+        let mut last_global_call = Instant::now() - GLOBAL_COOLDOWN;
+        let mut last_symbol_calls: std::collections::HashMap<String, Instant> = std::collections::HashMap::new();
 
         // ── Event loop ───────────────────────────────────────────────────
         while let Some(message_result) = stream.next().await {
@@ -209,18 +213,31 @@ pub mod engine {
 
                         // ── Anomaly detected! Invoke DeepSeek LLM ─────────
                         // ── Cooldown gate ────────────────────────────────
-                        // Skip this anomaly if we called the LLM less than
-                        // LLM_COOLDOWN ago to avoid 429 rate-limit storms.
-                        if last_llm_call.elapsed() < LLM_COOLDOWN {
+                        // 1. Check global rate limit (to avoid API spam)
+                        if last_global_call.elapsed() < GLOBAL_COOLDOWN {
                             log::info!(
-                                "⏳ LLM cooldown active ({:.1}s remaining) — skipping anomaly for {}",
-                                (LLM_COOLDOWN - last_llm_call.elapsed()).as_secs_f64(),
+                                "⏳ Global LLM cooldown active ({:.1}s remaining) — skipping anomaly for {}",
+                                (GLOBAL_COOLDOWN - last_global_call.elapsed()).as_secs_f64(),
                                 candle.symbol,
                             );
                             continue;
                         }
 
-                        last_llm_call = Instant::now();
+                        // 2. Check per-symbol rate limit (to avoid redundant insights for the same asset)
+                        let now = Instant::now();
+                        if let Some(&last_symbol_call) = last_symbol_calls.get(&candle.symbol) {
+                            if now.duration_since(last_symbol_call) < SYMBOL_COOLDOWN {
+                                log::info!(
+                                    "⏳ Per-symbol LLM cooldown active ({:.1}s remaining) — skipping anomaly for {}",
+                                    (SYMBOL_COOLDOWN - now.duration_since(last_symbol_call)).as_secs_f64(),
+                                    candle.symbol,
+                                );
+                                continue;
+                            }
+                        }
+
+                        last_global_call = now;
+                        last_symbol_calls.insert(candle.symbol.clone(), now);
 
                         log::info!(
                             "🚨 ANOMALY DETECTED: symbol={} change={:.2}% — invoking DeepSeek...",
