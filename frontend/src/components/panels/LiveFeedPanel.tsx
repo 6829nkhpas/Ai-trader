@@ -16,9 +16,9 @@ export default function LiveFeedPanel() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="shrink-0 border-b border-border-default p-4">
+      <div className="shrink-0 border-b border-border-default px-3 py-2">
         <h2 className="text-xs font-bold uppercase tracking-widest text-text-secondary">Stock List</h2>
-        <div className="mt-3">
+        <div className="mt-1.5">
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -28,7 +28,7 @@ export default function LiveFeedPanel() {
           />
         </div>
       </div>
-      <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2">
+      <div className="flex flex-1 flex-col gap-1 overflow-y-auto p-1.5">
         {filteredDecisions.length === 0 ? (
           <div className="p-4 text-center text-xs text-text-secondary">
             {recentDecisions.length === 0 ? 'Waiting for backend decisions...' : 'No matching symbols found.'}
@@ -39,7 +39,7 @@ export default function LiveFeedPanel() {
             return (
               <div
                 key={`${decision.timestamp_ms}-${i}`}
-                className={`flex h-11 flex-col justify-center px-3 py-1 text-xs text-text-secondary transition-colors cursor-pointer ${isSelected ? 'bg-emerald-500/15' : 'hover:bg-elevated'}`}
+                className={`flex h-9 flex-col justify-center px-2.5 py-0.5 text-xs text-text-secondary transition-colors cursor-pointer rounded ${isSelected ? 'bg-emerald-500/15' : 'hover:bg-elevated'}`}
               >
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-2">

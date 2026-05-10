@@ -10,7 +10,7 @@ export default function OrderExecutionPanel() {
 
   if (!activeDecision) {
     return (
-      <div className="flex flex-col gap-3 px-4 py-3">
+      <div className="flex flex-col gap-2 px-3 py-2">
         <div className="flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-text-secondary">
             <Briefcase size={14} /> Portfolio State
@@ -18,7 +18,7 @@ export default function OrderExecutionPanel() {
           <span className="text-xs text-text-muted">No active signal</span>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-sm text-text-secondary">
             <span>Available Balance:</span>
             <span className="flex items-center text-lg font-bold text-text-primary">
@@ -55,8 +55,8 @@ export default function OrderExecutionPanel() {
   const stopValue = '--';
 
   return (
-    <div className="flex flex-col gap-3 px-4 py-3">
-      <div className="flex flex-wrap items-center justify-between gap-4">
+    <div className="flex flex-col gap-2 px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-45">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-text-secondary">Trade Strip</h2>
           <div className="mt-1 text-sm font-semibold text-text-primary">
@@ -66,7 +66,7 @@ export default function OrderExecutionPanel() {
           <div className="text-xs text-text-secondary">Conviction {activeDecision.final_conviction_score}%</div>
         </div>
 
-        <div className="flex items-center gap-6 text-xs">
+        <div className="flex items-center gap-4 text-xs">
           <div>
             <div className="text-[10px] uppercase tracking-wider text-text-secondary">Entry</div>
             <div className="text-sm font-semibold text-text-primary">{entryValue}</div>
@@ -81,14 +81,14 @@ export default function OrderExecutionPanel() {
           </div>
         </div>
 
-        <div className="flex min-w-60 flex-1 items-start gap-2 text-xs text-text-secondary">
+        <div className="flex min-w-48 flex-1 items-start gap-2 text-xs text-text-secondary">
           <span className="font-semibold text-text-secondary">Reasoning:</span>
           <span>{activeDecision.reasoning || 'Live backend decision received without a reasoning string.'}</span>
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-4">
-        <div className="flex flex-1 items-center gap-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-1 items-center gap-3">
           <div className="min-w-35 flex-1">
             <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-text-secondary">Quantity</label>
             <input

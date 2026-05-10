@@ -34,8 +34,8 @@ export function MacroSentimentPanel() {
     <div id="macro-sentiment-panel" className="flex h-full flex-col rounded-lg border border-border-default bg-surface text-sm select-none overflow-hidden">
       
       <div className="flex flex-col border-b border-border-default">
-        <div className="px-4 pt-3 pb-1.5"><h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Macro Indicators</h3></div>
-        <div className="flex flex-col gap-0 px-4 pb-3">
+        <div className="px-3 pt-2 pb-1"><h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Macro Indicators</h3></div>
+        <div className="flex flex-col gap-0 px-3 pb-2">
           {MACRO_INDICATORS.map((ind) => (
             <div key={ind.label} className="flex items-center justify-between py-1.5 border-b border-border-subtle last:border-0">
               <span className="text-[11px] text-text-secondary">{ind.label}</span>
@@ -48,17 +48,17 @@ export function MacroSentimentPanel() {
         </div>
       </div>
       <div className="flex flex-col border-b border-border-default">
-        <div className="px-4 pt-3 pb-1.5"><h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Portfolio Risk Metrics</h3></div>
-        <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 px-4 pb-3">
+        <div className="px-3 pt-2 pb-1"><h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Portfolio Risk Metrics</h3></div>
+        <div className="grid grid-cols-2 gap-x-2 gap-y-1 px-3 pb-2">
           {PORTFOLIO_METRICS.map((m) => (<div key={m.label} className="flex items-center justify-between"><span className="text-[10px] text-text-muted">{m.label}</span><span className="text-[11px] font-semibold text-text-primary tabular-nums">{m.value}</span></div>))}
         </div>
       </div>
       <div className="flex flex-1 min-h-0 flex-col">
-        <div className="flex shrink-0 items-center justify-between px-4 pt-3 pb-1.5">
+        <div className="flex shrink-0 items-center justify-between px-3 pt-2 pb-1">
           <h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Quant-RAG Outlook</h3>
           <span className={`rounded px-1.5 py-px text-[9px] font-bold uppercase tracking-widest ${latestInsight ? 'bg-cyan-500/10 text-cyan-600' : 'bg-amber-500/10 text-amber-500'}`}>{latestInsight ? 'AI Generated' : 'Standby'}</span>
         </div>
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-3">
+        <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-2">
           {latestInsight ? (
             <div className="flex flex-col gap-2.5">
               <div className="rounded-md border border-border-subtle bg-elevated/50 p-3">

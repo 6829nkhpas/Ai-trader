@@ -178,8 +178,8 @@ export function SwingConfluencePanel() {
 
       {/* ── Multi-Timeframe Trend ────────────────────────────── */}
       <div className="shrink-0 flex flex-col border-b border-border-default">
-        <div className="px-4 pt-3 pb-1.5"><h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Multi-Timeframe Trend</h3></div>
-        <div className="flex flex-col gap-2 px-4 pb-3">
+        <div className="px-3 pt-2 pb-1"><h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Multi-Timeframe Trend</h3></div>
+        <div className="flex flex-col gap-1.5 px-3 pb-2">
           {TIMEFRAME_TRENDS.map((t) => (
             <div key={t.timeframe} className="flex flex-col gap-1">
               <div className="flex items-center justify-between">
@@ -200,7 +200,7 @@ export function SwingConfluencePanel() {
       {/* ── AI News Sentiment ────────────────────────────────── */}
       <div className="flex flex-1 flex-col" style={{ minHeight: '200px' }}>
         {/* Sentiment Header */}
-        <div className="flex shrink-0 items-center justify-between px-4 pt-3 pb-1.5">
+        <div className="flex shrink-0 items-center justify-between px-3 pt-2 pb-1">
           <div className="flex items-center gap-2">
             <h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">AI News Sentiment</h3>
             {insightCount > 0 && (
@@ -222,7 +222,7 @@ export function SwingConfluencePanel() {
         </div>
 
         {/* Sentiment Gauge Bar */}
-        <div className="mx-4 mb-2">
+        <div className="mx-3 mb-1.5">
           <div className="h-2 w-full rounded-full bg-elevated overflow-hidden relative">
             {score !== null ? (
               <>
@@ -250,7 +250,7 @@ export function SwingConfluencePanel() {
         </div>
 
         {/* ── Scrollable Insight Feed ──────────────────────── */}
-        <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-3 pb-3 space-y-2 scrollbar-thin">
+        <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-2 pb-2 space-y-1.5 scrollbar-thin">
           {insightHistory.length > 0 ? (
             insightHistory.map((insight, i) => (
               <InsightCard

@@ -66,7 +66,7 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
   return (
     <div className="flex h-screen flex-col bg-background font-sans text-text-primary">
       {/* Header */}
-      <header className="z-10 flex shrink-0 items-center gap-4 border-b border-border-default bg-surface px-4 py-3 panel-shadow-sm">
+      <header className="z-10 flex shrink-0 items-center gap-3 border-b border-border-default bg-surface px-3 py-1.5 panel-shadow-sm">
         <div className="flex flex-1 items-center gap-3">
           <Activity className="text-primary" size={22} />
           <div>
@@ -183,14 +183,14 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
       </header>
 
       {/* Main Content */}
-      <div className="flex flex-1 min-h-0 overflow-hidden bg-background p-4 gap-4">
+      <div className="flex flex-1 min-h-0 overflow-hidden bg-background p-2 gap-2">
         {/* Stock List */}
-        <aside className="flex w-64 shrink-0 min-h-0 flex-col overflow-y-auto border border-border-default rounded-lg bg-surface panel-shadow">
+        <aside className="flex w-56 shrink-0 min-h-0 flex-col overflow-y-auto border border-border-default rounded-lg bg-surface panel-shadow">
           {leftPanel}
         </aside>
 
         {/* Tools Bar */}
-        <div className="flex w-16 shrink-0 flex-col items-center gap-[20px] overflow-y-auto border border-border-default rounded-lg bg-surface py-4 panel-shadow">
+        <div className="flex w-12 shrink-0 flex-col items-center gap-1.5 overflow-y-auto border border-border-default rounded-lg bg-surface py-2 panel-shadow">
           {toolOptions.map((tool) => {
             const Icon = tool.icon;
             const isActive = activeTool === tool.id;
@@ -202,12 +202,12 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
                 aria-pressed={isActive}
                 title={tool.label}
                 aria-label={tool.label}
-                className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${isActive
+                className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${isActive
                   ? 'text-primary'
                   : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
                   }`}
               >
-                <Icon size={18} />
+                <Icon size={15} />
               </button>
             );
           })}

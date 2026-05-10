@@ -131,17 +131,11 @@ export default function Home() {
           <div className="flex h-full min-h-0 w-full gap-0">
             {/* ── Left: Chart + Order Execution ──────────────── */}
             <div className={`flex min-h-0 min-w-0 flex-col rounded-lg border border-border-default bg-surface panel-shadow-lg transition-all duration-300 ease-out ${sidebarOpen ? 'flex-1' : 'w-full'}`}>
-              <div className="flex h-12 shrink-0 items-center justify-between gap-4 border-b border-border-default px-4 bg-surface rounded-t-lg">
+              <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-border-default px-3 bg-surface rounded-t-lg">
                 <div className="flex min-w-0 items-center gap-3">
                   <div className="truncate text-sm font-semibold text-text-primary">{symbol}</div>
                   <div className="text-xs text-text-secondary">{lastPrice ? `$${lastPrice.toFixed(2)}` : 'Price --'}</div>
-                  {/* Profile Mode Badge */}
-                  <span
-                    id="profile-mode-badge"
-                    className={`rounded-md border px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${badge.color}`}
-                  >
-                    {badge.label}
-                  </span>
+                    
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
@@ -201,7 +195,7 @@ export default function Home() {
               </div>
 
               {/* Chart area - takes full width */}
-              <div className="min-h-0 flex-1 bg-surface relative flex flex-col p-3 overflow-hidden">
+              <div className="min-h-0 flex-1 bg-surface relative flex flex-col p-1.5 overflow-hidden">
                 {renderProfileContent()}
               </div>
 
@@ -216,13 +210,13 @@ export default function Home() {
               className={`
                 flex flex-col min-h-0 overflow-hidden transition-all duration-300 ease-out
                 ${sidebarOpen
-                  ? 'w-[320px] min-w-[280px] max-w-[380px] opacity-100 ml-3'
+                  ? 'w-[300px] min-w-[260px] max-w-[340px] opacity-100 ml-2'
                   : 'w-0 min-w-0 max-w-0 opacity-0 ml-0 pointer-events-none'
                 }
               `}
             >
               {/* Sidebar Header with Collapse Toggle */}
-              <div className="flex shrink-0 items-center justify-between rounded-t-lg border border-b-0 border-border-default bg-surface px-3 py-2">
+              <div className="flex shrink-0 items-center justify-between rounded-t-lg border border-b-0 border-border-default bg-surface px-3 py-1.5">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-semibold text-text-primary tracking-wide">{sidebarCfg.label}</span>
                   <span className={`rounded px-1.5 py-px text-[9px] font-bold uppercase tracking-widest ${sidebarCfg.badgeColor}`}>
