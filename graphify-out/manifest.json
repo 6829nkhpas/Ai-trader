@@ -123,9 +123,13 @@
     "mtime": 1777053463.3130822,
     "hash": "4619433aba716b6f66823a0bf2e08592"
   },
+  "D:\\projects\\Ai-trader\\aggregator\\src\\kite_api.rs": {
+    "mtime": 1778418585.5905752,
+    "hash": "2212e9574626cd6da6c555b88ae51f89"
+  },
   "D:\\projects\\Ai-trader\\aggregator\\src\\main.rs": {
-    "mtime": 1778223420.9292068,
-    "hash": "c640b43f5276e0fd96a479835a2e5974"
+    "mtime": 1778418612.158456,
+    "hash": "f36c0c26a1e0e241931634cb38c629fd"
   },
   "D:\\projects\\Ai-trader\\aggregator\\src\\ohlc_server.rs": {
     "mtime": 1778048745.8994458,
@@ -388,8 +392,8 @@
     "hash": "d0f8375ae1199dc7acd3977fc33b78b8"
   },
   "D:\\projects\\Ai-trader\\frontend\\next.config.ts": {
-    "mtime": 1778239326.2171073,
-    "hash": "de7802eee442df6525a185e9871cd914"
+    "mtime": 1778418722.5166602,
+    "hash": "a4bd41e158c2b555a20f3184210543a6"
   },
   "D:\\projects\\Ai-trader\\frontend\\postcss.config.mjs": {
     "mtime": 1777053680.2480612,
@@ -508,8 +512,8 @@
     "hash": "4d840693e8eeae6f59082494f3bfb8b2"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\panels\\WatchlistPanel.tsx": {
-    "mtime": 1778416963.8085399,
-    "hash": "166ea23e5e7d1880941dd9c9f7b2513d"
+    "mtime": 1778418807.3249154,
+    "hash": "f7fad04bb87e0b9ceed75de104caa437"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\context\\AuthContext.tsx": {
     "mtime": 1778071698.6382082,

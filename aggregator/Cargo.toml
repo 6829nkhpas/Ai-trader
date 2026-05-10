@@ -37,6 +37,23 @@ serde_json = "1.0"
 # WebSocket server — upgrades TCP streams to WS for real-time decision push.
 tokio-tungstenite = "0.20"
 
+# HTTP framework — lightweight REST API for Kite instrument search + quote proxy
+axum = "0.7"
+
+# HTTP client — proxies requests to Kite Connect REST API
+reqwest = { version = "0.11", features = ["json"] }
+
+# Serialization — JSON request/response types for the REST API
+serde = { version = "1", features = ["derive"] }
+
+# CORS support — allows frontend to call the REST API directly
+tower-http = { version = "0.5", features = ["cors"] }
+tower = "0.4"
+
+# URL encoding/decoding for query parameter handling
+urlencoding = "2"
+
+
 # ===========================================================================
 # Build-time Dependencies (proto compilation)
 # ===========================================================================

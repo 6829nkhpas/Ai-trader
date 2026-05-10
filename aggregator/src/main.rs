@@ -19,6 +19,7 @@
 mod consumer;
 mod engine;
 mod kafka_producer;
+mod kite_api;
 mod ohlc_server;
 mod proto;
 mod state;
@@ -51,9 +52,13 @@ async fn main() {
     let ws_port = std::env::var("WEBSOCKET_PORT")
         .unwrap_or_else(|_| "8080".to_string());
 
+    let kite_api_port = std::env::var("KITE_API_PORT")
+        .unwrap_or_else(|_| "8084".to_string());
+
     log::info!("Kafka broker   : {}", brokers);
     log::info!("Consumer group : {}", group_id);
     log::info!("WebSocket port : {}", ws_port);
+    log::info!("Kite API port  : {}", kite_api_port);
 
     // ── Aggregator State (SP40) ──────────────────────────────────────────────
     // Shared sentiment cache: updated by sentiment consumer, read by tech consumer.
@@ -74,6 +79,14 @@ async fn main() {
         ws_server::start_server(&ws_port, ws_rx).await;
     });
     log::info!("WebSocket server spawned (background task)");
+
+    // ── Kite REST API Server ──────────────────────────────────────────────────
+    // Serves instrument search + quote proxy for the frontend watchlist panel.
+    // Runs on a separate port (default 8084) to avoid conflicts.
+    tokio::spawn(async move {
+        kite_api::run_kite_api_server(&kite_api_port).await;
+    });
+    log::info!("Kite REST API server spawned (background task)");
 
     // ── Kafka-gated block ─────────────────────────────────────────────────────
     #[cfg(feature = "kafka")]
