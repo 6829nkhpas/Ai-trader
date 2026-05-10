@@ -404,8 +404,8 @@
     "hash": "62c2bb2fa103d5d8556c48a6bc55084c"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\app\\page.tsx": {
-    "mtime": 1778415156.174007,
-    "hash": "5538cbecd93c5c97118f186ba72b4677"
+    "mtime": 1778416980.960613,
+    "hash": "55f5879c5feff42c027c8e9fa3ff3d8c"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\app\\auth\\layout.tsx": {
     "mtime": 1777819675.428254,
@@ -472,8 +472,8 @@
     "hash": "93900a91be4367393d9d45b4ab27ec11"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\layout\\TerminalLayout.tsx": {
-    "mtime": 1778414904.351534,
-    "hash": "82a6a1e87f7b4690935452bdd18f2b36"
+    "mtime": 1778416991.8503213,
+    "hash": "460d8874c2ac757d26f6bdc6bb0fad7a"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\layouts\\IntradayLayout.tsx": {
     "mtime": 1778411522.2021744,
@@ -506,6 +506,10 @@
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\panels\\OrderExecutionPanel.tsx": {
     "mtime": 1778414925.452998,
     "hash": "4d840693e8eeae6f59082494f3bfb8b2"
+  },
+  "D:\\projects\\Ai-trader\\frontend\\src\\components\\panels\\WatchlistPanel.tsx": {
+    "mtime": 1778416963.8085399,
+    "hash": "166ea23e5e7d1880941dd9c9f7b2513d"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\context\\AuthContext.tsx": {
     "mtime": 1778071698.6382082,

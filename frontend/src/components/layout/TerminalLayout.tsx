@@ -184,7 +184,7 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
 
       {/* Main Content */}
       <div className="flex flex-1 min-h-0 overflow-hidden bg-background p-2 gap-2">
-        {/* Stock List */}
+        {/* Watchlist */}
         <aside className="flex w-56 shrink-0 min-h-0 flex-col overflow-y-auto border border-border-default rounded-lg bg-surface panel-shadow">
           {leftPanel}
         </aside>

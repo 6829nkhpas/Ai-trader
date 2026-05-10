@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Loader2, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import TradingChart from '../components/TradingChart';
 import TerminalLayout from '../components/layout/TerminalLayout';
-import LiveFeedPanel from '../components/panels/LiveFeedPanel';
+import WatchlistPanel from '../components/panels/WatchlistPanel';
 import OrderExecutionPanel from '../components/panels/OrderExecutionPanel';
 import AlphaPredictiveChart from '../components/AlphaPredictiveChart';
 import IntradayLayout from '../components/layouts/IntradayLayout';
@@ -127,7 +127,7 @@ export default function Home() {
     <div className="flex h-full flex-col bg-background">
       {/* ── Profile-Driven Terminal ────────────────────────── */}
       <div className="min-h-0 flex-1">
-        <TerminalLayout leftPanel={<LiveFeedPanel />}>
+        <TerminalLayout leftPanel={<WatchlistPanel />}>
           <div className="flex h-full min-h-0 w-full gap-0">
             {/* ── Left: Chart + Order Execution ──────────────── */}
             <div className={`flex min-h-0 min-w-0 flex-col rounded-lg border border-border-default bg-surface panel-shadow-lg transition-all duration-300 ease-out ${sidebarOpen ? 'flex-1' : 'w-full'}`}>
