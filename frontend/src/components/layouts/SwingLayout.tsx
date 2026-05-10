@@ -5,17 +5,10 @@ import { ChevronDown, Zap, TrendingUp, TrendingDown, Minus } from 'lucide-react'
 import AlphaPredictiveChart from '../AlphaPredictiveChart';
 import type { Timeframe } from '../AlphaPredictiveChart';
 import { TradeProfile, MarketInsight, useTradeStore } from '../../store/useTradeStore';
+import { useMultiTimeframeTrend } from '../../hooks/useMultiTimeframeTrend';
+import type { TrendBias } from '../../hooks/useMultiTimeframeTrend';
 
 interface SwingLayoutProps { activeProfile?: TradeProfile; timeframe?: string; isExpanded?: boolean; onToggleExpand?: () => void; }
-type TrendBias = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
-interface TimeframeTrend { timeframe: string; bias: TrendBias; strength: number; }
-
-const TIMEFRAME_TRENDS: TimeframeTrend[] = [
-  { timeframe: '1H', bias: 'BULLISH', strength: 72 },
-  { timeframe: '4H', bias: 'NEUTRAL', strength: 50 },
-  { timeframe: '1D', bias: 'BULLISH', strength: 84 },
-  { timeframe: '1W', bias: 'BULLISH', strength: 91 },
-];
 
 function biasColor(b: TrendBias) { return b === 'BULLISH' ? 'text-bull' : b === 'BEARISH' ? 'text-bear' : 'text-neutral'; }
 function biasBarColor(b: TrendBias) { return b === 'BULLISH' ? 'bg-bull' : b === 'BEARISH' ? 'bg-bear' : 'bg-neutral'; }
@@ -140,6 +133,7 @@ function InsightCard({ insight, isNew, index }: InsightCardProps) {
 
 export function SwingConfluencePanel() {
   const latestInsight = useTradeStore((s) => s.latestInsight);
+  const timeframeTrends = useMultiTimeframeTrend();
   const [insightHistory, setInsightHistory] = useState<MarketInsight[]>([]);
   const [newestId, setNewestId] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -180,7 +174,7 @@ export function SwingConfluencePanel() {
       <div className="shrink-0 flex flex-col border-b border-border-default">
         <div className="px-3 pt-2 pb-1"><h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Multi-Timeframe Trend</h3></div>
         <div className="flex flex-col gap-1.5 px-3 pb-2">
-          {TIMEFRAME_TRENDS.map((t) => (
+          {timeframeTrends.map((t) => (
             <div key={t.timeframe} className="flex flex-col gap-1">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-text-primary">{t.timeframe}</span>

@@ -512,23 +512,6 @@ export default function AlphaPredictiveChart({
 
   return (
     <div className="relative flex h-full w-full flex-col outline-none">
-      {/* ── Chart Control Bar ─────────────────────────────────────── */}
-      <div className="flex shrink-0 items-center justify-end px-3 py-1.5 border-b border-white/5">
-        {/* Expand/Collapse toggle */}
-        <div className="flex items-center gap-1">
-          {onToggleExpand && (
-            <button
-              type="button"
-              onClick={onToggleExpand}
-              className="rounded p-1 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
-              title={isExpanded ? 'Collapse chart' : 'Expand chart'}
-            >
-              {isExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-            </button>
-          )}
-        </div>
-      </div>
-
       {/* ── Chart Canvas ──────────────────────────────────────────── */}
       <div
         ref={chartContainerRef}
