@@ -203,11 +203,6 @@ export function SwingConfluencePanel() {
         <div className="flex shrink-0 items-center justify-between px-3 pt-2 pb-1">
           <div className="flex items-center gap-2">
             <h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">AI News Sentiment</h3>
-            {insightCount > 0 && (
-              <span className="rounded-full bg-elevated px-1.5 py-px text-[8px] font-bold text-text-muted tabular-nums">
-                {insightCount}{errorCount > 0 ? ` · ${errorCount} err` : ''}
-              </span>
-            )}
           </div>
           <div className="flex items-center gap-1.5">
             {score !== null ? (

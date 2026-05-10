@@ -43,11 +43,11 @@ export default function SignupPage() {
   if (authState === 'loading' || authState === 'idle') {
     return (
       <div className="flex flex-col gap-5 animate-pulse">
-        <div className="h-4 w-40 rounded bg-slate-200/70" />
-        <div className="h-10 rounded-xl bg-slate-200/70" />
-        <div className="h-10 rounded-xl bg-slate-200/70" />
-        <div className="h-10 rounded-xl bg-slate-200/70" />
-        <div className="h-10 rounded-xl bg-slate-200/70" />
+        <div className="h-4 w-40 rounded bg-slate-700/50" />
+        <div className="h-10 rounded-xl bg-slate-700/50" />
+        <div className="h-10 rounded-xl bg-slate-700/50" />
+        <div className="h-10 rounded-xl bg-slate-700/50" />
+        <div className="h-10 rounded-xl bg-slate-700/50" />
       </div>
     );
   }

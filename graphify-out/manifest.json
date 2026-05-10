@@ -404,16 +404,16 @@
     "hash": "62c2bb2fa103d5d8556c48a6bc55084c"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\app\\page.tsx": {
-    "mtime": 1778414921.424824,
-    "hash": "4f0fe1bf9679af6c46e4bcccb731fee0"
+    "mtime": 1778415156.174007,
+    "hash": "5538cbecd93c5c97118f186ba72b4677"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\app\\auth\\layout.tsx": {
     "mtime": 1777819675.428254,
     "hash": "42dbfec3c77c8b1a552266d636d89559"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\app\\auth\\login\\page.tsx": {
-    "mtime": 1777899928.8499365,
-    "hash": "40d63b0a517323db5d3709a9d391428f"
+    "mtime": 1778415601.0202763,
+    "hash": "0a55ade501a1e6d9b79eddb640dd171c"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\app\\auth\\oauth\\complete\\OAuthCompleteInner.tsx": {
     "mtime": 1777899928.875381,
@@ -428,8 +428,8 @@
     "hash": "6a6236505a9c53f073b68cc66c56355e"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\app\\auth\\signup\\page.tsx": {
-    "mtime": 1777899928.8499365,
-    "hash": "86bc592401f8dbb3eb72efee25148487"
+    "mtime": 1778415603.0341823,
+    "hash": "41e29338f619e3ed74294e8ff2ae6c78"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\app\\dashboard\\DashboardRedirect.tsx": {
     "mtime": 1777899928.8520234,
@@ -484,8 +484,8 @@
     "hash": "18157bfebdc0eb8bbca91ad299f3fa99"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\layouts\\SwingLayout.tsx": {
-    "mtime": 1778414950.1421402,
-    "hash": "fdee0e3fc9edcc63f5609a1f09b61184"
+    "mtime": 1778415258.7938802,
+    "hash": "abff636320e686b442c63b902f8155ed"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\panels\\AgentStatusPanel.tsx": {
     "mtime": 1777818960.2493775,
