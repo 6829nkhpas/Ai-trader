@@ -198,3 +198,33 @@ Frontend invoke("get_historical_view", { symbol: "RELIANCE" })
     → Tauri Command → QuestDB PG Query → bincode::serialize → Uint8Array
 ```
 
+## Perfection Phase 4: Timeframe Routing Engine
+
+The UI now includes a global **Timeframe Engine** that governs which OHLC data stream is rendered on the chart canvas and which AI overlays are visible.
+
+### Zustand State (`ChartTimeframe`)
+
+A new `ChartTimeframe` type (`'1m' | '5m' | '10m' | '15m' | '1H' | '1D'`) is stored in the Zustand `useTradeStore` as `activeTimeframe`, defaulting to `'10m'`. The `setActiveTimeframe` action updates this globally. All chart components and layout renderers read from this single source of truth.
+
+### Timeframe Selector UI
+
+A compact segmented control bar is rendered in the chart command bar (alongside the Profile Switcher). Buttons for all six timeframes are displayed with the active selection highlighted in `emerald-400` on a `slate-800` background. Selection triggers `setActiveTimeframe()` which propagates instantly to all subscribers.
+
+### OHLC Data Routing
+
+The backend currently emits **exclusively 10-minute candles** via the Alpha Terminal WebSocket on port 8081 (`market.ohlc.10m`). The chart's data merge pipeline implements a routing gate:
+
+- **`activeTimeframe === '10m'`**: Live WebSocket candle stream is appended to the chart. Full real-time rendering.
+- **All other timeframes**: Live stream is excluded. Only historical data (from QuestDB) is displayed. Backend generation for additional timeframe candles (1m, 5m, 15m, 1H, 1D) is planned for future phases.
+
+### Predictive ML Overlay Constraint (Ghost Line)
+
+> **CRITICAL:** The Predictive Ghost Line is **rigidly bound to the 10m view** to ensure mathematical integrity.
+
+The Predictive Agent (`/agents/predictive`) uses a 14-period rolling window of **10-minute closing prices** for Least-Squares Linear Regression to project the next candle's close. This math is only valid on the 10m timeframe. Therefore:
+
+- **`activeTimeframe === '10m'`**: Ghost Line renders normally (dashed sky-blue projection from last close to predicted close).
+- **Any other timeframe**: Ghost Line data is cleared (`setData([])`) and the line is hidden entirely. No predictive overlay is rendered on non-10m charts.
+
+This constraint prevents misleading projections from being displayed to the user when viewing timeframes that the ML model was not trained on.
+

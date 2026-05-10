@@ -12,13 +12,12 @@ import IntradayLayout from '../components/layouts/IntradayLayout';
 import SwingLayout from '../components/layouts/SwingLayout';
 import InvestorLayout from '../components/layouts/InvestorLayout';
 import SystemConsole from '../components/SystemConsole';
-import { useTradeStore, TradeProfile } from '../store/useTradeStore';
+import { useTradeStore, TradeProfile, ChartTimeframe } from '../store/useTradeStore';
 import { isOnboardingComplete } from '@/lib/onboarding';
 
 export default function Home() {
   const router = useRouter();
-  const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, activeDecision, liveDecisions, activeProfile } = useTradeStore();
-  const [activeTimeframe, setActiveTimeframe] = useState('1m');
+  const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, setActiveTimeframe } = useTradeStore();
   const [indicatorsEnabled, setIndicatorsEnabled] = useState(true);
   const [aiEnabled, setAiEnabled] = useState(true);
   const [isChecking, setIsChecking] = useState(true);
@@ -74,7 +73,7 @@ export default function Home() {
   const latestDecision = activeDecision ?? liveDecisions[liveDecisions.length - 1] ?? null;
   const symbol = latestDecision?.symbol ?? '---';
   const lastPrice = latestDecision?.price;
-  const timeframes = ['1m', '5m', '15m', '1h', '1D'];
+  const timeframes: ChartTimeframe[] = ['1m', '5m', '10m', '15m', '1H', '1D'];
 
   const profileBadgeConfig: Record<TradeProfile, { label: string; color: string }> = {
     INTRADAY: { label: 'INTRADAY MODE', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' },

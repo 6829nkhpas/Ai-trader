@@ -2,6 +2,13 @@ import { create } from 'zustand';
 
 export type TradeProfile = 'INTRADAY' | 'SWING' | 'INVESTOR';
 
+/**
+ * Chart timeframe options. The backend predictive ML engine operates
+ * exclusively on 10-minute candles (market.ohlc.10m), making '10m' the
+ * primary timeframe for all AI overlays (Ghost Line, confidence scores).
+ */
+export type ChartTimeframe = '1m' | '5m' | '10m' | '15m' | '1H' | '1D';
+
 type BackendAction = 'BUY' | 'SELL' | 'HOLD';
 
 export interface AggregatedDecision {
@@ -80,8 +87,10 @@ interface TradeStore {
   connectionStatus: 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED';
   wsStatus: 'disconnected' | 'connecting' | 'connected' | 'error';
   activeProfile: TradeProfile;
+  activeTimeframe: ChartTimeframe;
   systemLogs: SystemLog[];
   setActiveProfile: (profile: TradeProfile) => void;
+  setActiveTimeframe: (tf: ChartTimeframe) => void;
   setLatestInsight: (insight: MarketInsight) => void;
   addSystemLog: (level: SystemLog['level'], message: string) => void;
   connectWebSocket: () => void;
@@ -153,10 +162,15 @@ export const useTradeStore = create<TradeStore>((set, get) => {
     connectionStatus: 'DISCONNECTED',
     wsStatus: 'disconnected',
     activeProfile: 'INTRADAY',
+    activeTimeframe: '10m',
     systemLogs: [],
 
     setActiveProfile: (profile: TradeProfile) => {
       set({ activeProfile: profile });
+    },
+
+    setActiveTimeframe: (tf: ChartTimeframe) => {
+      set({ activeTimeframe: tf });
     },
 
     addSystemLog: (level: SystemLog['level'], message: string) => {

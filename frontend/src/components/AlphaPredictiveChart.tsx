@@ -13,13 +13,13 @@ import {
   CrosshairMode,
   LineStyle,
 } from 'lightweight-charts';
-import { useTradeStore, OhlcCandle, TradeProfile } from '../store/useTradeStore';
+import { useTradeStore, OhlcCandle, TradeProfile, ChartTimeframe } from '../store/useTradeStore';
 import { useHistoricalData, HistoricalCandle } from '../hooks/useHistoricalData';
 import { Maximize2, Minimize2 } from 'lucide-react';
 
 // ── Exported Types ────────────────────────────────────────────────────────
 
-export type Timeframe = '1m' | '5m' | '15m' | '1h' | '1D';
+export type Timeframe = '1m' | '5m' | '10m' | '15m' | '1h' | '1D';
 
 interface AlphaPredictiveChartProps {
   activeProfile?: TradeProfile;
@@ -56,6 +56,7 @@ interface EmaPoint {
 const TIMEFRAME_MS: Record<Timeframe, number> = {
   '1m': 60_000,
   '5m': 5 * 60_000,
+  '10m': 10 * 60_000,
   '15m': 15 * 60_000,
   '1h': 60 * 60_000,
   '1D': 24 * 60 * 60_000,
@@ -218,6 +219,10 @@ export default function AlphaPredictiveChart({
   const activeDecision = useTradeStore((s) => s.activeDecision);
   const liveDecisions = useTradeStore((s) => s.liveDecisions);
 
+  // ── Read the global activeTimeframe from Zustand ─────────────────
+  // This is the single source of truth for timeframe selection.
+  const activeTimeframe = useTradeStore((s) => s.activeTimeframe);
+
   const activeSymbol = useMemo(() => {
     const d = activeDecision ?? liveDecisions[liveDecisions.length - 1];
     return d?.symbol ?? '';
@@ -227,8 +232,12 @@ export default function AlphaPredictiveChart({
   const { candles: historicalCandles, loading: histLoading } = useHistoricalData(activeSymbol);
 
   // ── Merge historical + live candles ─────────────────────────────────
-  // Convert historical candles (from QuestDB REST API) into OhlcCandle format
-  // and prepend them before live WebSocket candles. Dedup by timestamp.
+  // The backend emits 10-minute candles via WebSocket port 8081.
+  // The aggregateCandles() engine re-buckets these into any selected
+  // timeframe (15m, 1H, 1D = upward aggregation; 1m, 5m = displayed
+  // as raw 10m bars until sub-10m backend streams are implemented).
+  // Live candles always flow through — only the Ghost Line is gated to 10m.
+  // TODO: Route additional Kafka timeframes for 1m/5m sub-candle resolution.
   const mergedCandles = useMemo(() => {
     // Convert historical candles to OhlcCandle format
     const histAsOhlc: OhlcCandle[] = historicalCandles.map((h) => ({
@@ -241,16 +250,13 @@ export default function AlphaPredictiveChart({
       volume: h.volume,
     }));
 
-    // Merge: historical first, then live (deduplicated by bucketed timestamp)
+    // Merge: historical first, then live (deduplicated by timestamp)
     const all = [...histAsOhlc, ...ohlcCandles];
 
-    // Dedup by rounding to daily bucket for historical data
+    // Dedup by raw timestamp
     const seen = new Set<number>();
     const deduped: OhlcCandle[] = [];
     for (const c of all) {
-      // Daily bucket key: floor to day boundary
-      const dayKey = Math.floor(c.start_timestamp_ms / 86400000) * 86400000;
-      const key = `${c.symbol}:${dayKey}`.length; // Just use the raw entry
       if (!seen.has(c.start_timestamp_ms)) {
         seen.add(c.start_timestamp_ms);
         deduped.push(c);
@@ -426,10 +432,23 @@ export default function AlphaPredictiveChart({
   }, [chartData, volumeData, ema9Data, ema21Data]);
 
   // ── Ghost Line: render latest predictive forward projection ─────────
+  // CRITICAL CONSTRAINT: The Ghost Line (ML forward projection) MUST ONLY
+  // be visible when activeTimeframe === '10m'. The predictive math uses a
+  // 14-period rolling window of 10-minute closing prices for Least-Squares
+  // Linear Regression. Rendering it on any other timeframe would display
+  // mathematically invalid projections.
   const predictiveSignals = useTradeStore((s) => s.predictiveSignals);
 
   useEffect(() => {
     if (!ghostLineRef.current) return;
+
+    // ── Timeframe Guard ──────────────────────────────────────────
+    // Ghost Line is ONLY valid on the 10m chart. On any other timeframe,
+    // clear the line entirely to prevent misleading projections.
+    if (activeTimeframe !== '10m') {
+      ghostLineRef.current.setData([]);
+      return;
+    }
 
     // Only use the LATEST prediction for the active symbol
     const symbolSignals = activeSymbol
@@ -462,7 +481,7 @@ export default function AlphaPredictiveChart({
       { time: lastCandle.time as Time, value: lastCandle.close },
       { time: targetTimeSec as Time, value: latest.predicted_close_price },
     ]);
-  }, [predictiveSignals, activeSymbol, chartData]);
+  }, [predictiveSignals, activeSymbol, chartData, activeTimeframe]);
 
   // ── Update time scale on timeframe change ──────────────────────────
   useEffect(() => {

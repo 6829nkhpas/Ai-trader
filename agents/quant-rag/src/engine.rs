@@ -24,15 +24,15 @@ pub mod engine {
     use rdkafka::consumer::{Consumer, StreamConsumer};
     use rdkafka::message::Message as KafkaMessage;
     use rdkafka::producer::{FutureProducer, FutureRecord};
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
     use tokio::sync::broadcast;
 
     // ── Constants ────────────────────────────────────────────────────────────
 
     /// Anomaly threshold — absolute % change required to trigger an LLM insight.
-    /// For live Indian equities (e.g. RELIANCE), a 10-minute candle rarely moves
-    /// more than 0.3–0.5%.  The load-tester injects 5%+ anomalies.
-    const ANOMALY_THRESHOLD_PCT: f64 = 0.3;
+    /// Production value: 2.0% — matches the documented anomaly detection spec.
+    /// For stress testing with the load_tester, temporarily lower to 0.3%.
+    const ANOMALY_THRESHOLD_PCT: f64 = 2.0;
 
     // ── Consumer initialisation ──────────────────────────────────────────────
 
@@ -160,6 +160,12 @@ pub mod engine {
         log::info!("Anomaly detection loop started — waiting for OHLC candles...");
         log::info!("─────────────────────────────────────────────────────");
 
+        // ── Per-symbol LLM cooldown ──────────────────────────────────────
+        // Enforce a minimum interval between LLM calls to avoid hammering
+        // the NVIDIA NIM API during load-tester stress runs.
+        const LLM_COOLDOWN: Duration = Duration::from_secs(5);
+        let mut last_llm_call = Instant::now() - LLM_COOLDOWN; // allow first call immediately
+
         // ── Event loop ───────────────────────────────────────────────────
         while let Some(message_result) = stream.next().await {
             match message_result {
@@ -202,6 +208,20 @@ pub mod engine {
                         }
 
                         // ── Anomaly detected! Invoke DeepSeek LLM ─────────
+                        // ── Cooldown gate ────────────────────────────────
+                        // Skip this anomaly if we called the LLM less than
+                        // LLM_COOLDOWN ago to avoid 429 rate-limit storms.
+                        if last_llm_call.elapsed() < LLM_COOLDOWN {
+                            log::info!(
+                                "⏳ LLM cooldown active ({:.1}s remaining) — skipping anomaly for {}",
+                                (LLM_COOLDOWN - last_llm_call.elapsed()).as_secs_f64(),
+                                candle.symbol,
+                            );
+                            continue;
+                        }
+
+                        last_llm_call = Instant::now();
+
                         log::info!(
                             "🚨 ANOMALY DETECTED: symbol={} change={:.2}% — invoking DeepSeek...",
                             candle.symbol,

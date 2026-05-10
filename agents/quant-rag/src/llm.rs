@@ -20,6 +20,8 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use std::env;
 use std::error::Error;
+use std::time::Duration;
+use tokio::time::sleep;
 
 /// NVIDIA NIM inference endpoint (OpenAI-compatible).
 const NIM_API_URL: &str = "https://integrate.api.nvidia.com/v1/chat/completions";
@@ -98,36 +100,57 @@ impl LlmClient {
             "stream": false
         });
 
-        // ── Send the request ─────────────────────────────────────────────
-        let response = self
-            .client
-            .post(NIM_API_URL)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| {
-                format!(
-                    "NVIDIA NIM HTTP request failed (network/timeout): {}",
-                    e
-                )
-            })?;
+        // ── Send the request (with retry for 429 rate-limiting) ───────────
+        let max_retries: u32 = 3;
+        let mut attempt: u32 = 0;
+        let response = loop {
+            attempt += 1;
 
-        // ── Validate HTTP status ─────────────────────────────────────────
-        let status = response.status();
-        if !status.is_success() {
-            let error_body = response
-                .text()
+            let resp = self
+                .client
+                .post(NIM_API_URL)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .json(&payload)
+                .send()
                 .await
-                .unwrap_or_else(|_| "Unable to read error body".to_string());
-            return Err(format!(
-                "NVIDIA NIM API returned HTTP {} — {}",
-                status.as_u16(),
-                error_body
-            )
-            .into());
-        }
+                .map_err(|e| {
+                    format!(
+                        "NVIDIA NIM HTTP request failed (network/timeout): {}",
+                        e
+                    )
+                })?;
+
+            // ── Rate-limit backoff ────────────────────────────────────────
+            // NVIDIA NIM returns 429 when we exceed the API rate limit.
+            // Retry with exponential backoff: 2s → 4s → 8s.
+            if resp.status().as_u16() == 429 && attempt <= max_retries {
+                let backoff_secs = 2u64.pow(attempt);
+                log::warn!(
+                    "[llm] HTTP 429 rate-limited (attempt {}/{}) — backing off {}s",
+                    attempt, max_retries, backoff_secs
+                );
+                sleep(Duration::from_secs(backoff_secs)).await;
+                continue;
+            }
+
+            // ── Validate HTTP status ─────────────────────────────────────
+            let status = resp.status();
+            if !status.is_success() {
+                let error_body = resp
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "Unable to read error body".to_string());
+                return Err(format!(
+                    "NVIDIA NIM API returned HTTP {} — {}",
+                    status.as_u16(),
+                    error_body
+                )
+                .into());
+            }
+
+            break resp;
+        };
 
         // ── Parse the outer response envelope ────────────────────────────
         let json_resp: Value = response.json().await.map_err(|e| {
