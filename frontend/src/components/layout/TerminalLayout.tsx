@@ -7,26 +7,38 @@ import {
   Crosshair,
   TrendingUp,
   Minus,
-  Columns2,
-  PenLine,
   Brush,
   Type,
-  Smile,
   Ruler,
-  Search,
   Magnet,
   Lock,
   Eye,
   Trash2,
-  Layers,
   Bell,
   User as UserIcon,
   LogOut,
   HelpCircle,
   ChevronDown,
+  Circle,
+  MousePointer2,
+  Eraser,
+  ArrowRight,
+  Plus,
+  AlignEndHorizontal,
+  AlignCenterHorizontal,
+  Highlighter,
+  Square,
+  MessageSquare,
+  Tag,
+  ArrowUpRight,
+  ArrowDownRight,
+  EyeOff,
+  MoveVertical
 } from 'lucide-react';
 import { useTradeStore, TradeProfile } from '../../store/useTradeStore';
 import { useAuth } from '../../context/AuthContext';
+import { useChartUIStore } from '../../store/useChartUIStore';
+import { ToolMenu } from '../chart/ToolMenu';
 
 const PROFILES: { key: TradeProfile; label: string; shortcut: string }[] = [
   { key: 'INTRADAY', label: 'Intraday', shortcut: 'Scalp' },
@@ -39,29 +51,69 @@ interface TerminalLayoutProps {
   leftPanel: React.ReactNode;
 }
 
-const toolOptions = [
-  { id: 'crosshair', label: 'Crosshair Tool', icon: Crosshair },
-  { id: 'trendline', label: 'Trend Line Tool', icon: TrendingUp },
-  { id: 'horizontal-line', label: 'Horizontal Line Tool', icon: Minus },
-  { id: 'parallel-channel', label: 'Parallel Channel Tool', icon: Columns2 },
-  { id: 'polyline', label: 'Polyline Tool', icon: PenLine },
-  { id: 'brush', label: 'Free Drawing Tool', icon: Brush },
-  { id: 'text', label: 'Text Annotation Tool', icon: Type },
-  { id: 'emoji', label: 'Icon / Emoji Marker Tool', icon: Smile },
-  { id: 'ruler', label: 'Measure Tool', icon: Ruler },
-  { id: 'zoom', label: 'Zoom Tool', icon: Search },
-  { id: 'magnet', label: 'Magnet Tool', icon: Magnet },
-  { id: 'lock', label: 'Lock Drawing Tool', icon: Lock },
-  { id: 'eye', label: 'Hide / Show Drawings', icon: Eye },
-  { id: 'delete', label: 'Clear Drawings Tool', icon: Trash2 },
-  { id: 'layers', label: 'Layers', icon: Layers },
-];
-
 export default function TerminalLayout({ children, leftPanel }: TerminalLayoutProps) {
   const { activeProfile, setActiveProfile, resetSession } = useTradeStore();
   const { user, logout } = useAuth();
-  const [activeTool, setActiveTool] = useState<string>(toolOptions[0].id);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  
+  const { 
+    activeCursor, 
+    activeDrawingTool, 
+    magnetMode, 
+    drawingsVisible, 
+    drawingsLocked,
+    setActiveCursor,
+    setActiveDrawingTool,
+    setMagnetMode,
+    toggleDrawingsVisible,
+    toggleDrawingsLocked,
+    clearDrawings
+  } = useChartUIStore();
+
+  const cursorOptions = [
+    { id: 'cross', label: 'Crosshair', icon: Crosshair },
+    { id: 'dot', label: 'Dot', icon: Circle },
+    { id: 'arrow', label: 'Arrow', icon: MousePointer2 },
+    { id: 'eraser', label: 'Eraser', icon: Eraser },
+  ];
+
+  const lineOptions = [
+    { id: 'trendline', label: 'Trend Line', icon: TrendingUp },
+    { id: 'horizontal-line', label: 'Horizontal Line', icon: Minus },
+    { id: 'horizontal-ray', label: 'Horizontal Ray', icon: ArrowRight },
+    { id: 'vertical-line', label: 'Vertical Line', icon: MoveVertical },
+    { id: 'cross-line', label: 'Cross Line', icon: Plus },
+  ];
+
+  const fibOptions = [
+    { id: 'fib-retracement', label: 'Fib Retracement', icon: AlignEndHorizontal },
+    { id: 'trend-fib', label: 'Trend-Based Fib', icon: AlignCenterHorizontal },
+  ];
+
+  const shapeOptions = [
+    { id: 'brush', label: 'Brush', icon: Brush },
+    { id: 'highlighter', label: 'Highlighter', icon: Highlighter },
+    { id: 'rectangle', label: 'Rectangle', icon: Square },
+    { id: 'circle', label: 'Circle', icon: Circle },
+  ];
+
+  const textOptions = [
+    { id: 'text', label: 'Text', icon: Type },
+    { id: 'callout', label: 'Callout', icon: MessageSquare },
+    { id: 'price-label', label: 'Price Label', icon: Tag },
+  ];
+
+  const measurementOptions = [
+    { id: 'long-position', label: 'Long Position', icon: ArrowUpRight },
+    { id: 'short-position', label: 'Short Position', icon: ArrowDownRight },
+    { id: 'price-range', label: 'Price Range', icon: Ruler },
+  ];
+
+  const cycleMagnetMode = () => {
+    if (magnetMode === 'off') setMagnetMode('weak');
+    else if (magnetMode === 'weak') setMagnetMode('strong');
+    else setMagnetMode('off');
+  };
 
   return (
     <div className="flex h-screen flex-col bg-background font-sans text-text-primary">
@@ -190,27 +242,100 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
         </aside>
 
         {/* Tools Bar */}
-        <div className="flex w-12 shrink-0 flex-col items-center gap-1.5 overflow-y-auto border border-border-default rounded-lg bg-surface py-2 panel-shadow">
-          {toolOptions.map((tool) => {
-            const Icon = tool.icon;
-            const isActive = activeTool === tool.id;
-            return (
-              <button
-                key={tool.id}
-                type="button"
-                onClick={() => setActiveTool(tool.id)}
-                aria-pressed={isActive}
-                title={tool.label}
-                aria-label={tool.label}
-                className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${isActive
-                  ? 'text-primary'
+        <div className="flex w-12 shrink-0 flex-col items-center gap-1.5 border border-border-default rounded-lg bg-surface py-2 panel-shadow relative z-20">
+          
+          <ToolMenu
+            icon={cursorOptions.find(o => o.id === activeCursor)?.icon || Crosshair}
+            isActive={true}
+            options={cursorOptions}
+            onSelect={(id) => setActiveCursor(id as 'cross' | 'dot' | 'arrow' | 'eraser')}
+          />
+
+          <div className="my-1 h-px w-6 bg-border-default/50" />
+
+          <ToolMenu
+            icon={lineOptions.find(o => o.id === activeDrawingTool)?.icon || TrendingUp}
+            isActive={lineOptions.some(o => o.id === activeDrawingTool)}
+            options={lineOptions}
+            onSelect={setActiveDrawingTool}
+          />
+
+          <ToolMenu
+            icon={fibOptions.find(o => o.id === activeDrawingTool)?.icon || AlignEndHorizontal}
+            isActive={fibOptions.some(o => o.id === activeDrawingTool)}
+            options={fibOptions}
+            onSelect={setActiveDrawingTool}
+          />
+
+          <ToolMenu
+            icon={shapeOptions.find(o => o.id === activeDrawingTool)?.icon || Brush}
+            isActive={shapeOptions.some(o => o.id === activeDrawingTool)}
+            options={shapeOptions}
+            onSelect={setActiveDrawingTool}
+          />
+
+          <ToolMenu
+            icon={textOptions.find(o => o.id === activeDrawingTool)?.icon || Type}
+            isActive={textOptions.some(o => o.id === activeDrawingTool)}
+            options={textOptions}
+            onSelect={setActiveDrawingTool}
+          />
+
+          <ToolMenu
+            icon={measurementOptions.find(o => o.id === activeDrawingTool)?.icon || Ruler}
+            isActive={measurementOptions.some(o => o.id === activeDrawingTool)}
+            options={measurementOptions}
+            onSelect={setActiveDrawingTool}
+          />
+
+          <div className="flex-grow" />
+
+          {/* Standalone bottom buttons */}
+          <div className="flex flex-col items-center gap-1.5 pt-2">
+            <button
+              type="button"
+              onClick={cycleMagnetMode}
+              title={`Magnet Mode: ${magnetMode}`}
+              className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
+                magnetMode !== 'off'
+                  ? 'text-primary bg-primary/10'
                   : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
-                  }`}
-              >
-                <Icon size={15} />
-              </button>
-            );
-          })}
+              }`}
+            >
+              <Magnet size={15} />
+            </button>
+
+            <button
+              type="button"
+              onClick={toggleDrawingsLocked}
+              title="Lock All Drawings"
+              className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
+                drawingsLocked
+                  ? 'text-primary bg-primary/10'
+                  : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
+              }`}
+            >
+              <Lock size={15} />
+            </button>
+
+            <button
+              type="button"
+              onClick={toggleDrawingsVisible}
+              title={drawingsVisible ? 'Hide Drawings' : 'Show Drawings'}
+              className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
+            >
+              {drawingsVisible ? <Eye size={15} /> : <EyeOff size={15} />}
+            </button>
+
+            <button
+              type="button"
+              onClick={clearDrawings}
+              title="Clear Drawings"
+              className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-elevated hover:text-red-400"
+            >
+              <Trash2 size={15} />
+            </button>
+          </div>
         </div>
 
         {/* Central Area */}

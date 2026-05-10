@@ -15,6 +15,7 @@ import {
 } from 'lightweight-charts';
 import { useTradeStore, OhlcCandle, TradeProfile, ChartTimeframe } from '../store/useTradeStore';
 import { useHistoricalData, HistoricalCandle } from '../hooks/useHistoricalData';
+import { useChartUIStore } from '../store/useChartUIStore';
 import { Maximize2, Minimize2 } from 'lucide-react';
 
 // ── Exported Types ────────────────────────────────────────────────────────
@@ -222,6 +223,9 @@ export default function AlphaPredictiveChart({
   // ── Read the global activeTimeframe from Zustand ─────────────────
   // This is the single source of truth for timeframe selection.
   const activeTimeframe = useTradeStore((s) => s.activeTimeframe);
+
+  // ── Chart UI State ────────────────────────────────────────────────
+  const { activeCursor, activeDrawingTool } = useChartUIStore();
 
   const activeSymbol = useMemo(() => {
     const d = activeDecision ?? liveDecisions[liveDecisions.length - 1];
@@ -510,8 +514,29 @@ export default function AlphaPredictiveChart({
   const latestEma9 = ema9Data.length > 0 ? ema9Data[ema9Data.length - 1].value : null;
   const latestEma21 = ema21Data.length > 0 ? ema21Data[ema21Data.length - 1].value : null;
 
+  const cursorClass = useMemo(() => {
+    if (activeDrawingTool) return 'cursor-crosshair';
+    switch (activeCursor) {
+      case 'cross': return 'cursor-crosshair';
+      case 'dot': return 'cursor-default';
+      case 'arrow': return 'cursor-default';
+      case 'eraser': return 'cursor-not-allowed';
+      default: return 'cursor-default';
+    }
+  }, [activeCursor, activeDrawingTool]);
+
+  const handleChartInteraction = useCallback(() => {
+    if (activeDrawingTool) {
+      console.log(`[DRAWING ENGINE] Initializing draw sequence for: ${activeDrawingTool}`);
+      // In the next phase, we will calculate mouse coordinates here.
+    }
+  }, [activeDrawingTool]);
+
   return (
-    <div className="relative flex h-full w-full flex-col outline-none">
+    <div 
+      className={`relative flex h-full w-full flex-col outline-none ${cursorClass}`}
+      onMouseDown={handleChartInteraction}
+    >
       {/* ── Chart Canvas ──────────────────────────────────────────── */}
       <div
         ref={chartContainerRef}
