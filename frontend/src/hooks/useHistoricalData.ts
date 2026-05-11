@@ -4,6 +4,14 @@
 // QuestDB exposes a REST API on port 9000 that accepts SQL queries.
 //
 // Endpoint: GET http://localhost:9000/exec?query=SELECT...&fmt=json
+//
+// ── Tauri-Specific Fixes ──────────────────────────────────────────────────
+//   1. Pool Race Condition: The QuestDB PgPool is registered asynchronously
+//      in lib.rs. We now poll `get_pool_status` with retries before calling
+//      `get_historical_view` to avoid "state not managed" errors.
+//   2. CORS Bypass: In production Tauri builds (tauri:// origin), direct
+//      fetch() to http://127.0.0.1:9000 fails due to CORS. The fallback
+//      now uses the `fetch_questdb` IPC command that proxies through Rust.
 
 import { useState, useEffect, useCallback } from 'react';
 
@@ -35,13 +43,8 @@ interface UseHistoricalDataReturn {
 // Check if running in Tauri environment
 const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
-// URL for QuestDB REST API.
-// In browser/dev mode: use the Next.js proxy rewrite (/questdb/* → :9000)
-// In Tauri (packaged app): use the direct address — no Next.js server exists.
+// URL for QuestDB REST API (browser-only path via Next.js proxy).
 const QUESTDB_BROWSER_URL = '/questdb/exec';
-const QUESTDB_DIRECT_URL = 'http://127.0.0.1:9000/exec';
-
-const getQuestDbUrl = () => isTauri() ? QUESTDB_DIRECT_URL : QUESTDB_BROWSER_URL;
 
 /**
  * Parses a bincode-serialized byte array of `BinaryCandle` structs into an array of `HistoricalCandle`.
@@ -84,47 +87,112 @@ function parseBincodeCandles(buffer: Uint8Array): HistoricalCandle[] {
 }
 
 /**
- * Fetch historical data from QuestDB via REST API.
- * Used as both the primary browser path and a fallback for Tauri when IPC fails.
+ * Parse QuestDB JSON response rows into HistoricalCandle[].
  */
-async function fetchFromQuestDB(symbol: string): Promise<HistoricalCandle[]> {
-  const QUESTDB_URL = getQuestDbUrl();
+function parseQuestDBRows(dataset: (string | number | null)[][]): HistoricalCandle[] {
+  return dataset
+    .map((row) => {
+      const tsStr = row[0] as string;
+      const timeSec = Math.floor(new Date(tsStr).getTime() / 1000);
+      return {
+        time: timeSec,
+        open: Number(row[1]),
+        high: Number(row[2]),
+        low: Number(row[3]),
+        close: Number(row[4]),
+        volume: Number(row[5]),
+      };
+    })
+    .filter((c) => c.time > 0 && c.open > 0);
+}
 
-  // Try historical_candles first; fall back to live_ticks if it doesn't exist.
-  const tables = [
+// ── SQL queries to try in order ─────────────────────────────────────────────
+function getQueries(symbol: string): string[] {
+  return [
     `SELECT ts, open, high, low, close, volume FROM historical_candles WHERE symbol = '${symbol}' ORDER BY ts ASC`,
     `SELECT timestamp as ts, last_price as open, last_price as high, last_price as low, last_price as close, volume FROM live_ticks WHERE symbol = '${symbol}' ORDER BY timestamp ASC LIMIT 1000`,
   ];
+}
 
-  for (const query of tables) {
+/**
+ * Wait for QuestDB PgPool to be registered as Tauri managed state.
+ * Polls `get_pool_status` every 500ms for up to `maxWaitMs`.
+ */
+async function waitForPool(tauri: any, maxWaitMs = 8000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
     try {
-      const url = `${QUESTDB_URL}?query=${encodeURIComponent(query)}&fmt=json`;
+      const ready: boolean = await tauri.invoke('get_pool_status');
+      if (ready) return true;
+    } catch {
+      // Command itself might fail if Tauri is still initializing
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return false;
+}
+
+/**
+ * Fetch historical data from QuestDB via the `fetch_questdb` IPC command.
+ * This proxies the HTTP request through Rust, completely bypassing CORS.
+ * Used as the Tauri fallback when the primary bincode IPC path fails.
+ */
+async function fetchViaIpcProxy(
+  tauri: any,
+  symbol: string
+): Promise<HistoricalCandle[]> {
+  const queries = getQueries(symbol);
+
+  for (const query of queries) {
+    try {
+      const rawJson: string = await tauri.invoke('fetch_questdb', { query });
+      const data: QuestDBResponse = JSON.parse(rawJson);
+      if (data.error || !data.dataset || data.dataset.length === 0) continue;
+
+      const parsed = parseQuestDBRows(data.dataset);
+      console.log(
+        `[Historical] ${symbol}: ${parsed.length} candles loaded via Tauri IPC proxy (fetch_questdb)`
+      );
+      return parsed;
+    } catch (err) {
+      console.warn('[Historical] IPC proxy query attempt failed:', err);
+    }
+  }
+
+  console.warn(
+    `[Historical] All IPC proxy queries failed for ${symbol} — no historical data available.`
+  );
+  return [];
+}
+
+/**
+ * Fetch historical data from QuestDB via browser fetch() + Next.js proxy.
+ * Only used in non-Tauri (browser) mode where /questdb/* proxy is available.
+ */
+async function fetchFromQuestDB(symbol: string): Promise<HistoricalCandle[]> {
+  const queries = getQueries(symbol);
+
+  for (const query of queries) {
+    try {
+      const url = `${QUESTDB_BROWSER_URL}?query=${encodeURIComponent(query)}&fmt=json`;
       const response = await fetch(url);
       if (!response.ok) continue;
       const data: QuestDBResponse = await response.json();
       if (data.error || !data.dataset || data.dataset.length === 0) continue;
 
-      const parsed: HistoricalCandle[] = data.dataset.map((row) => {
-        const tsStr = row[0] as string;
-        const timeSec = Math.floor(new Date(tsStr).getTime() / 1000);
-        return {
-          time: timeSec,
-          open: Number(row[1]),
-          high: Number(row[2]),
-          low: Number(row[3]),
-          close: Number(row[4]),
-          volume: Number(row[5]),
-        };
-      }).filter((c) => c.time > 0 && c.open > 0);
-
-      console.log(`[Historical] ${symbol}: ${parsed.length} candles loaded from QuestDB (${isTauri() ? 'Tauri direct' : 'browser proxy'})`);
+      const parsed = parseQuestDBRows(data.dataset);
+      console.log(
+        `[Historical] ${symbol}: ${parsed.length} candles loaded from QuestDB (browser proxy)`
+      );
       return parsed;
     } catch (err) {
       console.warn('[Historical] Query attempt failed:', err);
     }
   }
 
-  console.warn(`[Historical] All QuestDB queries failed for ${symbol} — no historical data available.`);
+  console.warn(
+    `[Historical] All QuestDB queries failed for ${symbol} — no historical data available.`
+  );
   return [];
 }
 
@@ -146,37 +214,60 @@ export function useHistoricalData(symbol: string): UseHistoricalDataReturn {
 
     try {
       if (isTauri()) {
-        // --- TAURI IPC PATH (Binary Serialization) ---
-        // Try IPC first; fall back to REST API if the command isn't available
-        // (e.g. QuestDB is empty, or `get_historical_view` isn't registered yet).
-        try {
-          // Dynamic import prevents breaking web-only builds where
-          // @tauri-apps/api/core may not be installed.
-          const tauri = await import('@tauri-apps/api/core');
-          const response = await tauri.invoke<number[] | Uint8Array>('get_historical_view', { symbol });
-          const binaryBuffer = response instanceof Uint8Array ? response : new Uint8Array(response);
-          const parsed = parseBincodeCandles(binaryBuffer);
+        // ── TAURI PATH ──────────────────────────────────────────────────
+        // Dynamic import prevents breaking web-only builds where
+        // @tauri-apps/api/core may not be installed.
+        const tauri = await import('@tauri-apps/api/core');
 
-          console.log(
-            `[Historical Tauri IPC] ${symbol}: ${parsed.length} candles loaded via zero-latency buffer`
-          );
-          setCandles(parsed);
-          return; // IPC succeeded — no REST fallback needed
-        } catch (ipcErr) {
-          // IPC failed (command not registered, QuestDB empty, etc.)
-          // Fall through to REST API.
+        // Step 1: Wait for the QuestDB PgPool to be registered as managed
+        // state. The pool is initialized asynchronously in lib.rs — calling
+        // get_historical_view before it's ready causes "state not managed".
+        const poolReady = await waitForPool(tauri);
+
+        if (poolReady) {
+          // Step 2a: Try the primary bincode IPC path (zero-latency)
+          try {
+            const response = await tauri.invoke<number[] | Uint8Array>(
+              'get_historical_view',
+              { symbol }
+            );
+            const binaryBuffer =
+              response instanceof Uint8Array ? response : new Uint8Array(response);
+            const parsed = parseBincodeCandles(binaryBuffer);
+
+            console.log(
+              `[Historical Tauri IPC] ${symbol}: ${parsed.length} candles loaded via zero-latency buffer`
+            );
+            if (parsed.length > 0) {
+              setCandles(parsed);
+              return; // Success — done
+            }
+            // IPC returned 0 candles — fall through to HTTP proxy
+          } catch (ipcErr) {
+            console.warn(
+              `[Historical] Tauri IPC 'get_historical_view' failed for ${symbol}:`,
+              ipcErr,
+              '→ falling back to IPC proxy'
+            );
+          }
+        } else {
           console.warn(
-            `[Historical] Tauri IPC 'get_historical_view' failed for ${symbol}:`,
-            ipcErr,
-            '→ falling back to QuestDB REST API'
+            `[Historical] QuestDB pool not ready after timeout — skipping bincode path for ${symbol}`
           );
         }
+
+        // Step 2b: Fallback — use fetch_questdb IPC command which proxies
+        // the HTTP request through Rust, bypassing CORS entirely.
+        // This works even when the PgPool isn't ready (uses HTTP, not PG).
+        const parsed = await fetchViaIpcProxy(tauri, symbol);
+        setCandles(parsed);
+        return;
       }
 
-      // --- WEB BROWSER PATH (or Tauri IPC fallback) ---
+      // ── BROWSER PATH ────────────────────────────────────────────────
+      // Uses the Next.js proxy rewrite: /questdb/* → localhost:9000
       const parsed = await fetchFromQuestDB(symbol);
       setCandles(parsed);
-
     } catch (e: any) {
       const msg = typeof e === 'string' ? e : e?.message || 'Unknown error';
       console.error(`[Historical] Failed to fetch ${symbol}:`, msg);

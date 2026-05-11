@@ -15,7 +15,7 @@
 use log::{info, error};
 use serde::Serialize;
 use sqlx::PgPool;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::services::history_loader;
 
@@ -73,7 +73,17 @@ pub async fn get_historical_view(
             let candles: Vec<BinaryCandle> = data
                 .iter()
                 .filter_map(|row| {
-                    let ts: i64 = row.try_get("ts").ok()?;
+                    // QuestDB returns ts as TIMESTAMP which sqlx decodes as
+                    // chrono::NaiveDateTime, NOT i64. We must extract as
+                    // NaiveDateTime and convert to microseconds for bincode.
+                    let ts: i64 = row
+                        .try_get::<chrono::NaiveDateTime, _>("ts")
+                        .ok()
+                        .map(|dt| dt.and_utc().timestamp_micros())
+                        .or_else(|| {
+                            // Fallback: try as raw i64 in case QuestDB returns raw µs
+                            row.try_get::<i64, _>("ts").ok()
+                        })?;
                     let open: f64 = row.try_get("open").ok()?;
                     let high: f64 = row.try_get("high").ok()?;
                     let low: f64 = row.try_get("low").ok()?;
@@ -119,11 +129,12 @@ pub async fn get_historical_view(
 /// The pool is registered asynchronously in lib.rs — the frontend should
 /// call this first and wait until it returns `true` before invoking
 /// `get_historical_view`. This prevents the "State not found" race condition.
+///
+/// Uses `AppHandle::try_state()` instead of `Option<State<PgPool>>` because
+/// `State<T>` does not implement `Deserialize` in Tauri v2.
 #[tauri::command]
-pub async fn get_pool_status(
-    _pool: Option<tauri::State<'_, PgPool>>,
-) -> bool {
-    _pool.is_some()
+pub async fn get_pool_status(app: AppHandle) -> bool {
+    app.try_state::<PgPool>().is_some()
 }
 
 /// Proxy a QuestDB REST API request through Rust, returning the raw JSON body.
