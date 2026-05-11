@@ -444,8 +444,8 @@
     "hash": "4983e478596aba769e2f199dadd5116f"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\AlphaPredictiveChart.tsx": {
-    "mtime": 1778496625.652273,
-    "hash": "d7126bae47903ff6c1987ab50899c4fa"
+    "mtime": 1778499119.6584804,
+    "hash": "22bfd84adc7eff11fb20ec0c3499eefb"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\OrderBook.tsx": {
     "mtime": 1778412029.0964186,
@@ -476,12 +476,12 @@
     "hash": "93900a91be4367393d9d45b4ab27ec11"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\chart\\ToolMenu.tsx": {
-    "mtime": 1778437356.6246858,
-    "hash": "676c09bf8c5ecf392395fd2ea80b976b"
+    "mtime": 1778497057.097249,
+    "hash": "6b0d5db29f2cc941fc6cd092200e24f8"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\layout\\TerminalLayout.tsx": {
-    "mtime": 1778438049.7677565,
-    "hash": "24fa9793bcc69dd72562797b1dd12d21"
+    "mtime": 1778498916.0717778,
+    "hash": "a416490415dfd9330fe36de2bbf4e1d2"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\layouts\\IntradayLayout.tsx": {
     "mtime": 1778435734.9066737,
@@ -524,8 +524,8 @@
     "hash": "422415d7907958741d008843a288232b"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useDrawingEngine.ts": {
-    "mtime": 1778496597.8924632,
-    "hash": "4db7f35bf26b2bdfa9067c328f3db9f0"
+    "mtime": 1778498939.6280613,
+    "hash": "ac035d5b4bad3b9a5ea7ad27290a82a0"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useHistoricalData.ts": {
     "mtime": 1778488549.9564488,

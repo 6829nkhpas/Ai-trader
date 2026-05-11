@@ -33,12 +33,33 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   EyeOff,
-  MoveVertical
+  MoveVertical,
+  MoveRight,
+  Info,
+  MoveHorizontal,
+  CornerRightUp,
+  Columns,
+  TrendingDown,
+  ChevronsUpDown,
+  Unlink,
+  Layers,
+  Clock,
+  Wind,
+  Timer,
+  Target,
+  RotateCcw,
+  Sparkles,
+  Triangle,
+  Waypoints,
+  Grid3x3,
+  Hash,
+  Scan,
+  Fan,
 } from 'lucide-react';
 import { useTradeStore, TradeProfile } from '../../store/useTradeStore';
 import { useAuth } from '../../context/AuthContext';
 import { useChartUIStore } from '../../store/useChartUIStore';
-import { ToolMenu } from '../chart/ToolMenu';
+import { ToolMenu, type ToolMenuEntry } from '../chart/ToolMenu';
 
 const PROFILES: { key: TradeProfile; label: string; shortcut: string }[] = [
   { key: 'INTRADAY', label: 'Intraday', shortcut: 'Scalp' },
@@ -77,17 +98,41 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
     { id: 'eraser', label: 'Eraser', icon: Eraser },
   ];
 
-  const lineOptions = [
-    { id: 'trendline', label: 'Trend Line', icon: TrendingUp },
-    { id: 'horizontal-line', label: 'Horizontal Line', icon: Minus },
-    { id: 'horizontal-ray', label: 'Horizontal Ray', icon: ArrowRight },
-    { id: 'vertical-line', label: 'Vertical Line', icon: MoveVertical },
-    { id: 'cross-line', label: 'Cross Line', icon: Plus },
+  const lineOptions: ToolMenuEntry[] = [
+    { id: 'trendline', label: 'Trend Line', icon: TrendingUp, shortcut: 'Alt + T' },
+    { id: 'ray', label: 'Ray', icon: MoveRight },
+    { id: 'info-line', label: 'Info Line', icon: Info },
+    { id: 'extended-line', label: 'Extended Line', icon: MoveHorizontal },
+    { id: 'trend-angle', label: 'Trend Angle', icon: CornerRightUp },
+    { id: 'horizontal-line', label: 'Horizontal Line', icon: Minus, shortcut: 'Alt + H' },
+    { id: 'horizontal-ray', label: 'Horizontal Ray', icon: ArrowRight, shortcut: 'Alt + J' },
+    { id: 'vertical-line', label: 'Vertical Line', icon: MoveVertical, shortcut: 'Alt + V' },
+    { id: 'cross-line', label: 'Cross Line', icon: Plus, shortcut: 'Alt + C' },
+    { section: 'Channels' },
+    { id: 'parallel-channel', label: 'Parallel Channel', icon: Columns },
+    { id: 'regression-trend', label: 'Regression Trend', icon: TrendingDown },
+    { id: 'flat-top-bottom', label: 'Flat Top/Bottom', icon: ChevronsUpDown },
+    { id: 'disjoint-channel', label: 'Disjoint Channel', icon: Unlink },
   ];
 
-  const fibOptions = [
-    { id: 'fib-retracement', label: 'Fib Retracement', icon: AlignEndHorizontal },
-    { id: 'trend-fib', label: 'Trend-Based Fib', icon: AlignCenterHorizontal },
+  const fibOptions: ToolMenuEntry[] = [
+    { section: 'Fibonacci' },
+    { id: 'fib-retracement', label: 'Fib Retracement', icon: AlignEndHorizontal, shortcut: 'Alt + F' },
+    { id: 'fib-extension', label: 'Trend-Based Fib Extension', icon: AlignCenterHorizontal },
+    { id: 'fib-channel', label: 'Fib Channel', icon: Layers },
+    { id: 'fib-time-zone', label: 'Fib Time Zone', icon: Clock },
+    { id: 'fib-speed-fan', label: 'Fib Speed Resistance Fan', icon: Wind },
+    { id: 'fib-time-trend', label: 'Trend-Based Fib Time', icon: Timer },
+    { id: 'fib-circles', label: 'Fib Circles', icon: Target },
+    { id: 'fib-spiral', label: 'Fib Spiral', icon: RotateCcw },
+    { id: 'fib-arcs', label: 'Fib Speed Resistance Arcs', icon: Sparkles },
+    { id: 'fib-wedge', label: 'Fib Wedge', icon: Triangle },
+    { id: 'pitchfan', label: 'Pitchfan', icon: Waypoints },
+    { section: 'Gann' },
+    { id: 'gann-box', label: 'Gann Box', icon: Grid3x3 },
+    { id: 'gann-square-fixed', label: 'Gann Square Fixed', icon: Scan },
+    { id: 'gann-square', label: 'Gann Square', icon: Hash },
+    { id: 'gann-fan', label: 'Gann Fan', icon: Fan },
   ];
 
   const shapeOptions = [
@@ -254,15 +299,15 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
           <div className="my-1 h-px w-6 bg-border-default/50" />
 
           <ToolMenu
-            icon={lineOptions.find(o => o.id === activeDrawingTool)?.icon || TrendingUp}
-            isActive={lineOptions.some(o => o.id === activeDrawingTool)}
+            icon={(lineOptions.filter((o): o is { id: string; label: string; icon: React.ElementType; shortcut?: string } => 'id' in o).find(o => o.id === activeDrawingTool))?.icon || TrendingUp}
+            isActive={lineOptions.filter((o): o is { id: string; label: string; icon: React.ElementType; shortcut?: string } => 'id' in o).some(o => o.id === activeDrawingTool)}
             options={lineOptions}
             onSelect={setActiveDrawingTool}
           />
 
           <ToolMenu
-            icon={fibOptions.find(o => o.id === activeDrawingTool)?.icon || AlignEndHorizontal}
-            isActive={fibOptions.some(o => o.id === activeDrawingTool)}
+            icon={(fibOptions.filter((o): o is { id: string; label: string; icon: React.ElementType; shortcut?: string } => 'id' in o).find(o => o.id === activeDrawingTool))?.icon || AlignEndHorizontal}
+            isActive={fibOptions.filter((o): o is { id: string; label: string; icon: React.ElementType; shortcut?: string } => 'id' in o).some(o => o.id === activeDrawingTool)}
             options={fibOptions}
             onSelect={setActiveDrawingTool}
           />

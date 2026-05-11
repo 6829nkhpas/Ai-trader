@@ -539,9 +539,11 @@ export default function AlphaPredictiveChart({
   // Pass refs (not .current) so the hook reads live instances inside handlers
   useDrawingEngine(chartRef, candleSeriesRef);
 
-  // ── Drawing Renderer — sync store drawings onto the chart canvas ─────
+  // ── Drawing Renderer — tool-specific rendering onto the chart canvas ──
+  // Each tool type gets distinct visual behavior matching TradingView conventions.
   useEffect(() => {
     const chart = chartRef.current;
+    const mainSeries = candleSeriesRef.current;
     if (!chart) return;
 
     // Remove previous drawing series from chart
@@ -560,10 +562,18 @@ export default function AlphaPredictiveChart({
     // Color map per drawing tool
     const TOOL_COLORS: Record<string, string> = {
       'trendline': '#2962FF',
+      'ray': '#2962FF',
+      'info-line': '#00BCD4',
+      'extended-line': '#2962FF',
+      'trend-angle': '#FF9800',
       'horizontal-line': '#FF6D00',
       'horizontal-ray': '#FF6D00',
       'vertical-line': '#AB47BC',
       'cross-line': '#AB47BC',
+      'parallel-channel': '#26A69A',
+      'regression-trend': '#EC407A',
+      'flat-top-bottom': '#26A69A',
+      'disjoint-channel': '#78909C',
       'fib-retracement': '#FFD600',
       'trend-fib': '#FFD600',
       'long-position': '#22c55e',
@@ -571,31 +581,587 @@ export default function AlphaPredictiveChart({
       'price-range': '#00BCD4',
     };
 
-    // Render each 2-point drawing as a LineSeries
+    // Line style map per tool type
+    const TOOL_LINE_STYLES: Record<string, number> = {
+      'trendline': 0,       // Solid
+      'ray': 0,             // Solid
+      'info-line': 0,       // Solid
+      'extended-line': 0,   // Solid
+      'trend-angle': 0,     // Solid
+      'horizontal-line': 2, // Dashed
+      'horizontal-ray': 2,  // Dashed
+      'vertical-line': 2,   // Dashed
+      'cross-line': 2,      // Dashed
+      'parallel-channel': 0,
+      'regression-trend': 2,
+      'flat-top-bottom': 2,
+      'disjoint-channel': 0,
+    };
+
+    // Helper: compute interval from chart data
+    const intervalSec = chartData.length >= 2
+      ? chartData[1].time - chartData[0].time
+      : 600; // fallback 10min
+
+    // Helper: create a standard line series with endpoints
+    const createLine = (
+      data: { time: Time; value: number }[],
+      color: string,
+      lineWidth: 1 | 2 | 3 | 4 = 2,
+      lineStyle: number = 0,
+      title?: string,
+    ) => {
+      const line = chart.addSeries(LineSeries, {
+        color,
+        lineWidth,
+        lineStyle,
+        crosshairMarkerVisible: true,
+        crosshairMarkerRadius: 6,
+        crosshairMarkerBackgroundColor: '#FFFFFF',
+        crosshairMarkerBorderColor: color,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        ...(title ? { title } : {}),
+      });
+      line.setData(data);
+      drawingSeriesRef.current.push(line);
+      return line;
+    };
+
     for (const drawing of drawings) {
-      if (drawing.points.length >= 2) {
-        const color = TOOL_COLORS[drawing.tool] || '#2962FF';
-        const line = chart.addSeries(LineSeries, {
-          color,
-          lineWidth: 2,
-          lineStyle: 0, // Solid
-          crosshairMarkerVisible: false,
-          priceLineVisible: false,
-          lastValueVisible: false,
-        });
+      if (drawing.points.length < 2) continue;
+      const color = TOOL_COLORS[drawing.tool] || '#2962FF';
+      const lineStyle = TOOL_LINE_STYLES[drawing.tool] ?? 0;
+      const p1 = drawing.points[0];
+      const p2 = drawing.points[1];
+      const sorted = [p1, p2].sort((a, b) => a.time - b.time);
 
-        // Sort points by time to ensure valid series data ordering
-        const sortedPoints = [...drawing.points].sort((a, b) => a.time - b.time);
+      switch (drawing.tool) {
+        // ── TREND LINE ─────────────────────────────────────────
+        case 'trendline':
+        default: {
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[1].price },
+            ],
+            color, 2, lineStyle,
+          );
+          break;
+        }
 
-        line.setData([
-          { time: sortedPoints[0].time as Time, value: sortedPoints[0].price },
-          { time: sortedPoints[1].time as Time, value: sortedPoints[1].price },
-        ]);
+        // ── RAY — extends from p1 through p2 to far right ─────
+        case 'ray': {
+          const slope = (p2.price - p1.price) / ((p2.time - p1.time) || 1);
+          const farTime = sorted[1].time + intervalSec * 200;
+          const farPrice = p2.price + slope * (farTime - p2.time);
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[1].price },
+              { time: farTime as Time, value: +farPrice.toFixed(2) },
+            ],
+            color, 2, 0,
+          );
+          break;
+        }
 
-        drawingSeriesRef.current.push(line);
+        // ── INFO LINE — trend line + measurement label ────────
+        case 'info-line': {
+          const priceDiff = p2.price - p1.price;
+          const pctChange = ((priceDiff / p1.price) * 100).toFixed(2);
+          const timeDiffSec = Math.abs(p2.time - p1.time);
+          const bars = Math.round(timeDiffSec / intervalSec);
+          const hours = Math.floor(timeDiffSec / 3600);
+          const mins = Math.floor((timeDiffSec % 3600) / 60);
+          const duration = hours > 24
+            ? `${Math.floor(hours / 24)}d ${hours % 24}h ${mins}m`
+            : `${hours}h ${mins}m`;
+          const angle = Math.atan2(priceDiff, bars || 1) * (180 / Math.PI);
+          const title = `${priceDiff >= 0 ? '+' : ''}${priceDiff.toFixed(2)} (${pctChange}%) · ${bars} bars (${duration}) · ${angle.toFixed(1)}°`;
+
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[1].price },
+            ],
+            color, 2, 0, title,
+          );
+          break;
+        }
+
+        // ── EXTENDED LINE — extends in both directions ────────
+        case 'extended-line': {
+          const exSlope = (p2.price - p1.price) / ((p2.time - p1.time) || 1);
+          const leftTime = sorted[0].time - intervalSec * 200;
+          const rightTime = sorted[1].time + intervalSec * 200;
+          const leftPrice = sorted[0].price + exSlope * (leftTime - sorted[0].time);
+          const rightPrice = sorted[1].price + exSlope * (rightTime - sorted[1].time);
+          createLine(
+            [
+              { time: leftTime as Time, value: +leftPrice.toFixed(2) },
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[1].price },
+              { time: rightTime as Time, value: +rightPrice.toFixed(2) },
+            ],
+            color, 2, 0,
+          );
+          break;
+        }
+
+        // ── TREND ANGLE — like trend line + angle display ─────
+        case 'trend-angle': {
+          const taBars = Math.round(Math.abs(p2.time - p1.time) / intervalSec);
+          const taDiff = p2.price - p1.price;
+          const taAngle = Math.atan2(taDiff, taBars || 1) * (180 / Math.PI);
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[1].price },
+            ],
+            color, 2, 0, `∠ ${taAngle.toFixed(1)}°`,
+          );
+          break;
+        }
+
+        // ── HORIZONTAL LINE — full-width dashed line at price ──
+        case 'horizontal-line': {
+          if (mainSeries) {
+            mainSeries.createPriceLine({
+              price: p1.price,
+              color,
+              lineWidth: 1,
+              lineStyle: 2,
+              axisLabelVisible: true,
+            });
+          }
+          break;
+        }
+
+        // ── HORIZONTAL RAY — from point extending right ───────
+        case 'horizontal-ray': {
+          const hrFarTime = sorted[0].time + intervalSec * 500;
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: hrFarTime as Time, value: sorted[0].price },
+            ],
+            color, 1, 2,
+          );
+          break;
+        }
+
+        // ── VERTICAL LINE — tall vertical at a time point ─────
+        case 'vertical-line': {
+          // Approximate vertical with extreme price range
+          const vHigh = p1.price * 1.15;
+          const vLow = p1.price * 0.85;
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +vLow.toFixed(2) },
+              { time: sorted[0].time as Time, value: +vHigh.toFixed(2) },
+            ],
+            color, 1, 2,
+          );
+          break;
+        }
+
+        // ── CROSS LINE — horizontal + vertical at a point ─────
+        case 'cross-line': {
+          // Horizontal
+          const clLeftTime = sorted[0].time - intervalSec * 100;
+          const clRightTime = sorted[0].time + intervalSec * 100;
+          createLine(
+            [
+              { time: clLeftTime as Time, value: p1.price },
+              { time: clRightTime as Time, value: p1.price },
+            ],
+            color, 1, 2,
+          );
+          // Vertical
+          const clHigh = p1.price * 1.10;
+          const clLow = p1.price * 0.90;
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +clLow.toFixed(2) },
+              { time: sorted[0].time as Time, value: +clHigh.toFixed(2) },
+            ],
+            color, 1, 2,
+          );
+          break;
+        }
+
+        // ── PARALLEL CHANNEL — two parallel lines ─────────────
+        case 'parallel-channel':
+        case 'flat-top-bottom': {
+          // Main line
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[1].price },
+            ],
+            color, 2, 0,
+          );
+          // Parallel offset line (mirror around midpoint)
+          const pcMid = (sorted[0].price + sorted[1].price) / 2;
+          const offset = Math.abs(sorted[1].price - sorted[0].price) * 0.5;
+          const direction = sorted[1].price > sorted[0].price ? -1 : 1;
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +(sorted[0].price + offset * direction).toFixed(2) },
+              { time: sorted[1].time as Time, value: +(sorted[1].price + offset * direction).toFixed(2) },
+            ],
+            color, 1, 2,
+          );
+          break;
+        }
+
+        // ── REGRESSION TREND — line with upper/lower bounds ───
+        case 'regression-trend': {
+          // Main regression line
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[1].price },
+            ],
+            color, 2, 0,
+          );
+          // Upper/lower deviation bands (±2% of price range)
+          const rtRange = Math.abs(sorted[1].price - sorted[0].price) * 0.3;
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +(sorted[0].price + rtRange).toFixed(2) },
+              { time: sorted[1].time as Time, value: +(sorted[1].price + rtRange).toFixed(2) },
+            ],
+            color, 1, 2,
+          );
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +(sorted[0].price - rtRange).toFixed(2) },
+              { time: sorted[1].time as Time, value: +(sorted[1].price - rtRange).toFixed(2) },
+            ],
+            color, 1, 2,
+          );
+          break;
+        }
+
+        // ── DISJOINT CHANNEL — non-parallel lines ─────────────
+        case 'disjoint-channel': {
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[1].price },
+            ],
+            color, 2, 0,
+          );
+          const dcOffset = Math.abs(sorted[1].price - sorted[0].price) * 0.4;
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +(sorted[0].price - dcOffset * 0.5).toFixed(2) },
+              { time: sorted[1].time as Time, value: +(sorted[1].price - dcOffset * 1.5).toFixed(2) },
+            ],
+            color, 1, 2,
+          );
+          break;
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // ── FIBONACCI TOOLS ───────────────────────────────────
+        // ═══════════════════════════════════════════════════════
+
+        // ── FIB RETRACEMENT — horizontal lines at fib levels ──
+        case 'fib-retracement':
+        case 'trend-fib': {
+          const fibLevels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+          const fibRange = sorted[1].price - sorted[0].price;
+          const fibAlpha = ['FF', 'CC', 'AA', '99', 'AA', 'CC', 'FF'];
+          for (let i = 0; i < fibLevels.length; i++) {
+            const level = fibLevels[i];
+            const price = sorted[0].price + fibRange * level;
+            const levelColor = color + fibAlpha[i];
+            const line = createLine(
+              [
+                { time: sorted[0].time as Time, value: +price.toFixed(2) },
+                { time: sorted[1].time as Time, value: +price.toFixed(2) },
+              ],
+              color, 1, 2,
+              `${(level * 100).toFixed(1)}% — ${price.toFixed(2)}`,
+            );
+          }
+          break;
+        }
+
+        // ── FIB EXTENSION — retracement + extension levels ────
+        case 'fib-extension': {
+          const extLevels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.272, 1.618, 2, 2.618];
+          const extRange = sorted[1].price - sorted[0].price;
+          for (const level of extLevels) {
+            const price = sorted[0].price + extRange * level;
+            createLine(
+              [
+                { time: sorted[0].time as Time, value: +price.toFixed(2) },
+                { time: (sorted[1].time + intervalSec * 50) as Time, value: +price.toFixed(2) },
+              ],
+              color, level > 1 ? 1 : 1, level > 1 ? 0 : 2,
+              `${(level * 100).toFixed(1)}%`,
+            );
+          }
+          break;
+        }
+
+        // ── FIB CHANNEL — parallel lines at fib intervals ─────
+        case 'fib-channel': {
+          const chFibLevels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+          const chSlope = (sorted[1].price - sorted[0].price) / ((sorted[1].time - sorted[0].time) || 1);
+          const chRange = Math.abs(sorted[1].price - sorted[0].price) * 0.5;
+          for (const level of chFibLevels) {
+            const offset = chRange * level;
+            createLine(
+              [
+                { time: sorted[0].time as Time, value: +(sorted[0].price + offset).toFixed(2) },
+                { time: sorted[1].time as Time, value: +(sorted[1].price + offset).toFixed(2) },
+              ],
+              color, level === 0 || level === 1 ? 2 : 1, level === 0 || level === 1 ? 0 : 2,
+              level === 0 ? '' : `${(level * 100).toFixed(1)}%`,
+            );
+          }
+          break;
+        }
+
+        // ── FIB TIME ZONE — vertical lines at fib time intervals
+        case 'fib-time-zone':
+        case 'fib-time-trend': {
+          const fibSequence = [1, 1, 2, 3, 5, 8, 13, 21, 34, 55];
+          let cumBars = 0;
+          const vHigh = Math.max(sorted[0].price, sorted[1].price) * 1.05;
+          const vLow = Math.min(sorted[0].price, sorted[1].price) * 0.95;
+          for (const n of fibSequence) {
+            cumBars += n;
+            const t = sorted[0].time + intervalSec * cumBars;
+            if (t > sorted[1].time + intervalSec * 300) break;
+            createLine(
+              [
+                { time: t as Time, value: +vLow.toFixed(2) },
+                { time: t as Time, value: +vHigh.toFixed(2) },
+              ],
+              color, 1, 2,
+              `${cumBars}`,
+            );
+          }
+          break;
+        }
+
+        // ── FIB SPEED RESISTANCE FAN — lines from p1 to fib levels at p2 time
+        case 'fib-speed-fan': {
+          const fanLevels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+          const fanRange = sorted[1].price - sorted[0].price;
+          for (const level of fanLevels) {
+            const targetPrice = sorted[0].price + fanRange * level;
+            const farTime = sorted[1].time + intervalSec * 100;
+            const farSlope = (targetPrice - sorted[0].price) / ((sorted[1].time - sorted[0].time) || 1);
+            const farPrice = targetPrice + farSlope * (farTime - sorted[1].time);
+            createLine(
+              [
+                { time: sorted[0].time as Time, value: sorted[0].price },
+                { time: sorted[1].time as Time, value: +targetPrice.toFixed(2) },
+                { time: farTime as Time, value: +farPrice.toFixed(2) },
+              ],
+              color, level === 0.5 ? 2 : 1, level === 0.5 ? 0 : 2,
+              `${(level * 100).toFixed(1)}%`,
+            );
+          }
+          break;
+        }
+
+        // ── FIB CIRCLES — concentric horizontal bands at fib radii
+        case 'fib-circles': {
+          const circLevels = [0.236, 0.382, 0.5, 0.618, 0.786, 1];
+          const circRange = Math.abs(sorted[1].price - sorted[0].price);
+          const midPrice = (sorted[0].price + sorted[1].price) / 2;
+          const midTime = Math.round((sorted[0].time + sorted[1].time) / 2);
+          for (const level of circLevels) {
+            const radius = circRange * level;
+            const tSpread = Math.round((sorted[1].time - sorted[0].time) * level / 2);
+            // Top arc approximation
+            createLine(
+              [
+                { time: (midTime - tSpread) as Time, value: +midPrice.toFixed(2) },
+                { time: midTime as Time, value: +(midPrice + radius / 2).toFixed(2) },
+                { time: (midTime + tSpread) as Time, value: +midPrice.toFixed(2) },
+              ],
+              color, 1, 2,
+              `${(level * 100).toFixed(1)}%`,
+            );
+            // Bottom arc approximation
+            createLine(
+              [
+                { time: (midTime - tSpread) as Time, value: +midPrice.toFixed(2) },
+                { time: midTime as Time, value: +(midPrice - radius / 2).toFixed(2) },
+                { time: (midTime + tSpread) as Time, value: +midPrice.toFixed(2) },
+              ],
+              color, 1, 2,
+            );
+          }
+          break;
+        }
+
+        // ── FIB SPIRAL — expanding fan at golden ratio angles ─
+        case 'fib-spiral': {
+          const spiralLevels = [1, 1.618, 2.618, 4.236, 6.854];
+          const spRange = Math.abs(sorted[1].price - sorted[0].price);
+          const spDir = sorted[1].price > sorted[0].price ? 1 : -1;
+          for (const mult of spiralLevels) {
+            const targetPrice = sorted[0].price + spRange * mult * spDir;
+            const targetTime = sorted[0].time + (sorted[1].time - sorted[0].time) * mult;
+            createLine(
+              [
+                { time: sorted[0].time as Time, value: sorted[0].price },
+                { time: targetTime as Time, value: +targetPrice.toFixed(2) },
+              ],
+              color, 1, 2,
+              `${mult.toFixed(3)}`,
+            );
+          }
+          break;
+        }
+
+        // ── FIB SPEED RESISTANCE ARCS — curved lines at fib levels
+        case 'fib-arcs': {
+          const arcLevels = [0.236, 0.382, 0.5, 0.618, 0.786];
+          const arcRange = Math.abs(sorted[1].price - sorted[0].price);
+          const arcTimeDiff = sorted[1].time - sorted[0].time;
+          for (const level of arcLevels) {
+            const radius = arcRange * level;
+            const tR = Math.round(arcTimeDiff * level);
+            const pts = [];
+            for (let i = 0; i <= 8; i++) {
+              const frac = i / 8;
+              const t = sorted[1].time - tR + Math.round(tR * 2 * frac);
+              const pOffset = radius * Math.sqrt(1 - Math.pow(frac * 2 - 1, 2));
+              pts.push({ time: t as Time, value: +(sorted[1].price + pOffset).toFixed(2) });
+            }
+            createLine(pts, color, 1, 2, `${(level * 100).toFixed(1)}%`);
+          }
+          break;
+        }
+
+        // ── FIB WEDGE — converging lines from endpoints ───────
+        case 'fib-wedge': {
+          const wLevels = [0.236, 0.382, 0.5, 0.618, 0.786];
+          const wRange = sorted[1].price - sorted[0].price;
+          const convergenceTime = sorted[1].time + (sorted[1].time - sorted[0].time);
+          const convergencePrice = (sorted[0].price + sorted[1].price) / 2;
+          for (const level of wLevels) {
+            const startPrice = sorted[0].price + wRange * level;
+            createLine(
+              [
+                { time: sorted[0].time as Time, value: +startPrice.toFixed(2) },
+                { time: convergenceTime as Time, value: +convergencePrice.toFixed(2) },
+              ],
+              color, 1, 2,
+              `${(level * 100).toFixed(1)}%`,
+            );
+          }
+          break;
+        }
+
+        // ── PITCHFAN — radiating lines from origin ────────────
+        case 'pitchfan': {
+          const pfLevels = [0.25, 0.382, 0.5, 0.618, 0.75, 1];
+          const pfRange = sorted[1].price - sorted[0].price;
+          const pfTimeDiff = sorted[1].time - sorted[0].time;
+          for (const level of pfLevels) {
+            const targetPrice = sorted[0].price + pfRange * level;
+            const farTime = sorted[1].time + pfTimeDiff;
+            const slope = (targetPrice - sorted[0].price) / (pfTimeDiff || 1);
+            const farPrice = targetPrice + slope * pfTimeDiff;
+            createLine(
+              [
+                { time: sorted[0].time as Time, value: sorted[0].price },
+                { time: sorted[1].time as Time, value: +targetPrice.toFixed(2) },
+                { time: farTime as Time, value: +farPrice.toFixed(2) },
+              ],
+              color, level === 0.5 ? 2 : 1, level === 0.5 ? 0 : 2,
+            );
+          }
+          break;
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // ── GANN TOOLS ────────────────────────────────────────
+        // ═══════════════════════════════════════════════════════
+
+        // ── GANN BOX — grid of horizontal + vertical lines ────
+        case 'gann-box':
+        case 'gann-square-fixed':
+        case 'gann-square': {
+          const gLevels = [0, 0.25, 0.5, 0.75, 1];
+          const gPriceRange = sorted[1].price - sorted[0].price;
+          const gTimeDiff = sorted[1].time - sorted[0].time;
+          // Horizontal grid lines
+          for (const level of gLevels) {
+            const price = sorted[0].price + gPriceRange * level;
+            createLine(
+              [
+                { time: sorted[0].time as Time, value: +price.toFixed(2) },
+                { time: sorted[1].time as Time, value: +price.toFixed(2) },
+              ],
+              color, level === 0 || level === 1 ? 2 : 1,
+              level === 0 || level === 1 ? 0 : 2,
+              `${(level * 100).toFixed(0)}%`,
+            );
+          }
+          // Vertical grid lines
+          const vPriceHigh = Math.max(sorted[0].price, sorted[1].price);
+          const vPriceLow = Math.min(sorted[0].price, sorted[1].price);
+          for (const level of gLevels) {
+            if (level === 0 || level === 1) continue;
+            const t = sorted[0].time + Math.round(gTimeDiff * level);
+            createLine(
+              [
+                { time: t as Time, value: +vPriceLow.toFixed(2) },
+                { time: t as Time, value: +vPriceHigh.toFixed(2) },
+              ],
+              color, 1, 2,
+            );
+          }
+          // Diagonal
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[1].price },
+            ],
+            color, 1, 2,
+          );
+          break;
+        }
+
+        // ── GANN FAN — lines at classic Gann angles ───────────
+        case 'gann-fan': {
+          // Gann angles: 1x8, 1x4, 1x3, 1x2, 1x1, 2x1, 3x1, 4x1, 8x1
+          const gannMultipliers = [0.125, 0.25, 0.333, 0.5, 1, 2, 3, 4, 8];
+          const gannLabels = ['1×8', '1×4', '1×3', '1×2', '1×1', '2×1', '3×1', '4×1', '8×1'];
+          const gfTimeDiff = sorted[1].time - sorted[0].time;
+          const gfPricePerBar = (sorted[1].price - sorted[0].price) / (gfTimeDiff / intervalSec || 1);
+          for (let i = 0; i < gannMultipliers.length; i++) {
+            const mult = gannMultipliers[i];
+            const farTime = sorted[0].time + gfTimeDiff * 2;
+            const barsToFar = (farTime - sorted[0].time) / intervalSec;
+            const farPrice = sorted[0].price + gfPricePerBar * mult * barsToFar;
+            createLine(
+              [
+                { time: sorted[0].time as Time, value: sorted[0].price },
+                { time: farTime as Time, value: +farPrice.toFixed(2) },
+              ],
+              color, mult === 1 ? 2 : 1, mult === 1 ? 0 : 2,
+              gannLabels[i],
+            );
+          }
+          break;
+        }
       }
     }
-  }, [drawings, drawingsVisible]);
+  }, [drawings, drawingsVisible, chartData]);
 
   // ── Resize on expand/collapse ────────────────────────────────────────
   useEffect(() => {

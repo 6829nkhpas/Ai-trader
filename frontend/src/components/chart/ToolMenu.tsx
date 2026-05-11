@@ -7,10 +7,20 @@ interface ToolOption {
   shortcut?: string;
 }
 
+interface ToolSection {
+  section: string;
+}
+
+export type ToolMenuEntry = ToolOption | ToolSection;
+
+function isSection(entry: ToolMenuEntry): entry is ToolSection {
+  return 'section' in entry;
+}
+
 interface ToolMenuProps {
   icon: React.ElementType;
   isActive: boolean;
-  options: ToolOption[];
+  options: ToolMenuEntry[];
   onSelect: (id: string) => void;
 }
 
@@ -49,22 +59,32 @@ export function ToolMenu({ icon: Icon, isActive, options, onSelect }: ToolMenuPr
       </button>
 
       {isOpen && (
-        <div className="absolute left-[100%] top-0 z-50 ml-1 w-48 rounded-md border border-border-default bg-surface shadow-lg panel-shadow py-1">
-          {options.map((option) => {
-            const OptionIcon = option.icon;
+        <div className="absolute left-[100%] top-0 z-50 ml-1 w-56 rounded-md border border-border-default bg-surface shadow-lg panel-shadow py-1">
+          {options.map((entry, idx) => {
+            if (isSection(entry)) {
+              return (
+                <div key={`section-${idx}`} className="px-3 pt-3 pb-1.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-widest text-text-secondary/50">
+                    {entry.section}
+                  </span>
+                </div>
+              );
+            }
+
+            const OptionIcon = entry.icon;
             return (
               <button
-                key={option.id}
+                key={entry.id}
                 onClick={() => {
-                  onSelect(option.id);
+                  onSelect(entry.id);
                   setIsOpen(false);
                 }}
-                className="flex w-full items-center gap-3 px-3 py-2 text-sm text-text-secondary hover:bg-elevated hover:text-text-primary text-left"
+                className="flex w-full items-center gap-3 px-3 py-1.5 text-sm text-text-secondary hover:bg-elevated hover:text-text-primary text-left"
               >
                 <OptionIcon size={14} className="shrink-0" />
-                <span className="flex-1 truncate">{option.label}</span>
-                {option.shortcut && (
-                  <span className="text-[10px] text-text-secondary/60">{option.shortcut}</span>
+                <span className="flex-1 truncate">{entry.label}</span>
+                {entry.shortcut && (
+                  <span className="text-[10px] font-mono text-text-secondary/40">{entry.shortcut}</span>
                 )}
               </button>
             );
