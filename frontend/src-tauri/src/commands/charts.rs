@@ -114,6 +114,59 @@ pub async fn get_historical_view(
     }
 }
 
+/// Check whether the QuestDB PG pool has been registered as Tauri state.
+///
+/// The pool is registered asynchronously in lib.rs — the frontend should
+/// call this first and wait until it returns `true` before invoking
+/// `get_historical_view`. This prevents the "State not found" race condition.
+#[tauri::command]
+pub async fn get_pool_status(
+    _pool: Option<tauri::State<'_, PgPool>>,
+) -> bool {
+    _pool.is_some()
+}
+
+/// Proxy a QuestDB REST API request through Rust, returning the raw JSON body.
+///
+/// This bypasses browser/WebView CORS restrictions entirely — the HTTP request
+/// is made from the Rust process (no origin header), so QuestDB responds freely.
+///
+/// # Arguments (from `invoke("fetch_questdb", { query })`)
+/// * `query` — SQL string to send to QuestDB REST API (/exec endpoint)
+///
+/// # Returns
+/// Raw JSON string from QuestDB (the `{ dataset: [...] }` response).
+#[tauri::command]
+pub async fn fetch_questdb(query: String) -> Result<String, String> {
+    let questdb_url = std::env::var("QUESTDB_HTTP_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:9000".to_string());
+
+    let url = format!("{}/exec", questdb_url);
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let response = client
+        .get(&url)
+        .query(&[("query", &query), ("fmt", &"json".to_string())])
+        .send()
+        .await
+        .map_err(|e| format!("QuestDB HTTP request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("QuestDB returned HTTP {}", response.status()));
+    }
+
+    let body = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read QuestDB response body: {}", e))?;
+
+    Ok(body)
+}
+
 /// Trigger historical data ingestion from Kite API for a given symbol.
 ///
 /// # Arguments (from frontend `invoke("load_historical", { symbol, instrumentToken })`)

@@ -153,6 +153,8 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
         commands::charts::get_historical_view,
         commands::charts::load_historical,
+        commands::charts::fetch_questdb,
+        commands::charts::get_pool_status,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
