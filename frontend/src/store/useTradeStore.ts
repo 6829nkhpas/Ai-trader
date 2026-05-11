@@ -199,7 +199,24 @@ export const useTradeStore = create<TradeStore>((set, get) => {
           try {
             const candle: OhlcCandle = JSON.parse(event.data);
             set((state) => {
-              const newCandles = [...state.ohlcCandles, candle];
+              // Upsert: if a candle with the same symbol + timestamp already
+              // exists, replace it in-place so the chart reflects live price
+              // movement within the current bucket. Otherwise append.
+              const idx = state.ohlcCandles.findIndex(
+                (c) =>
+                  c.symbol === candle.symbol &&
+                  c.start_timestamp_ms === candle.start_timestamp_ms
+              );
+
+              let newCandles: OhlcCandle[];
+              if (idx !== -1) {
+                // Replace existing candle with updated OHLC values
+                newCandles = [...state.ohlcCandles];
+                newCandles[idx] = candle;
+              } else {
+                newCandles = [...state.ohlcCandles, candle];
+              }
+
               if (newCandles.length > 3000) {
                 return { ohlcCandles: newCandles.slice(-3000) };
               }

@@ -1,16 +1,16 @@
 # Graph Report - Ai-trader  (2026-05-11)
 
 ## Corpus Check
-- 165 files · ~87,444 words
+- 165 files · ~87,666 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 557 nodes · 876 edges · 70 communities (60 shown, 10 thin omitted)
+- 558 nodes · 877 edges · 70 communities (60 shown, 10 thin omitted)
 - Extraction: 88% EXTRACTED · 12% INFERRED · 0% AMBIGUOUS · INFERRED: 102 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `efec84db`
+- Built from commit: `7dd87737`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -39,7 +39,7 @@
 - [[_COMMUNITY_Community 25|Community 25]]
 - [[_COMMUNITY_Community 29|Community 29]]
 - [[_COMMUNITY_Community 33|Community 33]]
-- [[_COMMUNITY_Community 45|Community 45]]
+- [[_COMMUNITY_Community 44|Community 44]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `main()` - 31 edges
@@ -68,32 +68,32 @@
 ## Communities (70 total, 10 thin omitted)
 
 ### Community 0 - "Community 0"
+Cohesion: 0.1
+Nodes (22): handleGenerateMfa(), handleGoogleLogin(), handleHealth(), handleLogin(), handleLogout(), handleRefresh(), handleRegister(), handleSession() (+14 more)
+
+### Community 1 - "Community 1"
 Cohesion: 0.06
 Nodes (26): rsi_warm_up_gating(), update_rsi(), update_vwap(), vwap_basic_calculation(), vwap_no_volume_returns_none(), run_listener(), generate_access_token(), KiteSessionData (+18 more)
 
-### Community 1 - "Community 1"
+### Community 2 - "Community 2"
 Cohesion: 0.07
 Nodes (19): gate(), AuthLayout(), handleEmailBlur(), handlePassBlur(), validateEmail(), validatePassword(), OAuthCompleteInner(), OAuthCompletePage() (+11 more)
-
-### Community 2 - "Community 2"
-Cohesion: 0.12
-Nodes (20): handleGenerateMfa(), handleGoogleLogin(), handleHealth(), handleLogin(), handleLogout(), handleRefresh(), handleRegister(), handleSession() (+12 more)
 
 ### Community 3 - "Community 3"
 Cohesion: 0.09
 Nodes (19): hashPassword(), verifyPassword(), AuthenticationError, DuplicateEmailError, NotFoundError, PasswordComplexityError, TokenReuseError, findUserByEmail() (+11 more)
 
 ### Community 4 - "Community 4"
-Cohesion: 0.09
-Nodes (21): registerErrorHandler(), registerAuthRoutes(), registerStocksRoutes(), BillingSyncEngine, analyzeSentiment(), getClient(), getClient(), isArticleProcessed() (+13 more)
-
-### Community 5 - "Community 5"
 Cohesion: 0.1
 Nodes (15): OhlcEngine, SymbolState, confidence_is_clamped(), flat_prices_yield_high_confidence(), PredictionEngine, returns_none_when_window_incomplete(), returns_prediction_at_full_window(), window_never_exceeds_capacity() (+7 more)
 
-### Community 6 - "Community 6"
+### Community 5 - "Community 5"
 Cohesion: 0.1
 Nodes (25): handleGetProfile(), handleGetUploadUrl(), handleLivenessCheck(), handleUpsertProfile(), handleVerifyPan(), decryptSymmetric(), encryptSymmetric(), getKey() (+17 more)
+
+### Community 6 - "Community 6"
+Cohesion: 0.12
+Nodes (19): registerErrorHandler(), registerAuthRoutes(), registerStocksRoutes(), analyzeSentiment(), getClient(), getClient(), isArticleProcessed(), markArticleProcessed() (+11 more)
 
 ### Community 7 - "Community 7"
 Cohesion: 0.2
@@ -135,11 +135,11 @@ Nodes (6): make_ltp_packet(), parse_binary_frame(), parse_binary_tick(), test_fr
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `main()` connect `Community 0` to `Community 5`, `Community 10`, `Community 11`, `Community 18`, `Community 20`?**
+- **Why does `main()` connect `Community 1` to `Community 4`, `Community 10`, `Community 11`, `Community 18`, `Community 20`?**
   _High betweenness centrality (0.145) - this node is a cross-community bridge._
-- **Why does `run()` connect `Community 7` to `Community 3`, `Community 12`, `Community 4`?**
+- **Why does `run()` connect `Community 7` to `Community 3`, `Community 12`, `Community 6`?**
   _High betweenness centrality (0.132) - this node is a cross-community bridge._
-- **Why does `publish_tick()` connect `Community 10` to `Community 0`?**
+- **Why does `publish_tick()` connect `Community 10` to `Community 1`?**
   _High betweenness centrality (0.074) - this node is a cross-community bridge._
 - **Are the 16 inferred relationships involving `main()` (e.g. with `run_listener()` and `update_rsi()`) actually correct?**
   _`main()` has 16 INFERRED edges - model-reasoned connections that need verification._

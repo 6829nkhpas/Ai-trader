@@ -138,8 +138,8 @@ function aggregateCandles(
 
   const filtered = symbol
     ? rawCandles.filter(
-        (c) => c.symbol.toUpperCase() === symbol.toUpperCase()
-      )
+      (c) => c.symbol.toUpperCase() === symbol.toUpperCase()
+    )
     : rawCandles;
 
   const sorted = [...filtered].sort(
@@ -254,20 +254,19 @@ export default function AlphaPredictiveChart({
       volume: h.volume,
     }));
 
-    // Merge: historical first, then live (deduplicated by timestamp)
-    const all = [...histAsOhlc, ...ohlcCandles];
-
-    // Dedup by raw timestamp
-    const seen = new Set<number>();
-    const deduped: OhlcCandle[] = [];
-    for (const c of all) {
-      if (!seen.has(c.start_timestamp_ms)) {
-        seen.add(c.start_timestamp_ms);
-        deduped.push(c);
-      }
+    // Merge: historical first, then live.
+    // Use a Map so that live candles (iterated second) OVERWRITE stale
+    // historical entries for the same timestamp — this is critical for
+    // the chart to reflect real-time price movement.
+    const candleMap = new Map<number, OhlcCandle>();
+    for (const c of histAsOhlc) {
+      candleMap.set(c.start_timestamp_ms, c);
+    }
+    for (const c of ohlcCandles) {
+      candleMap.set(c.start_timestamp_ms, c); // live overwrites historical
     }
 
-    return deduped;
+    return Array.from(candleMap.values());
   }, [historicalCandles, ohlcCandles, activeSymbol]);
 
   // OHLC info for the header watermark
@@ -457,8 +456,8 @@ export default function AlphaPredictiveChart({
     // Only use the LATEST prediction for the active symbol
     const symbolSignals = activeSymbol
       ? predictiveSignals.filter(
-          (s) => s.symbol.toUpperCase() === activeSymbol.toUpperCase()
-        )
+        (s) => s.symbol.toUpperCase() === activeSymbol.toUpperCase()
+      )
       : predictiveSignals;
 
     const latest = symbolSignals.length > 0
@@ -533,7 +532,7 @@ export default function AlphaPredictiveChart({
   }, [activeDrawingTool]);
 
   return (
-    <div 
+    <div
       className={`relative flex h-full w-full flex-col outline-none ${cursorClass}`}
       onMouseDown={handleChartInteraction}
     >

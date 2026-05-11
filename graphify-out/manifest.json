@@ -132,7 +132,7 @@
     "hash": "f36c0c26a1e0e241931634cb38c629fd"
   },
   "D:\\projects\\Ai-trader\\aggregator\\src\\ohlc_server.rs": {
-    "mtime": 1778048745.8994458,
+    "mtime": 1778482464.0236874,
     "hash": "053d66fb027ec93c3ab7b1130137724a"
   },
   "D:\\projects\\Ai-trader\\aggregator\\src\\proto.rs": {
@@ -152,12 +152,12 @@
     "hash": "a4fb67a0c23f9ad225c3129a363161d5"
   },
   "D:\\projects\\Ai-trader\\alpha-terminal\\src\\consumer.rs": {
-    "mtime": 1778009960.4482658,
-    "hash": "8456dd3a93859f013493e1f404e6e40d"
+    "mtime": 1778482624.016912,
+    "hash": "e7c0583a9d981e901310aec644bc4074"
   },
   "D:\\projects\\Ai-trader\\alpha-terminal\\src\\engine.rs": {
-    "mtime": 1778009729.9762075,
-    "hash": "260786b2ff75f5791c11af2f86d573d0"
+    "mtime": 1778481900.087579,
+    "hash": "03eb59418e1ea2a0777120ff80278768"
   },
   "D:\\projects\\Ai-trader\\alpha-terminal\\src\\kafka_producer.rs": {
     "mtime": 1778009814.2758064,
@@ -444,8 +444,8 @@
     "hash": "4983e478596aba769e2f199dadd5116f"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\AlphaPredictiveChart.tsx": {
-    "mtime": 1778438068.602638,
-    "hash": "7ac92a241d6a3f572dba4408baecf199"
+    "mtime": 1778482464.091221,
+    "hash": "5cd3fd298b7b4faa6990d2ae3fae5dda"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\OrderBook.tsx": {
     "mtime": 1778412029.0964186,
@@ -492,7 +492,7 @@
     "hash": "2bece4f487112014453656d64060f25f"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\layouts\\SwingLayout.tsx": {
-    "mtime": 1778428213.7918189,
+    "mtime": 1778482464.091221,
     "hash": "c51fedf5418c6573d565ef9bb470b882"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\panels\\AgentStatusPanel.tsx": {
@@ -552,8 +552,8 @@
     "hash": "691d30a4bfeb92d98d8461c63f93b6f6"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\store\\useTradeStore.ts": {
-    "mtime": 1778271854.657647,
-    "hash": "bd6e3f5e7c06c44801f560a68cd5abac"
+    "mtime": 1778481095.975105,
+    "hash": "ddcf130a3fd2aa1540a99f14e2ae7456"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\build.rs": {
     "mtime": 1778012051.5296266,

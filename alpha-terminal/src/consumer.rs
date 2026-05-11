@@ -38,7 +38,10 @@ pub async fn run_consumer(brokers: &str, topic: &str, producer: FutureProducer, 
                 };
 
                 if let Ok(tick) = Tick::decode(payload) {
-                    if let Some(closed_candle) = engine.process_tick(&tick) {
+                    let closed = engine.process_tick(&tick);
+
+                    // If a candle closed, publish the completed candle to Kafka
+                    if let Some(ref closed_candle) = closed {
                         log::info!(
                             "[CANDLE CLOSED] {} | O: {} H: {} L: {} C: {} | Vol: {}",
                             closed_candle.symbol,
@@ -51,11 +54,13 @@ pub async fn run_consumer(brokers: &str, topic: &str, producer: FutureProducer, 
                         
                         let producer_clone = producer.clone();
                         let ohlc_topic_clone = ohlc_topic.to_string();
+                        let candle_for_kafka = closed_candle.clone();
                         
                         tokio::spawn(async move {
-                            crate::kafka_producer::publish_candle(&producer_clone, &ohlc_topic_clone, &closed_candle).await;
+                            crate::kafka_producer::publish_candle(&producer_clone, &ohlc_topic_clone, &candle_for_kafka).await;
                         });
 
+                        // Broadcast the closed candle to WebSocket clients
                         let json_value = json!({
                             "symbol": closed_candle.symbol,
                             "start_timestamp_ms": closed_candle.start_timestamp_ms,
@@ -66,6 +71,22 @@ pub async fn run_consumer(brokers: &str, topic: &str, producer: FutureProducer, 
                             "volume": closed_candle.volume
                         });
                         let _ = tx.send(json_value.to_string());
+                    }
+
+                    // ALWAYS broadcast the current in-progress candle so the
+                    // frontend chart updates in real-time on every tick,
+                    // not just when a 10-minute window closes.
+                    if let Some(active) = engine.get_active_candle(&tick.symbol) {
+                        let live_json = json!({
+                            "symbol": active.symbol,
+                            "start_timestamp_ms": active.start_timestamp_ms,
+                            "open": active.open,
+                            "high": active.high,
+                            "low": active.low,
+                            "close": active.close,
+                            "volume": active.volume
+                        });
+                        let _ = tx.send(live_json.to_string());
                     }
                 } else {
                     log::warn!("Error parsing Protobuf tick");

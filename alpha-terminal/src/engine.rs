@@ -69,4 +69,11 @@ impl OhlcEngine {
             None
         }
     }
+
+    /// Returns a clone of the in-progress candle for a given symbol.
+    /// Used to stream live candle updates to the frontend on every tick,
+    /// not just when a 10-minute window closes.
+    pub fn get_active_candle(&self, symbol: &str) -> Option<OhlcCandle> {
+        self.states.get(symbol).map(|s| s.active_candle.clone())
+    }
 }
