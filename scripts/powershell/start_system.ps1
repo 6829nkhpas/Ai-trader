@@ -4,6 +4,28 @@ $env:PATH = "$env:USERPROFILE\.cargo\bin;C:\Program Files\CMake\bin;" + $env:PAT
 # Store process objects to kill them later
 $script:processes = @()
 
+# Wait until a TCP port is open (polls every second up to $TimeoutSec)
+# Uses async BeginConnect to avoid nested try/catch which breaks PowerShell's outer try/finally
+function Wait-ForPort {
+    param([int]$Port, [int]$TimeoutSec = 60, [string]$Label = "")
+    $name = if ($Label) { $Label } else { "port $Port" }
+    Write-Host "  Waiting for $name to be ready..." -ForegroundColor DarkCyan
+    $deadline = [DateTime]::Now.AddSeconds($TimeoutSec)
+    while ([DateTime]::Now -lt $deadline) {
+        $tcp = New-Object System.Net.Sockets.TcpClient
+        $async = $tcp.BeginConnect('127.0.0.1', $Port, $null, $null)
+        $waited = $async.AsyncWaitHandle.WaitOne(1000, $false)
+        if ($waited -and $tcp.Connected) {
+            $tcp.Close()
+            Write-Host "  [$name] is ready!" -ForegroundColor Green
+            return
+        }
+        $tcp.Close()
+        Start-Sleep -Milliseconds 500
+    }
+    Write-Host "  WARNING: $name did not become ready within ${TimeoutSec}s - continuing anyway." -ForegroundColor Yellow
+}
+
 # Clean up function when script exits or is interrupted
 function Cleanup {
     Write-Host "`nShutting down system..." -ForegroundColor Yellow
@@ -100,6 +122,7 @@ try {
     Push-Location auth
     $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cmd.exe" -ArgumentList "/c npm run dev"
     Pop-Location
+    Wait-ForPort -Port 3001 -TimeoutSec 60 -Label "Auth Service (:3001)"
 
     Write-Host "Starting Rust Ingestion Service (Kite -> Kafka)..." -ForegroundColor Cyan
     Push-Location ingestion

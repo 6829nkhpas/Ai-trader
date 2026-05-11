@@ -198,6 +198,19 @@ export const useTradeStore = create<TradeStore>((set, get) => {
         alphaWs.onmessage = (event) => {
           try {
             const candle: OhlcCandle = JSON.parse(event.data);
+
+            // Validate required fields before storing — malformed messages
+            // (e.g. missing symbol or NaN prices) corrupt the chart silently.
+            if (
+              !candle.symbol ||
+              typeof candle.start_timestamp_ms !== 'number' ||
+              typeof candle.open !== 'number' ||
+              typeof candle.close !== 'number'
+            ) {
+              syslog('WARN', `Malformed OHLC candle received: ${event.data.slice(0, 100)}`);
+              return;
+            }
+
             set((state) => {
               // Upsert: if a candle with the same symbol + timestamp already
               // exists, replace it in-place so the chart reflects live price
@@ -215,6 +228,10 @@ export const useTradeStore = create<TradeStore>((set, get) => {
                 newCandles[idx] = candle;
               } else {
                 newCandles = [...state.ohlcCandles, candle];
+                // Log the first few candles arriving to confirm data flow
+                if (newCandles.length <= 5) {
+                  console.log(`[OHLC WS] Candle #${newCandles.length}:`, candle);
+                }
               }
 
               if (newCandles.length > 3000) {

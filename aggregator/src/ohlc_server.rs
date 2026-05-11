@@ -26,10 +26,15 @@ pub mod ohlc_server {
     use tokio::sync::broadcast;
     use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-    /// OHLC candle interval in milliseconds (1 minute — standard base timeframe).
+    /// OHLC candle window in milliseconds (1 minute — standard base timeframe).
     /// Higher timeframes (5m, 15m, 1h, 1D) are aggregated client-side from these
     /// base 1-minute candles.
     const CANDLE_INTERVAL_MS: u64 = 60_000;
+
+    /// How often the timer-based flush fires to push in-progress candles to the
+    /// frontend even if no new tick has arrived (handles sparse markets / pauses).
+    /// 5 seconds keeps the chart feeling live without excessive broadcast noise.
+    const FLUSH_INTERVAL_MS: u64 = 5_000;
 
     /// Kafka topic for raw market ticks.
     const TOPIC_TICKS: &str = "market.ticks";
@@ -213,9 +218,10 @@ pub mod ohlc_server {
         // Per-symbol candle accumulators.
         let mut accumulators: HashMap<String, CandleAccumulator> = HashMap::new();
 
-        // Timer for flushing candles periodically even if no new ticks arrive.
+        // Timer for flushing in-progress candles periodically (sparse market safety net).
+        // We also broadcast on every individual tick below, so this is just a heartbeat.
         let mut flush_interval =
-            tokio::time::interval(std::time::Duration::from_millis(CANDLE_INTERVAL_MS));
+            tokio::time::interval(std::time::Duration::from_millis(FLUSH_INTERVAL_MS));
 
         log::info!(
             "[OHLC] Tick aggregation loop started. Candle interval: {}ms",
@@ -242,20 +248,35 @@ pub mod ohlc_server {
                                     if acc.bucket_start_ms == bucket_start {
                                         // Same candle bucket — update in place.
                                         acc.update(price, volume);
-                                    } else {
-                                        // New bucket — flush the old candle and start fresh.
+                                        // ── CRITICAL FIX ────────────────────────────────────────
+                                        // Broadcast the LIVE in-progress candle on every single
+                                        // tick so the frontend chart updates in real-time.
+                                        // Previously this only happened at bucket boundaries
+                                        // (once per minute), making the chart appear frozen with
+                                        // real Kite data (which ticks every few seconds).
                                         let json = acc.to_json();
                                         let _ = ohlc_tx.send(json);
+                                    } else {
+                                        // New bucket — flush the completed candle first.
+                                        let json = acc.to_json();
+                                        let _ = ohlc_tx.send(json);
+                                        // Start the fresh candle for the new window.
                                         *acc = CandleAccumulator::new(
-                                            symbol, timestamp_ms, price, volume,
+                                            symbol.clone(), timestamp_ms, price, volume,
                                         );
+                                        // Immediately broadcast the opening tick of the new candle.
+                                        let new_json = acc.to_json();
+                                        let _ = ohlc_tx.send(new_json);
                                     }
                                 } else {
                                     // First tick for this symbol — create accumulator.
-                                    accumulators.insert(
-                                        symbol.clone(),
-                                        CandleAccumulator::new(symbol, timestamp_ms, price, volume),
+                                    let acc = CandleAccumulator::new(
+                                        symbol.clone(), timestamp_ms, price, volume,
                                     );
+                                    // Broadcast immediately so the chart shows the first tick.
+                                    let json = acc.to_json();
+                                    let _ = ohlc_tx.send(json);
+                                    accumulators.insert(symbol, acc);
                                 }
                             }
                         }
