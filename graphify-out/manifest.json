@@ -444,8 +444,8 @@
     "hash": "4983e478596aba769e2f199dadd5116f"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\AlphaPredictiveChart.tsx": {
-    "mtime": 1778501751.782899,
-    "hash": "b83e8233dd6c1c38577c92910185acde"
+    "mtime": 1778503637.854748,
+    "hash": "099986af3d760d47db5d57c0be86404f"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\OrderBook.tsx": {
     "mtime": 1778412029.0964186,
@@ -523,6 +523,14 @@
     "mtime": 1778071698.6382082,
     "hash": "422415d7907958741d008843a288232b"
   },
+  "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useChartDataSync.ts": {
+    "mtime": 1778502387.4847305,
+    "hash": "aa35b96ebea2183b90d0a2a4717173c3"
+  },
+  "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useChartInit.ts": {
+    "mtime": 1778502189.5028312,
+    "hash": "8c633243f8b4c667b23c75942f2d4bae"
+  },
   "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useDrawingEngine.ts": {
     "mtime": 1778501282.335822,
     "hash": "127bc2359407f80e873c8c3f19d3c5a6"
@@ -530,6 +538,14 @@
   "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useDrawingInteraction.ts": {
     "mtime": 1778501429.998388,
     "hash": "55b69dbb1857189858dcd456616dfca9"
+  },
+  "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useDrawingRenderer.ts": {
+    "mtime": 1778502994.7719426,
+    "hash": "6aadf80cdbdd3cfeaa87dd64c55f6642"
+  },
+  "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useFibZoneOverlay.ts": {
+    "mtime": 1778503151.9224906,
+    "hash": "d04f98611d144e17416ba31a1dd1a17a"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useHistoricalData.ts": {
     "mtime": 1778488549.9564488,
@@ -562,6 +578,14 @@
   "D:\\projects\\Ai-trader\\frontend\\src\\store\\useTradeStore.ts": {
     "mtime": 1778486297.916207,
     "hash": "b26bba7eac6d2b0c08516621c48ed877"
+  },
+  "D:\\projects\\Ai-trader\\frontend\\src\\utils\\chartAggregation.ts": {
+    "mtime": 1778502147.8944898,
+    "hash": "f4f4efa0c67529c1342d4e6d362c75e8"
+  },
+  "D:\\projects\\Ai-trader\\frontend\\src\\utils\\chartTypes.ts": {
+    "mtime": 1778502129.1675742,
+    "hash": "91d82a45791098d65ce9760e23e537b9"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\build.rs": {
     "mtime": 1778012051.5296266,
