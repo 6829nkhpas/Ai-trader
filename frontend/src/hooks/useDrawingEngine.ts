@@ -13,6 +13,14 @@ const TWO_POINT_TOOLS = new Set([
   'fib-arcs', 'fib-wedge', 'pitchfan',
   'gann-box', 'gann-square-fixed', 'gann-square', 'gann-fan',
   'trend-fib', 'long-position', 'short-position', 'price-range',
+  // Patterns
+  'xabcd-pattern', 'cypher-pattern', 'head-shoulders',
+  'abcd-pattern', 'triangle-pattern', 'three-drives',
+  // Elliott Waves
+  'elliott-impulse', 'elliott-correction', 'elliott-triangle',
+  'elliott-double-combo', 'elliott-triple-combo',
+  // Cycles
+  'cyclic-lines', 'time-cycles', 'sine-line',
 ]);
 
 const UNSUPPORTED_TOOLS = new Set([
@@ -132,6 +140,17 @@ export function useDrawingEngine(
       'trend-fib': '#FFD600',
       'long-position': '#22c55e', 'short-position': '#ef4444',
       'price-range': '#00BCD4',
+      // Patterns
+      'xabcd-pattern': '#2196F3', 'cypher-pattern': '#00BCD4',
+      'head-shoulders': '#9C27B0', 'abcd-pattern': '#3F51B5',
+      'triangle-pattern': '#009688', 'three-drives': '#FF5722',
+      // Elliott Waves
+      'elliott-impulse': '#4CAF50', 'elliott-correction': '#FF9800',
+      'elliott-triangle': '#E91E63', 'elliott-double-combo': '#673AB7',
+      'elliott-triple-combo': '#795548',
+      // Cycles
+      'cyclic-lines': '#00BCD4', 'time-cycles': '#3F51B5',
+      'sine-line': '#E91E63',
     };
     return colors[tool] || '#2962FF';
   }, []);

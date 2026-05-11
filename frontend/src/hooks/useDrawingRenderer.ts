@@ -48,6 +48,23 @@ export function useDrawingRenderer(
       'long-position': '#22c55e',
       'short-position': '#ef4444',
       'price-range': '#00BCD4',
+      // Patterns
+      'xabcd-pattern': '#2196F3',
+      'cypher-pattern': '#00BCD4',
+      'head-shoulders': '#9C27B0',
+      'abcd-pattern': '#3F51B5',
+      'triangle-pattern': '#009688',
+      'three-drives': '#FF5722',
+      // Elliott Waves
+      'elliott-impulse': '#4CAF50',
+      'elliott-correction': '#FF9800',
+      'elliott-triangle': '#E91E63',
+      'elliott-double-combo': '#673AB7',
+      'elliott-triple-combo': '#795548',
+      // Cycles
+      'cyclic-lines': '#00BCD4',
+      'time-cycles': '#3F51B5',
+      'sine-line': '#E91E63',
     };
 
     const TOOL_LINE_STYLES: Record<string, number> = {
@@ -575,6 +592,393 @@ export function useDrawingRenderer(
               gannLabels[i],
             );
           }
+          break;
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // ── HARMONIC PATTERNS ─────────────────────────────────
+        // ═══════════════════════════════════════════════════════
+
+        // ── XABCD Pattern — 5-point harmonic zigzag ───────────
+        case 'xabcd-pattern': {
+          const range = Math.abs(sorted[1].price - sorted[0].price);
+          const dir = sorted[1].price > sorted[0].price ? 1 : -1;
+          const timeDiff = sorted[1].time - sorted[0].time;
+          const tStep = Math.round(timeDiff / 4);
+          // X → A → B → C → D (classic Gartley proportions)
+          const X = { t: sorted[0].time, p: sorted[0].price };
+          const A = { t: sorted[0].time + tStep, p: sorted[0].price + range * dir };
+          const B = { t: sorted[0].time + tStep * 2, p: A.p - range * 0.618 * dir };
+          const C = { t: sorted[0].time + tStep * 3, p: B.p + range * 0.786 * dir };
+          const D = { t: sorted[1].time, p: C.p - range * 0.786 * dir };
+          const pts = [X, A, B, C, D];
+          const labels = ['X', 'A', 'B', 'C', 'D'];
+          for (let i = 0; i < pts.length - 1; i++) {
+            createLine(
+              [
+                { time: pts[i].t as Time, value: +pts[i].p.toFixed(2) },
+                { time: pts[i + 1].t as Time, value: +pts[i + 1].p.toFixed(2) },
+              ],
+              color, 2, 0, labels[i],
+            );
+          }
+          break;
+        }
+
+        // ── Cypher Pattern — similar to XABCD with different ratios ─
+        case 'cypher-pattern': {
+          const cypRange = Math.abs(sorted[1].price - sorted[0].price);
+          const cypDir = sorted[1].price > sorted[0].price ? 1 : -1;
+          const cypStep = Math.round((sorted[1].time - sorted[0].time) / 4);
+          const cX = { t: sorted[0].time, p: sorted[0].price };
+          const cA = { t: sorted[0].time + cypStep, p: sorted[0].price + cypRange * 0.786 * cypDir };
+          const cB = { t: sorted[0].time + cypStep * 2, p: cA.p - cypRange * 0.382 * cypDir };
+          const cC = { t: sorted[0].time + cypStep * 3, p: cB.p + cypRange * 1.272 * cypDir };
+          const cD = { t: sorted[1].time, p: cC.p - cypRange * 0.786 * cypDir };
+          const cypPts = [cX, cA, cB, cC, cD];
+          const cypLabels = ['X', 'A', 'B', 'C', 'D'];
+          for (let i = 0; i < cypPts.length - 1; i++) {
+            createLine(
+              [
+                { time: cypPts[i].t as Time, value: +cypPts[i].p.toFixed(2) },
+                { time: cypPts[i + 1].t as Time, value: +cypPts[i + 1].p.toFixed(2) },
+              ],
+              color, 2, 0, cypLabels[i],
+            );
+          }
+          break;
+        }
+
+        // ── Head and Shoulders — 5-point reversal pattern ──────
+        case 'head-shoulders': {
+          const hsRange = Math.abs(sorted[1].price - sorted[0].price);
+          const hsDir = sorted[1].price > sorted[0].price ? 1 : -1;
+          const hsStep = Math.round((sorted[1].time - sorted[0].time) / 6);
+          const neckline = sorted[0].price;
+          const lShoulder = { t: sorted[0].time + hsStep, p: neckline + hsRange * 0.6 * hsDir };
+          const neck1 = { t: sorted[0].time + hsStep * 2, p: neckline };
+          const head = { t: sorted[0].time + hsStep * 3, p: neckline + hsRange * hsDir };
+          const neck2 = { t: sorted[0].time + hsStep * 4, p: neckline };
+          const rShoulder = { t: sorted[0].time + hsStep * 5, p: neckline + hsRange * 0.6 * hsDir };
+          const end = { t: sorted[1].time, p: neckline };
+          // Left shoulder
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +neckline.toFixed(2) },
+              { time: lShoulder.t as Time, value: +lShoulder.p.toFixed(2) },
+              { time: neck1.t as Time, value: +neck1.p.toFixed(2) },
+            ],
+            color, 2, 0, 'LS',
+          );
+          // Head
+          createLine(
+            [
+              { time: neck1.t as Time, value: +neck1.p.toFixed(2) },
+              { time: head.t as Time, value: +head.p.toFixed(2) },
+              { time: neck2.t as Time, value: +neck2.p.toFixed(2) },
+            ],
+            color, 2, 0, 'H',
+          );
+          // Right shoulder
+          createLine(
+            [
+              { time: neck2.t as Time, value: +neck2.p.toFixed(2) },
+              { time: rShoulder.t as Time, value: +rShoulder.p.toFixed(2) },
+              { time: end.t as Time, value: +end.p.toFixed(2) },
+            ],
+            color, 2, 0, 'RS',
+          );
+          // Neckline (dashed)
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +neckline.toFixed(2) },
+              { time: (sorted[1].time + intervalSec * 30) as Time, value: +neckline.toFixed(2) },
+            ],
+            color, 1, 2, 'Neckline',
+          );
+          break;
+        }
+
+        // ── ABCD Pattern — 4-point harmonic ────────────────────
+        case 'abcd-pattern': {
+          const abRange = Math.abs(sorted[1].price - sorted[0].price);
+          const abDir = sorted[1].price > sorted[0].price ? 1 : -1;
+          const abStep = Math.round((sorted[1].time - sorted[0].time) / 3);
+          const pA = { t: sorted[0].time, p: sorted[0].price };
+          const pB = { t: sorted[0].time + abStep, p: sorted[0].price + abRange * 0.618 * abDir };
+          const pC = { t: sorted[0].time + abStep * 2, p: pB.p - abRange * 0.382 * abDir };
+          const pD = { t: sorted[1].time, p: pC.p + abRange * 0.618 * abDir };
+          const abPts = [pA, pB, pC, pD];
+          const abLabels = ['A', 'B', 'C', 'D'];
+          for (let i = 0; i < abPts.length - 1; i++) {
+            createLine(
+              [
+                { time: abPts[i].t as Time, value: +abPts[i].p.toFixed(2) },
+                { time: abPts[i + 1].t as Time, value: +abPts[i + 1].p.toFixed(2) },
+              ],
+              color, 2, 0, abLabels[i],
+            );
+          }
+          break;
+        }
+
+        // ── Triangle Pattern — converging trendlines ───────────
+        case 'triangle-pattern': {
+          const triRange = Math.abs(sorted[1].price - sorted[0].price);
+          const triMid = (sorted[0].price + sorted[1].price) / 2;
+          const apex = sorted[1].time + (sorted[1].time - sorted[0].time) * 0.5;
+          // Upper trendline
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +(triMid + triRange / 2).toFixed(2) },
+              { time: apex as Time, value: +triMid.toFixed(2) },
+            ],
+            color, 2, 0, '▽ Upper',
+          );
+          // Lower trendline
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +(triMid - triRange / 2).toFixed(2) },
+              { time: apex as Time, value: +triMid.toFixed(2) },
+            ],
+            color, 2, 0, '△ Lower',
+          );
+          // Inner zigzag approximation
+          const zStep = Math.round((sorted[1].time - sorted[0].time) / 5);
+          const zPts = [];
+          for (let i = 0; i <= 5; i++) {
+            const shrink = 1 - i * 0.16;
+            const dir = i % 2 === 0 ? 1 : -1;
+            zPts.push({
+              time: (sorted[0].time + zStep * i) as Time,
+              value: +(triMid + (triRange / 2) * shrink * dir).toFixed(2),
+            });
+          }
+          createLine(zPts, color, 1, 2);
+          break;
+        }
+
+        // ── Three Drives Pattern — 3 progressive pushes ───────
+        case 'three-drives': {
+          const tdRange = Math.abs(sorted[1].price - sorted[0].price);
+          const tdDir = sorted[1].price > sorted[0].price ? 1 : -1;
+          const tdStep = Math.round((sorted[1].time - sorted[0].time) / 6);
+          const drive1 = { t: sorted[0].time + tdStep, p: sorted[0].price + tdRange * 0.5 * tdDir };
+          const ret1 = { t: sorted[0].time + tdStep * 2, p: sorted[0].price + tdRange * 0.2 * tdDir };
+          const drive2 = { t: sorted[0].time + tdStep * 3, p: sorted[0].price + tdRange * 0.75 * tdDir };
+          const ret2 = { t: sorted[0].time + tdStep * 4, p: sorted[0].price + tdRange * 0.4 * tdDir };
+          const drive3 = { t: sorted[0].time + tdStep * 5, p: sorted[0].price + tdRange * tdDir };
+          const tdEnd = { t: sorted[1].time, p: sorted[0].price + tdRange * 0.5 * tdDir };
+          const tdPts = [
+            { t: sorted[0].time, p: sorted[0].price },
+            drive1, ret1, drive2, ret2, drive3, tdEnd,
+          ];
+          for (let i = 0; i < tdPts.length - 1; i++) {
+            createLine(
+              [
+                { time: tdPts[i].t as Time, value: +tdPts[i].p.toFixed(2) },
+                { time: tdPts[i + 1].t as Time, value: +tdPts[i + 1].p.toFixed(2) },
+              ],
+              color, 2, 0, i === 0 ? 'D1' : i === 2 ? 'D2' : i === 4 ? 'D3' : '',
+            );
+          }
+          break;
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // ── ELLIOTT WAVES ─────────────────────────────────────
+        // ═══════════════════════════════════════════════════════
+
+        // ── Elliott Impulse (12345) ────────────────────────────
+        case 'elliott-impulse': {
+          const eiRange = Math.abs(sorted[1].price - sorted[0].price);
+          const eiDir = sorted[1].price > sorted[0].price ? 1 : -1;
+          const eiStep = Math.round((sorted[1].time - sorted[0].time) / 5);
+          const wavePts = [
+            { t: sorted[0].time, p: sorted[0].price },                                    // 0
+            { t: sorted[0].time + eiStep, p: sorted[0].price + eiRange * 0.38 * eiDir },   // 1
+            { t: sorted[0].time + eiStep * 2, p: sorted[0].price + eiRange * 0.15 * eiDir },// 2
+            { t: sorted[0].time + eiStep * 3, p: sorted[0].price + eiRange * 0.75 * eiDir },// 3
+            { t: sorted[0].time + eiStep * 4, p: sorted[0].price + eiRange * 0.50 * eiDir },// 4
+            { t: sorted[1].time, p: sorted[1].price },                                     // 5
+          ];
+          const waveLabels = ['0', '1', '2', '3', '4', '5'];
+          for (let i = 0; i < wavePts.length - 1; i++) {
+            createLine(
+              [
+                { time: wavePts[i].t as Time, value: +wavePts[i].p.toFixed(2) },
+                { time: wavePts[i + 1].t as Time, value: +wavePts[i + 1].p.toFixed(2) },
+              ],
+              color, 2, 0, waveLabels[i + 1],
+            );
+          }
+          break;
+        }
+
+        // ── Elliott Correction (ABC) ──────────────────────────
+        case 'elliott-correction': {
+          const ecRange = Math.abs(sorted[1].price - sorted[0].price);
+          const ecDir = sorted[1].price > sorted[0].price ? 1 : -1;
+          const ecStep = Math.round((sorted[1].time - sorted[0].time) / 3);
+          const corrPts = [
+            { t: sorted[0].time, p: sorted[0].price },
+            { t: sorted[0].time + ecStep, p: sorted[0].price + ecRange * 0.618 * ecDir },      // A
+            { t: sorted[0].time + ecStep * 2, p: sorted[0].price + ecRange * 0.236 * ecDir },   // B
+            { t: sorted[1].time, p: sorted[1].price },                                          // C
+          ];
+          const corrLabels = ['', 'A', 'B', 'C'];
+          for (let i = 0; i < corrPts.length - 1; i++) {
+            createLine(
+              [
+                { time: corrPts[i].t as Time, value: +corrPts[i].p.toFixed(2) },
+                { time: corrPts[i + 1].t as Time, value: +corrPts[i + 1].p.toFixed(2) },
+              ],
+              color, 2, 0, corrLabels[i + 1],
+            );
+          }
+          break;
+        }
+
+        // ── Elliott Triangle (ABCDE) ──────────────────────────
+        case 'elliott-triangle': {
+          const etRange = Math.abs(sorted[1].price - sorted[0].price);
+          const etDir = sorted[1].price > sorted[0].price ? 1 : -1;
+          const etStep = Math.round((sorted[1].time - sorted[0].time) / 5);
+          const triPts = [
+            { t: sorted[0].time, p: sorted[0].price },
+            { t: sorted[0].time + etStep, p: sorted[0].price + etRange * 0.8 * etDir },       // A
+            { t: sorted[0].time + etStep * 2, p: sorted[0].price + etRange * 0.2 * etDir },    // B
+            { t: sorted[0].time + etStep * 3, p: sorted[0].price + etRange * 0.6 * etDir },    // C
+            { t: sorted[0].time + etStep * 4, p: sorted[0].price + etRange * 0.35 * etDir },   // D
+            { t: sorted[1].time, p: sorted[0].price + etRange * 0.5 * etDir },                 // E
+          ];
+          const triLabels = ['', 'A', 'B', 'C', 'D', 'E'];
+          for (let i = 0; i < triPts.length - 1; i++) {
+            createLine(
+              [
+                { time: triPts[i].t as Time, value: +triPts[i].p.toFixed(2) },
+                { time: triPts[i + 1].t as Time, value: +triPts[i + 1].p.toFixed(2) },
+              ],
+              color, 2, 0, triLabels[i + 1],
+            );
+          }
+          break;
+        }
+
+        // ── Elliott Double Combo (WXY) ────────────────────────
+        case 'elliott-double-combo': {
+          const dcRange = Math.abs(sorted[1].price - sorted[0].price);
+          const dcDir = sorted[1].price > sorted[0].price ? 1 : -1;
+          const dcStep = Math.round((sorted[1].time - sorted[0].time) / 5);
+          const dcPts = [
+            { t: sorted[0].time, p: sorted[0].price },
+            { t: sorted[0].time + dcStep, p: sorted[0].price + dcRange * 0.4 * dcDir },       // W
+            { t: sorted[0].time + dcStep * 2, p: sorted[0].price + dcRange * 0.15 * dcDir },   // X
+            { t: sorted[0].time + dcStep * 3, p: sorted[0].price + dcRange * 0.6 * dcDir },    // W2
+            { t: sorted[0].time + dcStep * 4, p: sorted[0].price + dcRange * 0.3 * dcDir },    // X2
+            { t: sorted[1].time, p: sorted[1].price },                                         // Y
+          ];
+          const dcLabels = ['', 'W', 'X', 'W', 'X', 'Y'];
+          for (let i = 0; i < dcPts.length - 1; i++) {
+            createLine(
+              [
+                { time: dcPts[i].t as Time, value: +dcPts[i].p.toFixed(2) },
+                { time: dcPts[i + 1].t as Time, value: +dcPts[i + 1].p.toFixed(2) },
+              ],
+              color, 2, 0, dcLabels[i + 1],
+            );
+          }
+          break;
+        }
+
+        // ── Elliott Triple Combo (WXYXZ) ──────────────────────
+        case 'elliott-triple-combo': {
+          const tcRange = Math.abs(sorted[1].price - sorted[0].price);
+          const tcDir = sorted[1].price > sorted[0].price ? 1 : -1;
+          const tcStep = Math.round((sorted[1].time - sorted[0].time) / 7);
+          const tcPts = [
+            { t: sorted[0].time, p: sorted[0].price },
+            { t: sorted[0].time + tcStep, p: sorted[0].price + tcRange * 0.3 * tcDir },       // W
+            { t: sorted[0].time + tcStep * 2, p: sorted[0].price + tcRange * 0.1 * tcDir },    // X
+            { t: sorted[0].time + tcStep * 3, p: sorted[0].price + tcRange * 0.5 * tcDir },    // Y
+            { t: sorted[0].time + tcStep * 4, p: sorted[0].price + tcRange * 0.25 * tcDir },   // X
+            { t: sorted[0].time + tcStep * 5, p: sorted[0].price + tcRange * 0.7 * tcDir },    // Y
+            { t: sorted[0].time + tcStep * 6, p: sorted[0].price + tcRange * 0.45 * tcDir },   // X
+            { t: sorted[1].time, p: sorted[1].price },                                         // Z
+          ];
+          const tcLabels = ['', 'W', 'X', 'Y', 'X', 'Y', 'X', 'Z'];
+          for (let i = 0; i < tcPts.length - 1; i++) {
+            createLine(
+              [
+                { time: tcPts[i].t as Time, value: +tcPts[i].p.toFixed(2) },
+                { time: tcPts[i + 1].t as Time, value: +tcPts[i + 1].p.toFixed(2) },
+              ],
+              color, 2, 0, tcLabels[i + 1],
+            );
+          }
+          break;
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // ── CYCLES ────────────────────────────────────────────
+        // ═══════════════════════════════════════════════════════
+
+        // ── Cyclic Lines — evenly spaced vertical lines ───────
+        case 'cyclic-lines': {
+          const cyclePeriod = sorted[1].time - sorted[0].time;
+          if (cyclePeriod < intervalSec) break;
+          const cycleHigh = Math.max(sorted[0].price, sorted[1].price) * 1.05;
+          const cycleLow = Math.min(sorted[0].price, sorted[1].price) * 0.95;
+          for (let i = 0; i < 20; i++) {
+            const t = sorted[0].time + cyclePeriod * i;
+            if (t > sorted[1].time + cyclePeriod * 20) break;
+            createLine(
+              [
+                { time: t as Time, value: +cycleLow.toFixed(2) },
+                { time: t as Time, value: +cycleHigh.toFixed(2) },
+              ],
+              color, 1, 2, i === 0 ? 'Cycle' : '',
+            );
+          }
+          break;
+        }
+
+        // ── Time Cycles — concentric vertical line bands ──────
+        case 'time-cycles': {
+          const tcPeriod = sorted[1].time - sorted[0].time;
+          if (tcPeriod < intervalSec) break;
+          const tcHigh = Math.max(sorted[0].price, sorted[1].price) * 1.05;
+          const tcLow = Math.min(sorted[0].price, sorted[1].price) * 0.95;
+          const multiples = [1, 2, 3, 5, 8, 13];
+          for (const m of multiples) {
+            const t = sorted[0].time + tcPeriod * m;
+            createLine(
+              [
+                { time: t as Time, value: +tcLow.toFixed(2) },
+                { time: t as Time, value: +tcHigh.toFixed(2) },
+              ],
+              color, m <= 3 ? 2 : 1, 2, `×${m}`,
+            );
+          }
+          break;
+        }
+
+        // ── Sine Line — sinusoidal wave approximation ─────────
+        case 'sine-line': {
+          const sinePeriod = sorted[1].time - sorted[0].time;
+          const sineAmp = Math.abs(sorted[1].price - sorted[0].price) / 2;
+          const sineMid = (sorted[0].price + sorted[1].price) / 2;
+          const numCycles = 3;
+          const totalLen = sinePeriod * numCycles;
+          const steps = numCycles * 16;
+          const sinePts = [];
+          for (let i = 0; i <= steps; i++) {
+            const frac = i / steps;
+            const t = sorted[0].time + Math.round(totalLen * frac);
+            const val = sineMid + sineAmp * Math.sin(frac * numCycles * 2 * Math.PI);
+            sinePts.push({ time: t as Time, value: +val.toFixed(2) });
+          }
+          createLine(sinePts, color, 2, 0, 'Sine');
           break;
         }
       }

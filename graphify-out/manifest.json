@@ -480,8 +480,8 @@
     "hash": "6b0d5db29f2cc941fc6cd092200e24f8"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\layout\\TerminalLayout.tsx": {
-    "mtime": 1778498916.0717778,
-    "hash": "a416490415dfd9330fe36de2bbf4e1d2"
+    "mtime": 1778511161.1707864,
+    "hash": "56e1f5e49ec621f855a50a0ab79b9aa2"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\layouts\\IntradayLayout.tsx": {
     "mtime": 1778435734.9066737,
@@ -532,16 +532,16 @@
     "hash": "8c633243f8b4c667b23c75942f2d4bae"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useDrawingEngine.ts": {
-    "mtime": 1778501282.335822,
-    "hash": "127bc2359407f80e873c8c3f19d3c5a6"
+    "mtime": 1778511613.6093905,
+    "hash": "3c59834fc17cafb749a03f69845eeb8c"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useDrawingInteraction.ts": {
     "mtime": 1778501429.998388,
     "hash": "55b69dbb1857189858dcd456616dfca9"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useDrawingRenderer.ts": {
-    "mtime": 1778502994.7719426,
-    "hash": "6aadf80cdbdd3cfeaa87dd64c55f6642"
+    "mtime": 1778511346.0456624,
+    "hash": "d7c081a3f32df6b97025cf057a69edb2"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useFibZoneOverlay.ts": {
     "mtime": 1778503151.9224906,

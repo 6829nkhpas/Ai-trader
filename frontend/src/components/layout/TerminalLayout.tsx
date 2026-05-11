@@ -55,6 +55,20 @@ import {
   Hash,
   Scan,
   Fan,
+  // Pattern & Wave & Cycle icons
+  Hexagon,
+  Pentagon,
+  Gem,
+  Diamond,
+  Shapes,
+  GitBranch,
+  GitMerge,
+  GitPullRequest,
+  GitCommit,
+  Workflow,
+  BarChart3,
+  AudioWaveform,
+  Waves,
 } from 'lucide-react';
 import { useTradeStore, TradeProfile } from '../../store/useTradeStore';
 import { useAuth } from '../../context/AuthContext';
@@ -133,6 +147,26 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
     { id: 'gann-square-fixed', label: 'Gann Square Fixed', icon: Scan },
     { id: 'gann-square', label: 'Gann Square', icon: Hash },
     { id: 'gann-fan', label: 'Gann Fan', icon: Fan },
+  ];
+
+  const patternOptions: ToolMenuEntry[] = [
+    { section: 'Patterns' },
+    { id: 'xabcd-pattern', label: 'XABCD Pattern', icon: Hexagon },
+    { id: 'cypher-pattern', label: 'Cypher Pattern', icon: Pentagon },
+    { id: 'head-shoulders', label: 'Head and Shoulders', icon: Gem },
+    { id: 'abcd-pattern', label: 'ABCD Pattern', icon: Diamond },
+    { id: 'triangle-pattern', label: 'Triangle Pattern', icon: Triangle },
+    { id: 'three-drives', label: 'Three Drives Pattern', icon: Shapes },
+    { section: 'Elliott Waves' },
+    { id: 'elliott-impulse', label: 'Elliott Impulse Wave (12345)', icon: GitBranch },
+    { id: 'elliott-correction', label: 'Elliott Correction Wave (ABC)', icon: GitMerge },
+    { id: 'elliott-triangle', label: 'Elliott Triangle Wave (ABCDE)', icon: GitPullRequest },
+    { id: 'elliott-double-combo', label: 'Elliott Double Combo (WXY)', icon: GitCommit },
+    { id: 'elliott-triple-combo', label: 'Elliott Triple Combo (WXYXZ)', icon: Workflow },
+    { section: 'Cycles' },
+    { id: 'cyclic-lines', label: 'Cyclic Lines', icon: BarChart3 },
+    { id: 'time-cycles', label: 'Time Cycles', icon: AudioWaveform },
+    { id: 'sine-line', label: 'Sine Line', icon: Waves },
   ];
 
   const shapeOptions = [
@@ -309,6 +343,13 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
             icon={(fibOptions.filter((o): o is { id: string; label: string; icon: React.ElementType; shortcut?: string } => 'id' in o).find(o => o.id === activeDrawingTool))?.icon || AlignEndHorizontal}
             isActive={fibOptions.filter((o): o is { id: string; label: string; icon: React.ElementType; shortcut?: string } => 'id' in o).some(o => o.id === activeDrawingTool)}
             options={fibOptions}
+            onSelect={setActiveDrawingTool}
+          />
+
+          <ToolMenu
+            icon={(patternOptions.filter((o): o is { id: string; label: string; icon: React.ElementType; shortcut?: string } => 'id' in o).find(o => o.id === activeDrawingTool))?.icon || Hexagon}
+            isActive={patternOptions.filter((o): o is { id: string; label: string; icon: React.ElementType; shortcut?: string } => 'id' in o).some(o => o.id === activeDrawingTool)}
+            options={patternOptions}
             onSelect={setActiveDrawingTool}
           />
 
