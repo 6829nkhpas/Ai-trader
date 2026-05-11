@@ -1,270 +1,268 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import type { IChartApi, ISeriesApi, Time } from 'lightweight-charts';
 import { LineSeries } from 'lightweight-charts';
 import { useChartUIStore, type Point } from '../store/useChartUIStore';
 
-// All 2-click (start → end) drawing tools
+// All 2-click / drag drawing tools
 const TWO_POINT_TOOLS = new Set([
-  'trendline',
-  'ray',
-  'info-line',
-  'extended-line',
-  'trend-angle',
-  'horizontal-line',
-  'horizontal-ray',
-  'vertical-line',
-  'cross-line',
-  'parallel-channel',
-  'regression-trend',
-  'flat-top-bottom',
-  'disjoint-channel',
-  'fib-retracement',
-  'fib-extension',
-  'fib-channel',
-  'fib-time-zone',
-  'fib-speed-fan',
-  'fib-time-trend',
-  'fib-circles',
-  'fib-spiral',
-  'fib-arcs',
-  'fib-wedge',
-  'pitchfan',
-  'gann-box',
-  'gann-square-fixed',
-  'gann-square',
-  'gann-fan',
-  'trend-fib',
-  'long-position',
-  'short-position',
-  'price-range',
+  'trendline', 'ray', 'info-line', 'extended-line', 'trend-angle',
+  'horizontal-line', 'horizontal-ray', 'vertical-line', 'cross-line',
+  'parallel-channel', 'regression-trend', 'flat-top-bottom', 'disjoint-channel',
+  'fib-retracement', 'fib-extension', 'fib-channel', 'fib-time-zone',
+  'fib-speed-fan', 'fib-time-trend', 'fib-circles', 'fib-spiral',
+  'fib-arcs', 'fib-wedge', 'pitchfan',
+  'gann-box', 'gann-square-fixed', 'gann-square', 'gann-fan',
+  'trend-fib', 'long-position', 'short-position', 'price-range',
 ]);
 
-// Tools that are not yet supported (single-click or complex)
 const UNSUPPORTED_TOOLS = new Set([
-  'brush',
-  'highlighter',
-  'rectangle',
-  'circle',
-  'text',
-  'callout',
-  'price-label',
+  'brush', 'highlighter', 'rectangle', 'circle',
+  'text', 'callout', 'price-label',
 ]);
-
-// Color per tool for the anchor marker
-const TOOL_COLORS: Record<string, string> = {
-  'trendline': '#2962FF',
-  'ray': '#2962FF',
-  'info-line': '#00BCD4',
-  'extended-line': '#2962FF',
-  'trend-angle': '#FF9800',
-  'horizontal-line': '#FF6D00',
-  'horizontal-ray': '#FF6D00',
-  'vertical-line': '#AB47BC',
-  'cross-line': '#AB47BC',
-  'parallel-channel': '#26A69A',
-  'regression-trend': '#EC407A',
-  'flat-top-bottom': '#26A69A',
-  'disjoint-channel': '#78909C',
-  'fib-retracement': '#FFD600',
-  'fib-extension': '#FFD600',
-  'fib-channel': '#F48FB1',
-  'fib-time-zone': '#CE93D8',
-  'fib-speed-fan': '#80CBC4',
-  'fib-time-trend': '#CE93D8',
-  'fib-circles': '#FFAB91',
-  'fib-spiral': '#A5D6A7',
-  'fib-arcs': '#80DEEA',
-  'fib-wedge': '#EF9A9A',
-  'pitchfan': '#B39DDB',
-  'gann-box': '#FFF176',
-  'gann-square-fixed': '#FFF176',
-  'gann-square': '#FFF176',
-  'gann-fan': '#FFE082',
-  'trend-fib': '#FFD600',
-  'long-position': '#22c55e',
-  'short-position': '#ef4444',
-  'price-range': '#00BCD4',
-};
 
 /**
- * useDrawingEngine — Drawing Physics Bridge
+ * useDrawingEngine — Drag-to-Draw Physics Bridge (v2)
  *
- * Translates raw screen-pixel clicks on the lightweight-charts canvas into
- * logical Time/Price coordinates, then persists completed drawings into the
- * Zustand store.
- *
- * Shows a visible anchor marker (pulsing dot) at the first click point
- * so the user knows the start point was registered.
- *
- * @param chartRef       – React ref holding the IChartApi instance.
- * @param candleSeriesRef – React ref holding the primary candlestick series.
+ * Supports drag-to-draw: mousedown sets anchor, mousemove shows live preview,
+ * mouseup finalizes the drawing. Falls back to click-click for accessibility.
  */
 export function useDrawingEngine(
   chartRef: React.RefObject<IChartApi | null>,
   candleSeriesRef: React.RefObject<ISeriesApi<'Candlestick'> | null>,
+  containerRef: React.RefObject<HTMLDivElement | null>,
 ) {
   const activeDrawingTool = useChartUIStore((s) => s.activeDrawingTool);
   const addDrawing = useChartUIStore((s) => s.addDrawing);
   const setActiveDrawingTool = useChartUIStore((s) => s.setActiveDrawingTool);
 
-  // Local state for in-progress drawing
-  const [currentPoints, setCurrentPoints] = useState<Point[]>([]);
-  const currentPointsRef = useRef<Point[]>([]);
+  // Drag state refs (avoid re-renders during drag)
+  const isDragging = useRef(false);
+  const anchorPoint = useRef<Point | null>(null);
+  const previewSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
 
-  // Temporary anchor marker series (shows the first-click dot on chart)
-  const anchorSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  // ── Pixel → Logical coordinate conversion ──────────────────────────
+  const pixelToPoint = useCallback(
+    (x: number, y: number): Point | null => {
+      const chart = chartRef.current;
+      const series = candleSeriesRef.current;
+      if (!chart || !series) return null;
 
-  // Keep ref in sync so the click handler always reads the latest value
-  useEffect(() => {
-    currentPointsRef.current = currentPoints;
-  }, [currentPoints]);
-
-  // ── Cleanup anchor marker helper ────────────────────────────────────
-  const removeAnchorMarker = useCallback(() => {
-    const chart = chartRef.current;
-    if (anchorSeriesRef.current && chart) {
-      try {
-        chart.removeSeries(anchorSeriesRef.current);
-      } catch {
-        // already removed
+      // Time from pixel X
+      let time: number | null = null;
+      const converted = chart.timeScale().coordinateToTime(x);
+      if (converted !== null && converted !== undefined) {
+        time = converted as number;
       }
-      anchorSeriesRef.current = null;
-    }
-  }, [chartRef]);
+      if (time === null) return null;
 
-  // ── Show anchor marker at first-click position ──────────────────────
-  const showAnchorMarker = useCallback(
-    (point: Point, color: string) => {
+      // Price from pixel Y
+      const price = series.coordinateToPrice(y);
+      if (price === null || price === undefined) return null;
+
+      return { time, price: +price.toFixed(2) };
+    },
+    [chartRef, candleSeriesRef],
+  );
+
+  // ── Show/update live preview line during drag ──────────────────────
+  const updatePreview = useCallback(
+    (p1: Point, p2: Point, color: string) => {
       const chart = chartRef.current;
       if (!chart) return;
 
-      // Remove any existing anchor marker first
-      removeAnchorMarker();
+      // Remove old preview
+      if (previewSeriesRef.current) {
+        try { chart.removeSeries(previewSeriesRef.current); } catch {}
+        previewSeriesRef.current = null;
+      }
 
-      // Create a visible anchor series — lastValueVisible shows a permanent
-      // colored dot + label at the price level on the y-axis.
-      // crosshairMarkerVisible shows a dot when the crosshair is near.
-      const anchorSeries = chart.addSeries(LineSeries, {
-        color: 'transparent',
-        lineWidth: 1,
+      const sorted = [p1, p2].sort((a, b) => a.time - b.time);
+      const preview = chart.addSeries(LineSeries, {
+        color,
+        lineWidth: 2,
+        lineStyle: 2, // Dashed for preview
         crosshairMarkerVisible: true,
         crosshairMarkerRadius: 6,
-        crosshairMarkerBackgroundColor: color,
+        crosshairMarkerBackgroundColor: '#FFFFFF',
+        crosshairMarkerBorderColor: color,
         priceLineVisible: false,
-        lastValueVisible: true,
-        title: '⊙',
+        lastValueVisible: false,
       });
 
-      // Single data point — the line won't render (need 2+ pts)
-      // but lastValueVisible still shows the price label dot
-      anchorSeries.setData([
-        { time: point.time as Time, value: point.price },
+      // LWC requires strictly ascending time — offset if equal
+      const t0 = sorted[0].time;
+      const t1 = sorted[1].time <= t0 ? t0 + 1 : sorted[1].time;
+
+      preview.setData([
+        { time: t0 as Time, value: sorted[0].price },
+        { time: t1 as Time, value: sorted[1].price },
       ]);
 
-      // Add a subtle horizontal price line as permanent visual indicator
-      anchorSeries.createPriceLine({
-        price: point.price,
-        color,
-        lineWidth: 1,
-        lineStyle: 2, // Dashed
-        axisLabelVisible: true,
-      });
-
-      anchorSeriesRef.current = anchorSeries;
+      previewSeriesRef.current = preview;
     },
-    [chartRef, removeAnchorMarker],
+    [chartRef],
   );
 
-  // Reset in-progress state + remove anchor whenever the tool changes
-  useEffect(() => {
-    setCurrentPoints([]);
-    removeAnchorMarker();
-  }, [activeDrawingTool, removeAnchorMarker]);
-
-  // ── Click handler — pixel → logical coordinate translation ──────────
-  const handleClick = useCallback(
-    (param: any) => {
-      const chart = chartRef.current;
-      const candleSeries = candleSeriesRef.current;
-
-      if (!activeDrawingTool) return;
-      if (!chart || !candleSeries) {
-        console.warn('[DRAWING ENGINE] Chart or series not ready');
-        return;
-      }
-
-      // Check if the tool is unsupported
-      if (UNSUPPORTED_TOOLS.has(activeDrawingTool)) {
-        console.log(`[DRAWING ENGINE] "${activeDrawingTool}" is not yet implemented`);
-        setActiveDrawingTool(null);
-        return;
-      }
-
-      // Must have pixel coordinates
-      if (!param.point) return;
-
-      // ── Extract logical time ──────────────────────────────────────
-      let time: number | null = null;
-
-      if (param.time !== undefined && param.time !== null) {
-        time = param.time as number;
-      } else {
-        const converted = chart.timeScale().coordinateToTime(param.point.x);
-        if (converted !== null && converted !== undefined) {
-          time = converted as number;
-        }
-      }
-
-      if (time === null) {
-        console.warn('[DRAWING ENGINE] Could not resolve time coordinate');
-        return;
-      }
-
-      // ── Extract logical price ─────────────────────────────────────
-      const price = candleSeries.coordinateToPrice(param.point.y);
-      if (price === null || price === undefined) {
-        console.warn('[DRAWING ENGINE] Could not resolve price coordinate');
-        return;
-      }
-
-      const point: Point = { time, price: +price.toFixed(2) };
-      const toolColor = TOOL_COLORS[activeDrawingTool] || '#2962FF';
-
-      // ── 2-point drawing tools ─────────────────────────────────────
-      if (TWO_POINT_TOOLS.has(activeDrawingTool)) {
-        const points = [...currentPointsRef.current, point];
-
-        if (points.length === 1) {
-          // First click — show anchor marker and wait for second click
-          setCurrentPoints(points);
-          showAnchorMarker(point, toolColor);
-          console.log('[DRAWING ENGINE] Anchor set:', point);
-        } else if (points.length >= 2) {
-          // Second click — remove anchor, complete the drawing
-          removeAnchorMarker();
-          const id = crypto.randomUUID();
-          addDrawing({ id, tool: activeDrawingTool, points: [points[0], points[1]] });
-          console.log(`[DRAWING ENGINE] ${activeDrawingTool} complete:`, id);
-
-          // Reset: deactivate the tool so user exits drawing mode
-          setCurrentPoints([]);
-          setActiveDrawingTool(null);
-        }
-      }
-    },
-    [activeDrawingTool, chartRef, candleSeriesRef, addDrawing, setActiveDrawingTool, showAnchorMarker, removeAnchorMarker],
-  );
-
-  // ── Subscribe / unsubscribe to chart click events ───────────────────
-  useEffect(() => {
+  // ── Remove preview series ──────────────────────────────────────────
+  const clearPreview = useCallback(() => {
     const chart = chartRef.current;
-    if (!chart || !activeDrawingTool) return;
+    if (previewSeriesRef.current && chart) {
+      try { chart.removeSeries(previewSeriesRef.current); } catch {}
+      previewSeriesRef.current = null;
+    }
+  }, [chartRef]);
 
-    chart.subscribeClick(handleClick);
-    return () => {
-      chart.unsubscribeClick(handleClick);
+  // ── Tool color helper ──────────────────────────────────────────────
+  const getToolColor = useCallback((tool: string): string => {
+    const colors: Record<string, string> = {
+      'trendline': '#2962FF', 'ray': '#2962FF', 'info-line': '#00BCD4',
+      'extended-line': '#2962FF', 'trend-angle': '#FF9800',
+      'horizontal-line': '#FF6D00', 'horizontal-ray': '#FF6D00',
+      'vertical-line': '#AB47BC', 'cross-line': '#AB47BC',
+      'parallel-channel': '#26A69A', 'regression-trend': '#EC407A',
+      'flat-top-bottom': '#26A69A', 'disjoint-channel': '#78909C',
+      'fib-retracement': '#FFD600', 'fib-extension': '#FFD600',
+      'fib-channel': '#F48FB1', 'fib-time-zone': '#CE93D8',
+      'fib-speed-fan': '#80CBC4', 'fib-time-trend': '#CE93D8',
+      'fib-circles': '#FFAB91', 'fib-spiral': '#A5D6A7',
+      'fib-arcs': '#80DEEA', 'fib-wedge': '#EF9A9A',
+      'pitchfan': '#B39DDB',
+      'gann-box': '#FFF176', 'gann-square-fixed': '#FFF176',
+      'gann-square': '#FFF176', 'gann-fan': '#FFE082',
+      'trend-fib': '#FFD600',
+      'long-position': '#22c55e', 'short-position': '#ef4444',
+      'price-range': '#00BCD4',
     };
-  }, [chartRef, activeDrawingTool, handleClick]);
+    return colors[tool] || '#2962FF';
+  }, []);
 
-  return { currentPoints };
+  // ── Finalize drawing ───────────────────────────────────────────────
+  const finalizeDraw = useCallback(
+    (p1: Point, p2: Point) => {
+      if (!activeDrawingTool) return;
+      clearPreview();
+      const id = crypto.randomUUID();
+      addDrawing({ id, tool: activeDrawingTool, points: [p1, p2] });
+      console.log(`[DRAW ENGINE] ${activeDrawingTool} complete:`, id);
+      isDragging.current = false;
+      anchorPoint.current = null;
+      setActiveDrawingTool(null);
+    },
+    [activeDrawingTool, addDrawing, setActiveDrawingTool, clearPreview],
+  );
+
+  // ── Mouse event handlers ───────────────────────────────────────────
+  useEffect(() => {
+    const container = containerRef.current;
+    const chart = chartRef.current;
+    if (!container || !chart || !activeDrawingTool) return;
+
+    if (UNSUPPORTED_TOOLS.has(activeDrawingTool)) {
+      console.log(`[DRAW ENGINE] "${activeDrawingTool}" not yet implemented`);
+      setActiveDrawingTool(null);
+      return;
+    }
+
+    if (!TWO_POINT_TOOLS.has(activeDrawingTool)) return;
+
+    const color = getToolColor(activeDrawingTool);
+
+    // Get chart canvas offset (the chart container's position on screen)
+    const getLocalCoords = (e: MouseEvent) => {
+      const rect = container.getBoundingClientRect();
+      return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    };
+
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0) return; // left click only
+      const { x, y } = getLocalCoords(e);
+      const point = pixelToPoint(x, y);
+      if (!point) return;
+
+      isDragging.current = true;
+      anchorPoint.current = point;
+
+      // Prevent chart from panning while drawing
+      chart.applyOptions({ handleScroll: false, handleScale: false });
+    };
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current || !anchorPoint.current) return;
+      const { x, y } = getLocalCoords(e);
+      const point = pixelToPoint(x, y);
+      if (!point) return;
+
+      // Show live dashed preview line
+      updatePreview(anchorPoint.current, point, color);
+    };
+
+    const onMouseUp = (e: MouseEvent) => {
+      // Re-enable chart interaction
+      chart.applyOptions({ handleScroll: true, handleScale: true });
+
+      if (!isDragging.current || !anchorPoint.current) return;
+      const { x, y } = getLocalCoords(e);
+      const point = pixelToPoint(x, y);
+
+      if (point) {
+        // Only finalize if dragged a meaningful distance (> 5px)
+        const dx = Math.abs(e.clientX - (container.getBoundingClientRect().left + 
+          (chart.timeScale().timeToCoordinate(anchorPoint.current.time as Time) ?? 0)));
+        if (dx > 5 || Math.abs(anchorPoint.current.price - point.price) > 0.01) {
+          finalizeDraw(anchorPoint.current, point);
+        } else {
+          // Too small — treat as a click, wait for second click
+          // (keep anchor, don't finalize)
+          isDragging.current = false;
+        }
+      } else {
+        isDragging.current = false;
+        anchorPoint.current = null;
+        clearPreview();
+      }
+    };
+
+    // Also support click-click as fallback
+    const onClick = (e: MouseEvent) => {
+      if (isDragging.current) return; // drag handled by mouseup
+      if (!anchorPoint.current) return; // no pending anchor from a tiny drag
+
+      const { x, y } = getLocalCoords(e);
+      const point = pixelToPoint(x, y);
+      if (!point) return;
+
+      // Second click — complete the drawing
+      finalizeDraw(anchorPoint.current, point);
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        isDragging.current = false;
+        anchorPoint.current = null;
+        clearPreview();
+        chart.applyOptions({ handleScroll: true, handleScale: true });
+        setActiveDrawingTool(null);
+      }
+    };
+
+    container.addEventListener('mousedown', onMouseDown);
+    container.addEventListener('mousemove', onMouseMove);
+    container.addEventListener('mouseup', onMouseUp);
+    container.addEventListener('click', onClick);
+    document.addEventListener('keydown', onKeyDown);
+
+    return () => {
+      container.removeEventListener('mousedown', onMouseDown);
+      container.removeEventListener('mousemove', onMouseMove);
+      container.removeEventListener('mouseup', onMouseUp);
+      container.removeEventListener('click', onClick);
+      document.removeEventListener('keydown', onKeyDown);
+      chart.applyOptions({ handleScroll: true, handleScale: true });
+      clearPreview();
+      isDragging.current = false;
+      anchorPoint.current = null;
+    };
+  }, [activeDrawingTool, chartRef, candleSeriesRef, containerRef, 
+      pixelToPoint, updatePreview, clearPreview, finalizeDraw, 
+      getToolColor, setActiveDrawingTool]);
 }
