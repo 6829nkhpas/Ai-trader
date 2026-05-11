@@ -1,11 +1,12 @@
 'use client';
 
 import React, { useMemo } from 'react';
-import { useTradeStore } from '../store/useTradeStore';
+import { useTradeStore, type OhlcCandle } from '../store/useTradeStore';
 import { useChartUIStore } from '../store/useChartUIStore';
 import { useHistoricalData } from '../hooks/useHistoricalData';
 
-import type { Timeframe, AlphaPredictiveChartProps, OhlcCandle } from '../utils/chartTypes';
+import type { Timeframe, AlphaPredictiveChartProps } from '../utils/chartTypes';
+export type { Timeframe };
 import { aggregateCandles } from '../utils/chartAggregation';
 
 import { useChartInit } from '../hooks/useChartInit';
