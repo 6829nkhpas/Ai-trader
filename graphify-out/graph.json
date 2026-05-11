@@ -3373,7 +3373,7 @@
       "label": "cycleMagnetMode()",
       "file_type": "code",
       "source_file": "frontend/src/components/layout/TerminalLayout.tsx",
-      "source_location": "L191",
+      "source_location": "L222",
       "id": "layout_terminallayout_cyclemagnetmode",
       "community": 15,
       "norm_label": "cyclemagnetmode()"
@@ -3382,7 +3382,7 @@
       "label": "async()",
       "file_type": "code",
       "source_file": "frontend/src/components/layout/TerminalLayout.tsx",
-      "source_location": "L299",
+      "source_location": "L330",
       "id": "layout_terminallayout_async",
       "community": 15,
       "norm_label": "async()"
@@ -3769,7 +3769,7 @@
       "label": "useDrawingEngine()",
       "file_type": "code",
       "source_file": "frontend/src/hooks/useDrawingEngine.ts",
-      "source_location": "L37",
+      "source_location": "L43",
       "id": "hooks_usedrawingengine_usedrawingengine",
       "community": 7,
       "norm_label": "usedrawingengine()"
@@ -14848,5 +14848,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "78a0d0abba7b5e40f71d321f5b9b064ffd772306"
+  "built_at_commit": "2dafa89b77c2875b019b300b5837ca2ca73c30bd"
 }

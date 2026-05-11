@@ -65,6 +65,15 @@ export function useDrawingRenderer(
       'cyclic-lines': '#00BCD4',
       'time-cycles': '#3F51B5',
       'sine-line': '#E91E63',
+      // Arrows
+      'arrow-marker': '#FF5722', 'arrow': '#FF5722',
+      'arrow-mark-up': '#4CAF50', 'arrow-mark-down': '#ef4444',
+      'arrow-mark-left': '#FF9800', 'arrow-mark-right': '#2196F3',
+      // Shapes
+      'rectangle': '#2962FF', 'rotated-rectangle': '#2962FF',
+      'path': '#9C27B0', 'circle': '#00BCD4', 'ellipse': '#00BCD4',
+      'polyline': '#FF9800', 'triangle-shape': '#009688',
+      'arc': '#E91E63', 'curve': '#673AB7', 'double-curve': '#795548',
     };
 
     const TOOL_LINE_STYLES: Record<string, number> = {
@@ -979,6 +988,314 @@ export function useDrawingRenderer(
             sinePts.push({ time: t as Time, value: +val.toFixed(2) });
           }
           createLine(sinePts, color, 2, 0, 'Sine');
+          break;
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // ── ARROWS ────────────────────────────────────────────
+        // ═══════════════════════════════════════════════════════
+
+        // ── Arrow Marker — point indicator at p1 ──────────────
+        case 'arrow-marker': {
+          const amSize = Math.abs(sorted[1].price - sorted[0].price) * 0.15 || sorted[0].price * 0.002;
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +(sorted[0].price - amSize).toFixed(2) },
+              { time: sorted[0].time as Time, value: +(sorted[0].price + amSize).toFixed(2) },
+            ],
+            color, 3, 0, '▲',
+          );
+          break;
+        }
+
+        // ── Arrow — directional line with arrowhead feel ───────
+        case 'arrow': {
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[1].price },
+            ],
+            color, 3, 0, '→',
+          );
+          break;
+        }
+
+        // ── Arrow Mark Up — vertical up marker ────────────────
+        case 'arrow-mark-up': {
+          const amuSize = Math.abs(sorted[1].price - sorted[0].price) || sorted[0].price * 0.01;
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[0].time as Time, value: +(sorted[0].price + amuSize).toFixed(2) },
+            ],
+            color, 3, 0, '▲ Up',
+          );
+          break;
+        }
+
+        // ── Arrow Mark Down — vertical down marker ────────────
+        case 'arrow-mark-down': {
+          const amdSize = Math.abs(sorted[1].price - sorted[0].price) || sorted[0].price * 0.01;
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[0].time as Time, value: +(sorted[0].price - amdSize).toFixed(2) },
+            ],
+            color, 3, 0, '▼ Down',
+          );
+          break;
+        }
+
+        // ── Arrow Mark Left — horizontal left marker ──────────
+        case 'arrow-mark-left': {
+          const amlSpan = Math.abs(sorted[1].time - sorted[0].time) || intervalSec * 10;
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: (sorted[0].time - amlSpan) as Time, value: sorted[0].price },
+            ],
+            color, 3, 0, '← Left',
+          );
+          break;
+        }
+
+        // ── Arrow Mark Right — horizontal right marker ────────
+        case 'arrow-mark-right': {
+          const amrSpan = Math.abs(sorted[1].time - sorted[0].time) || intervalSec * 10;
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: (sorted[0].time + amrSpan) as Time, value: sorted[0].price },
+            ],
+            color, 3, 0, '→ Right',
+          );
+          break;
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // ── SHAPES ────────────────────────────────────────────
+        // ═══════════════════════════════════════════════════════
+
+        // ── Rectangle — 4-sided box between two points ────────
+        case 'rectangle': {
+          const rTop = Math.max(sorted[0].price, sorted[1].price);
+          const rBot = Math.min(sorted[0].price, sorted[1].price);
+          // Top edge
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +rTop.toFixed(2) },
+              { time: sorted[1].time as Time, value: +rTop.toFixed(2) },
+            ],
+            color, 2, 0,
+          );
+          // Bottom edge
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +rBot.toFixed(2) },
+              { time: sorted[1].time as Time, value: +rBot.toFixed(2) },
+            ],
+            color, 2, 0,
+          );
+          // Left edge
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +rBot.toFixed(2) },
+              { time: sorted[0].time as Time, value: +rTop.toFixed(2) },
+            ],
+            color, 2, 0,
+          );
+          // Right edge
+          createLine(
+            [
+              { time: sorted[1].time as Time, value: +rBot.toFixed(2) },
+              { time: sorted[1].time as Time, value: +rTop.toFixed(2) },
+            ],
+            color, 2, 0,
+          );
+          break;
+        }
+
+        // ── Rotated Rectangle — tilted box ─────────────────────
+        case 'rotated-rectangle': {
+          const rrRange = Math.abs(sorted[1].price - sorted[0].price) * 0.3;
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +(sorted[0].price + rrRange).toFixed(2) },
+              { time: sorted[1].time as Time, value: +(sorted[1].price + rrRange).toFixed(2) },
+            ],
+            color, 2, 0,
+          );
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +(sorted[0].price - rrRange).toFixed(2) },
+              { time: sorted[1].time as Time, value: +(sorted[1].price - rrRange).toFixed(2) },
+            ],
+            color, 2, 0,
+          );
+          // End caps
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +(sorted[0].price - rrRange).toFixed(2) },
+              { time: sorted[0].time as Time, value: +(sorted[0].price + rrRange).toFixed(2) },
+            ],
+            color, 2, 0,
+          );
+          createLine(
+            [
+              { time: sorted[1].time as Time, value: +(sorted[1].price - rrRange).toFixed(2) },
+              { time: sorted[1].time as Time, value: +(sorted[1].price + rrRange).toFixed(2) },
+            ],
+            color, 2, 0,
+          );
+          break;
+        }
+
+        // ── Path — multi-segment line (simplified to 2-point) ─
+        case 'path': {
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[1].price },
+            ],
+            color, 2, 0, 'Path',
+          );
+          break;
+        }
+
+        // ── Circle — approximated with arc points ─────────────
+        case 'circle': {
+          const cRadius = Math.abs(sorted[1].price - sorted[0].price) / 2;
+          const cMidP = (sorted[0].price + sorted[1].price) / 2;
+          const cMidT = Math.round((sorted[0].time + sorted[1].time) / 2);
+          const cTimeR = Math.round((sorted[1].time - sorted[0].time) / 2);
+          const cSteps = 16;
+          const cPtsTop = [];
+          const cPtsBot = [];
+          for (let i = 0; i <= cSteps; i++) {
+            const angle = (i / cSteps) * Math.PI;
+            const t = cMidT - cTimeR + Math.round((cTimeR * 2 * i) / cSteps);
+            const pOff = cRadius * Math.sin(angle);
+            cPtsTop.push({ time: t as Time, value: +(cMidP + pOff).toFixed(2) });
+            cPtsBot.push({ time: t as Time, value: +(cMidP - pOff).toFixed(2) });
+          }
+          createLine(cPtsTop, color, 2, 0);
+          createLine(cPtsBot, color, 2, 0);
+          break;
+        }
+
+        // ── Ellipse — stretched circle ─────────────────────────
+        case 'ellipse': {
+          const eRadiusP = Math.abs(sorted[1].price - sorted[0].price) / 2;
+          const eMidP = (sorted[0].price + sorted[1].price) / 2;
+          const eMidT = Math.round((sorted[0].time + sorted[1].time) / 2);
+          const eTimeR = Math.round((sorted[1].time - sorted[0].time) / 2);
+          const eSteps = 20;
+          const ePtsTop = [];
+          const ePtsBot = [];
+          for (let i = 0; i <= eSteps; i++) {
+            const angle = (i / eSteps) * Math.PI;
+            const t = eMidT - eTimeR + Math.round((eTimeR * 2 * i) / eSteps);
+            const pOff = eRadiusP * Math.sin(angle);
+            ePtsTop.push({ time: t as Time, value: +(eMidP + pOff).toFixed(2) });
+            ePtsBot.push({ time: t as Time, value: +(eMidP - pOff).toFixed(2) });
+          }
+          createLine(ePtsTop, color, 2, 0);
+          createLine(ePtsBot, color, 2, 0);
+          break;
+        }
+
+        // ── Polyline — zigzag multi-segment ────────────────────
+        case 'polyline': {
+          const plRange = Math.abs(sorted[1].price - sorted[0].price);
+          const plSteps = 5;
+          const plStep = Math.round((sorted[1].time - sorted[0].time) / plSteps);
+          const plPts = [{ time: sorted[0].time as Time, value: sorted[0].price }];
+          for (let i = 1; i < plSteps; i++) {
+            const dir = i % 2 === 0 ? 1 : -1;
+            const t = sorted[0].time + plStep * i;
+            const p = ((sorted[0].price + sorted[1].price) / 2) + plRange * 0.3 * dir;
+            plPts.push({ time: t as Time, value: +p.toFixed(2) });
+          }
+          plPts.push({ time: sorted[1].time as Time, value: sorted[1].price });
+          createLine(plPts, color, 2, 0, 'Polyline');
+          break;
+        }
+
+        // ── Triangle Shape — equilateral triangle ─────────────
+        case 'triangle-shape': {
+          const tsTop = Math.max(sorted[0].price, sorted[1].price);
+          const tsBot = Math.min(sorted[0].price, sorted[1].price);
+          const tsMidT = Math.round((sorted[0].time + sorted[1].time) / 2);
+          // Left edge → apex → right edge
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +tsBot.toFixed(2) },
+              { time: tsMidT as Time, value: +tsTop.toFixed(2) },
+              { time: sorted[1].time as Time, value: +tsBot.toFixed(2) },
+            ],
+            color, 2, 0,
+          );
+          // Base
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +tsBot.toFixed(2) },
+              { time: sorted[1].time as Time, value: +tsBot.toFixed(2) },
+            ],
+            color, 2, 0,
+          );
+          break;
+        }
+
+        // ── Arc — half-circle curve ────────────────────────────
+        case 'arc': {
+          const arcMidP = (sorted[0].price + sorted[1].price) / 2;
+          const arcAmp = Math.abs(sorted[1].price - sorted[0].price) / 2;
+          const arcMidT = Math.round((sorted[0].time + sorted[1].time) / 2);
+          const arcTimeR = Math.round((sorted[1].time - sorted[0].time) / 2);
+          const arcSteps = 16;
+          const arcPts = [];
+          for (let i = 0; i <= arcSteps; i++) {
+            const angle = (i / arcSteps) * Math.PI;
+            const t = arcMidT - arcTimeR + Math.round((arcTimeR * 2 * i) / arcSteps);
+            const pOff = arcAmp * Math.sin(angle);
+            arcPts.push({ time: t as Time, value: +(arcMidP + pOff).toFixed(2) });
+          }
+          createLine(arcPts, color, 2, 0, 'Arc');
+          break;
+        }
+
+        // ── Curve — smooth S-curve between two points ─────────
+        case 'curve': {
+          const cvRange = sorted[1].price - sorted[0].price;
+          const cvTimeDiff = sorted[1].time - sorted[0].time;
+          const cvSteps = 20;
+          const cvPts = [];
+          for (let i = 0; i <= cvSteps; i++) {
+            const frac = i / cvSteps;
+            const t = sorted[0].time + Math.round(cvTimeDiff * frac);
+            // Smooth ease-in-out (sigmoid)
+            const ease = frac * frac * (3 - 2 * frac);
+            const val = sorted[0].price + cvRange * ease;
+            cvPts.push({ time: t as Time, value: +val.toFixed(2) });
+          }
+          createLine(cvPts, color, 2, 0, 'Curve');
+          break;
+        }
+
+        // ── Double Curve — S-curve with reverse ───────────────
+        case 'double-curve': {
+          const dcvRange = sorted[1].price - sorted[0].price;
+          const dcvTimeDiff = sorted[1].time - sorted[0].time;
+          const dcvSteps = 24;
+          const dcvPts = [];
+          for (let i = 0; i <= dcvSteps; i++) {
+            const frac = i / dcvSteps;
+            const t = sorted[0].time + Math.round(dcvTimeDiff * frac);
+            // Double S-curve: sin wave mapped to price
+            const val = sorted[0].price + dcvRange * (0.5 + 0.5 * Math.sin((frac * 2 - 1) * Math.PI / 2));
+            dcvPts.push({ time: t as Time, value: +val.toFixed(2) });
+          }
+          createLine(dcvPts, color, 2, 0, 'Double Curve');
           break;
         }
       }

@@ -69,6 +69,20 @@ import {
   BarChart3,
   AudioWaveform,
   Waves,
+  // Brush / Arrow / Shape icons
+  ArrowBigUp,
+  ArrowBigDown,
+  ArrowBigLeft,
+  ArrowBigRight,
+  Navigation,
+  MapPin,
+  RotateCw,
+  Spline,
+  PenTool,
+  Sigma,
+  Orbit,
+  Slice,
+  Radical,
 } from 'lucide-react';
 import { useTradeStore, TradeProfile } from '../../store/useTradeStore';
 import { useAuth } from '../../context/AuthContext';
@@ -169,11 +183,28 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
     { id: 'sine-line', label: 'Sine Line', icon: Waves },
   ];
 
-  const shapeOptions = [
+  const shapeOptions: ToolMenuEntry[] = [
+    { section: 'Brushes' },
     { id: 'brush', label: 'Brush', icon: Brush },
     { id: 'highlighter', label: 'Highlighter', icon: Highlighter },
-    { id: 'rectangle', label: 'Rectangle', icon: Square },
+    { section: 'Arrows' },
+    { id: 'arrow-marker', label: 'Arrow Marker', icon: MapPin },
+    { id: 'arrow', label: 'Arrow', icon: Navigation },
+    { id: 'arrow-mark-up', label: 'Arrow Mark Up', icon: ArrowBigUp },
+    { id: 'arrow-mark-down', label: 'Arrow Mark Down', icon: ArrowBigDown },
+    { id: 'arrow-mark-left', label: 'Arrow Mark Left', icon: ArrowBigLeft },
+    { id: 'arrow-mark-right', label: 'Arrow Mark Right', icon: ArrowBigRight },
+    { section: 'Shapes' },
+    { id: 'rectangle', label: 'Rectangle', icon: Square, shortcut: 'Alt + Shift + R' },
+    { id: 'rotated-rectangle', label: 'Rotated Rectangle', icon: RotateCw },
+    { id: 'path', label: 'Path', icon: PenTool },
     { id: 'circle', label: 'Circle', icon: Circle },
+    { id: 'ellipse', label: 'Ellipse', icon: Orbit },
+    { id: 'polyline', label: 'Polyline', icon: Spline },
+    { id: 'triangle-shape', label: 'Triangle', icon: Triangle },
+    { id: 'arc', label: 'Arc', icon: Slice },
+    { id: 'curve', label: 'Curve', icon: Sigma },
+    { id: 'double-curve', label: 'Double Curve', icon: Radical },
   ];
 
   const textOptions = [
@@ -354,8 +385,8 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
           />
 
           <ToolMenu
-            icon={shapeOptions.find(o => o.id === activeDrawingTool)?.icon || Brush}
-            isActive={shapeOptions.some(o => o.id === activeDrawingTool)}
+            icon={(shapeOptions.filter((o): o is { id: string; label: string; icon: React.ElementType; shortcut?: string } => 'id' in o).find(o => o.id === activeDrawingTool))?.icon || Brush}
+            isActive={shapeOptions.filter((o): o is { id: string; label: string; icon: React.ElementType; shortcut?: string } => 'id' in o).some(o => o.id === activeDrawingTool)}
             options={shapeOptions}
             onSelect={setActiveDrawingTool}
           />

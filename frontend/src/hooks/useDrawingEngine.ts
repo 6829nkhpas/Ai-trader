@@ -21,10 +21,16 @@ const TWO_POINT_TOOLS = new Set([
   'elliott-double-combo', 'elliott-triple-combo',
   // Cycles
   'cyclic-lines', 'time-cycles', 'sine-line',
+  // Arrows
+  'arrow-marker', 'arrow', 'arrow-mark-up', 'arrow-mark-down',
+  'arrow-mark-left', 'arrow-mark-right',
+  // Shapes
+  'rectangle', 'rotated-rectangle', 'path', 'circle', 'ellipse',
+  'polyline', 'triangle-shape', 'arc', 'curve', 'double-curve',
 ]);
 
 const UNSUPPORTED_TOOLS = new Set([
-  'brush', 'highlighter', 'rectangle', 'circle',
+  'brush', 'highlighter',
   'text', 'callout', 'price-label',
 ]);
 
@@ -151,6 +157,15 @@ export function useDrawingEngine(
       // Cycles
       'cyclic-lines': '#00BCD4', 'time-cycles': '#3F51B5',
       'sine-line': '#E91E63',
+      // Arrows
+      'arrow-marker': '#FF5722', 'arrow': '#FF5722',
+      'arrow-mark-up': '#4CAF50', 'arrow-mark-down': '#ef4444',
+      'arrow-mark-left': '#FF9800', 'arrow-mark-right': '#2196F3',
+      // Shapes
+      'rectangle': '#2962FF', 'rotated-rectangle': '#2962FF',
+      'path': '#9C27B0', 'circle': '#00BCD4', 'ellipse': '#00BCD4',
+      'polyline': '#FF9800', 'triangle-shape': '#009688',
+      'arc': '#E91E63', 'curve': '#673AB7', 'double-curve': '#795548',
     };
     return colors[tool] || '#2962FF';
   }, []);
