@@ -16,6 +16,7 @@ import {
 import { useTradeStore, OhlcCandle, TradeProfile, ChartTimeframe } from '../store/useTradeStore';
 import { useHistoricalData } from '../hooks/useHistoricalData';
 import { useChartUIStore } from '../store/useChartUIStore';
+import { useDrawingEngine } from '../hooks/useDrawingEngine';
 
 // ── Exported Types ────────────────────────────────────────────────────────
 
@@ -182,6 +183,9 @@ export default function AlphaPredictiveChart({
   const ema9SeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const ema21SeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
 
+  // ── Drawing series refs (one LineSeries per trendline on chart) ──────
+  const drawingSeriesRef = useRef<ISeriesApi<'Line'>[]>([]);
+
   // ── Refs tracking what's already painted on the chart ────────────────
   // These let us use series.update() for the last candle instead of
   // series.setData() (which redraws everything and causes the jitter).
@@ -198,6 +202,8 @@ export default function AlphaPredictiveChart({
   const predictiveSignals = useTradeStore((s) => s.predictiveSignals);
 
   const { activeCursor, activeDrawingTool } = useChartUIStore();
+  const drawings = useChartUIStore((s) => s.drawings);
+  const drawingsVisible = useChartUIStore((s) => s.drawingsVisible);
 
   const activeSymbol = useMemo(() => {
     const d = activeDecision ?? liveDecisions[liveDecisions.length - 1];
@@ -529,6 +535,68 @@ export default function AlphaPredictiveChart({
     });
   }, [effectiveTimeframe]);
 
+  // ── Drawing Engine (pixel → logical coordinate bridge) ───────────────
+  // Pass refs (not .current) so the hook reads live instances inside handlers
+  useDrawingEngine(chartRef, candleSeriesRef);
+
+  // ── Drawing Renderer — sync store drawings onto the chart canvas ─────
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    // Remove previous drawing series from chart
+    for (const series of drawingSeriesRef.current) {
+      try {
+        chart.removeSeries(series);
+      } catch {
+        // series may already be removed if chart was re-created
+      }
+    }
+    drawingSeriesRef.current = [];
+
+    // If drawings are hidden, stop here
+    if (!drawingsVisible) return;
+
+    // Color map per drawing tool
+    const TOOL_COLORS: Record<string, string> = {
+      'trendline': '#2962FF',
+      'horizontal-line': '#FF6D00',
+      'horizontal-ray': '#FF6D00',
+      'vertical-line': '#AB47BC',
+      'cross-line': '#AB47BC',
+      'fib-retracement': '#FFD600',
+      'trend-fib': '#FFD600',
+      'long-position': '#22c55e',
+      'short-position': '#ef4444',
+      'price-range': '#00BCD4',
+    };
+
+    // Render each 2-point drawing as a LineSeries
+    for (const drawing of drawings) {
+      if (drawing.points.length >= 2) {
+        const color = TOOL_COLORS[drawing.tool] || '#2962FF';
+        const line = chart.addSeries(LineSeries, {
+          color,
+          lineWidth: 2,
+          lineStyle: 0, // Solid
+          crosshairMarkerVisible: false,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+
+        // Sort points by time to ensure valid series data ordering
+        const sortedPoints = [...drawing.points].sort((a, b) => a.time - b.time);
+
+        line.setData([
+          { time: sortedPoints[0].time as Time, value: sortedPoints[0].price },
+          { time: sortedPoints[1].time as Time, value: sortedPoints[1].price },
+        ]);
+
+        drawingSeriesRef.current.push(line);
+      }
+    }
+  }, [drawings, drawingsVisible]);
+
   // ── Resize on expand/collapse ────────────────────────────────────────
   useEffect(() => {
     if (chartRef.current && chartContainerRef.current) {
@@ -547,11 +615,8 @@ export default function AlphaPredictiveChart({
     }
   }, [activeCursor, activeDrawingTool]);
 
-  const handleChartInteraction = useCallback(() => {
-    if (activeDrawingTool) {
-      console.log(`[DRAWING ENGINE] tool: ${activeDrawingTool}`);
-    }
-  }, [activeDrawingTool]);
+  // handleChartInteraction is no longer needed — useDrawingEngine
+  // subscribes directly to chart.subscribeClick for drawing logic.
 
   const ohlcLabel = latestCandle
     ? `O ${latestCandle.open.toFixed(2)}  H ${latestCandle.high.toFixed(2)}  L ${latestCandle.low.toFixed(2)}  C ${latestCandle.close.toFixed(2)}`
@@ -560,7 +625,7 @@ export default function AlphaPredictiveChart({
   return (
     <div
       className={`relative flex h-full w-full flex-col outline-none ${cursorClass}`}
-      onMouseDown={handleChartInteraction}
+      /* Drawing interactions handled by useDrawingEngine hook */
     >
       {/* ── Chart Canvas ─────────────────────────────────────────── */}
       <div ref={chartContainerRef} className="flex-1 min-h-0 w-full" />

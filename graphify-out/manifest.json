@@ -444,8 +444,8 @@
     "hash": "4983e478596aba769e2f199dadd5116f"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\AlphaPredictiveChart.tsx": {
-    "mtime": 1778486297.91464,
-    "hash": "993a5d3cb049da8f367f1ea19a0ee5c8"
+    "mtime": 1778496625.652273,
+    "hash": "d7126bae47903ff6c1987ab50899c4fa"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\OrderBook.tsx": {
     "mtime": 1778412029.0964186,
@@ -523,6 +523,10 @@
     "mtime": 1778071698.6382082,
     "hash": "422415d7907958741d008843a288232b"
   },
+  "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useDrawingEngine.ts": {
+    "mtime": 1778496597.8924632,
+    "hash": "4db7f35bf26b2bdfa9067c328f3db9f0"
+  },
   "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useHistoricalData.ts": {
     "mtime": 1778488549.9564488,
     "hash": "96ec1181cb8861affa7707651eb5bbf3"
@@ -548,8 +552,8 @@
     "hash": "3fada3806d8be3469602e299b94a6dbf"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\store\\useChartUIStore.ts": {
-    "mtime": 1778437367.7174952,
-    "hash": "691d30a4bfeb92d98d8461c63f93b6f6"
+    "mtime": 1778493201.7946143,
+    "hash": "a24e2c3d62f4706ee2edc7ab84ab51ad"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\store\\useTradeStore.ts": {
     "mtime": 1778486297.916207,
