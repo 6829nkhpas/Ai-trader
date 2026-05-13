@@ -197,11 +197,152 @@ async function fetchFromQuestDB(symbol: string): Promise<HistoricalCandle[]> {
 }
 
 /**
+ * Resolve a symbol's Kite instrument_token via the quote API.
+ * The quote endpoint (`/kite/quote?i=NSE:SYMBOL`) works even when the
+ * server-side instrument CSV cache is empty, making it a reliable fallback
+ * for token resolution.
+ */
+async function resolveInstrumentToken(symbol: string): Promise<number | null> {
+  try {
+    const res = await fetch(`/kite/quote?i=NSE:${encodeURIComponent(symbol)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const quotes = data.quotes as { symbol: string; instrument_token: number }[] | undefined;
+    if (!quotes || quotes.length === 0) return null;
+    const match = quotes.find((q) => q.symbol.toUpperCase() === symbol.toUpperCase());
+    return match?.instrument_token ?? quotes[0].instrument_token ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Cache resolved tokens to avoid repeated quote API calls during parallel fetches
+const tokenCache = new Map<string, number>();
+
+/**
+ * Fetch a single batch of historical candles from the Kite Historical API via
+ * the aggregator's REST proxy at /kite/historical.
+ *
+ * When the symbol-based request fails (server can't resolve the symbol because
+ * the instrument CSV cache is empty), we resolve the instrument_token via the
+ * quote API and retry with the token directly.
+ */
+async function fetchKiteBatch(
+  symbol: string,
+  interval: string,
+  daysBack: number
+): Promise<HistoricalCandle[]> {
+  const parseCandles = (data: any): HistoricalCandle[] =>
+    (data.candles || [])
+      .map((c: { time: number; open: number; high: number; low: number; close: number; volume: number }) => ({
+        time: c.time,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        volume: c.volume,
+      }))
+      .filter((c: HistoricalCandle) => c.time > 0 && c.open > 0);
+
+  const to = new Date();
+  const from = new Date(to.getTime() - daysBack * 24 * 60 * 60 * 1000);
+  const fmt = (d: Date) => d.toISOString().slice(0, 10); // yyyy-mm-dd
+  const dateParams = `&from=${fmt(from)}&to=${fmt(to)}`;
+
+  try {
+    // Attempt 1: Use symbol name (works if server instrument cache is populated)
+    const url = `/kite/historical?symbol=${encodeURIComponent(symbol)}&interval=${interval}${dateParams}`;
+    const response = await fetch(url);
+    if (response.ok) {
+      const data = await response.json();
+      const candles = parseCandles(data);
+      if (candles.length > 0) return candles;
+    }
+
+    // Attempt 2: Resolve instrument_token via quote API and retry with token
+    let token = tokenCache.get(symbol.toUpperCase());
+    if (!token) {
+      const resolved = await resolveInstrumentToken(symbol);
+      if (!resolved) {
+        console.warn(`[Historical] Could not resolve instrument token for ${symbol}`);
+        return [];
+      }
+      token = resolved;
+      tokenCache.set(symbol.toUpperCase(), token);
+    }
+
+    const tokenUrl = `/kite/historical?instrument_token=${token}&interval=${interval}${dateParams}`;
+    const tokenResponse = await fetch(tokenUrl);
+    if (!tokenResponse.ok) return [];
+    const tokenData = await tokenResponse.json();
+    return parseCandles(tokenData);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetch historical candles directly from the Kite Historical API via the
+ * aggregator's REST proxy at /kite/historical.
+ *
+ * This is the fallback when QuestDB has no data for a symbol (i.e. the symbol
+ * was never ingested via the Tauri history_loader).
+ *
+ * **Timeframe-aware:** For intraday timeframes we ONLY fetch intraday candles;
+ * for daily+ timeframes we ONLY fetch daily candles.  Mixing the two caused
+ * massive price-axis distortion (old daily prices plotted next to current
+ * intraday prices).
+ *
+ * @param symbol      — NSE trading symbol (e.g. "INFY").
+ * @param rangeDays   — How many days of data to fetch (e.g. 365, 1825).
+ * @param kiteInterval — The Kite API interval string (e.g. 'minute', '10minute', 'day').
+ */
+async function fetchFromKiteHistorical(
+  symbol: string,
+  rangeDays: number = 365,
+  kiteInterval: string = '10minute',
+): Promise<HistoricalCandle[]> {
+  try {
+    const isDailyOrAbove = kiteInterval === 'day';
+
+    if (isDailyOrAbove) {
+      // Daily+ timeframe: only daily candles, full range
+      const candles = await fetchKiteBatch(symbol, 'day', rangeDays);
+      if (candles.length > 0) {
+        console.log(
+          `[Historical] ${symbol}: ${candles.length} daily candles loaded (range=${rangeDays}d)`
+        );
+      }
+      return candles;
+    }
+
+    // Intraday timeframe: Kite limits intraday to ~60 days
+    const intradayDays = Math.min(rangeDays, 60);
+    const candles = await fetchKiteBatch(symbol, kiteInterval, intradayDays);
+    if (candles.length > 0) {
+      console.log(
+        `[Historical] ${symbol}: ${candles.length} ${kiteInterval} candles loaded (range=${intradayDays}d)`
+      );
+    }
+    return candles;
+  } catch (err) {
+    console.warn('[Historical] Kite historical API fetch failed:', err);
+    return [];
+  }
+}
+
+/**
  * React hook to fetch historical OHLCV data from QuestDB's REST API.
  *
- * @param symbol — Instrument symbol (e.g., "RELIANCE"). Empty string skips fetch.
+ * @param symbol       — Instrument symbol (e.g., "RELIANCE"). Empty string skips fetch.
+ * @param rangeDays    — How many days of historical data to request (default 365).
+ * @param kiteInterval — Kite API interval string for the active timeframe (default '10minute').
  */
-export function useHistoricalData(symbol: string): UseHistoricalDataReturn {
+export function useHistoricalData(
+  symbol: string,
+  rangeDays: number = 365,
+  kiteInterval: string = '10minute',
+): UseHistoricalDataReturn {
   const [candles, setCandles] = useState<HistoricalCandle[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -211,6 +352,9 @@ export function useHistoricalData(symbol: string): UseHistoricalDataReturn {
 
     setLoading(true);
     setError(null);
+    // Clear stale candles immediately so the old symbol's data doesn't
+    // bleed into the new symbol's chart while the fetch is in-flight.
+    setCandles([]);
 
     try {
       if (isTauri()) {
@@ -260,13 +404,28 @@ export function useHistoricalData(symbol: string): UseHistoricalDataReturn {
         // the HTTP request through Rust, bypassing CORS entirely.
         // This works even when the PgPool isn't ready (uses HTTP, not PG).
         const parsed = await fetchViaIpcProxy(tauri, symbol);
-        setCandles(parsed);
+        if (parsed.length > 0) {
+          setCandles(parsed);
+          return;
+        }
+
+        // Step 2c: Final fallback — fetch from Kite Historical API directly.
+        // This handles symbols that were never ingested into QuestDB.
+        const kiteCandles = await fetchFromKiteHistorical(symbol, rangeDays, kiteInterval);
+        setCandles(kiteCandles);
         return;
       }
 
       // ── BROWSER PATH ────────────────────────────────────────────────
       // Uses the Next.js proxy rewrite: /questdb/* → localhost:9000
-      const parsed = await fetchFromQuestDB(symbol);
+      let parsed = await fetchFromQuestDB(symbol);
+
+      // If QuestDB has no data for this symbol, fall back to the Kite
+      // Historical API which can serve candles for any NSE instrument.
+      if (parsed.length === 0) {
+        parsed = await fetchFromKiteHistorical(symbol, rangeDays, kiteInterval);
+      }
+
       setCandles(parsed);
     } catch (e: any) {
       const msg = typeof e === 'string' ? e : e?.message || 'Unknown error';
@@ -275,7 +434,7 @@ export function useHistoricalData(symbol: string): UseHistoricalDataReturn {
     } finally {
       setLoading(false);
     }
-  }, [symbol]);
+  }, [symbol, rangeDays, kiteInterval]);
 
   useEffect(() => {
     fetchData();

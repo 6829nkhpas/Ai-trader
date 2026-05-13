@@ -21,6 +21,24 @@ export function useChartDataSync(
   const lastPaintedTimeframeRef = useRef<string>('');
   const lastPaintedSymbolRef = useRef<string>('');
 
+  // ── Clear chart immediately when symbol changes (before new data arrives) ─
+  // Without this, the old symbol's candles stay visible during the async
+  // historical fetch, making it look like the chart didn't respond to the click.
+  useEffect(() => {
+    if (!candleSeriesRef.current || !volumeSeriesRef.current) return;
+    const prevSymbol = lastPaintedSymbolRef.current;
+    if (prevSymbol !== '' && prevSymbol !== activeSymbol) {
+      candleSeriesRef.current.setData([]);
+      volumeSeriesRef.current.setData([]);
+      if (ema9SeriesRef.current) ema9SeriesRef.current.setData([]);
+      if (ema21SeriesRef.current) ema21SeriesRef.current.setData([]);
+      if (ghostLineRef.current) ghostLineRef.current.setData([]);
+      // Reset the painted-count so the next data arrival triggers a full setData
+      lastPaintedCandleCountRef.current = 0;
+      lastPaintedSymbolRef.current = activeSymbol;
+    }
+  }, [activeSymbol, candleSeriesRef, volumeSeriesRef, ema9SeriesRef, ema21SeriesRef, ghostLineRef]);
+
   // ── Smart data sync: setData on full reset, update() for last candle ─
   useEffect(() => {
     if (!candleSeriesRef.current || !volumeSeriesRef.current) return;
@@ -53,7 +71,10 @@ export function useChartDataSync(
       lastPaintedCandleCountRef.current = chartData.length;
 
       if (timeframeChanged || symbolChanged || prevCount === 0) {
-        chartRef.current?.timeScale().scrollToRealTime();
+        // Force chart to auto-fit both time and price axes to the new data.
+        // Without this, switching symbols/timeframes can leave the chart
+        // zoomed to the previous data's price range, causing visual distortion.
+        chartRef.current?.timeScale().fitContent();
       }
     } else {
       // ── SMOOTH UPDATE PATH ─────────────────────────────────────────
@@ -142,12 +163,19 @@ export function useChartDataSync(
 
   // ── Update time scale on timeframe change ───────────────────────────
   useEffect(() => {
+    const tf = effectiveTimeframe;
+    const barSpacing =
+      tf === '1M' ? 20
+      : tf === '1W' ? 16
+      : tf === '1D' ? 14
+      : tf === '4h' || tf === '3h' || tf === '2h' ? 12
+      : tf === '1h' || tf === '1H' ? 10
+      : tf === '125m' || tf === '75m' || tf === '30m' ? 9
+      : 8;
+
     chartRef.current?.timeScale().applyOptions({
-      secondsVisible: effectiveTimeframe === '1m',
-      barSpacing:
-        effectiveTimeframe === '1D' ? 14
-        : effectiveTimeframe === '1h' || effectiveTimeframe === '1H' ? 10
-        : 8,
+      secondsVisible: false,
+      barSpacing,
     });
   }, [effectiveTimeframe, chartRef]);
 

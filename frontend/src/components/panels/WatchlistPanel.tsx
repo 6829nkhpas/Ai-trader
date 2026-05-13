@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { Search, TrendingUp, TrendingDown, Loader2, X, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { Search, Loader2, X, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { useTradeStore } from '../../store/useTradeStore';
 
 // ── Static Top-10 Watchlist Symbols (NIFTY 50 Blue Chips) ──────────────
 const TOP_WATCHLIST = [
@@ -58,6 +59,10 @@ export default function WatchlistPanel() {
   const quoteIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
+  // ── Symbol selection from store ────────────────────────────────────
+  const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
+  const setSelectedSymbol = useTradeStore((s) => s.setSelectedSymbol);
+
   // ── Fetch quotes for watchlist stocks ──────────────────────────────
   const fetchQuotes = useCallback(async () => {
     try {
@@ -79,14 +84,22 @@ export default function WatchlistPanel() {
     }
   }, []);
 
-  // Fetch quotes on mount + poll every 30s
+  // Fetch quotes on mount + poll every 30s.
+  // We store fetchQuotes in a ref so the interval callback always calls the
+  // latest version without adding it to the effect dependency array — this
+  // avoids the "setState in effect" lint rule while keeping the polling stable.
+  const fetchQuotesRef = useRef(fetchQuotes);
   useEffect(() => {
-    fetchQuotes();
-    quoteIntervalRef.current = setInterval(fetchQuotes, 30_000);
+    fetchQuotesRef.current = fetchQuotes;
+  }, [fetchQuotes]);
+
+  useEffect(() => {
+    fetchQuotesRef.current();
+    quoteIntervalRef.current = setInterval(() => fetchQuotesRef.current(), 30_000);
     return () => {
       if (quoteIntervalRef.current) clearInterval(quoteIntervalRef.current);
     };
-  }, [fetchQuotes]);
+  }, []);
 
   // ── Debounced search ──────────────────────────────────────────────
   const handleSearch = useCallback(async (searchQuery: string) => {
@@ -207,8 +220,10 @@ export default function WatchlistPanel() {
                     key={inst.instrument_token}
                     type="button"
                     onClick={() => {
+                      setSelectedSymbol(inst.tradingsymbol);
                       setShowDropdown(false);
-                      // Could be used to select a symbol in the future
+                      setQuery('');
+                      setSearchResults([]);
                     }}
                     className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors hover:bg-elevated/70"
                   >
@@ -246,11 +261,18 @@ export default function WatchlistPanel() {
             const quote = quotes[stock.symbol];
             const sectorColor = SECTOR_COLORS[stock.sector] ?? 'bg-elevated text-text-muted';
             const isPositive = quote ? quote.change >= 0 : false;
+            const isActive = selectedSymbol === stock.symbol;
 
             return (
-              <div
+              <button
                 key={stock.symbol}
-                className="group flex items-center justify-between gap-1 px-3 py-2 text-xs transition-colors cursor-pointer hover:bg-elevated/70 border-l-2 border-transparent hover:border-primary/50"
+                type="button"
+                onClick={() => setSelectedSymbol(stock.symbol)}
+                className={`group flex w-full items-center justify-between gap-1 px-3 py-2 text-xs text-left transition-colors cursor-pointer border-l-2 ${
+                  isActive
+                    ? 'bg-primary/10 border-primary text-text-primary'
+                    : 'hover:bg-elevated/70 border-transparent hover:border-primary/50'
+                }`}
               >
                 {/* Left: Symbol + Name */}
                 <div className="flex flex-col min-w-0 flex-1">
@@ -285,7 +307,7 @@ export default function WatchlistPanel() {
                     <span className="text-[10px] text-text-muted/50">—</span>
                   )}
                 </div>
-              </div>
+              </button>
             );
           })
         )}

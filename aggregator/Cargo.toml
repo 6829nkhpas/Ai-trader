@@ -53,6 +53,9 @@ tower = "0.4"
 # URL encoding/decoding for query parameter handling
 urlencoding = "2"
 
+# Date/time handling — used for Kite historical API date parsing and range defaults
+chrono = "0.4"
+
 
 # ===========================================================================
 # Build-time Dependencies (proto compilation)

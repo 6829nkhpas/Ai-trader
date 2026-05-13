@@ -66,6 +66,20 @@ pub struct QuoteParams {
     instruments: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct HistoricalParams {
+    /// Instrument token (numeric ID from Kite)
+    pub instrument_token: Option<u64>,
+    /// Symbol name — used to resolve token from cached instruments if token not provided
+    pub symbol: Option<String>,
+    /// Interval: "day", "minute", "3minute", "5minute", "10minute", "15minute", "60minute"
+    pub interval: Option<String>,
+    /// Start date (yyyy-mm-dd). Defaults to 1 year ago.
+    pub from: Option<String>,
+    /// End date (yyyy-mm-dd). Defaults to today.
+    pub to: Option<String>,
+}
+
 // ── Shared State ─────────────────────────────────────────────────────────────
 
 struct InstrumentCache {
@@ -356,6 +370,148 @@ async fn quote_handler(
     Ok(Json(serde_json::json!({ "quotes": quotes })))
 }
 
+/// GET /api/kite/historical?symbol=TCS&interval=day&from=2024-01-01&to=2025-05-13
+///
+/// Fetches historical OHLCV candles from the Kite Historical API.
+/// Resolves the instrument_token from the cached instruments list using the symbol.
+/// Falls back to `instrument_token` query param if provided directly.
+///
+/// Returns: `{ "candles": [ { "time": <unix_sec>, "open": ..., "high": ..., "low": ..., "close": ..., "volume": ... } ] }`
+async fn historical_handler(
+    Query(params): Query<HistoricalParams>,
+    state: axum::extract::State<Arc<KiteApiState>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let symbol = params.symbol.unwrap_or_default().trim().to_uppercase();
+    let interval = params.interval.unwrap_or_else(|| "day".to_string());
+
+    // Resolve instrument_token: either provided directly or looked up from symbol
+    let token: u64 = if let Some(t) = params.instrument_token {
+        t
+    } else if !symbol.is_empty() {
+        // Look up from cached instruments
+        let instruments = state.get_instruments("NSE").await.map_err(|e| {
+            log::error!("[Kite historical] Instrument lookup failed: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e, "candles": [] })),
+            )
+        })?;
+
+        instruments
+            .iter()
+            .find(|i| i.tradingsymbol.to_uppercase() == symbol)
+            .map(|i| i.instrument_token)
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({ "error": format!("Symbol '{}' not found in NSE instruments", symbol), "candles": [] })),
+                )
+            })?
+    } else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Either 'symbol' or 'instrument_token' is required", "candles": [] })),
+        ));
+    };
+
+    // Date range: default to 1 year of data
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let one_year_ago = (chrono::Utc::now() - chrono::Duration::days(365))
+        .format("%Y-%m-%d")
+        .to_string();
+
+    let from_date = params.from.unwrap_or(one_year_ago);
+    let to_date = params.to.unwrap_or(today);
+
+    log::info!(
+        "[Kite historical] Fetching {} (token {}) interval={} from={} to={}",
+        symbol, token, interval, from_date, to_date
+    );
+
+    let url = format!(
+        "https://api.kite.trade/instruments/historical/{}/{}",
+        token, interval
+    );
+
+    let response = state
+        .http_client
+        .get(&url)
+        .query(&[("from", &from_date), ("to", &to_date)])
+        .header("X-Kite-Version", "3")
+        .header("Authorization", state.auth_header())
+        .send()
+        .await
+        .map_err(|e| {
+            log::error!("[Kite historical] HTTP error: {}", e);
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": e.to_string(), "candles": [] })),
+            )
+        })?;
+
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let body = response.text().await.unwrap_or_default();
+        log::error!("[Kite historical] API returned {}: {}", status, body);
+        return Err((
+            StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
+            Json(serde_json::json!({ "error": format!("Kite API error {}: {}", status, body), "candles": [] })),
+        ));
+    }
+
+    let json: serde_json::Value = response.json().await.map_err(|e| {
+        log::error!("[Kite historical] JSON parse error: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "Failed to parse Kite response", "candles": [] })),
+        )
+    })?;
+
+    // Kite response: { "status": "success", "data": { "candles": [[ts, o, h, l, c, vol], ...] } }
+    let candles_raw = json
+        .get("data")
+        .and_then(|d| d.get("candles"))
+        .and_then(|c| c.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let candles: Vec<serde_json::Value> = candles_raw
+        .iter()
+        .filter_map(|row| {
+            let arr = row.as_array()?;
+            if arr.len() < 6 {
+                return None;
+            }
+            // Parse timestamp: Kite returns ISO 8601 string like "2024-01-15T00:00:00+0530"
+            let ts_str = arr[0].as_str().unwrap_or_default();
+            let time_sec = chrono::DateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M:%S%z")
+                .or_else(|_| chrono::DateTime::parse_from_rfc3339(ts_str))
+                .map(|dt| dt.timestamp())
+                .unwrap_or(0);
+
+            if time_sec == 0 {
+                return None;
+            }
+
+            Some(serde_json::json!({
+                "time": time_sec,
+                "open": arr[1].as_f64().unwrap_or(0.0),
+                "high": arr[2].as_f64().unwrap_or(0.0),
+                "low": arr[3].as_f64().unwrap_or(0.0),
+                "close": arr[4].as_f64().unwrap_or(0.0),
+                "volume": arr[5].as_u64().unwrap_or(0),
+            }))
+        })
+        .collect();
+
+    log::info!(
+        "[Kite historical] {} — {} candles returned (interval={})",
+        symbol, candles.len(), interval
+    );
+
+    Ok(Json(serde_json::json!({ "candles": candles })))
+}
+
 // ── Server ───────────────────────────────────────────────────────────────────
 
 /// Build and start the Kite REST API server on the given port.
@@ -371,6 +527,7 @@ pub async fn run_kite_api_server(port: &str) {
     let app = Router::new()
         .route("/api/kite/instruments", get(instruments_search))
         .route("/api/kite/quote", get(quote_handler))
+        .route("/api/kite/historical", get(historical_handler))
         .layer(cors)
         .with_state(state);
 

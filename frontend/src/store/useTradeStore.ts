@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { DataRange } from '../utils/chartTypes';
 
 export type TradeProfile = 'INTRADAY' | 'SWING' | 'INVESTOR';
 
@@ -7,7 +8,11 @@ export type TradeProfile = 'INTRADAY' | 'SWING' | 'INVESTOR';
  * exclusively on 10-minute candles (market.ohlc.10m), making '10m' the
  * primary timeframe for all AI overlays (Ghost Line, confidence scores).
  */
-export type ChartTimeframe = '1m' | '5m' | '10m' | '15m' | '1H' | '1D';
+export type ChartTimeframe =
+  | '1m' | '2m' | '3m' | '4m' | '5m'
+  | '10m' | '15m' | '30m' | '75m' | '125m'
+  | '1h' | '1H' | '2h' | '3h' | '4h'
+  | '1D' | '1W' | '1M';
 
 type BackendAction = 'BUY' | 'SELL' | 'HOLD';
 
@@ -88,11 +93,19 @@ interface TradeStore {
   wsStatus: 'disconnected' | 'connecting' | 'connected' | 'error';
   activeProfile: TradeProfile;
   activeTimeframe: ChartTimeframe;
+  /** Data range — how many years of historical data to fetch. */
+  activeRange: DataRange;
   systemLogs: SystemLog[];
+  /** Explicitly selected symbol from the watchlist. Takes priority over the
+   *  AI decision symbol when set. Defaults to 'RELIANCE'. */
+  selectedSymbol: string;
   setActiveProfile: (profile: TradeProfile) => void;
   setActiveTimeframe: (tf: ChartTimeframe) => void;
+  setActiveRange: (range: DataRange) => void;
   setLatestInsight: (insight: MarketInsight) => void;
   addSystemLog: (level: SystemLog['level'], message: string) => void;
+  /** Set the active chart symbol from the watchlist or search. */
+  setSelectedSymbol: (symbol: string) => void;
   connectWebSocket: () => void;
   connectAlphaWebSocket: (url: string) => void;
   connectPredictiveWebSocket: (url: string) => void;
@@ -102,7 +115,7 @@ interface TradeStore {
   resetSession: () => void;
 }
 
-export const useTradeStore = create<TradeStore>((set, get) => {
+export const useTradeStore = create<TradeStore>((set) => {
   let ws: WebSocket | null = null;
 
   // Helper: append a system log entry
@@ -163,7 +176,9 @@ export const useTradeStore = create<TradeStore>((set, get) => {
     wsStatus: 'disconnected',
     activeProfile: 'INTRADAY',
     activeTimeframe: '10m',
+    activeRange: '1Y' as DataRange,
     systemLogs: [],
+    selectedSymbol: 'RELIANCE',
 
     setActiveProfile: (profile: TradeProfile) => {
       set({ activeProfile: profile });
@@ -171,6 +186,10 @@ export const useTradeStore = create<TradeStore>((set, get) => {
 
     setActiveTimeframe: (tf: ChartTimeframe) => {
       set({ activeTimeframe: tf });
+    },
+
+    setActiveRange: (range: DataRange) => {
+      set({ activeRange: range });
     },
 
     addSystemLog: (level: SystemLog['level'], message: string) => {
@@ -183,8 +202,12 @@ export const useTradeStore = create<TradeStore>((set, get) => {
       set({ latestInsight: insight });
     },
 
+    setSelectedSymbol: (symbol: string) => {
+      set({ selectedSymbol: symbol.toUpperCase() });
+    },
+
     connectAlphaWebSocket: (url: string) => {
-      let destroyed = false;
+      const destroyed = false;
 
       const connect = () => {
         if (destroyed) return;
@@ -258,7 +281,7 @@ export const useTradeStore = create<TradeStore>((set, get) => {
     },
 
     connectPredictiveWebSocket: (url: string) => {
-      let destroyed = false;
+      const destroyed = false;
 
       const connect = () => {
         if (destroyed) return;
@@ -294,7 +317,7 @@ export const useTradeStore = create<TradeStore>((set, get) => {
     },
 
     connectInsightWebSocket: (url: string) => {
-      let destroyed = false;
+      const destroyed = false;
 
       const connect = () => {
         if (destroyed) return;
@@ -378,62 +401,69 @@ export const useTradeStore = create<TradeStore>((set, get) => {
         return;
       }
 
-      set({ wsStatus: 'connecting', connectionStatus: 'CONNECTING' });
-
       const wsUrl =
         process.env.NEXT_PUBLIC_AGGREGATOR_WS_URL ||
         process.env.NEXT_PUBLIC_WS_URL ||
         'ws://127.0.0.1:8080';
 
-      try {
-        ws = new WebSocket(wsUrl);
+      const connect = () => {
+        set({ wsStatus: 'connecting', connectionStatus: 'CONNECTING' });
 
-        ws.onopen = () => {
-          console.log('WebSocket connected to Aggregator', wsUrl);
-          set({ wsStatus: 'connected', connectionStatus: 'CONNECTED' });
-        };
+        try {
+          ws = new WebSocket(wsUrl);
 
-        ws.onmessage = (event) => {
-          console.log('📨 WebSocket message received:', event.data);
-          try {
-            const rawData: BackendDecisionPayload = JSON.parse(event.data);
-            console.log('✅ Parsed payload:', rawData);
-            const data = normalizeDecision(rawData);
-            console.log('✅ Normalized decision:', data);
-            const currentLatency = Date.now() - data.timestamp_ms;
+          ws.onopen = () => {
+            syslog('INFO', `Decision WS connected → ${wsUrl}`);
+            set({ wsStatus: 'connected', connectionStatus: 'CONNECTED' });
+          };
 
-            set((state) => {
-              // Append new decision and cap at 100 to prevent memory leaks
-              const updatedDecisions = [...state.liveDecisions, data];
-              if (updatedDecisions.length > 100) {
-                updatedDecisions.shift();
-              }
+          ws.onmessage = (event) => {
+            try {
+              const rawData: BackendDecisionPayload = JSON.parse(event.data);
+              const data = normalizeDecision(rawData);
+              const currentLatency = Date.now() - data.timestamp_ms;
 
-              return {
-                liveDecisions: updatedDecisions,
-                activeDecision: state.activeDecision ? state.activeDecision : data,
-                latencyMs: Number.isFinite(currentLatency) ? Math.max(0, currentLatency) : 0,
-              };
-            });
-          } catch (err) {
-            console.error('Failed to parse WebSocket message', err);
-          }
-        };
+              set((state) => {
+                const updatedDecisions = [...state.liveDecisions, data];
+                if (updatedDecisions.length > 100) {
+                  updatedDecisions.shift();
+                }
 
-        ws.onclose = () => {
-          console.log('WebSocket disconnected');
-          set({ wsStatus: 'disconnected', connectionStatus: 'DISCONNECTED' });
-          ws = null;
-        };
+                return {
+                  liveDecisions: updatedDecisions,
+                  activeDecision: state.activeDecision ? state.activeDecision : data,
+                  latencyMs: Number.isFinite(currentLatency) ? Math.max(0, currentLatency) : 0,
+                };
+              });
+            } catch (err) {
+              syslog('ERROR', `Decision WS parse error: ${err}`);
+            }
+          };
 
-        ws.onerror = (error) => {
-          console.error('WebSocket error:', error);
+          ws.onclose = () => {
+            set({ wsStatus: 'disconnected', connectionStatus: 'DISCONNECTED' });
+            ws = null;
+            // Auto-reconnect after 3s (matches other WS connections)
+            syslog('WARN', 'Decision WS disconnected. Reconnecting in 3s...');
+            setTimeout(connect, 3000);
+          };
+
+          ws.onerror = () => {
+            // Suppress noisy console.error — the onclose handler will fire
+            // immediately after and trigger reconnection. This is expected
+            // when the aggregator backend isn't running yet.
+            syslog('WARN', `Decision WS connection failed → ${wsUrl}`);
+            set({ wsStatus: 'error', connectionStatus: 'DISCONNECTED' });
+          };
+        } catch (error) {
+          syslog('ERROR', `Decision WS init failed: ${error}`);
           set({ wsStatus: 'error', connectionStatus: 'DISCONNECTED' });
-        };
-      } catch (error) {
-        console.error('Failed to initialize WebSocket', error);
-        set({ wsStatus: 'error', connectionStatus: 'DISCONNECTED' });
-      }
+          // Retry after 3s
+          setTimeout(connect, 3000);
+        }
+      };
+
+      connect();
     },
   };
 });

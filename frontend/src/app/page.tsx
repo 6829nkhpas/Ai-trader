@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { Loader2, PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight, ChevronDown } from 'lucide-react';
 import TradingChart from '../components/TradingChart';
 import TerminalLayout from '../components/layout/TerminalLayout';
 import WatchlistPanel from '../components/panels/WatchlistPanel';
@@ -14,6 +14,8 @@ import InvestorLayout, { MacroSentimentPanel } from '../components/layouts/Inves
 import OrderBook from '../components/OrderBook';
 import SystemConsole from '../components/SystemConsole';
 import { useTradeStore, TradeProfile, ChartTimeframe } from '../store/useTradeStore';
+import type { DataRange } from '../utils/chartTypes';
+import { TIMEFRAME_GROUPS } from '../utils/chartTypes';
 import { isOnboardingComplete } from '@/lib/onboarding';
 
 // ── Sidebar labels per profile ──────────────────────────────────────────
@@ -25,11 +27,13 @@ const SIDEBAR_CONFIG: Record<TradeProfile, { label: string; badge: string; badge
 
 export default function Home() {
   const router = useRouter();
-  const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, setActiveTimeframe } = useTradeStore();
+  const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, setActiveTimeframe, activeRange, setActiveRange, selectedSymbol } = useTradeStore();
   const [indicatorsEnabled, setIndicatorsEnabled] = useState(true);
   const [aiEnabled, setAiEnabled] = useState(true);
   const [isChecking, setIsChecking] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [tfDropdownOpen, setTfDropdownOpen] = useState(false);
+  const tfDropdownRef = useRef<HTMLDivElement>(null);
 
   // ── Real-time Kite quote for the active symbol ────────────────────
   interface SymbolQuote {
@@ -84,9 +88,10 @@ export default function Home() {
     connectInsightWebSocket('ws://127.0.0.1:8083');
   }, [connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket]);
 
-  // Derive symbol early so hooks below can reference it unconditionally
+  // Derive symbol early so hooks below can reference it unconditionally.
+  // selectedSymbol (watchlist click) takes priority over the AI decision symbol.
   const latestDecision = activeDecision ?? liveDecisions[liveDecisions.length - 1] ?? null;
-  const symbol = latestDecision?.symbol ?? 'RELIANCE';
+  const symbol = selectedSymbol || latestDecision?.symbol || 'RELIANCE';
 
   // Fetch real-time quote for the active symbol
   const fetchSymbolQuote = useCallback(async () => {
@@ -109,6 +114,17 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [fetchSymbolQuote]);
 
+  // Close timeframe dropdown on outside click
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (tfDropdownRef.current && !tfDropdownRef.current.contains(e.target as Node)) {
+        setTfDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
   if (isChecking) {
     return (
       <div className="flex min-h-[40vh] items-center justify-center gap-3 text-sm text-text-secondary">
@@ -118,7 +134,9 @@ export default function Home() {
     );
   }
 
-  const timeframes: ChartTimeframe[] = ['1m', '5m', '10m', '15m', '1H', '1D'];
+  const quickTimeframes: ChartTimeframe[] = ['1m', '5m', '10m', '15m', '1h', '1D'];
+  const rangeOptions: DataRange[] = ['60D', '1Y', '2Y', '3Y', '5Y'];
+  const rangeLabels: Record<DataRange, string> = { '60D': '60D', '1Y': '1Y', '2Y': '2Y', '3Y': '3Y', '5Y': '5Y' };
 
   const profileBadgeConfig: Record<TradeProfile, { label: string; color: string }> = {
     INTRADAY: { label: 'INTRADAY MODE', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' },
@@ -191,23 +209,52 @@ export default function Home() {
                   )}
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  {timeframes.map((frame) => (
-                    <button
-                      key={frame}
-                      type="button"
-                      onClick={() => setActiveTimeframe(frame)}
-                      className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${activeTimeframe === frame
-                          ? 'bg-emerald-500/15 text-emerald-400'
-                          : 'bg-surface text-text-secondary hover:bg-elevated'
-                        }`}
-                    >
-                      {frame}
-                    </button>
-                  ))}
-                </div>
-
                 <div className="flex items-center gap-2">
+                  {/* Timeframe dropdown */}
+                  <div className="relative" ref={tfDropdownRef}>
+                    <button
+                      type="button"
+                      onClick={() => setTfDropdownOpen(!tfDropdownOpen)}
+                      className={`flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors border ${
+                        tfDropdownOpen
+                          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                          : 'bg-surface text-text-secondary hover:bg-elevated border-border-default'
+                      }`}
+                    >
+                      {activeTimeframe}
+                      <ChevronDown size={12} className={`transition-transform duration-200 ${tfDropdownOpen ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {tfDropdownOpen && (
+                      <div className="absolute right-0 top-full z-50 mt-1 w-44 max-h-80 overflow-y-auto rounded-lg border border-border-default bg-surface shadow-lg panel-shadow py-1">
+                        {TIMEFRAME_GROUPS.map((group) => (
+                          <div key={group.label}>
+                            <div className="px-3 pt-2 pb-1 text-[9px] font-bold uppercase tracking-widest text-text-muted/60">
+                              {group.label}
+                            </div>
+                            {group.items.map((item) => (
+                              <button
+                                key={item.tf}
+                                type="button"
+                                onClick={() => {
+                                  setActiveTimeframe(item.tf as ChartTimeframe);
+                                  setTfDropdownOpen(false);
+                                }}
+                                className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors ${
+                                  activeTimeframe === item.tf
+                                    ? 'bg-emerald-500/10 text-emerald-400 font-semibold'
+                                    : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
+                                }`}
+                              >
+                                {item.display}
+                              </button>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   {/* Sidebar toggle button */}
                   <button
                     type="button"

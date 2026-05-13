@@ -6,6 +6,7 @@ import { useChartUIStore } from '../store/useChartUIStore';
 import { useHistoricalData } from '../hooks/useHistoricalData';
 
 import type { Timeframe, AlphaPredictiveChartProps } from '../utils/chartTypes';
+import { RANGE_DAYS, KITE_INTERVAL_MAP } from '../utils/chartTypes';
 export type { Timeframe };
 import { aggregateCandles } from '../utils/chartAggregation';
 
@@ -28,17 +29,27 @@ export default function AlphaPredictiveChart({
   const activeDecision = useTradeStore((s) => s.activeDecision);
   const liveDecisions = useTradeStore((s) => s.liveDecisions);
   const activeTimeframe = useTradeStore((s) => s.activeTimeframe);
+  const activeRange = useTradeStore((s) => s.activeRange);
   const predictiveSignals = useTradeStore((s) => s.predictiveSignals);
+  // selectedSymbol is the watchlist-driven selection; it takes priority over
+  // the AI decision symbol so clicking a stock immediately switches the chart.
+  const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
 
   const { activeCursor, activeDrawingTool } = useChartUIStore();
 
   const activeSymbol = useMemo(() => {
+    // 1. Explicit watchlist selection (highest priority)
+    if (selectedSymbol) return selectedSymbol.toUpperCase();
+    // 2. Fall back to the latest AI decision symbol
     const d = activeDecision ?? liveDecisions[liveDecisions.length - 1];
     return d?.symbol ?? 'RELIANCE';
-  }, [activeDecision, liveDecisions]);
+  }, [selectedSymbol, activeDecision, liveDecisions]);
 
   // ── Historical Data ──────────────────────────────────────────────────
-  const { candles: historicalCandles, loading: histLoading } = useHistoricalData(activeSymbol);
+  const effectiveTimeframe = (activeTimeframe as Timeframe) ?? timeframe;
+  const rangeDays = RANGE_DAYS[activeRange] ?? 365;
+  const kiteInterval = KITE_INTERVAL_MAP[effectiveTimeframe] ?? '10minute';
+  const { candles: historicalCandles, loading: histLoading } = useHistoricalData(activeSymbol, rangeDays, kiteInterval);
 
   // ── Merge Historical + Live ──────────────────────────────────────────
   const mergedCandles = useMemo(() => {
@@ -52,18 +63,33 @@ export default function AlphaPredictiveChart({
       volume: h.volume,
     }));
 
+    const liveForSymbol = ohlcCandles.filter(
+      (c) => c.symbol.toUpperCase() === activeSymbol.toUpperCase()
+    );
+
     const candleMap = new Map<number, OhlcCandle>();
     for (const c of histAsOhlc) candleMap.set(c.start_timestamp_ms, c);
-    for (const c of ohlcCandles) {
-      if (c.symbol.toUpperCase() === activeSymbol.toUpperCase()) {
-        candleMap.set(c.start_timestamp_ms, c);
-      }
+    for (const c of liveForSymbol) candleMap.set(c.start_timestamp_ms, c);
+
+    const merged = Array.from(candleMap.values());
+
+    // Debug: trace data sources to diagnose chart distortion
+    if (merged.length > 0) {
+      const histPrices = histAsOhlc.map((c) => c.close);
+      const livePrices = liveForSymbol.map((c) => c.close);
+      const mergedPrices = merged.map((c) => c.close);
+      console.log(
+        `[Chart Merge] ${activeSymbol} | hist=${histAsOhlc.length} [${Math.min(...histPrices).toFixed(1)}-${Math.max(...histPrices).toFixed(1)}]` +
+        ` | live=${liveForSymbol.length}${livePrices.length ? ` [${Math.min(...livePrices).toFixed(1)}-${Math.max(...livePrices).toFixed(1)}]` : ''}` +
+        ` | merged=${merged.length} [${Math.min(...mergedPrices).toFixed(1)}-${Math.max(...mergedPrices).toFixed(1)}]` +
+        ` | tf=${effectiveTimeframe} interval=${kiteInterval}`
+      );
     }
-    return Array.from(candleMap.values());
-  }, [historicalCandles, ohlcCandles, activeSymbol]);
+
+    return merged;
+  }, [historicalCandles, ohlcCandles, activeSymbol, effectiveTimeframe, kiteInterval]);
 
   // ── Aggregation ──────────────────────────────────────────────────────
-  const effectiveTimeframe = (activeTimeframe as Timeframe) ?? timeframe;
   const { candles: chartData, volumes: volumeData, ema9: ema9Data, ema21: ema21Data } = useMemo(
     () => aggregateCandles(mergedCandles, effectiveTimeframe, activeSymbol),
     [mergedCandles, effectiveTimeframe, activeSymbol]
