@@ -27,12 +27,21 @@ const TWO_POINT_TOOLS = new Set([
   // Shapes
   'rectangle', 'rotated-rectangle', 'path', 'circle', 'ellipse',
   'polyline', 'triangle-shape', 'arc', 'curve', 'double-curve',
+  // Projection & Volume & Measurer
+  'forecast', 'bars-pattern', 'ghost-feed', 'projection',
+  'anchored-vwap', 'fixed-range-volume', 'measure',
+  'date-range', 'date-price-range',
+  // Text & Notes
+  'text', 'anchored-text', 'note', 'anchored-note',
+  'callout', 'comment', 'price-label', 'price-note',
+  'signpost', 'flag-mark',
 ]);
 
-const UNSUPPORTED_TOOLS = new Set([
+const FREEHAND_TOOLS = new Set([
   'brush', 'highlighter',
-  'text', 'callout', 'price-label',
 ]);
+
+const UNSUPPORTED_TOOLS = new Set<string>();
 
 /**
  * useDrawingEngine — Drag-to-Draw Physics Bridge (v2)
@@ -48,10 +57,12 @@ export function useDrawingEngine(
   const activeDrawingTool = useChartUIStore((s) => s.activeDrawingTool);
   const addDrawing = useChartUIStore((s) => s.addDrawing);
   const setActiveDrawingTool = useChartUIStore((s) => s.setActiveDrawingTool);
+  const drawingColor = useChartUIStore((s) => s.drawingColor);
 
   // Drag state refs (avoid re-renders during drag)
   const isDragging = useRef(false);
   const anchorPoint = useRef<Point | null>(null);
+  const freehandPoints = useRef<Point[]>([]);
   const previewSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
 
   // ── Pixel → Logical coordinate conversion ──────────────────────────
@@ -166,6 +177,18 @@ export function useDrawingEngine(
       'path': '#9C27B0', 'circle': '#00BCD4', 'ellipse': '#00BCD4',
       'polyline': '#FF9800', 'triangle-shape': '#009688',
       'arc': '#E91E63', 'curve': '#673AB7', 'double-curve': '#795548',
+      // Projection & Volume & Measurer
+      'forecast': '#26A69A', 'bars-pattern': '#FF9800',
+      'ghost-feed': '#AB47BC', 'projection': '#2196F3',
+      'anchored-vwap': '#FF6D00', 'fixed-range-volume': '#00BCD4',
+      'date-range': '#78909C', 'date-price-range': '#607D8B', 'measure': '#2962FF',
+      // Brushes
+      'brush': '#FF5722', 'highlighter': '#FFEB3B',
+      // Text & Notes
+      'text': '#E0E0E0', 'anchored-text': '#BDBDBD', 'note': '#FFC107',
+      'anchored-note': '#FFB300', 'callout': '#4CAF50', 'comment': '#8BC34A',
+      'price-label': '#03A9F4', 'price-note': '#00BCD4',
+      'signpost': '#795548', 'flag-mark': '#F44336',
     };
     return colors[tool] || '#2962FF';
   }, []);
@@ -176,13 +199,13 @@ export function useDrawingEngine(
       if (!activeDrawingTool) return;
       clearPreview();
       const id = crypto.randomUUID();
-      addDrawing({ id, tool: activeDrawingTool, points: [p1, p2] });
+      addDrawing({ id, tool: activeDrawingTool, points: [p1, p2], color: drawingColor });
       console.log(`[DRAW ENGINE] ${activeDrawingTool} complete:`, id);
       isDragging.current = false;
       anchorPoint.current = null;
       setActiveDrawingTool(null);
     },
-    [activeDrawingTool, addDrawing, setActiveDrawingTool, clearPreview],
+    [activeDrawingTool, addDrawing, setActiveDrawingTool, clearPreview, drawingColor],
   );
 
   // ── Mouse event handlers ───────────────────────────────────────────
@@ -197,7 +220,8 @@ export function useDrawingEngine(
       return;
     }
 
-    if (!TWO_POINT_TOOLS.has(activeDrawingTool)) return;
+    const isFreehand = FREEHAND_TOOLS.has(activeDrawingTool);
+    if (!isFreehand && !TWO_POINT_TOOLS.has(activeDrawingTool)) return;
 
     const color = getToolColor(activeDrawingTool);
 
@@ -215,6 +239,7 @@ export function useDrawingEngine(
 
       isDragging.current = true;
       anchorPoint.current = point;
+      freehandPoints.current = isFreehand ? [point] : [];
 
       // Prevent chart from panning while drawing
       chart.applyOptions({ handleScroll: false, handleScale: false });
@@ -226,8 +251,18 @@ export function useDrawingEngine(
       const point = pixelToPoint(x, y);
       if (!point) return;
 
-      // Show live dashed preview line
-      updatePreview(anchorPoint.current, point, color);
+      if (isFreehand) {
+        // Collect every point for freehand brush
+        freehandPoints.current.push(point);
+        // Show live preview of the freehand path
+        if (freehandPoints.current.length >= 2) {
+          const pts = freehandPoints.current;
+          updatePreview(pts[pts.length - 2], pts[pts.length - 1], drawingColor);
+        }
+      } else {
+        // Show live dashed preview line
+        updatePreview(anchorPoint.current, point, color);
+      }
     };
 
     const onMouseUp = (e: MouseEvent) => {
@@ -235,6 +270,20 @@ export function useDrawingEngine(
       chart.applyOptions({ handleScroll: true, handleScale: true });
 
       if (!isDragging.current || !anchorPoint.current) return;
+
+      if (isFreehand && freehandPoints.current.length >= 2) {
+        // Finalize freehand drawing with all collected points
+        clearPreview();
+        const id = crypto.randomUUID();
+        addDrawing({ id, tool: activeDrawingTool, points: freehandPoints.current, color: drawingColor });
+        console.log(`[DRAW ENGINE] ${activeDrawingTool} freehand complete:`, id, `(${freehandPoints.current.length} pts)`);
+        isDragging.current = false;
+        anchorPoint.current = null;
+        freehandPoints.current = [];
+        setActiveDrawingTool(null);
+        return;
+      }
+
       const { x, y } = getLocalCoords(e);
       const point = pixelToPoint(x, y);
 
@@ -295,6 +344,7 @@ export function useDrawingEngine(
       clearPreview();
       isDragging.current = false;
       anchorPoint.current = null;
+      freehandPoints.current = [];
     };
   }, [activeDrawingTool, chartRef, candleSeriesRef, containerRef, 
       pixelToPoint, updatePreview, clearPreview, finalizeDraw, 

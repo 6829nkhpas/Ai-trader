@@ -4,7 +4,7 @@ type CursorMode = 'cross' | 'dot' | 'arrow' | 'eraser';
 type MagnetMode = 'off' | 'weak' | 'strong';
 
 export type Point = { time: number; price: number };
-export type Drawing = { id: string; tool: string; points: Point[] };
+export type Drawing = { id: string; tool: string; points: Point[]; color?: string; text?: string };
 
 interface ChartUIState {
   activeCursor: CursorMode;
@@ -14,6 +14,7 @@ interface ChartUIState {
   drawingsLocked: boolean;
   drawings: Drawing[];
   selectedDrawingId: string | null;
+  drawingColor: string;
 
   setActiveCursor: (cursor: CursorMode) => void;
   setActiveDrawingTool: (tool: string | null) => void;
@@ -21,10 +22,12 @@ interface ChartUIState {
   toggleDrawingsVisible: () => void;
   toggleDrawingsLocked: () => void;
   addDrawing: (drawing: Drawing) => void;
+  updateDrawing: (id: string, updates: Partial<Drawing>) => void;
   updateDrawingPoints: (id: string, points: Point[]) => void;
   removeDrawing: (id: string) => void;
   setSelectedDrawing: (id: string | null) => void;
   clearDrawings: () => void;
+  setDrawingColor: (color: string) => void;
 }
 
 export const useChartUIStore = create<ChartUIState>((set) => ({
@@ -35,6 +38,7 @@ export const useChartUIStore = create<ChartUIState>((set) => ({
   drawingsLocked: false,
   drawings: [],
   selectedDrawingId: null,
+  drawingColor: '#FF5722',
 
   setActiveCursor: (cursor) => set({ activeCursor: cursor, activeDrawingTool: null }),
   setActiveDrawingTool: (tool) => set({ activeDrawingTool: tool, selectedDrawingId: null }),
@@ -43,6 +47,9 @@ export const useChartUIStore = create<ChartUIState>((set) => ({
   toggleDrawingsLocked: () => set((state) => ({ drawingsLocked: !state.drawingsLocked })),
   addDrawing: (drawing) =>
     set((state) => ({ drawings: [...state.drawings, drawing] })),
+  updateDrawing: (id, updates) => set((state) => ({
+    drawings: state.drawings.map((d) => (d.id === id ? { ...d, ...updates } : d))
+  })),
   updateDrawingPoints: (id, points) =>
     set((state) => ({
       drawings: state.drawings.map((d) => (d.id === id ? { ...d, points } : d)),
@@ -54,4 +61,5 @@ export const useChartUIStore = create<ChartUIState>((set) => ({
     })),
   setSelectedDrawing: (id) => set({ selectedDrawingId: id }),
   clearDrawings: () => set({ drawings: [], selectedDrawingId: null }),
+  setDrawingColor: (color) => set({ drawingColor: color }),
 }));

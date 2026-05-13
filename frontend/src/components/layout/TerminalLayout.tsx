@@ -83,6 +83,21 @@ import {
   Orbit,
   Slice,
   Radical,
+  // Projection icons
+  Crosshair as CrosshairIcon,
+  BarChart2,
+  Rss,
+  LineChart,
+  Anchor,
+  BarChart4,
+  Calendar,
+  CalendarRange,
+  // Text icons
+  StickyNote,
+  MessageCircle,
+  Monitor,
+  Signpost,
+  Flag,
 } from 'lucide-react';
 import { useTradeStore, TradeProfile } from '../../store/useTradeStore';
 import { useAuth } from '../../context/AuthContext';
@@ -104,19 +119,21 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
   const { activeProfile, setActiveProfile, resetSession } = useTradeStore();
   const { user, logout } = useAuth();
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  
-  const { 
-    activeCursor, 
-    activeDrawingTool, 
-    magnetMode, 
-    drawingsVisible, 
+
+  const {
+    activeCursor,
+    activeDrawingTool,
+    magnetMode,
+    drawingsVisible,
     drawingsLocked,
     setActiveCursor,
     setActiveDrawingTool,
     setMagnetMode,
     toggleDrawingsVisible,
     toggleDrawingsLocked,
-    clearDrawings
+    clearDrawings,
+    drawingColor,
+    setDrawingColor
   } = useChartUIStore();
 
   const cursorOptions = [
@@ -207,16 +224,35 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
     { id: 'double-curve', label: 'Double Curve', icon: Radical },
   ];
 
-  const textOptions = [
+  const textOptions: ToolMenuEntry[] = [
+    { section: 'Text & Notes' },
     { id: 'text', label: 'Text', icon: Type },
+    { id: 'anchored-text', label: 'Anchored Text', icon: Anchor },
+    { id: 'note', label: 'Note', icon: StickyNote },
+    { id: 'anchored-note', label: 'Anchored Note', icon: MapPin },
     { id: 'callout', label: 'Callout', icon: MessageSquare },
+    { id: 'comment', label: 'Comment', icon: MessageCircle },
     { id: 'price-label', label: 'Price Label', icon: Tag },
+    { id: 'price-note', label: 'Price Note', icon: Monitor },
+    { id: 'signpost', label: 'Signpost', icon: Signpost },
+    { id: 'flag-mark', label: 'Flag Mark', icon: Flag },
   ];
 
-  const measurementOptions = [
+  const projectionOptions: ToolMenuEntry[] = [
+    { section: 'Projection' },
     { id: 'long-position', label: 'Long Position', icon: ArrowUpRight },
     { id: 'short-position', label: 'Short Position', icon: ArrowDownRight },
+    { id: 'forecast', label: 'Forecast', icon: LineChart },
+    { id: 'bars-pattern', label: 'Bars Pattern', icon: BarChart2 },
+    { id: 'ghost-feed', label: 'Ghost Feed', icon: Rss },
+    { id: 'projection', label: 'Projection', icon: TrendingUp },
+    { section: 'Volume-Based' },
+    { id: 'anchored-vwap', label: 'Anchored VWAP', icon: Anchor },
+    { id: 'fixed-range-volume', label: 'Fixed Range Volume Profile', icon: BarChart4 },
+    { section: 'Measurer' },
     { id: 'price-range', label: 'Price Range', icon: Ruler },
+    { id: 'date-range', label: 'Date Range', icon: Calendar },
+    { id: 'date-price-range', label: 'Date and Price Range', icon: CalendarRange },
   ];
 
   const cycleMagnetMode = () => {
@@ -252,10 +288,9 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
                     relative flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-xs font-semibold
                     transition-all duration-200 ease-out select-none
                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60
-                    ${
-                      isActive
-                        ? 'bg-emerald-500/15 text-emerald-400'
-                        : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
+                    ${isActive
+                      ? 'bg-emerald-500/15 text-emerald-400'
+                      : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
                     }
                   `}
                 >
@@ -265,11 +300,10 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
                   )}
                   <span>{label}</span>
                   <span
-                    className={`rounded px-1 py-px text-[10px] font-medium leading-none ${
-                      isActive
+                    className={`rounded px-1 py-px text-[10px] font-medium leading-none ${isActive
                         ? 'bg-emerald-500/10 text-[#059669]'
                         : 'bg-elevated text-text-secondary'
-                    }`}
+                      }`}
                   >
                     {shortcut}
                   </span>
@@ -287,7 +321,7 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
             <RefreshCcw size={14} />
             Reset Session
           </button>
-          
+
           <button className="relative text-text-secondary hover:text-text-primary transition-colors">
             <Bell size={18} />
             <span className="absolute top-0 right-0 h-2 w-2 rounded-full bg-red-500 border border-surface"></span>
@@ -306,11 +340,11 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
 
             {isProfileOpen && (
               <>
-                <div 
-                  className="fixed inset-0 z-40" 
+                <div
+                  className="fixed inset-0 z-40"
                   onClick={() => setIsProfileOpen(false)}
                 />
-                
+
                 <div className="absolute right-0 top-full z-50 mt-2 w-56 rounded-lg border border-border-default bg-surface py-2 shadow-lg panel-shadow">
                   <div className="border-b border-border-default px-4 pb-3 pt-2">
                     <p className="text-sm font-medium text-text-primary">
@@ -320,13 +354,13 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
                       {user?.email || 'user@example.com'}
                     </p>
                   </div>
-                  
+
                   <div className="flex flex-col py-1">
                     <button className="flex items-center gap-3 px-4 py-2 text-sm text-text-secondary hover:bg-elevated hover:text-text-primary text-left">
                       <HelpCircle size={16} />
                       Customer Support
                     </button>
-                    <button 
+                    <button
                       onClick={async () => {
                         await logout();
                         setIsProfileOpen(false);
@@ -345,15 +379,15 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
       </header>
 
       {/* Main Content */}
-      <div className="flex flex-1 min-h-0 overflow-hidden bg-background p-2 gap-2">
+      <div className="flex flex-1 min-h-0 overflow-visible bg-background p-2 gap-2">
         {/* Watchlist */}
-        <aside className="flex w-56 shrink-0 min-h-0 flex-col overflow-y-auto border border-border-default rounded-lg bg-surface panel-shadow">
+        <aside className="flex w-56 shrink-0 min-h-0 flex-col overflow-visible border border-border-default rounded-lg bg-surface panel-shadow">
           {leftPanel}
         </aside>
 
         {/* Tools Bar */}
         <div className="flex w-12 shrink-0 flex-col items-center gap-1.5 border border-border-default rounded-lg bg-surface py-2 panel-shadow relative z-20">
-          
+
           <ToolMenu
             icon={cursorOptions.find(o => o.id === activeCursor)?.icon || Crosshair}
             isActive={true}
@@ -392,20 +426,53 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
           />
 
           <ToolMenu
-            icon={textOptions.find(o => o.id === activeDrawingTool)?.icon || Type}
-            isActive={textOptions.some(o => o.id === activeDrawingTool)}
+            icon={(textOptions.filter((o): o is { id: string; label: string; icon: React.ElementType; shortcut?: string } => 'id' in o).find(o => o.id === activeDrawingTool))?.icon || Type}
+            isActive={textOptions.filter((o): o is { id: string; label: string; icon: React.ElementType; shortcut?: string } => 'id' in o).some(o => o.id === activeDrawingTool)}
             options={textOptions}
             onSelect={setActiveDrawingTool}
           />
 
           <ToolMenu
-            icon={measurementOptions.find(o => o.id === activeDrawingTool)?.icon || Ruler}
-            isActive={measurementOptions.some(o => o.id === activeDrawingTool)}
-            options={measurementOptions}
+            icon={(projectionOptions.filter((o): o is { id: string; label: string; icon: React.ElementType; shortcut?: string } => 'id' in o).find(o => o.id === activeDrawingTool))?.icon || ArrowUpRight}
+            isActive={projectionOptions.filter((o): o is { id: string; label: string; icon: React.ElementType; shortcut?: string } => 'id' in o).some(o => o.id === activeDrawingTool)}
+            options={projectionOptions}
             onSelect={setActiveDrawingTool}
           />
 
-          <div className="flex-grow" />
+          <div className="flex flex-col items-center gap-1.5 pb-2 border-b border-border-default w-full mb-2">
+            <button
+              type="button"
+              onClick={() => setActiveDrawingTool(activeDrawingTool === 'measure' ? null : 'measure')}
+              title="Measure"
+              className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${activeDrawingTool === 'measure'
+                  ? 'text-primary bg-primary/10'
+                  : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
+                }`}
+            >
+              <Ruler size={16} />
+            </button>
+          </div>
+
+          {/* Color Picker */}
+          <div className="flex flex-col items-center pb-2 border-b border-border-default w-full">
+            <label
+              htmlFor="color-picker"
+              className="group relative flex h-8 w-8 items-center justify-center rounded-md cursor-pointer hover:bg-elevated transition-colors"
+              title="Drawing Color"
+            >
+              <div 
+                className="w-5 h-5 rounded-full border border-border-default/50 shadow-sm transition-transform group-hover:scale-110"
+                style={{ backgroundColor: drawingColor }}
+              />
+              <input
+                id="color-picker"
+                type="color"
+                value={drawingColor}
+                onChange={(e) => setDrawingColor(e.target.value)}
+                className="absolute opacity-0 w-0 h-0"
+              />
+            </label>
+          </div>
 
           {/* Standalone bottom buttons */}
           <div className="flex flex-col items-center gap-1.5 pt-2">
@@ -413,11 +480,10 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
               type="button"
               onClick={cycleMagnetMode}
               title={`Magnet Mode: ${magnetMode}`}
-              className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
-                magnetMode !== 'off'
+              className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${magnetMode !== 'off'
                   ? 'text-primary bg-primary/10'
                   : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
-              }`}
+                }`}
             >
               <Magnet size={15} />
             </button>
@@ -426,11 +492,10 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
               type="button"
               onClick={toggleDrawingsLocked}
               title="Lock All Drawings"
-              className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
-                drawingsLocked
+              className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${drawingsLocked
                   ? 'text-primary bg-primary/10'
                   : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
-              }`}
+                }`}
             >
               <Lock size={15} />
             </button>
@@ -456,7 +521,7 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
         </div>
 
         {/* Central Area */}
-        <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <main className="flex min-h-0 flex-1 flex-col overflow-visible">
           {children}
         </main>
 

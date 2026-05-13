@@ -13,6 +13,7 @@ import { useChartInit } from '../hooks/useChartInit';
 import { useChartDataSync } from '../hooks/useChartDataSync';
 import { useDrawingEngine } from '../hooks/useDrawingEngine';
 import { useDrawingInteraction } from '../hooks/useDrawingInteraction';
+import { DrawingOverlays } from './chart/DrawingOverlays';
 import { useDrawingRenderer } from '../hooks/useDrawingRenderer';
 import { useFibZoneOverlay } from '../hooks/useFibZoneOverlay';
 
@@ -129,6 +130,9 @@ export default function AlphaPredictiveChart({
           </div>
         </div>
       )}
+
+      {/* ── HTML Drawing Overlays ──────────────────────────────── */}
+      <DrawingOverlays chartRef={refs.chartRef} candleSeriesRef={refs.candleSeriesRef} />
     </div>
   );
 }

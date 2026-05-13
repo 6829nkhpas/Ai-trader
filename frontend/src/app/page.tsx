@@ -197,11 +197,10 @@ export default function Home() {
                       key={frame}
                       type="button"
                       onClick={() => setActiveTimeframe(frame)}
-                      className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
-                        activeTimeframe === frame
+                      className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${activeTimeframe === frame
                           ? 'bg-emerald-500/15 text-emerald-400'
                           : 'bg-surface text-text-secondary hover:bg-elevated'
-                      }`}
+                        }`}
                     >
                       {frame}
                     </button>
@@ -213,11 +212,10 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => setSidebarOpen(!sidebarOpen)}
-                    className={`rounded-md p-1.5 text-xs font-semibold transition-colors ${
-                      sidebarOpen
+                    className={`rounded-md p-1.5 text-xs font-semibold transition-colors ${sidebarOpen
                         ? 'bg-emerald-500/15 text-emerald-400'
                         : 'bg-surface text-text-secondary hover:bg-elevated'
-                    }`}
+                      }`}
                     title={sidebarOpen ? `Hide ${sidebarCfg.label}` : `Show ${sidebarCfg.label}`}
                   >
                     {sidebarOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
@@ -226,7 +224,7 @@ export default function Home() {
               </div>
 
               {/* Chart area - takes full width */}
-              <div className="min-h-0 flex-1 bg-surface relative flex flex-col p-1.5 overflow-hidden">
+              <div className="min-h-0 flex-1 bg-surface relative flex flex-col p-1.5 overflow-visible">
                 {renderProfileContent()}
               </div>
 

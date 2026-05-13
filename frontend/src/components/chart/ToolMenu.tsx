@@ -40,26 +40,25 @@ export function ToolMenu({ icon: Icon, isActive, options, onSelect }: ToolMenuPr
   };
 
   return (
-    <div 
+    <div
       className="relative flex items-center justify-center w-full"
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
       <button
         type="button"
-        className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
-          isActive
+        className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${isActive
             ? 'text-primary bg-primary/10'
-            : isOpen 
+            : isOpen
               ? 'text-text-primary bg-elevated'
               : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
-        }`}
+          }`}
       >
         <Icon size={15} />
       </button>
 
       {isOpen && (
-        <div className="absolute left-[100%] top-0 z-50 ml-1 w-56 rounded-md border border-border-default bg-surface shadow-lg panel-shadow py-1">
+        <div className="absolute left-[100%] top-0 z-50 ml-1 w-56 max-h-[70vh] overflow-y-auto overscroll-contain rounded-md border border-border-default bg-surface shadow-lg panel-shadow py-1">
           {options.map((entry, idx) => {
             if (isSection(entry)) {
               return (

@@ -74,6 +74,18 @@ export function useDrawingRenderer(
       'path': '#9C27B0', 'circle': '#00BCD4', 'ellipse': '#00BCD4',
       'polyline': '#FF9800', 'triangle-shape': '#009688',
       'arc': '#E91E63', 'curve': '#673AB7', 'double-curve': '#795548',
+      // Projection & Volume & Measurer
+      'forecast': '#26A69A', 'bars-pattern': '#FF9800',
+      'ghost-feed': '#AB47BC', 'projection': '#2196F3',
+      'anchored-vwap': '#FF6D00', 'fixed-range-volume': '#00BCD4',
+      'date-range': '#78909C', 'date-price-range': '#607D8B',
+      // Brushes
+      'brush': '#FF5722', 'highlighter': '#FFEB3B',
+      // Text & Notes
+      'text': '#E0E0E0', 'anchored-text': '#BDBDBD', 'note': '#FFC107',
+      'anchored-note': '#FFB300', 'callout': '#4CAF50', 'comment': '#8BC34A',
+      'price-label': '#03A9F4', 'price-note': '#00BCD4',
+      'signpost': '#795548', 'flag-mark': '#F44336',
     };
 
     const TOOL_LINE_STYLES: Record<string, number> = {
@@ -103,6 +115,16 @@ export function useDrawingRenderer(
       lineStyle: number = 0,
       title?: string,
     ) => {
+      if (data.length < 2) return;
+
+      // LWC requires strictly ascending time — sort then deduplicate
+      const sorted = [...data].sort((a, b) => (a.time as number) - (b.time as number));
+      for (let i = 1; i < sorted.length; i++) {
+        if ((sorted[i].time as number) <= (sorted[i - 1].time as number)) {
+          sorted[i] = { ...sorted[i], time: ((sorted[i - 1].time as number) + 1) as Time };
+        }
+      }
+
       const line = chart.addSeries(LineSeries, {
         color,
         lineWidth,
@@ -115,14 +137,14 @@ export function useDrawingRenderer(
         lastValueVisible: false,
         ...(title ? { title } : {}),
       });
-      line.setData(data);
+      line.setData(sorted);
       drawingSeriesRef.current.push(line);
       return line;
     };
 
     for (const drawing of drawings) {
       if (drawing.points.length < 2) continue;
-      const color = TOOL_COLORS[drawing.tool] || '#2962FF';
+      const color = drawing.color || TOOL_COLORS[drawing.tool] || '#2962FF';
       const lineStyle = TOOL_LINE_STYLES[drawing.tool] ?? 0;
       const p1 = drawing.points[0];
       const p2 = drawing.points[1];
@@ -1296,6 +1318,443 @@ export function useDrawingRenderer(
             dcvPts.push({ time: t as Time, value: +val.toFixed(2) });
           }
           createLine(dcvPts, color, 2, 0, 'Double Curve');
+          break;
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // ── PROJECTION ────────────────────────────────────────
+        // ═══════════════════════════════════════════════════════
+
+        // ── Forecast — projected trend continuation ───────────
+        case 'forecast': {
+          // Main trend line
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[1].price },
+            ],
+            color, 2, 0,
+          );
+          // Projected continuation (dashed)
+          const fcSlope = (sorted[1].price - sorted[0].price) / ((sorted[1].time - sorted[0].time) || 1);
+          const fcExtent = sorted[1].time - sorted[0].time;
+          const fcFarTime = sorted[1].time + fcExtent;
+          const fcFarPrice = sorted[1].price + fcSlope * fcExtent;
+          createLine(
+            [
+              { time: sorted[1].time as Time, value: sorted[1].price },
+              { time: fcFarTime as Time, value: +fcFarPrice.toFixed(2) },
+            ],
+            color, 2, 2, 'Forecast',
+          );
+          // Confidence bands (±)
+          const fcBand = Math.abs(sorted[1].price - sorted[0].price) * 0.15;
+          createLine(
+            [
+              { time: sorted[1].time as Time, value: +(sorted[1].price + fcBand).toFixed(2) },
+              { time: fcFarTime as Time, value: +(fcFarPrice + fcBand * 2).toFixed(2) },
+            ],
+            color, 1, 2,
+          );
+          createLine(
+            [
+              { time: sorted[1].time as Time, value: +(sorted[1].price - fcBand).toFixed(2) },
+              { time: fcFarTime as Time, value: +(fcFarPrice - fcBand * 2).toFixed(2) },
+            ],
+            color, 1, 2,
+          );
+          break;
+        }
+
+        // ── Bars Pattern — repeating price pattern ─────────────
+        case 'bars-pattern': {
+          const bpTimeDiff = sorted[1].time - sorted[0].time;
+          const bpPriceDiff = sorted[1].price - sorted[0].price;
+          // Original segment
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[1].price },
+            ],
+            color, 2, 0, 'Pattern',
+          );
+          // Repeat the pattern twice
+          for (let rep = 1; rep <= 2; rep++) {
+            const baseTime = sorted[1].time + bpTimeDiff * (rep - 1);
+            createLine(
+              [
+                { time: baseTime as Time, value: +(sorted[1].price + bpPriceDiff * (rep - 1)).toFixed(2) },
+                { time: (baseTime + bpTimeDiff) as Time, value: +(sorted[1].price + bpPriceDiff * rep).toFixed(2) },
+              ],
+              color, 1, 2, `Rep ${rep}`,
+            );
+          }
+          break;
+        }
+
+        // ── Ghost Feed — mirrored/reflected price action ───────
+        case 'ghost-feed': {
+          // Original line
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[1].price },
+            ],
+            color, 2, 0, 'Ghost',
+          );
+          // Ghost: mirror forward from p2
+          const gfTimeDiff = sorted[1].time - sorted[0].time;
+          const gfPriceDiff = sorted[1].price - sorted[0].price;
+          const gfSteps = 8;
+          const gfPts = [];
+          for (let i = 0; i <= gfSteps; i++) {
+            const frac = i / gfSteps;
+            const t = sorted[1].time + Math.round(gfTimeDiff * frac);
+            // Dampened oscillation around endpoint
+            const damp = Math.exp(-frac * 2);
+            const val = sorted[1].price + gfPriceDiff * 0.3 * Math.sin(frac * Math.PI * 3) * damp;
+            gfPts.push({ time: t as Time, value: +val.toFixed(2) });
+          }
+          createLine(gfPts, color, 1, 2, 'Feed');
+          break;
+        }
+
+        // ── Projection — angle-based price projection ──────────
+        case 'projection': {
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[1].price },
+            ],
+            color, 2, 0,
+          );
+          const prjTimeDiff = sorted[1].time - sorted[0].time;
+          const prjPriceDiff = sorted[1].price - sorted[0].price;
+          // Project 100%, 161.8%, 200%
+          const prjLevels = [1, 1.618, 2];
+          for (const mult of prjLevels) {
+            const t = sorted[1].time + Math.round(prjTimeDiff * (mult - 1));
+            const p = sorted[1].price + prjPriceDiff * (mult - 1);
+            createLine(
+              [
+                { time: sorted[1].time as Time, value: sorted[1].price },
+                { time: t as Time, value: +p.toFixed(2) },
+              ],
+              color, 1, 2, `${(mult * 100).toFixed(0)}%`,
+            );
+          }
+          break;
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // ── VOLUME-BASED ──────────────────────────────────────
+        // ═══════════════════════════════════════════════════════
+
+        // ── Anchored VWAP — volume-weighted average from anchor
+        case 'anchored-vwap': {
+          // Simulated VWAP line from p1 to p2
+          const vwMid = (sorted[0].price + sorted[1].price) / 2;
+          const vwRange = Math.abs(sorted[1].price - sorted[0].price);
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: +vwMid.toFixed(2) },
+            ],
+            '#FF6D00', 2, 0, 'VWAP',
+          );
+          // Upper band
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +(sorted[0].price + vwRange * 0.2).toFixed(2) },
+              { time: sorted[1].time as Time, value: +(vwMid + vwRange * 0.15).toFixed(2) },
+            ],
+            '#FF6D00', 1, 2, '+1σ',
+          );
+          // Lower band
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +(sorted[0].price - vwRange * 0.2).toFixed(2) },
+              { time: sorted[1].time as Time, value: +(vwMid - vwRange * 0.15).toFixed(2) },
+            ],
+            '#FF6D00', 1, 2, '-1σ',
+          );
+          break;
+        }
+
+        // ── Fixed Range Volume Profile — horizontal bars ───────
+        case 'fixed-range-volume': {
+          const frvTop = Math.max(sorted[0].price, sorted[1].price);
+          const frvBot = Math.min(sorted[0].price, sorted[1].price);
+          const frvRange = frvTop - frvBot;
+          const frvBins = 8;
+          // Boundary lines
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +frvTop.toFixed(2) },
+              { time: sorted[1].time as Time, value: +frvTop.toFixed(2) },
+            ],
+            color, 1, 2,
+          );
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +frvBot.toFixed(2) },
+              { time: sorted[1].time as Time, value: +frvBot.toFixed(2) },
+            ],
+            color, 1, 2,
+          );
+          // Horizontal level markers (simulating volume bars)
+          for (let i = 1; i < frvBins; i++) {
+            const price = frvBot + (frvRange / frvBins) * i;
+            createLine(
+              [
+                { time: sorted[0].time as Time, value: +price.toFixed(2) },
+                { time: sorted[1].time as Time, value: +price.toFixed(2) },
+              ],
+              color, 1, 2,
+            );
+          }
+          // POC (point of control) — emphasized middle line
+          const poc = frvBot + frvRange * 0.5;
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +poc.toFixed(2) },
+              { time: sorted[1].time as Time, value: +poc.toFixed(2) },
+            ],
+            '#FF6D00', 2, 0, 'POC',
+          );
+          break;
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // ── MEASURER ──────────────────────────────────────────
+        // ═══════════════════════════════════════════════════════
+
+        // ── Date Range — time span measurement ────────────────
+        case 'date-range': {
+          const drTimeDiff = Math.abs(sorted[1].time - sorted[0].time);
+          const drBars = Math.round(drTimeDiff / intervalSec);
+          const drHours = Math.floor(drTimeDiff / 3600);
+          const drMins = Math.floor((drTimeDiff % 3600) / 60);
+          const drDuration = drHours > 24
+            ? `${Math.floor(drHours / 24)}d ${drHours % 24}h`
+            : `${drHours}h ${drMins}m`;
+          const drMid = (sorted[0].price + sorted[1].price) / 2;
+          // Vertical markers
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +(drMid * 0.98).toFixed(2) },
+              { time: sorted[0].time as Time, value: +(drMid * 1.02).toFixed(2) },
+            ],
+            color, 2, 0,
+          );
+          createLine(
+            [
+              { time: sorted[1].time as Time, value: +(drMid * 0.98).toFixed(2) },
+              { time: sorted[1].time as Time, value: +(drMid * 1.02).toFixed(2) },
+            ],
+            color, 2, 0,
+          );
+          // Connecting line with label
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: +drMid.toFixed(2) },
+              { time: sorted[1].time as Time, value: +drMid.toFixed(2) },
+            ],
+            color, 1, 2, `${drBars} bars (${drDuration})`,
+          );
+          break;
+        }
+
+        // ── Date and Price Range — combined measurement ────────
+        case 'date-price-range': {
+          const dpTimeDiff = Math.abs(sorted[1].time - sorted[0].time);
+          const dpBars = Math.round(dpTimeDiff / intervalSec);
+          const dpPriceDiff = sorted[1].price - sorted[0].price;
+          const dpPct = ((dpPriceDiff / sorted[0].price) * 100).toFixed(2);
+          const dpHours = Math.floor(dpTimeDiff / 3600);
+          const dpMins = Math.floor((dpTimeDiff % 3600) / 60);
+          const dpDuration = dpHours > 24
+            ? `${Math.floor(dpHours / 24)}d ${dpHours % 24}h`
+            : `${dpHours}h ${dpMins}m`;
+          // Main diagonal
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[1].price },
+            ],
+            color, 2, 0,
+            `${dpPriceDiff >= 0 ? '+' : ''}${dpPriceDiff.toFixed(2)} (${dpPct}%) · ${dpBars} bars (${dpDuration})`,
+          );
+          // Horizontal component
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[0].price },
+            ],
+            color, 1, 2,
+          );
+          // Vertical component
+          createLine(
+            [
+              { time: sorted[1].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[1].price },
+            ],
+            color, 1, 2,
+          );
+          break;
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // ── BRUSHES ───────────────────────────────────────────
+        // ═══════════════════════════════════════════════════════
+
+        // ── Brush — thick freehand-style line ─────────────────
+        case 'brush': {
+          const brushPts = drawing.points.map(p => ({
+            time: p.time as Time,
+            value: p.price,
+          }));
+          createLine(brushPts, color, 4, 0, 'Brush');
+          break;
+        }
+
+        // ── Highlighter — wide semi-transparent band ──────────
+        case 'highlighter': {
+          // Add opacity to the selected color or use yellow
+          const baseColor = drawing.color || '#FFEB3B';
+          const isHex = baseColor.startsWith('#');
+          // simple opacity approach if hex
+          const fillColor = isHex ? `${baseColor}99` : 'rgba(255, 235, 59, 0.6)';
+          const edgeColor = isHex ? `${baseColor}4D` : 'rgba(255, 235, 59, 0.3)';
+          
+          const hlRange = Math.abs(sorted[1].price - sorted[0].price) * 0.08 || sorted[0].price * 0.003;
+          
+          const mainPts = drawing.points.map(p => ({ time: p.time as Time, value: p.price }));
+          const topPts = drawing.points.map(p => ({ time: p.time as Time, value: +(p.price + hlRange).toFixed(2) }));
+          const botPts = drawing.points.map(p => ({ time: p.time as Time, value: +(p.price - hlRange).toFixed(2) }));
+
+          // Main center line
+          createLine(mainPts, fillColor, 4, 0);
+          // Top edge
+          createLine(topPts, edgeColor, 3, 0);
+          // Bottom edge
+          createLine(botPts, edgeColor, 3, 0);
+          break;
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // ── TEXT & NOTES ──────────────────────────────────────
+        // ═══════════════════════════════════════════════════════
+
+        case 'text':
+        case 'anchored-text': {
+          // Rendered as an underline with a title label attached
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[0].price },
+            ],
+            color, 2, 0,
+          );
+          break;
+        }
+
+        case 'note':
+        case 'anchored-note': {
+          // Rendered as a tiny square/pin marker
+          const notePriceOffset = Math.abs(sorted[1].price - sorted[0].price) * 0.1 || sorted[0].price * 0.001;
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[0].time as Time, value: +(sorted[0].price + notePriceOffset).toFixed(2) },
+            ],
+            color, 4, 0,
+          );
+          break;
+        }
+
+        case 'callout':
+        case 'comment': {
+          // Rendered as a pointer line ending in an underline
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[1].price },
+            ],
+            color, 1, 2,
+          );
+          const extTime = sorted[1].time + (sorted[1].time - sorted[0].time) * 0.2;
+          createLine(
+            [
+              { time: sorted[1].time as Time, value: sorted[1].price },
+              { time: extTime as Time, value: sorted[1].price },
+            ],
+            color, 2, 0,
+          );
+          break;
+        }
+
+        case 'price-label':
+        case 'price-note': {
+          // Rendered as a horizontal ray emphasizing the specific price
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: sorted[0].price },
+              { time: sorted[1].time as Time, value: sorted[0].price },
+            ],
+            color, 2, 0,
+          );
+          break;
+        }
+
+        case 'signpost': {
+          // Rendered as a vertical pole with a rectangle sign at the top
+          const topPrice = Math.max(sorted[0].price, sorted[1].price);
+          const botPrice = Math.min(sorted[0].price, sorted[1].price);
+          const signH = (topPrice - botPrice) * 0.2;
+          // Pole
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: botPrice },
+              { time: sorted[0].time as Time, value: topPrice },
+            ],
+            color, 2, 0,
+          );
+          // Sign
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: topPrice },
+              { time: sorted[1].time as Time, value: topPrice },
+              { time: sorted[1].time as Time, value: +(topPrice - signH).toFixed(2) },
+              { time: sorted[0].time as Time, value: +(topPrice - signH).toFixed(2) },
+            ],
+            color, 2, 0,
+          );
+          break;
+        }
+
+        case 'flag-mark': {
+          // Rendered as a vertical pole with a triangular flag
+          const topPrice = Math.max(sorted[0].price, sorted[1].price);
+          const botPrice = Math.min(sorted[0].price, sorted[1].price);
+          const flagH = (topPrice - botPrice) * 0.3;
+          // Pole
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: botPrice },
+              { time: sorted[0].time as Time, value: topPrice },
+            ],
+            color, 2, 0,
+          );
+          // Flag triangle
+          createLine(
+            [
+              { time: sorted[0].time as Time, value: topPrice },
+              { time: sorted[1].time as Time, value: +(topPrice - flagH / 2).toFixed(2) },
+              { time: sorted[0].time as Time, value: +(topPrice - flagH).toFixed(2) },
+            ],
+            color, 2, 0,
+          );
           break;
         }
       }
