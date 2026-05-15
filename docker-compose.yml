@@ -61,7 +61,7 @@ services:
       POSTGRES_USER: auth_admin
       POSTGRES_PASSWORD: ${POSTGRES_AUTH_PASSWORD:-auth_secret_dev}
     ports:
-      - "5432:5432"
+      - "5890:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./auth/migrations:/docker-entrypoint-initdb.d

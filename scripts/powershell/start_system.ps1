@@ -88,8 +88,11 @@ try {
     Write-Host "Starting infrastructure (Kafka/Redpanda, QuestDB, Redis, Postgres)..." -ForegroundColor Cyan
     docker-compose up -d redpanda questdb postgres redis
 
-    Write-Host "Infrastructure started. Waiting 15 seconds for initialization..." -ForegroundColor Cyan
-    Start-Sleep -Seconds 15
+    # Wait for each infra service to be reachable before proceeding
+    Wait-ForPort -Port 6379  -TimeoutSec 60 -Label "Redis (:6379)"
+    Wait-ForPort -Port 5890  -TimeoutSec 90 -Label "Postgres (:5890)"
+    Wait-ForPort -Port 9000  -TimeoutSec 90 -Label "QuestDB (:9000)"
+    Wait-ForPort -Port 19092 -TimeoutSec 90 -Label "Redpanda/Kafka (:19092)"
 
     # ── Pre-create Kafka topics via rpk ─────────────────────────────────────
     Write-Host "Pre-creating Kafka topics via rpk..." -ForegroundColor Cyan
@@ -103,7 +106,7 @@ try {
         }
     }
     docker exec alphasuite-redpanda rpk topic list
-    Write-Host "Infrastructure is ready!" -ForegroundColor Green
+    Write-Host "All infrastructure is ready!" -ForegroundColor Green
 
     # ── Start PRODUCERS first, then CONSUMERS ───────────────────────────────
     # Order: ingestion -> technical -> sentiment -> aggregator -> frontend
