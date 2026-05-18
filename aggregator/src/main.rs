@@ -22,6 +22,7 @@ mod kafka_producer;
 mod kite_api;
 mod ohlc_server;
 mod proto;
+mod quant;
 mod state;
 mod ws_server;
 
