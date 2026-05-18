@@ -13,12 +13,18 @@ import SwingLayout, { SwingConfluencePanel } from '../components/layouts/SwingLa
 import InvestorLayout, { MacroSentimentPanel } from '../components/layouts/InvestorLayout';
 import OrderBook from '../components/OrderBook';
 import SystemConsole from '../components/SystemConsole';
+import ConsensusBoard from '../components/quant/ConsensusBoard';
+import DeepQuantPanel from '../components/quant/DeepQuantPanel';
 import { useTradeStore, TradeProfile, ChartTimeframe } from '../store/useTradeStore';
+import { useQuantStore } from '../store/useQuantStore';
+import type { ConsensusReport } from '../store/useQuantStore';
 import type { DataRange } from '../utils/chartTypes';
 import { TIMEFRAME_GROUPS } from '../utils/chartTypes';
 import { isOnboardingComplete } from '@/lib/onboarding';
 
 // ── Sidebar labels per profile ──────────────────────────────────────────
+type SidebarTab = 'profile' | 'consensus' | 'deepquant';
+
 const SIDEBAR_CONFIG: Record<TradeProfile, { label: string; badge: string; badgeColor: string }> = {
   INTRADAY: { label: 'Order Book', badge: 'INTRADAY', badgeColor: 'bg-emerald-500/10 text-emerald-400' },
   SWING: { label: 'Confluence', badge: 'SWING', badgeColor: 'bg-amber-500/10 text-amber-400' },
@@ -32,8 +38,28 @@ export default function Home() {
   const [aiEnabled, setAiEnabled] = useState(true);
   const [isChecking, setIsChecking] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('profile');
   const [tfDropdownOpen, setTfDropdownOpen] = useState(false);
   const tfDropdownRef = useRef<HTMLDivElement>(null);
+  const consensusData = useQuantStore((s) => s.consensusData);
+  const setConsensusData = useQuantStore((s) => s.setConsensusData);
+
+  // Listen for Tauri consensus events
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        const u = await listen<ConsensusReport>('quant-consensus', (event) => {
+          setConsensusData(event.payload);
+        });
+        unlisten = u;
+      } catch {
+        // Not in Tauri context — ignore
+      }
+    })();
+    return () => { unlisten?.(); };
+  }, [setConsensusData]);
 
   // ── Real-time Kite quote for the active symbol ────────────────────
   interface SymbolQuote {
@@ -165,6 +191,13 @@ export default function Home() {
 
   // ── Profile-Driven Sidebar Content ────────────────────────────────
   const renderSidebarContent = () => {
+    if (sidebarTab === 'consensus') {
+      return <ConsensusBoard consensusData={consensusData} />;
+    }
+    if (sidebarTab === 'deepquant') {
+      return <DeepQuantPanel />;
+    }
+    // Default: profile-driven
     switch (activeProfile) {
       case 'INTRADAY':
         return <OrderBook />;
@@ -176,6 +209,8 @@ export default function Home() {
         return null;
     }
   };
+
+  const sidebarTitle = sidebarTab === 'consensus' ? 'Consensus' : sidebarTab === 'deepquant' ? 'Deep Quant' : sidebarCfg.label;
 
   return (
     <div className="flex h-full flex-col bg-background">
@@ -291,22 +326,47 @@ export default function Home() {
                 }
               `}
             >
-              {/* Sidebar Header with Collapse Toggle */}
-              <div className="flex shrink-0 items-center justify-between rounded-t-lg border border-b-0 border-border-default bg-surface px-3 py-1.5">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-text-primary tracking-wide">{sidebarCfg.label}</span>
-                  <span className={`rounded px-1.5 py-px text-[9px] font-bold uppercase tracking-widest ${sidebarCfg.badgeColor}`}>
-                    {sidebarCfg.badge}
-                  </span>
+              {/* Sidebar Header with Tab Switcher */}
+              <div className="flex shrink-0 flex-col rounded-t-lg border border-b-0 border-border-default bg-surface">
+                <div className="flex items-center justify-between px-3 py-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-text-primary tracking-wide">{sidebarTitle}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSidebarOpen(false)}
+                    className="rounded p-1 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
+                    title="Collapse sidebar"
+                  >
+                    <PanelRightClose size={14} />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setSidebarOpen(false)}
-                  className="rounded p-1 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
-                  title="Collapse sidebar"
-                >
-                  <PanelRightClose size={14} />
-                </button>
+
+                {/* Tab row */}
+                <div className="flex gap-0.5 px-2 pb-1">
+                  {[
+                    { key: 'profile' as SidebarTab, label: sidebarCfg.badge },
+                    { key: 'consensus' as SidebarTab, label: 'CONSENSUS' },
+                    { key: 'deepquant' as SidebarTab, label: 'AI QUANT' },
+                  ].map(({ key, label }) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setSidebarTab(key)}
+                      className={`flex-1 rounded-md px-1.5 py-1 text-[9px] font-bold uppercase tracking-wider transition-all duration-200 ${
+                        sidebarTab === key
+                          ? key === 'deepquant'
+                            ? 'bg-gradient-to-r from-blue-500/15 to-violet-500/15 text-blue-400 border border-blue-500/30'
+                            : key === 'consensus'
+                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                              : 'bg-elevated text-text-primary border border-border-default'
+                          : 'text-text-muted hover:text-text-secondary hover:bg-elevated/50 border border-transparent'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Sidebar Content */}
