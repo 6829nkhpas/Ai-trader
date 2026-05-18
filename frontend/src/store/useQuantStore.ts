@@ -37,6 +37,7 @@ export interface SentimentPayload {
   label: string;           // "Bullish", "Bearish", "Neutral"
   top_headline: string;
   impact: 'positive' | 'negative' | 'neutral';
+  headlines: string[];     // All fetched headlines for individual display
 }
 
 // ── Paper Trading Position ──────────────────────────────────────────────

@@ -18,6 +18,7 @@ pub struct SentimentPayload {
     pub label: String,       // "Bullish", "Bearish", "Neutral"
     pub top_headline: String,
     pub impact: String,      // "positive", "negative", "neutral"
+    pub headlines: Vec<String>, // All fetched headlines for individual display
 }
 
 // ── LLM response shape ─────────────────────────────────────────────────────
@@ -35,7 +36,7 @@ struct LlmSentimentResponse {
 // Primary: Google News RSS for the stock symbol (always available, no auth).
 // Fallback: Local NEWS_API_URL if configured and reachable.
 
-async fn fetch_news_headlines(symbol: &str) -> String {
+async fn fetch_news_headlines(symbol: &str) -> Vec<String> {
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
@@ -43,20 +44,19 @@ async fn fetch_news_headlines(symbol: &str) -> String {
         Ok(c) => c,
         Err(e) => {
             warn!("[sentiment] HTTP client build failed: {}", e);
-            return format!("No recent news available for {}.", symbol);
+            return Vec::new();
         }
     };
 
     // ── Primary: Google News RSS ────────────────────────────────────────
     let google_news = fetch_google_news_rss(&client, symbol).await;
     if !google_news.is_empty() {
-        let combined = google_news.join("\n");
         info!(
             "[sentiment] Google News RSS returned {} headlines for {}",
             google_news.len(),
             symbol
         );
-        return combined;
+        return google_news;
     }
 
     // ── Fallback: Local NEWS_API_URL ────────────────────────────────────
@@ -69,7 +69,7 @@ async fn fetch_news_headlines(symbol: &str) -> String {
             let body = resp.text().await.unwrap_or_default();
             if !body.trim().is_empty() && !body.contains("No recent news") {
                 info!("[sentiment] Local news API returned data for {}", symbol);
-                return body;
+                return body.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
             }
         }
         _ => {
@@ -77,7 +77,7 @@ async fn fetch_news_headlines(symbol: &str) -> String {
         }
     }
 
-    format!("No recent news available for {}.", symbol)
+    Vec::new()
 }
 
 /// Scrape headlines from Google News RSS feed. No API key required.
@@ -114,7 +114,6 @@ async fn fetch_google_news_rss(client: &reqwest::Client, symbol: &str) -> Vec<St
     // Skip the first <title> (channel title, usually "RELIANCE stock NSE India - Google News")
     let mut headlines: Vec<String> = Vec::new();
     let mut search_from = 0usize;
-    let mut skipped_first = false;
 
     loop {
         let start_tag = match body[search_from..].find("<title>") {
@@ -129,12 +128,6 @@ async fn fetch_google_news_rss(client: &reqwest::Client, symbol: &str) -> Vec<St
         let raw = &body[start_tag..end_tag];
         search_from = end_tag + 8; // skip "</title>"
 
-        // Skip channel-level title
-        if !skipped_first {
-            skipped_first = true;
-            continue;
-        }
-
         // Decode basic XML entities
         let decoded = raw
             .replace("&amp;", "&")
@@ -146,9 +139,17 @@ async fn fetch_google_news_rss(client: &reqwest::Client, symbol: &str) -> Vec<St
             .replace("]]>", "");
 
         let trimmed = decoded.trim().to_string();
-        if !trimmed.is_empty() {
-            headlines.push(trimmed);
+
+        // Skip empty, channel-level titles, and junk entries
+        if trimmed.is_empty()
+            || trimmed == "Google News"
+            || trimmed.starts_with("\"")
+            || trimmed.len() < 10
+        {
+            continue;
         }
+
+        headlines.push(trimmed);
 
         if headlines.len() >= 10 {
             break;
@@ -171,7 +172,7 @@ and 'impact' (string: \"positive\", \"negative\", or \"neutral\"). \
 Do NOT include any text outside the JSON object. Do NOT wrap in markdown code fences. \
 Output ONLY the raw JSON object.";
 
-async fn analyze_sentiment_via_llm(symbol: &str, news: &str) -> Result<SentimentPayload, String> {
+async fn analyze_sentiment_via_llm(symbol: &str, news: &str, headlines: Vec<String>) -> Result<SentimentPayload, String> {
     use crate::services::llm::{ChatMessage, ChatRequest};
 
     let api_url = resolve_llm_endpoint();
@@ -274,6 +275,7 @@ async fn analyze_sentiment_via_llm(symbol: &str, news: &str) -> Result<Sentiment
         label,
         top_headline,
         impact,
+        headlines,
     })
 }
 
@@ -322,6 +324,11 @@ fn mock_sentiment(symbol: &str) -> SentimentPayload {
         label: "Bullish".to_string(),
         top_headline: format!("{} reports strong quarterly earnings, beating analyst estimates by 12%.", symbol),
         impact: "positive".to_string(),
+        headlines: vec![
+            format!("{} reports strong quarterly earnings, beating analyst estimates by 12%.", symbol),
+            format!("{} announces expansion into renewable energy sector.", symbol),
+            format!("Analysts upgrade {} to 'Outperform' with revised target price.", symbol),
+        ],
     }
 }
 
@@ -352,16 +359,24 @@ pub async fn fetch_symbol_sentiment(symbol: String) -> Result<SentimentPayload, 
 
     // Step 1: Fetch news headlines (independent HTTP call)
     let t_news = Instant::now();
-    let news = fetch_news_headlines(&symbol).await;
+    let headlines = fetch_news_headlines(&symbol).await;
+    let news_text = if headlines.is_empty() {
+        format!("No recent news available for {}.", symbol)
+    } else {
+        headlines.iter().enumerate()
+            .map(|(i, h)| format!("{}. {}", i + 1, h))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     info!(
-        "[sentiment] step=news_fetch elapsed_ms={} chars={}",
+        "[sentiment] step=news_fetch elapsed_ms={} headlines={}",
         t_news.elapsed().as_millis(),
-        news.len()
+        headlines.len()
     );
 
     // Step 2: Analyze via LLM
     let t_llm = Instant::now();
-    let payload = analyze_sentiment_via_llm(&symbol, &news).await.map_err(|e| {
+    let payload = analyze_sentiment_via_llm(&symbol, &news_text, headlines).await.map_err(|e| {
         error!(
             "[sentiment] ✘ LLM analysis failed for {} elapsed_ms={}: {}",
             symbol, t_llm.elapsed().as_millis(), e
