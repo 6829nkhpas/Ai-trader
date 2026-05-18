@@ -1,18 +1,13 @@
 # Graph Report - Ai-trader  (2026-05-18)
 
 ## Corpus Check
-- 195 files · ~133,716 words
+- 195 files · ~133,760 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
 - 781 nodes · 1255 edges · 82 communities (71 shown, 11 thin omitted)
 - Extraction: 90% EXTRACTED · 10% INFERRED · 0% AMBIGUOUS · INFERRED: 126 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
-
-## Graph Freshness
-- Built from commit: `74435230`
-- Run `git rev-parse HEAD` and compare to check if the graph is stale.
-- Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
 - [[_COMMUNITY_Community 0|Community 0]]

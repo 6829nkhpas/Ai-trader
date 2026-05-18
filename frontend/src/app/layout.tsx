@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import { SessionProvider } from "@/context/AuthContext";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -10,7 +9,7 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: "AI Trader - Trade Terminal",
-  description: "Institutional-grade AI-powered trading, secured by design.",
+  description: "Institutional-grade AI-powered trading.",
 };
 
 export default function RootLayout({
@@ -18,7 +17,9 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const isTestMode = process.env.ALPHA_TEST_MODE === '1' || process.env.ALPHA_TEST_MODE === 'true';
+  const isTestMode =
+    process.env.ALPHA_TEST_MODE === "1" ||
+    process.env.ALPHA_TEST_MODE === "true";
 
   return (
     <html
@@ -35,12 +36,7 @@ export default function RootLayout({
             }}
           />
         )}
-        {/*
-          SessionProvider is rendered in a Client Component (AuthContext.tsx).
-          Next.js App Router allows Server Components to import Client Component
-          wrappers — children within are still individually server-rendered.
-        */}
-        <SessionProvider>{children}</SessionProvider>
+        {children}
       </body>
     </html>
   );

@@ -41,11 +41,11 @@ function Cleanup {
 
 try {
     # ── Pre-flight: Kill anything occupying our ports ────────────────────────
-    # Ports: 3000=Next.js, 3001=Auth, 8080-8083=WS agents,
+    # Ports: 3000=Next.js, 8080-8083=WS agents,
     #        9000/9009=QuestDB, 5432=PG, 6379=Redis, 19092=Kafka
     Write-Host "==> Cleaning up stale processes and ports..." -ForegroundColor Magenta
 
-    $portsToKill = @(3000, 3001, 8080, 8081, 8082, 8083, 9000, 9009, 5432, 6379, 19092)
+    $portsToKill = @(3000, 8080, 8081, 8082, 8083, 9000, 9009, 5432, 6379, 19092)
     foreach ($port in $portsToKill) {
         $netstatOut = netstat -ano 2>$null
         $matched = $netstatOut | Select-String (":$port\s")
@@ -110,22 +110,8 @@ try {
 
     # ── Start PRODUCERS first, then CONSUMERS ───────────────────────────────
     # Order: ingestion -> technical -> sentiment -> aggregator -> frontend
-
-    # ── Generate JWT RSA keys if missing ────────────────────────────────────
-    if (-not (Test-Path "auth\keys\private.pem")) {
-        Write-Host "Generating RSA-2048 JWT key pair for auth service..." -ForegroundColor Cyan
-        New-Item -ItemType Directory -Path "auth\keys" -Force | Out-Null
-        node -e "const crypto = require('crypto'); const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048, publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } }); require('fs').writeFileSync('auth/keys/private.pem', privateKey); require('fs').writeFileSync('auth/keys/public.pem', publicKey); console.log('[KEYGEN] RSA key pair generated at auth/keys/');"
-        Write-Host "  [+] JWT key pair ready." -ForegroundColor Green
-    } else {
-        Write-Host "  [=] JWT key pair already exists, skipping keygen." -ForegroundColor DarkGray
-    }
-
-    Write-Host "Starting Auth Service..." -ForegroundColor Cyan
-    Push-Location auth
-    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cmd.exe" -ArgumentList "/c npm run dev"
-    Pop-Location
-    Wait-ForPort -Port 3001 -TimeoutSec 60 -Label "Auth Service (:3001)"
+    # NOTE: The standalone auth/profile service has been removed from the app.
+    # The dashboard at "/" is now directly accessible — no JWT keys, no /api/auth.
 
     Write-Host "Starting Rust Ingestion Service (Kite -> Kafka)..." -ForegroundColor Cyan
     Push-Location ingestion

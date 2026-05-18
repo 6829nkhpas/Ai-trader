@@ -14,7 +14,7 @@
 // Note: The full trading UI requires the Tauri native shell for WebSocket events
 // and IPC commands. These tests validate:
 //   1. The test infrastructure (Playwright + Next.js dev server)
-//   2. Mock API route responses
+//   2. Mock API route responses for the data plane (Kite quotes)
 //   3. Page rendering and navigation
 //   4. The Tauri IPC contract for `run_deep_quant_analysis`
 //
@@ -23,30 +23,6 @@
 import { test, expect, Page } from '@playwright/test';
 
 // ── Mock Data ───────────────────────────────────────────────────────────────
-
-const MOCK_USER = {
-  user: {
-    id: 'test-user-001',
-    email: 'alpha@test.local',
-    displayName: 'Alpha Tester',
-    avatarUrl: null,
-    mfaEnabled: false,
-    kycStatus: 'VERIFIED',
-    subscriptionStatus: 'ACTIVE',
-    createdAt: '2024-01-01T00:00:00Z',
-  },
-};
-
-const MOCK_KYC_PROFILE = {
-  profile: {
-    id: 'test-user-001',
-    kyc_status: 'VERIFIED',
-    full_name: 'Alpha Tester',
-    pan_number: 'XXXXX0000X',
-    risk_profile: 'AGGRESSIVE',
-    trading_experience: 'EXPERT',
-  },
-};
 
 const MOCK_QUOTE = {
   quotes: [{
@@ -73,18 +49,11 @@ const MOCK_AI_EXECUTION_PLAN = {
 };
 
 /**
- * Set up route interception to mock all API calls at the browser level.
+ * Set up route interception to mock data-plane API calls at the browser level.
+ * Auth + KYC routes are no longer part of the application — the dashboard is
+ * directly accessible.
  */
 async function setupMockRoutes(page: Page) {
-  await page.route('**/api/auth/session**', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_USER) });
-  });
-  await page.route('**/api/auth/refresh**', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_USER) });
-  });
-  await page.route('**/api/kyc/profile**', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_KYC_PROFILE) });
-  });
   await page.route('**/kite/quote**', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_QUOTE) });
   });
@@ -118,91 +87,46 @@ test.describe('Alpha Suite V3 — E2E Test Infrastructure', () => {
     expect(response).not.toBeNull();
     expect(response!.status()).toBeLessThan(500);
 
-    // Page should render something (either trading UI or login)
+    // Page should render something
     const bodyText = await page.textContent('body');
     expect(bodyText).toBeTruthy();
     expect(bodyText!.length).toBeGreaterThan(50);
   });
 
-  test('2. Playwright route interception mocks API responses', async ({ page }) => {
-    await setupMockRoutes(page);
-
-    // Navigate to a page that will trigger API calls
-    await page.goto('/');
-    await page.waitForLoadState('domcontentloaded');
-
-    // Verify route interception works by making direct fetch calls
-    const sessionResp = await page.evaluate(async () => {
-      const res = await fetch('/api/auth/session/');
-      return { status: res.status, body: await res.text() };
-    });
-    expect(sessionResp.status).toBe(200);
-    const sessionData = JSON.parse(sessionResp.body);
-    expect(sessionData.user.id).toBe('test-user-001');
-    expect(sessionData.user.kycStatus).toBe('VERIFIED');
-
-    const kycResp = await page.evaluate(async () => {
-      const res = await fetch('/api/kyc/profile/');
-      return { status: res.status, body: await res.text() };
-    });
-    expect(kycResp.status).toBe(200);
-    const kycData = JSON.parse(kycResp.body);
-    expect(kycData.profile.kyc_status).toBe('VERIFIED');
-  });
-
-  test('3. Trading UI renders when auth is mocked', async ({ page }) => {
+  test('2. Trading UI renders directly on the root route', async ({ page }) => {
     await setupMockRoutes(page);
     await page.goto('/');
     await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(2000);
 
-    const currentUrl = page.url();
     const bodyText = await page.textContent('body');
 
-    if (!currentUrl.includes('/auth/')) {
-      // Trading UI loaded successfully
-      expect(
-        bodyText?.includes('RELIANCE') ||
-        bodyText?.includes('INTRADAY') ||
-        bodyText?.includes('SWING') ||
-        bodyText?.includes('INVESTOR') ||
-        bodyText?.includes('Preparing your workspace')
-      ).toBeTruthy();
+    // The terminal should render without any auth gate. We expect either
+    // the live trading UI to be visible, or — if Tauri IPC isn't available
+    // in plain browser mode — a "no data" placeholder. Either way we should
+    // never see an auth screen.
+    expect(bodyText?.toLowerCase()).not.toContain('sign in');
+    expect(bodyText?.toLowerCase()).not.toContain('signup');
 
-      // Check for the sidebar tabs
-      const aiQuantTab = page.locator('button:has-text("AI QUANT")');
-      if (await aiQuantTab.isVisible()) {
-        await aiQuantTab.click();
-        await page.waitForTimeout(500);
-
-        // Deep Quant button should be visible
-        const deepQuantBtn = page.locator('#btn-run-deep-quant');
-        await expect(deepQuantBtn).toBeVisible({ timeout: 5_000 });
-        await expect(deepQuantBtn).toContainText('RUN DEEP QUANT ANALYSIS');
-      }
-    } else {
-      // Page redirected to auth — this is expected in browser-only mode
-      // The full trading UI requires Tauri IPC context
-      console.log('Trading UI requires Tauri context for full rendering.');
-      console.log('Run with: ALPHA_TEST_MODE=1 npm run tauri:dev');
-      expect(bodyText?.includes('Sign in') || bodyText?.includes('Welcome')).toBeTruthy();
+    // Sidebar tab buttons should exist (they ship with the dashboard layout).
+    const aiQuantTab = page.locator('button:has-text("AI QUANT")');
+    if (await aiQuantTab.isVisible()) {
+      await aiQuantTab.click();
+      await page.waitForTimeout(500);
+      const deepQuantBtn = page.locator('#btn-run-deep-quant');
+      await expect(deepQuantBtn).toBeVisible({ timeout: 5_000 });
+      await expect(deepQuantBtn).toContainText('RUN DEEP QUANT ANALYSIS');
     }
   });
 
-  test('4. Server-side mock API routes respond (Next.js route handlers)', async ({ request }) => {
-    // Test the Next.js API route handlers directly (server-side)
-    const sessionResp = await request.get('/api/auth/session/');
-    expect(sessionResp.status()).toBe(200);
-    const sessionJson = await sessionResp.json();
-    expect(sessionJson.user).toBeDefined();
-    expect(sessionJson.user.id).toBe('test-user-001');
+  test('3. /dashboard redirects straight to the terminal', async ({ page }) => {
+    await page.goto('/dashboard/');
+    await page.waitForLoadState('domcontentloaded');
+    // After the redirect, we should land on the root.
+    expect(new URL(page.url()).pathname).toBe('/');
+  });
 
-    const kycResp = await request.get('/api/kyc/profile/');
-    expect(kycResp.status()).toBe(200);
-    const kycJson = await kycResp.json();
-    expect(kycJson.profile).toBeDefined();
-    expect(kycJson.profile.kyc_status).toBe('VERIFIED');
-
+  test('4. Server-side mock API routes respond (Kite quote handler)', async ({ request }) => {
     const quoteResp = await request.get('/api/kite/quote/?i=NSE:RELIANCE');
     expect(quoteResp.status()).toBe(200);
     const quoteJson = await quoteResp.json();

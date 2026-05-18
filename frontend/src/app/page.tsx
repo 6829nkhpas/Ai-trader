@@ -1,8 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { useRouter } from 'next/navigation';
-import { Loader2, PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight, ChevronDown } from 'lucide-react';
+import { PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight, ChevronDown } from 'lucide-react';
 import TradingChart from '../components/TradingChart';
 import TerminalLayout from '../components/layout/TerminalLayout';
 import WatchlistPanel from '../components/panels/WatchlistPanel';
@@ -21,7 +20,6 @@ import { useQuantStore } from '../store/useQuantStore';
 import type { ConsensusReport } from '../store/useQuantStore';
 import type { DataRange } from '../utils/chartTypes';
 import { TIMEFRAME_GROUPS } from '../utils/chartTypes';
-import { isOnboardingComplete } from '@/lib/onboarding';
 
 // ── Sidebar labels per profile ──────────────────────────────────────────
 type SidebarTab = 'profile' | 'consensus' | 'deepquant';
@@ -33,11 +31,9 @@ const SIDEBAR_CONFIG: Record<TradeProfile, { label: string; badge: string; badge
 };
 
 export default function Home() {
-  const router = useRouter();
   const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, setActiveTimeframe, activeRange, setActiveRange, selectedSymbol } = useTradeStore();
   const [indicatorsEnabled, setIndicatorsEnabled] = useState(true);
   const [aiEnabled, setAiEnabled] = useState(true);
-  const [isChecking, setIsChecking] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('profile');
   const [tfDropdownOpen, setTfDropdownOpen] = useState(false);
@@ -92,37 +88,8 @@ export default function Home() {
   const [symbolQuote, setSymbolQuote] = useState<SymbolQuote | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function gate() {
-      try {
-        const complete = await isOnboardingComplete();
-        if (cancelled) return;
-
-        if (!complete) {
-          router.replace('/auth/onboarding');
-          return;
-        }
-
-        setIsChecking(false);
-      } catch {
-        if (!cancelled) {
-          router.replace('/auth/login?reason=session_expired');
-        }
-      }
-    }
-
-    gate();
-    return () => {
-      cancelled = true;
-    };
-  }, [router]);
-
-  useEffect(() => {
-    if (!isChecking) {
-      connectWebSocket();
-    }
-  }, [connectWebSocket, isChecking]);
+    connectWebSocket();
+  }, [connectWebSocket]);
 
   useEffect(() => {
     connectAlphaWebSocket('ws://127.0.0.1:8081');
@@ -172,15 +139,6 @@ export default function Home() {
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
-
-  if (isChecking) {
-    return (
-      <div className="flex min-h-[40vh] items-center justify-center gap-3 text-sm text-text-secondary">
-        <Loader2 size={18} className="animate-spin" />
-        <span>Preparing your workspace...</span>
-      </div>
-    );
-  }
 
   const quickTimeframes: ChartTimeframe[] = ['1m', '5m', '10m', '15m', '1h', '1D'];
   const rangeOptions: DataRange[] = ['60D', '1Y', '2Y', '3Y', '5Y'];
