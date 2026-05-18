@@ -47,19 +47,34 @@ export default function Home() {
 
   // Listen for Tauri consensus events
   useEffect(() => {
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
+
     (async () => {
       try {
         const { listen } = await import('@tauri-apps/api/event');
+        // Bail if the component unmounted while we were importing
+        if (cancelled) return;
         const u = await listen<ConsensusReport>('quant-consensus', (event) => {
-          setConsensusData(event.payload);
+          if (!cancelled) {
+            setConsensusData(event.payload);
+          }
         });
-        unlisten = u;
+        if (cancelled) {
+          // Already unmounted — clean up immediately
+          u();
+        } else {
+          unlisten = u;
+        }
       } catch {
         // Not in Tauri context — ignore
       }
     })();
-    return () => { unlisten?.(); };
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, [setConsensusData]);
 
   // ── Real-time Kite quote for the active symbol ────────────────────
@@ -121,24 +136,30 @@ export default function Home() {
   const symbol = selectedSymbol || latestDecision?.symbol || 'RELIANCE';
 
   // Fetch real-time quote for the active symbol
-  const fetchSymbolQuote = useCallback(async () => {
+  const fetchSymbolQuote = useCallback(async (signal?: AbortSignal) => {
     if (!symbol || symbol === '---') return;
     try {
-      const res = await fetch(`/kite/quote?i=NSE:${symbol}`);
+      const res = await fetch(`/kite/quote?i=NSE:${symbol}`, { signal });
       if (!res.ok) return;
       const data = await res.json();
       if (data.quotes && data.quotes.length > 0) {
         setSymbolQuote(data.quotes[0]);
       }
     } catch (err) {
+      // Silence AbortError — expected on unmount
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       console.error('[Header] Quote fetch failed:', err);
     }
   }, [symbol]);
 
   useEffect(() => {
-    fetchSymbolQuote();
-    const interval = setInterval(fetchSymbolQuote, 30_000);
-    return () => clearInterval(interval);
+    const controller = new AbortController();
+    fetchSymbolQuote(controller.signal);
+    const interval = setInterval(() => fetchSymbolQuote(controller.signal), 30_000);
+    return () => {
+      controller.abort();
+      clearInterval(interval);
+    };
   }, [fetchSymbolQuote]);
 
   // Close timeframe dropdown on outside click

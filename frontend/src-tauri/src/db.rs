@@ -27,20 +27,17 @@ pub struct DbState {
 
 /// Resolve the SQLite database file path.
 ///
-/// In debug builds the DB lives next to the executable for convenience.
-/// In release (production) it lives in the OS-standard local data directory
-/// (e.g. `%APPDATA%/com.alphasuite.app/workspace.db` on Windows).
+/// Both debug and release builds use the OS-standard local data directory
+/// (e.g. `%LOCALAPPDATA%/com.alphasuite.app/workspace.db` on Windows).
+///
+/// Previously, debug builds stored the DB as a bare `workspace.db` in the
+/// Tauri working directory (src-tauri/), which caused the dev file watcher
+/// to detect WAL/SHM changes and trigger infinite rebuild loops.
 fn db_path() -> PathBuf {
-    if cfg!(debug_assertions) {
-        // Dev mode — store next to the Tauri binary for easy inspection
-        PathBuf::from("workspace.db")
-    } else {
-        // Production — respect OS conventions via dirs crate fallback
-        let mut dir = dirs_fallback();
-        std::fs::create_dir_all(&dir).ok();
-        dir.push("workspace.db");
-        dir
-    }
+    let mut dir = dirs_fallback();
+    std::fs::create_dir_all(&dir).ok();
+    dir.push("workspace.db");
+    dir
 }
 
 /// Minimal fallback to find the user's local app data directory

@@ -400,7 +400,7 @@
     "hash": "dfa1f5f6a7037bf39dc510f30b180002"
   },
   "D:\\projects\\Ai-trader\\frontend\\next-env.d.ts": {
-    "mtime": 1779118843.6115973,
+    "mtime": 1779120158.7399,
     "hash": "2a74d3909800ca5467fa83b0ab4a4890"
   },
   "D:\\projects\\Ai-trader\\frontend\\next.config.ts": {
@@ -420,8 +420,8 @@
     "hash": "62c2bb2fa103d5d8556c48a6bc55084c"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\app\\page.tsx": {
-    "mtime": 1779119294.4985585,
-    "hash": "52c36a395b521ad577337057f9392586"
+    "mtime": 1779120141.3408406,
+    "hash": "0be504b37fb69e89709f3b22fbd88ac3"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\app\\auth\\layout.tsx": {
     "mtime": 1777819675.428254,
@@ -624,8 +624,8 @@
     "hash": "8e6c89bd412b755ef41bd9bb191f2e31"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\db.rs": {
-    "mtime": 1779119180.647761,
-    "hash": "930a6a7e712c9367e0cc7f88ef42dad6"
+    "mtime": 1779119777.9505658,
+    "hash": "a5737c7379182405db65db1d5145454e"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\lib.rs": {
     "mtime": 1779119192.0928237,

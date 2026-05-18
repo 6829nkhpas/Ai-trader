@@ -3562,7 +3562,7 @@
       "label": "renderSidebarContent()",
       "file_type": "code",
       "source_file": "frontend/src/app/page.tsx",
-      "source_location": "L194",
+      "source_location": "L215",
       "id": "app_page_rendersidebarcontent",
       "community": 1,
       "norm_label": "rendersidebarcontent()"
@@ -5065,7 +5065,7 @@
       "label": "db_path()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/db.rs",
-      "source_location": "L33",
+      "source_location": "L36",
       "id": "src_db_db_path",
       "community": 19,
       "norm_label": "db_path()"
@@ -5074,7 +5074,7 @@
       "label": "dirs_fallback()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/db.rs",
-      "source_location": "L48",
+      "source_location": "L45",
       "id": "src_db_dirs_fallback",
       "community": 19,
       "norm_label": "dirs_fallback()"
@@ -5083,7 +5083,7 @@
       "label": "init_db()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/db.rs",
-      "source_location": "L67",
+      "source_location": "L64",
       "id": "src_db_init_db",
       "community": 19,
       "norm_label": "init_db()"
@@ -5092,7 +5092,7 @@
       "label": "save_workspace()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/db.rs",
-      "source_location": "L123",
+      "source_location": "L120",
       "id": "src_db_save_workspace",
       "community": 19,
       "norm_label": "save_workspace()"
@@ -5101,7 +5101,7 @@
       "label": "load_workspace()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/db.rs",
-      "source_location": "L144",
+      "source_location": "L141",
       "id": "src_db_load_workspace",
       "community": 19,
       "norm_label": "load_workspace()"
@@ -5110,7 +5110,7 @@
       "label": "log_completed_trade()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/db.rs",
-      "source_location": "L170",
+      "source_location": "L167",
       "id": "src_db_log_completed_trade",
       "community": 19,
       "norm_label": "log_completed_trade()"
@@ -5119,7 +5119,7 @@
       "label": "get_trade_history()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/db.rs",
-      "source_location": "L199",
+      "source_location": "L196",
       "id": "src_db_get_trade_history",
       "community": 19,
       "norm_label": "get_trade_history()"
@@ -18629,5 +18629,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "a7989e9e88f6a652fd57a83685301144ac90f9e0"
+  "built_at_commit": "0b868680f37104f13f951e89860557e40123dbb7"
 }
