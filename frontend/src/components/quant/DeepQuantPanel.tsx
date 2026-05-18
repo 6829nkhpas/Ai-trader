@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   XCircle,
   RotateCcw,
+  Rocket,
 } from 'lucide-react';
 import { useQuantStore } from '../../store/useQuantStore';
 import { useTradeStore } from '../../store/useTradeStore';
@@ -95,9 +96,18 @@ function LoadingState() {
 // ── Main Component ──────────────────────────────────────────────────────
 
 export default function DeepQuantPanel() {
-  const { aiPlan, isAnalyzing, analysisError, fetchDeepAnalysis, clearAiPlan } = useQuantStore();
+  const { aiPlan, isAnalyzing, analysisError, fetchDeepAnalysis, clearAiPlan, openPosition, activePositions } = useQuantStore();
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
   const symbol = selectedSymbol || 'RELIANCE';
+
+  // Check if there's already an active position for this symbol from this plan
+  const hasActivePosition = activePositions.some((p) => p.symbol === symbol);
+  const [deployed, setDeployed] = React.useState(false);
+
+  // Reset deployed state when plan changes
+  React.useEffect(() => {
+    setDeployed(false);
+  }, [aiPlan]);
 
   return (
     <div className="flex h-full flex-col text-sm select-none overflow-hidden">
@@ -230,7 +240,46 @@ export default function DeepQuantPanel() {
             </div>
 
             {/* Clear button */}
-            <div className="px-3 py-2">
+            <div className="px-3 py-2 flex flex-col gap-1.5">
+              {/* Deploy Strategy Button */}
+              <button
+                id="btn-deploy-strategy"
+                type="button"
+                disabled={deployed || hasActivePosition}
+                onClick={() => {
+                  if (aiPlan) {
+                    openPosition(symbol, aiPlan);
+                    setDeployed(true);
+                  }
+                }}
+                className={`
+                  group relative w-full flex items-center justify-center gap-2
+                  rounded-xl px-4 py-2.5 text-[11px] font-bold uppercase tracking-wider
+                  transition-all duration-300 ease-out
+                  ${deployed || hasActivePosition
+                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 cursor-default'
+                    : 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white border border-emerald-500/40 hover:from-emerald-500 hover:to-teal-500 hover:shadow-lg hover:shadow-emerald-500/20 active:scale-[0.98]'
+                  }
+                `}
+              >
+                {!deployed && !hasActivePosition && (
+                  <div className="absolute -inset-px rounded-xl bg-gradient-to-r from-emerald-400/20 to-teal-400/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300 blur-sm" />
+                )}
+                <span className="relative flex items-center gap-2">
+                  {deployed || hasActivePosition ? (
+                    <>
+                      <CheckCircle2 size={14} />
+                      STRATEGY DEPLOYED
+                    </>
+                  ) : (
+                    <>
+                      <Rocket size={14} className="group-hover:animate-bounce" />
+                      DEPLOY SIMULATED STRATEGY
+                    </>
+                  )}
+                </span>
+              </button>
+
               <button
                 onClick={clearAiPlan}
                 className="w-full flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-semibold text-text-muted bg-elevated border border-border-default hover:bg-surface hover:text-text-secondary transition-colors"

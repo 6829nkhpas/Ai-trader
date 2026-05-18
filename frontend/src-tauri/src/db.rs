@@ -6,6 +6,8 @@
 //
 // Tables:
 //   workspaces (symbol TEXT PK, state_json TEXT)
+//   trades     (id TEXT PK, symbol TEXT, entry_price REAL, exit_price REAL,
+//              pnl REAL, pos_type TEXT, size REAL, timestamp INTEGER)
 //
 // Exposed Tauri commands:
 //   save_workspace(symbol, state_json) — UPSERT via ON CONFLICT
@@ -88,7 +90,26 @@ pub fn init_db() -> Result<DbState, String> {
         msg
     })?;
 
-    info!("[Workspace DB] Schema ready — workspaces table initialised.");
+    // Create the trades table for paper trading journal
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS trades (
+            id          TEXT PRIMARY KEY,
+            symbol      TEXT NOT NULL,
+            entry_price REAL NOT NULL,
+            exit_price  REAL NOT NULL,
+            pnl         REAL NOT NULL,
+            pos_type    TEXT NOT NULL DEFAULT 'LONG',
+            size        REAL NOT NULL DEFAULT 1.0,
+            timestamp   INTEGER NOT NULL
+        );",
+        [],
+    ).map_err(|e| {
+        let msg = format!("[Workspace DB] Trades table migration failed: {}", e);
+        error!("{}", msg);
+        msg
+    })?;
+
+    info!("[Workspace DB] Schema ready — workspaces + trades tables initialised.");
     Ok(DbState { conn: Mutex::new(conn) })
 }
 
@@ -137,4 +158,68 @@ pub fn load_workspace(
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok("{}".to_string()),
         Err(e) => Err(format!("Failed to load workspace for {}: {}", symbol, e)),
     }
+}
+
+// ── Trade Journal Commands ──────────────────────────────────────────────
+
+/// Log a completed paper trade to the local SQLite database.
+///
+/// Called by the frontend when a simulated position is closed (via auto-exit
+/// or manual close). Provides persistent trade history for PNL review.
+#[tauri::command]
+pub fn log_completed_trade(
+    state: tauri::State<'_, DbState>,
+    id: &str,
+    symbol: &str,
+    entry_price: f64,
+    exit_price: f64,
+    pnl: f64,
+    pos_type: &str,
+    size: f64,
+    timestamp: i64,
+) -> Result<(), String> {
+    let conn = state.conn.lock().map_err(|e| format!("DB lock error: {}", e))?;
+    conn.execute(
+        "INSERT INTO trades (id, symbol, entry_price, exit_price, pnl, pos_type, size, timestamp)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(id) DO UPDATE SET
+             exit_price = excluded.exit_price,
+             pnl = excluded.pnl;",
+        params![id, symbol, entry_price, exit_price, pnl, pos_type, size, timestamp],
+    ).map_err(|e| format!("Failed to log trade {}: {}", id, e))?;
+
+    info!("[Trade Journal] Logged: {} {} @ {} → {} | PNL: {:.2}", pos_type, symbol, entry_price, exit_price, pnl);
+    Ok(())
+}
+
+/// Retrieve all completed trades from the local SQLite database.
+///
+/// Returns a JSON-serialized array of trade records, ordered most recent first.
+#[tauri::command]
+pub fn get_trade_history(
+    state: tauri::State<'_, DbState>,
+) -> Result<String, String> {
+    let conn = state.conn.lock().map_err(|e| format!("DB lock error: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, symbol, entry_price, exit_price, pnl, pos_type, size, timestamp
+         FROM trades ORDER BY timestamp DESC LIMIT 200;"
+    ).map_err(|e| format!("Failed to prepare trade query: {}", e))?;
+
+    let trades: Vec<serde_json::Value> = stmt.query_map([], |row| {
+        Ok(serde_json::json!({
+            "id": row.get::<_, String>(0)?,
+            "symbol": row.get::<_, String>(1)?,
+            "entry_price": row.get::<_, f64>(2)?,
+            "exit_price": row.get::<_, f64>(3)?,
+            "pnl": row.get::<_, f64>(4)?,
+            "type": row.get::<_, String>(5)?,
+            "size": row.get::<_, f64>(6)?,
+            "timestamp": row.get::<_, i64>(7)?,
+        }))
+    }).map_err(|e| format!("Trade query failed: {}", e))?
+    .filter_map(|r| r.ok())
+    .collect();
+
+    serde_json::to_string(&trades).map_err(|e| format!("Trade serialization failed: {}", e))
 }

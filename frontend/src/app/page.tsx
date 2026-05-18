@@ -15,6 +15,7 @@ import OrderBook from '../components/OrderBook';
 import SystemConsole from '../components/SystemConsole';
 import ConsensusBoard from '../components/quant/ConsensusBoard';
 import DeepQuantPanel from '../components/quant/DeepQuantPanel';
+import ActivePositions from '../components/quant/ActivePositions';
 import { useTradeStore, TradeProfile, ChartTimeframe } from '../store/useTradeStore';
 import { useQuantStore } from '../store/useQuantStore';
 import type { ConsensusReport } from '../store/useQuantStore';
@@ -309,6 +310,9 @@ export default function Home() {
               <div className="min-h-0 flex-1 bg-surface relative flex flex-col p-1.5 overflow-visible">
                 {renderProfileContent()}
               </div>
+
+              {/* Live PNL Positions Drawer */}
+              <ActivePositions />
 
               {/* Buy/Sell Panel */}
               <div className="shrink-0 border-t border-border-default bg-surface rounded-b-lg">

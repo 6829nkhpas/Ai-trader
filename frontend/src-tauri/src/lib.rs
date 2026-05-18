@@ -171,6 +171,8 @@ pub fn run() {
         commands::deep_quant::run_deep_quant_analysis,
         db::save_workspace,
         db::load_workspace,
+        db::log_completed_trade,
+        db::get_trade_history,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

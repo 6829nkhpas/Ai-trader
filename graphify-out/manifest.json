@@ -420,8 +420,8 @@
     "hash": "62c2bb2fa103d5d8556c48a6bc55084c"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\app\\page.tsx": {
-    "mtime": 1779118825.8936417,
-    "hash": "e48e0f364a043bf3b9ad999ef239a7a1"
+    "mtime": 1779119294.4985585,
+    "hash": "52c36a395b521ad577337057f9392586"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\app\\auth\\layout.tsx": {
     "mtime": 1777819675.428254,
@@ -535,13 +535,17 @@
     "mtime": 1778665301.7283812,
     "hash": "afffb953b12a1623e127e661d80ee161"
   },
+  "D:\\projects\\Ai-trader\\frontend\\src\\components\\quant\\ActivePositions.tsx": {
+    "mtime": 1779119240.865932,
+    "hash": "fe47a246805ee8aa08089702fe54fb63"
+  },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\quant\\ConsensusBoard.tsx": {
     "mtime": 1779118728.126114,
     "hash": "ea628c20f0af272c8ea226407fce4120"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\quant\\DeepQuantPanel.tsx": {
-    "mtime": 1779118779.8472693,
-    "hash": "825fefe0eb6510d9f95a717737c848e1"
+    "mtime": 1779119267.4567864,
+    "hash": "657ebc0a11e70f80faca14920fa55f41"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\context\\AuthContext.tsx": {
     "mtime": 1778071698.6382082,
@@ -600,8 +604,8 @@
     "hash": "adca4805b5e77fc0ce911385faa99f5e"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\store\\useQuantStore.ts": {
-    "mtime": 1779118684.3790438,
-    "hash": "cf44631f495e834d92ff6582dc8f8b30"
+    "mtime": 1779119151.4608052,
+    "hash": "11f888c65409c69a86cd527a14cd2f4b"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\store\\useTradeStore.ts": {
     "mtime": 1778668597.244595,
@@ -620,12 +624,12 @@
     "hash": "8e6c89bd412b755ef41bd9bb191f2e31"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\db.rs": {
-    "mtime": 1779108567.745623,
-    "hash": "c16ad041d54032528699e9c90d32f69d"
+    "mtime": 1779119180.647761,
+    "hash": "930a6a7e712c9367e0cc7f88ef42dad6"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\lib.rs": {
-    "mtime": 1779118319.975249,
-    "hash": "c9a808032c832718a5528d515d033954"
+    "mtime": 1779119192.0928237,
+    "hash": "c221cc5287f6baf00713294b66023064"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\main.rs": {
     "mtime": 1778012051.536122,
