@@ -612,8 +612,8 @@
     "hash": "c16ad041d54032528699e9c90d32f69d"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\lib.rs": {
-    "mtime": 1779108697.8367286,
-    "hash": "6d71a5e6b3152f61d7a24b100868787f"
+    "mtime": 1779118319.975249,
+    "hash": "c9a808032c832718a5528d515d033954"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\main.rs": {
     "mtime": 1778012051.536122,
@@ -623,17 +623,37 @@
     "mtime": 1778488379.993244,
     "hash": "cffd6409f5a4fdbf45c39ce5ab0cd91c"
   },
+  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\commands\\deep_quant.rs": {
+    "mtime": 1779118342.8942318,
+    "hash": "f93cea058b427e85538dc037c04a353a"
+  },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\commands\\mod.rs": {
-    "mtime": 1778237774.3448138,
-    "hash": "51ad35b26d1abbbd381f6ef45f98601c"
+    "mtime": 1779118305.5995958,
+    "hash": "9b3e089aaec2fc97a14e2fef2c3ced7d"
+  },
+  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\quant\\mod.rs": {
+    "mtime": 1779118217.381255,
+    "hash": "383cfe4064c6539a1fd57beb5aef9124"
+  },
+  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\quant\\patterns.rs": {
+    "mtime": 1779118160.2171893,
+    "hash": "12400c6248101c52192e58838adbc4af"
+  },
+  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\quant\\strategies.rs": {
+    "mtime": 1779118178.558,
+    "hash": "09c6b48c937823b0a33dd307b8a30a83"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\services\\history_loader.rs": {
     "mtime": 1778238063.9683084,
     "hash": "bfb92b0213c90b8be1292a0f8e649aae"
   },
+  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\services\\llm.rs": {
+    "mtime": 1779118257.451582,
+    "hash": "37abc909d716e4b3d1a8ccb1807ad645"
+  },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\services\\mod.rs": {
-    "mtime": 1778237772.3381262,
-    "hash": "4de1701459ddedf3344dbf33d4622a74"
+    "mtime": 1779118307.61624,
+    "hash": "722056eff9de54a5cdb7b561cb31484c"
   },
   "D:\\projects\\Ai-trader\\ingestion\\build.rs": {
     "mtime": 1776889314.183324,

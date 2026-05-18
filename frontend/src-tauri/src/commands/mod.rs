@@ -4,3 +4,4 @@
 // can invoke via Tauri's invoke() API.
 
 pub mod charts;
+pub mod deep_quant;

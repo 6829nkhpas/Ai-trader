@@ -6,6 +6,7 @@ use log::{info, warn, error};
 
 mod commands;
 mod db;
+mod quant;
 mod services;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -167,6 +168,7 @@ pub fn run() {
         commands::charts::load_historical,
         commands::charts::fetch_questdb,
         commands::charts::get_pool_status,
+        commands::deep_quant::run_deep_quant_analysis,
         db::save_workspace,
         db::load_workspace,
     ])
