@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useRef, useCallback } from 'react';
 import { useTradeStore, type OhlcCandle } from '../store/useTradeStore';
 import { useChartUIStore } from '../store/useChartUIStore';
 import { useHistoricalData } from '../hooks/useHistoricalData';
@@ -35,7 +35,7 @@ export default function AlphaPredictiveChart({
   // the AI decision symbol so clicking a stock immediately switches the chart.
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
 
-  const { activeCursor, activeDrawingTool } = useChartUIStore();
+  const { activeCursor, activeDrawingTool, drawings } = useChartUIStore();
 
   const activeSymbol = useMemo(() => {
     // 1. Explicit watchlist selection (highest priority)
@@ -111,6 +111,47 @@ export default function AlphaPredictiveChart({
   useDrawingInteraction(refs.chartRef, refs.candleSeriesRef, containerRef);
   useDrawingRenderer(refs, chartData);
   useFibZoneOverlay(refs, chartData);
+
+  // ── Workspace Persistence: Auto-Load on Symbol Change ─────────────
+  useEffect(() => {
+    if (!activeSymbol) return;
+    useChartUIStore.getState().loadWorkspaceFromDB(activeSymbol);
+  }, [activeSymbol]);
+
+  // ── Workspace Persistence: Debounced Auto-Save on Drawing Change ──
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const drawingsRef = useRef(drawings);
+  drawingsRef.current = drawings;
+
+  const debouncedSave = useCallback(() => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      if (activeSymbol) {
+        useChartUIStore.getState().saveWorkspaceToDB(activeSymbol);
+      }
+    }, 1000); // 1-second debounce
+  }, [activeSymbol]);
+
+  // Track drawing mutations — skip the initial load hydration
+  const isFirstRender = useRef(true);
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    debouncedSave();
+  }, [drawings, debouncedSave]);
+
+  // Flush on window close to catch any unsaved state
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (activeSymbol && drawingsRef.current.length > 0) {
+        useChartUIStore.getState().saveWorkspaceToDB(activeSymbol);
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [activeSymbol]);
 
   // ── Render Helpers ───────────────────────────────────────────────────
   const cursorClass = useMemo(() => {

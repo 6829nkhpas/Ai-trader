@@ -5,6 +5,7 @@ use tokio_tungstenite::connect_async;
 use log::{info, warn, error};
 
 mod commands;
+mod db;
 mod services;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -20,6 +21,17 @@ pub fn run() {
             .level(log::LevelFilter::Info)
             .build(),
         )?;
+      }
+
+      // ── Local Workspace SQLite Database ───────────────────────────
+      match db::init_db() {
+          Ok(db_state) => {
+              app.manage(db_state);
+              info!("Workspace SQLite database initialised and registered.");
+          }
+          Err(e) => {
+              error!("Workspace DB init failed: {} — drawings will not persist.", e);
+          }
       }
 
       // ── QuestDB Connection Pool (PG wire :8812) ─────────────────────
@@ -155,6 +167,8 @@ pub fn run() {
         commands::charts::load_historical,
         commands::charts::fetch_questdb,
         commands::charts::get_pool_status,
+        db::save_workspace,
+        db::load_workspace,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
