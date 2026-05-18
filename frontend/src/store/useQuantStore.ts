@@ -15,6 +15,12 @@ export interface ConsensusReport {
   volume_flow_state: string; // "ACCUMULATION" | "DISTRIBUTION" | "NEUTRAL"
   active_patterns: string[];
   active_strategies: string[];
+  sentiment?: {
+    score: number;           // -100 to +100
+    label: string;           // "Bullish", "Bearish", "Neutral"
+    top_headline: string;
+    impact: 'positive' | 'negative' | 'neutral';
+  };
 }
 
 export interface AiExecutionPlan {
@@ -115,18 +121,35 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
   setConsensusData: (data: ConsensusReport) => set({ consensusData: data }),
 
   fetchDeepAnalysis: async (symbol: string) => {
+    const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    console.log(`[QuantStore] ▶ Deep analysis START symbol=${symbol} ts=${new Date().toISOString()}`);
     set({ isAnalyzing: true, analysisError: null, aiPlan: null });
 
     try {
+      console.log(`[QuantStore] → invoking 'run_deep_quant_analysis' (Tauri IPC)…`);
+      const tInvoke = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
       const plan = await tauriInvoke<AiExecutionPlan>(
         'run_deep_quant_analysis',
         { symbol }
       );
 
+      const tDone = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      console.log(
+        `[QuantStore] ✔ Deep analysis OK symbol=${symbol} ` +
+        `ipc_ms=${Math.round(tDone - tInvoke)} total_ms=${Math.round(tDone - t0)} ` +
+        `conviction=${plan.conviction_score}`
+      );
+      console.debug('[QuantStore] plan payload:', plan);
+
       set({ aiPlan: plan, isAnalyzing: false });
     } catch (err) {
+      const tDone = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       const message = err instanceof Error ? err.message : String(err);
-      console.error('[QuantStore] Deep analysis failed:', message);
+      console.error(
+        `[QuantStore] ✘ Deep analysis FAIL symbol=${symbol} ` +
+        `total_ms=${Math.round(tDone - t0)} message=${message}`
+      );
       set({ isAnalyzing: false, analysisError: message });
     }
   },

@@ -1,0 +1,489 @@
+'use client';
+
+import React, { useState, useCallback, useRef, useEffect } from 'react';
+import {
+  Search, Loader2, X, ArrowUpRight, ArrowDownRight,
+  TrendingUp, TrendingDown, Minus, Activity, Gauge, Waves,
+  BarChart3, Hexagon, Target, Newspaper, ChevronUp, ChevronDown,
+} from 'lucide-react';
+import { useTradeStore } from '../../store/useTradeStore';
+import { useQuantStore } from '../../store/useQuantStore';
+import type { ConsensusReport } from '../../store/useQuantStore';
+
+// ── Static Watchlist ────────────────────────────────────────────────────
+const TOP_WATCHLIST = [
+  { symbol: 'RELIANCE', name: 'Reliance Industries', sector: 'Energy' },
+  { symbol: 'TCS', name: 'Tata Consultancy', sector: 'IT' },
+  { symbol: 'HDFCBANK', name: 'HDFC Bank', sector: 'Banking' },
+  { symbol: 'INFY', name: 'Infosys', sector: 'IT' },
+  { symbol: 'ICICIBANK', name: 'ICICI Bank', sector: 'Banking' },
+  { symbol: 'HINDUNILVR', name: 'Hindustan Unilever', sector: 'FMCG' },
+  { symbol: 'SBIN', name: 'State Bank of India', sector: 'Banking' },
+  { symbol: 'BHARTIARTL', name: 'Bharti Airtel', sector: 'Telecom' },
+  { symbol: 'KOTAKBANK', name: 'Kotak Mahindra Bank', sector: 'Banking' },
+  { symbol: 'LT', name: 'Larsen & Toubro', sector: 'Infra' },
+];
+
+const SECTOR_COLORS: Record<string, string> = {
+  Energy: 'bg-amber-500/10 text-amber-400',
+  IT: 'bg-cyan-500/10 text-cyan-400',
+  Banking: 'bg-emerald-500/10 text-emerald-400',
+  FMCG: 'bg-purple-500/10 text-purple-400',
+  Telecom: 'bg-rose-500/10 text-rose-400',
+  Infra: 'bg-orange-500/10 text-orange-400',
+};
+
+interface QuoteData {
+  symbol: string;
+  last_price: number;
+  change: number;
+  net_change: number;
+  open: number; high: number; low: number; close: number; volume: number;
+}
+
+interface SearchInstrument {
+  instrument_token: number;
+  tradingsymbol: string;
+  name: string;
+  instrument_type: string;
+  exchange: string;
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────
+
+function trendColor(score: number) {
+  if (score > 50) return 'text-emerald-400';
+  if (score > 0) return 'text-emerald-400/70';
+  if (score < -50) return 'text-rose-400';
+  if (score < 0) return 'text-rose-400/70';
+  return 'text-amber-400';
+}
+
+function trendBg(score: number) {
+  if (score > 50) return 'bg-emerald-500';
+  if (score > 0) return 'bg-emerald-500/60';
+  if (score < -50) return 'bg-rose-500';
+  if (score < 0) return 'bg-rose-500/60';
+  return 'bg-amber-500/60';
+}
+
+function stateColor(state: string) {
+  switch (state) {
+    case 'OVERBOUGHT': return 'text-rose-400 bg-rose-500/10 border-rose-500/30';
+    case 'OVERSOLD': return 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30';
+    case 'SQUEEZING': return 'text-amber-400 bg-amber-500/10 border-amber-500/30';
+    case 'EXPANDING': return 'text-violet-400 bg-violet-500/10 border-violet-500/30';
+    case 'ACCUMULATION': return 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30';
+    case 'DISTRIBUTION': return 'text-rose-400 bg-rose-500/10 border-rose-500/30';
+    default: return 'text-slate-400 bg-slate-500/10 border-slate-500/30';
+  }
+}
+
+function sentimentImpactColor(impact: string) {
+  switch (impact) {
+    case 'positive': return 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30';
+    case 'negative': return 'text-rose-400 bg-rose-500/10 border-rose-500/30';
+    default: return 'text-slate-400 bg-slate-500/10 border-slate-500/30';
+  }
+}
+
+// ── Main Component ──────────────────────────────────────────────────────
+
+export default function LeftPanel() {
+  const [query, setQuery] = useState('');
+  const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
+  const [quotesLoading, setQuotesLoading] = useState(true);
+  const [searchResults, setSearchResults] = useState<SearchInstrument[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [watchlistCollapsed, setWatchlistCollapsed] = useState(false);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const quoteIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
+  const setSelectedSymbol = useTradeStore((s) => s.setSelectedSymbol);
+  const consensusData = useQuantStore((s) => s.consensusData);
+
+  // ── Fetch quotes ──────────────────────────────────────────────────
+  const fetchQuotes = useCallback(async () => {
+    try {
+      const params = TOP_WATCHLIST.map((s) => `i=NSE:${s.symbol}`).join('&');
+      const res = await fetch(`/kite/quote?${params}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.quotes) {
+        const map: Record<string, QuoteData> = {};
+        for (const q of data.quotes) map[q.symbol] = q;
+        setQuotes(map);
+      }
+    } catch (err) {
+      console.error('[LeftPanel] Quote fetch failed:', err);
+    } finally {
+      setQuotesLoading(false);
+    }
+  }, []);
+
+  const fetchQuotesRef = useRef(fetchQuotes);
+  useEffect(() => { fetchQuotesRef.current = fetchQuotes; }, [fetchQuotes]);
+  useEffect(() => {
+    fetchQuotesRef.current();
+    quoteIntervalRef.current = setInterval(() => fetchQuotesRef.current(), 30_000);
+    return () => { if (quoteIntervalRef.current) clearInterval(quoteIntervalRef.current); };
+  }, []);
+
+  // ── Search ────────────────────────────────────────────────────────
+  const handleSearch = useCallback(async (searchQuery: string) => {
+    const normalized = searchQuery.trim();
+    if (normalized.length < 2) { setSearchResults([]); setShowDropdown(false); setIsSearching(false); return; }
+    setIsSearching(true); setShowDropdown(true);
+    try {
+      const res = await fetch(`/kite/instruments?q=${encodeURIComponent(normalized)}&exchange=NSE`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setSearchResults(data.results || []);
+    } catch { setSearchResults([]); }
+    finally { setIsSearching(false); }
+  }, []);
+
+  const handleInputChange = (value: string) => {
+    setQuery(value);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    if (!value.trim() || value.trim().length < 2) { setSearchResults([]); setShowDropdown(false); return; }
+    searchTimeoutRef.current = setTimeout(() => handleSearch(value), 400);
+  };
+
+  const clearSearch = () => { setQuery(''); setSearchResults([]); setShowDropdown(false); };
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setShowDropdown(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  useEffect(() => { return () => { if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current); }; }, []);
+
+  const formatPrice = (price: number) => price ? '₹' + price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+  const formatChange = (change: number) => `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+
+  // Active symbol quote for header
+  const activeQuote = quotes[selectedSymbol] || null;
+
+  return (
+    <div className="flex h-full flex-col select-none">
+
+      {/* ══════════════════════════════════════════════════════════════
+          TOP SECTION — Search + Watchlist (collapsible)
+         ══════════════════════════════════════════════════════════════ */}
+      <div className="shrink-0 border-b border-border-default">
+        {/* Search */}
+        <div className="px-3 pt-2 pb-1.5">
+          <div className="relative" ref={dropdownRef}>
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+            <input
+              value={query}
+              onChange={(e) => handleInputChange(e.target.value)}
+              onFocus={() => { if (searchResults.length > 0) setShowDropdown(true); }}
+              placeholder="Search NSE symbol..."
+              aria-label="Search symbols"
+              className="h-8 w-full rounded-md border border-border-default bg-surface pl-8 pr-8 text-[11px] text-text-primary placeholder:text-text-muted transition-colors focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+            {query && (
+              <button onClick={clearSearch} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary transition-colors" aria-label="Clear search">
+                <X size={13} />
+              </button>
+            )}
+            {showDropdown && (
+              <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-52 overflow-y-auto rounded-lg border border-border-default bg-surface shadow-lg panel-shadow">
+                {isSearching ? (
+                  <div className="flex items-center justify-center gap-2 px-3 py-4">
+                    <Loader2 size={13} className="animate-spin text-primary" />
+                    <span className="text-[11px] text-text-secondary">Searching...</span>
+                  </div>
+                ) : searchResults.length === 0 ? (
+                  <div className="px-3 py-4 text-center text-[11px] text-text-muted">No instruments found</div>
+                ) : (
+                  searchResults.map((inst) => (
+                    <button
+                      key={inst.instrument_token}
+                      type="button"
+                      onClick={() => { setSelectedSymbol(inst.tradingsymbol); setShowDropdown(false); setQuery(''); setSearchResults([]); }}
+                      className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition-colors hover:bg-elevated/70"
+                    >
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-[11px] font-semibold text-text-primary truncate">{inst.tradingsymbol}</span>
+                        <span className="text-[9px] text-text-muted truncate">{inst.name}</span>
+                      </div>
+                      <span className="rounded px-1 py-px text-[7px] font-semibold uppercase tracking-wider bg-elevated text-text-muted">{inst.instrument_type || 'EQ'}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Watchlist toggle */}
+        <button
+          type="button"
+          onClick={() => setWatchlistCollapsed(!watchlistCollapsed)}
+          className="flex w-full items-center justify-between px-3 py-1 text-[9px] font-bold uppercase tracking-widest text-text-muted/60 hover:text-text-muted transition-colors"
+        >
+          <span>Watchlist</span>
+          {watchlistCollapsed ? <ChevronDown size={10} /> : <ChevronUp size={10} />}
+        </button>
+      </div>
+
+      {/* Watchlist rows */}
+      {!watchlistCollapsed && (
+        <div className="shrink-0 max-h-[200px] overflow-y-auto scrollbar-thin border-b border-border-default">
+          {quotesLoading ? (
+            <div className="flex items-center justify-center gap-2 py-4">
+              <Loader2 size={14} className="animate-spin text-primary" />
+              <span className="text-[10px] text-text-secondary">Loading...</span>
+            </div>
+          ) : (
+            TOP_WATCHLIST.map((stock) => {
+              const quote = quotes[stock.symbol];
+              const isPositive = quote ? quote.change >= 0 : false;
+              const isActive = selectedSymbol === stock.symbol;
+              const sectorColor = SECTOR_COLORS[stock.sector] ?? 'bg-elevated text-text-muted';
+              return (
+                <button
+                  key={stock.symbol}
+                  type="button"
+                  onClick={() => setSelectedSymbol(stock.symbol)}
+                  className={`group flex w-full items-center justify-between gap-1 px-3 py-1.5 text-[11px] text-left transition-colors cursor-pointer border-l-2 ${
+                    isActive
+                      ? 'bg-primary/10 border-primary text-text-primary'
+                      : 'hover:bg-elevated/70 border-transparent hover:border-primary/50'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="font-semibold text-text-primary truncate">{stock.symbol}</span>
+                    <span className={`rounded px-1 py-px text-[6px] font-semibold uppercase tracking-wider ${sectorColor}`}>{stock.sector}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {quote ? (
+                      <>
+                        <span className="font-semibold text-text-primary tabular-nums text-[10px]">{formatPrice(quote.last_price)}</span>
+                        <span className={`flex items-center gap-px text-[9px] font-medium tabular-nums ${isPositive ? 'text-bull' : 'text-bear'}`}>
+                          {isPositive ? <ArrowUpRight size={8} /> : <ArrowDownRight size={8} />}
+                          {formatChange(quote.change)}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-[9px] text-text-muted/50">—</span>
+                    )}
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════
+          BOTTOM SECTION — Live Asset HUD (Consensus + Sentiment)
+         ══════════════════════════════════════════════════════════════ */}
+      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin">
+        {/* Active Symbol Header */}
+        <div className="sticky top-0 z-10 shrink-0 border-b border-border-default px-3 py-2 bg-surface/95 backdrop-blur-sm">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="flex h-6 w-6 items-center justify-center rounded-md bg-primary/10">
+                <Activity size={12} className="text-primary" />
+              </div>
+              <span className="text-sm font-bold text-text-primary tracking-tight">{selectedSymbol}</span>
+            </div>
+            {activeQuote && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm font-bold tabular-nums text-text-primary">{formatPrice(activeQuote.last_price)}</span>
+                <span className={`flex items-center gap-px text-[10px] font-semibold tabular-nums ${activeQuote.change >= 0 ? 'text-bull' : 'text-bear'}`}>
+                  {activeQuote.change >= 0 ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />}
+                  {formatChange(activeQuote.change)}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {!consensusData ? (
+          <div className="flex flex-col items-center justify-center gap-3 p-4 py-8">
+            <div className="relative">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-elevated border border-border-subtle">
+                <Activity size={20} className="text-text-muted animate-pulse" />
+              </div>
+              <div className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-amber-500/30 border border-amber-500/50 animate-ping" />
+            </div>
+            <div className="text-center">
+              <p className="text-[10px] font-semibold text-text-muted">Awaiting Tick Data...</p>
+              <p className="text-[8px] text-text-muted/50 mt-1">Consensus engine activates on<br />first candle ingestion</p>
+            </div>
+          </div>
+        ) : (
+          <LiveAssetHUD data={consensusData} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Live Asset HUD Sub-component ────────────────────────────────────────
+
+function LiveAssetHUD({ data }: { data: ConsensusReport }) {
+  const { trend_score, momentum_state, volatility_state, volume_flow_state, active_patterns, active_strategies, sentiment } = data;
+  const gaugePercent = Math.round(((trend_score + 100) / 200) * 100);
+
+  const stateEntries = [
+    { label: 'Momentum', value: momentum_state, icon: <Gauge size={10} /> },
+    { label: 'Volatility', value: volatility_state, icon: <Waves size={10} /> },
+    { label: 'Vol Flow', value: volume_flow_state, icon: <BarChart3 size={10} /> },
+  ];
+
+  return (
+    <div className="flex flex-col text-sm">
+
+      {/* ── Section 1: Technical Consensus ──────────────────── */}
+      <div className="border-b border-border-default px-3 py-2.5">
+        <div className="flex items-center gap-1.5 mb-2">
+          <TrendingUp size={10} className="text-text-muted" />
+          <h3 className="text-[9px] font-bold text-text-secondary uppercase tracking-wider">Technical Consensus</h3>
+        </div>
+
+        {/* Trend Score */}
+        <div className="flex items-center gap-2.5 mb-2">
+          <div className={`text-2xl font-black tabular-nums tracking-tight ${trendColor(trend_score)}`}>
+            {trend_score > 0 ? '+' : ''}{trend_score}
+          </div>
+          <div className="flex-1 flex flex-col gap-0.5">
+            <div className="flex items-center justify-between">
+              <span className={`text-[9px] font-bold uppercase tracking-wider ${trendColor(trend_score)}`}>
+                {trend_score > 50 ? 'STRONG BULL' : trend_score > 0 ? 'BULLISH' : trend_score < -50 ? 'STRONG BEAR' : trend_score < 0 ? 'BEARISH' : 'NEUTRAL'}
+              </span>
+              <span className="text-[8px] text-text-muted tabular-nums">{gaugePercent}%</span>
+            </div>
+            <div className="relative h-1.5 w-full rounded-full bg-elevated overflow-hidden">
+              <div className={`h-1.5 rounded-full transition-all duration-700 ease-out ${trendBg(trend_score)}`} style={{ width: `${gaugePercent}%` }} />
+              <div className="absolute top-0 left-1/2 -translate-x-px w-0.5 h-1.5 bg-text-muted/30" />
+            </div>
+          </div>
+        </div>
+
+        {/* State Badges */}
+        <div className="flex flex-col gap-1">
+          {stateEntries.map(({ label, value, icon }) => (
+            <div key={label} className="flex items-center justify-between">
+              <div className="flex items-center gap-1 text-[10px] text-text-secondary">
+                {icon}
+                <span className="font-medium">{label}</span>
+              </div>
+              <span className={`inline-flex items-center rounded px-1.5 py-px text-[8px] font-bold border ${stateColor(value)}`}>{value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Section 2: Active Patterns ──────────────────────── */}
+      <div className="border-b border-border-default px-3 py-2">
+        <div className="flex items-center gap-1.5 mb-1.5">
+          <Hexagon size={10} className="text-text-muted" />
+          <h3 className="text-[9px] font-bold text-text-secondary uppercase tracking-wider">Patterns</h3>
+          {active_patterns.length > 0 && (
+            <span className="ml-auto flex h-3.5 w-3.5 items-center justify-center rounded-full bg-slate-500/20 text-[8px] font-bold text-slate-400">
+              {active_patterns.length}
+            </span>
+          )}
+        </div>
+        {active_patterns.length > 0 ? (
+          <div className="flex flex-wrap gap-1">
+            {active_patterns.map((p) => (
+              <span key={p} className="inline-flex items-center gap-0.5 rounded px-1.5 py-px text-[8px] font-semibold bg-slate-500/8 text-slate-400 border border-slate-500/20">
+                {p.includes('Bullish') || p === 'Hammer' ? <TrendingUp size={7} /> : p.includes('Bearish') || p === 'Shooting Star' ? <TrendingDown size={7} /> : <Minus size={7} />}
+                {p}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="text-[9px] text-text-muted/50 italic">No patterns detected</p>
+        )}
+      </div>
+
+      {/* ── Section 2b: Active Strategies ───────────────────── */}
+      <div className="border-b border-border-default px-3 py-2">
+        <div className="flex items-center gap-1.5 mb-1.5">
+          <Target size={10} className="text-blue-400" />
+          <h3 className="text-[9px] font-bold text-blue-400 uppercase tracking-wider">Strategies</h3>
+          {active_strategies.length > 0 && (
+            <span className="ml-auto flex h-3.5 w-3.5 items-center justify-center rounded-full bg-blue-500/20 text-[8px] font-bold text-blue-400 animate-pulse">
+              {active_strategies.length}
+            </span>
+          )}
+        </div>
+        {active_strategies.length > 0 ? (
+          <div className="flex flex-col gap-1">
+            {active_strategies.map((s) => (
+              <div key={s} className="flex items-center gap-1.5 rounded-md px-2 py-1 border border-blue-500/30 bg-blue-500/5 transition-colors hover:bg-blue-500/10">
+                <div className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-blue-500/15">
+                  {s.includes('Bullish') || s.includes('Golden') ? <TrendingUp size={8} className="text-blue-400" /> : <TrendingDown size={8} className="text-blue-400" />}
+                </div>
+                <span className="text-[10px] font-semibold text-blue-300">{s}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-[9px] text-text-muted/50 italic">No strategies active</p>
+        )}
+      </div>
+
+      {/* ── Section 3: Live Sentiment ───────────────────────── */}
+      <div className="px-3 py-2.5">
+        <div className="flex items-center gap-1.5 mb-1.5">
+          <Newspaper size={10} className="text-text-muted" />
+          <h3 className="text-[9px] font-bold text-text-secondary uppercase tracking-wider">Live Sentiment</h3>
+        </div>
+
+        {sentiment ? (
+          <div className="flex flex-col gap-1.5">
+            {/* Sentiment score + label */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <span className={`text-lg font-black tabular-nums ${
+                  sentiment.impact === 'positive' ? 'text-emerald-400' :
+                  sentiment.impact === 'negative' ? 'text-rose-400' : 'text-slate-400'
+                }`}>
+                  {sentiment.score > 0 ? '+' : ''}{sentiment.score}
+                </span>
+                <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[8px] font-bold border ${sentimentImpactColor(sentiment.impact)}`}>
+                  {sentiment.label}
+                </span>
+              </div>
+              <span className={`h-2 w-2 rounded-full ${
+                sentiment.impact === 'positive' ? 'bg-emerald-400 animate-pulse' :
+                sentiment.impact === 'negative' ? 'bg-rose-400 animate-pulse' : 'bg-slate-500'
+              }`} />
+            </div>
+
+            {/* Top headline */}
+            <div className={`rounded-md px-2 py-1.5 border text-[9px] leading-relaxed font-medium ${
+              sentiment.impact === 'positive'
+                ? 'border-emerald-500/20 bg-emerald-500/5 text-emerald-300/90'
+                : sentiment.impact === 'negative'
+                  ? 'border-rose-500/20 bg-rose-500/5 text-rose-300/90'
+                  : 'border-slate-500/20 bg-slate-500/5 text-slate-300/90'
+            }`}>
+              {sentiment.top_headline.length > 100 ? sentiment.top_headline.slice(0, 100) + '…' : sentiment.top_headline}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 rounded-md px-2 py-2 bg-elevated/50 border border-border-default">
+            <div className="h-1.5 w-1.5 rounded-full bg-slate-500/40 animate-pulse" />
+            <p className="text-[9px] text-text-muted/60 italic">No sentiment data available</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

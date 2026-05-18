@@ -49,8 +49,54 @@ pub fn mock_ai_execution_plan() -> quant::AiExecutionPlan {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  // Load .env from monorepo root (two directories up from src-tauri)
-  let _ = dotenvy::from_filename("../../.env");
+  // ── Load .env (robust, cwd-independent) ─────────────────────────────────
+  //
+  // Tauri's dev command may launch the binary with various working
+  // directories (src-tauri, frontend, target/debug, …). A plain relative
+  // lookup like "../../.env" silently fails when cwd shifts, leaving the
+  // app blind to keys like DEEPSEEK_API_KEY.
+  //
+  // We anchor the search at CARGO_MANIFEST_DIR (frontend/src-tauri at
+  // compile time) and also try a few common fallbacks. The first hit wins.
+  {
+      use std::path::PathBuf;
+      let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+      let candidates: Vec<PathBuf> = vec![
+          manifest_dir.join("../../.env"),   // monorepo root (preferred)
+          manifest_dir.join("../.env"),      // frontend/.env
+          manifest_dir.join(".env"),         // src-tauri/.env
+          PathBuf::from("../../.env"),       // cwd-relative fallbacks
+          PathBuf::from("../.env"),
+          PathBuf::from(".env"),
+      ];
+
+      let mut loaded_from: Option<PathBuf> = None;
+      for candidate in &candidates {
+          if candidate.is_file() {
+              match dotenvy::from_path(candidate) {
+                  Ok(_) => {
+                      loaded_from = Some(candidate.clone());
+                      break;
+                  }
+                  Err(e) => {
+                      eprintln!("[env] failed to parse {}: {}", candidate.display(), e);
+                  }
+              }
+          }
+      }
+
+      match loaded_from {
+          Some(path) => {
+              eprintln!("[env] loaded .env from {}", path.display());
+          }
+          None => {
+              eprintln!(
+                  "[env] WARNING: no .env found in any of: {:?}",
+                  candidates.iter().map(|p| p.display().to_string()).collect::<Vec<_>>()
+              );
+          }
+      }
+  }
 
   let is_test_env = is_test_mode();
 

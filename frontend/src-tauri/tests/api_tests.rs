@@ -49,6 +49,16 @@ const FIXTURE_NEWS: &str = "Reliance posts strong Q3 earnings; refining margins 
 
 // Ensure the live env doesn't leak into the test (audit log + key fallback).
 fn isolate_env() {
+    // Remove production keys if exported in the dev shell so tests
+    // exercise the fallback path with a deterministic TEST_KEY.
+    std::env::remove_var("HF_API_KEY");
+    std::env::remove_var("HUGGINGFACE_API_KEY");
+    std::env::remove_var("HUGGING_FACE_API_KEY");
+    std::env::remove_var("NVIDIA_API_KEY");
+    std::env::remove_var("LLM_API_URL");
+    std::env::remove_var("HF_API_URL");
+    std::env::remove_var("DEEPSEEK_API_URL");
+    std::env::remove_var("NVIDIA_NIM_API_URL");
     std::env::set_var("DEEPSEEK_API_KEY", "TEST_KEY");
     std::env::set_var("DEEPSEEK_MODEL", "deepseek-chat");
     std::env::remove_var("ALPHA_TEST_MODE"); // we want the real code path
@@ -88,7 +98,10 @@ fn test_request_contract_carries_consensus_strings() {
     assert!(serialized.contains("execution_plan"));
 
     // Response format coercion is critical for deterministic parsing.
-    assert_eq!(req.response_format.kind, "json_object");
+    // We deliberately omit `response_format` because some providers (NIM,
+    // some HF backends) reject it. The system prompt + post-fence strip
+    // is what guarantees JSON output.
+    assert!(req.response_format.is_none());
     assert_eq!(req.temperature, 0.3);
     assert_eq!(req.model, "deepseek-chat");
 
@@ -319,6 +332,14 @@ async fn test_audit_logger_writes_to_disk_in_test_mode() {
 
     // Activate the audit logger.
     std::env::set_var("ALPHA_TEST_MODE", "1");
+    std::env::remove_var("HF_API_KEY");
+    std::env::remove_var("HUGGINGFACE_API_KEY");
+    std::env::remove_var("HUGGING_FACE_API_KEY");
+    std::env::remove_var("NVIDIA_API_KEY");
+    std::env::remove_var("LLM_API_URL");
+    std::env::remove_var("HF_API_URL");
+    std::env::remove_var("DEEPSEEK_API_URL");
+    std::env::remove_var("NVIDIA_NIM_API_URL");
     std::env::set_var("DEEPSEEK_API_KEY", "TEST_KEY");
 
     // Clean any prior report so the assertion isn't fooled by stale data.

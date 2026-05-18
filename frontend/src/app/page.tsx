@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight, ChevronDown } from 'lucide-react';
 import TradingChart from '../components/TradingChart';
 import TerminalLayout from '../components/layout/TerminalLayout';
-import WatchlistPanel from '../components/panels/WatchlistPanel';
+import LeftPanel from '../components/panels/LeftPanel';
 import OrderExecutionPanel from '../components/panels/OrderExecutionPanel';
 import AlphaPredictiveChart from '../components/AlphaPredictiveChart';
 import IntradayLayout from '../components/layouts/IntradayLayout';
@@ -12,7 +12,7 @@ import SwingLayout, { SwingConfluencePanel } from '../components/layouts/SwingLa
 import InvestorLayout, { MacroSentimentPanel } from '../components/layouts/InvestorLayout';
 import OrderBook from '../components/OrderBook';
 import SystemConsole from '../components/SystemConsole';
-import ConsensusBoard from '../components/quant/ConsensusBoard';
+
 import DeepQuantPanel from '../components/quant/DeepQuantPanel';
 import ActivePositions from '../components/quant/ActivePositions';
 import { useTradeStore, TradeProfile, ChartTimeframe } from '../store/useTradeStore';
@@ -22,7 +22,7 @@ import type { DataRange } from '../utils/chartTypes';
 import { TIMEFRAME_GROUPS } from '../utils/chartTypes';
 
 // ── Sidebar labels per profile ──────────────────────────────────────────
-type SidebarTab = 'profile' | 'consensus' | 'deepquant';
+type SidebarTab = 'profile' | 'deepquant';
 
 const SIDEBAR_CONFIG: Record<TradeProfile, { label: string; badge: string; badgeColor: string }> = {
   INTRADAY: { label: 'Order Book', badge: 'INTRADAY', badgeColor: 'bg-emerald-500/10 text-emerald-400' },
@@ -171,9 +171,6 @@ export default function Home() {
 
   // ── Profile-Driven Sidebar Content ────────────────────────────────
   const renderSidebarContent = () => {
-    if (sidebarTab === 'consensus') {
-      return <ConsensusBoard consensusData={consensusData} />;
-    }
     if (sidebarTab === 'deepquant') {
       return <DeepQuantPanel />;
     }
@@ -190,13 +187,13 @@ export default function Home() {
     }
   };
 
-  const sidebarTitle = sidebarTab === 'consensus' ? 'Consensus' : sidebarTab === 'deepquant' ? 'Deep Quant' : sidebarCfg.label;
+  const sidebarTitle = sidebarTab === 'deepquant' ? 'Deep Quant' : sidebarCfg.label;
 
   return (
     <div className="flex h-full flex-col bg-background">
       {/* ── Profile-Driven Terminal ────────────────────────── */}
       <div className="min-h-0 flex-1">
-        <TerminalLayout leftPanel={<WatchlistPanel />}>
+        <TerminalLayout leftPanel={<LeftPanel />}>
           <div className="flex h-full min-h-0 w-full gap-0">
             {/* ── Left: Chart + Order Execution ──────────────── */}
             <div className={`flex min-h-0 min-w-0 flex-col rounded-lg border border-border-default bg-surface panel-shadow-lg transition-all duration-300 ease-out ${sidebarOpen ? 'flex-1' : 'w-full'}`}>
@@ -329,7 +326,6 @@ export default function Home() {
                 <div className="flex gap-0.5 px-2 pb-1">
                   {[
                     { key: 'profile' as SidebarTab, label: sidebarCfg.badge },
-                    { key: 'consensus' as SidebarTab, label: 'CONSENSUS' },
                     { key: 'deepquant' as SidebarTab, label: 'AI QUANT' },
                   ].map(({ key, label }) => (
                     <button
@@ -340,9 +336,7 @@ export default function Home() {
                         sidebarTab === key
                           ? key === 'deepquant'
                             ? 'bg-gradient-to-r from-blue-500/15 to-violet-500/15 text-blue-400 border border-blue-500/30'
-                            : key === 'consensus'
-                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
-                              : 'bg-elevated text-text-primary border border-border-default'
+                            : 'bg-elevated text-text-primary border border-border-default'
                           : 'text-text-muted hover:text-text-secondary hover:bg-elevated/50 border border-transparent'
                       }`}
                     >

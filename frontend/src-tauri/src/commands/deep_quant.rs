@@ -8,7 +8,7 @@
 //   4. Call DeepSeek API with the Master Prompt
 //   5. Return AiExecutionPlan to React UI
 
-use log::{info, warn};
+use log::{info, warn, error};
 use sqlx::PgPool;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -139,41 +139,65 @@ async fn load_candles_from_db(pool: &PgPool, symbol: &str, limit: i64) -> Result
 /// 1. Load 200 most recent candles from QuestDB
 /// 2. Compute IndicatorState + ConsensusReport
 /// 3. Fetch recent news (with fallback)
-/// 4. Call DeepSeek with the Master Prompt
+/// 4. Call LLM (Hugging Face router → DeepSeek) with the Master Prompt
 /// 5. Return structured AiExecutionPlan
 #[tauri::command]
 pub async fn run_deep_quant_analysis(
     app: AppHandle,
     symbol: String,
 ) -> Result<AiExecutionPlan, String> {
+    use std::time::Instant;
+    let t_total = Instant::now();
+
     info!("╔══════════════════════════════════════════════════╗");
     info!("║  Deep Quant Analysis — V3 Pipeline Starting     ║");
     info!("║  Symbol: {:<40} ║", symbol);
     info!("╚══════════════════════════════════════════════════╝");
 
     // ── Step 1: Fetch candles from QuestDB ───────────────────────────────
-    let pool = app
-        .try_state::<PgPool>()
-        .ok_or_else(|| "QuestDB pool not yet available — try again shortly.".to_string())?;
+    let t_step = Instant::now();
+    info!("[deep_quant] step=1/5 candle_load_start symbol={}", symbol);
 
-    let candles = load_candles_from_db(pool.inner(), &symbol, 200).await?;
+    let pool = app.try_state::<PgPool>().ok_or_else(|| {
+        let msg = "QuestDB pool not yet available — try again shortly.";
+        warn!("[deep_quant] step=1/5 FAIL {}", msg);
+        msg.to_string()
+    })?;
+
+    let candles = load_candles_from_db(pool.inner(), &symbol, 200)
+        .await
+        .map_err(|e| {
+            warn!("[deep_quant] step=1/5 FAIL elapsed_ms={} err={}", t_step.elapsed().as_millis(), e);
+            e
+        })?;
 
     if candles.len() < 2 {
-        return Err(format!(
+        let msg = format!(
             "Insufficient data for {}: only {} candles available (need ≥2).",
             symbol,
             candles.len()
-        ));
+        );
+        warn!("[deep_quant] step=1/5 FAIL {}", msg);
+        return Err(msg);
     }
 
-    info!("Step 1 complete: {} candles loaded for {}", candles.len(), symbol);
+    info!(
+        "[deep_quant] step=1/5 candle_load_done elapsed_ms={} candles={} symbol={}",
+        t_step.elapsed().as_millis(),
+        candles.len(),
+        symbol,
+    );
 
     // ── Step 2: Compute indicators and consensus ────────────────────────
+    let t_step = Instant::now();
+    info!("[deep_quant] step=2/5 consensus_compute_start");
+
     let indicators = IndicatorState::from_candles_basic(&candles);
     let consensus = ConsensusEngine::compile_consensus(&symbol, &candles, &indicators);
 
     info!(
-        "Step 2 complete: trend={}, momentum={}, volatility={}, volume={}, patterns={:?}, strategies={:?}",
+        "[deep_quant] step=2/5 consensus_compute_done elapsed_ms={} trend={} momentum={} volatility={} volume={} patterns={:?} strategies={:?}",
+        t_step.elapsed().as_millis(),
         consensus.trend_score,
         consensus.momentum_state,
         consensus.volatility_state,
@@ -184,30 +208,62 @@ pub async fn run_deep_quant_analysis(
 
     // Emit consensus to frontend for real-time dashboard display
     let _ = app.emit("quant-consensus", serde_json::json!(&consensus));
+    info!("[deep_quant] step=2/5 emit=quant-consensus");
 
     // ── Step 3: Fetch news context ──────────────────────────────────────
+    let t_step = Instant::now();
+    info!("[deep_quant] step=3/5 news_fetch_start symbol={}", symbol);
+
     let news = fetch_news_context(&symbol).await;
-    info!("Step 3 complete: news context ({} chars)", news.len());
-
-    // ── Step 4: Call DeepSeek via LLM bridge (or mock in test mode) ────
-    let plan = if crate::is_test_mode() {
-        info!("Step 4: [TEST MODE] Returning mocked AiExecutionPlan — no network call.");
-        crate::mock_ai_execution_plan()
-    } else {
-        info!("Step 4: calling DeepSeek API...");
-        llm::generate_deep_quant_plan(&symbol, &consensus, &news).await?
-    };
-
     info!(
-        "Step 4 complete: conviction={}, plan preview: {}...",
-        plan.conviction_score,
-        &plan.execution_plan[..80.min(plan.execution_plan.len())]
+        "[deep_quant] step=3/5 news_fetch_done elapsed_ms={} chars={}",
+        t_step.elapsed().as_millis(),
+        news.len()
     );
+
+    // ── Step 4: Call LLM via bridge (or mock in test mode) ──────────────
+    let t_step = Instant::now();
+    let plan = if crate::is_test_mode() {
+        info!("[deep_quant] step=4/5 llm_call_start mode=TEST_MODE_MOCK");
+        let mocked = crate::mock_ai_execution_plan();
+        info!(
+            "[deep_quant] step=4/5 llm_call_done elapsed_ms={} mode=mocked conviction={}",
+            t_step.elapsed().as_millis(),
+            mocked.conviction_score
+        );
+        mocked
+    } else {
+        info!("[deep_quant] step=4/5 llm_call_start mode=LIVE");
+        match llm::generate_deep_quant_plan(&symbol, &consensus, &news).await {
+            Ok(p) => {
+                info!(
+                    "[deep_quant] step=4/5 llm_call_done elapsed_ms={} conviction={}",
+                    t_step.elapsed().as_millis(),
+                    p.conviction_score
+                );
+                p
+            }
+            Err(e) => {
+                error!(
+                    "[deep_quant] step=4/5 llm_call_FAIL elapsed_ms={} err={}",
+                    t_step.elapsed().as_millis(),
+                    e
+                );
+                return Err(e);
+            }
+        }
+    };
 
     // ── Step 5: Emit result event and return ────────────────────────────
     let _ = app.emit("deep-quant-result", serde_json::json!(&plan));
+    info!("[deep_quant] step=5/5 emit=deep-quant-result");
 
-    info!("Deep Quant Analysis complete for {} — conviction: {}", symbol, plan.conviction_score);
+    info!(
+        "[deep_quant] PIPELINE_DONE symbol={} total_elapsed_ms={} conviction={}",
+        symbol,
+        t_total.elapsed().as_millis(),
+        plan.conviction_score
+    );
 
     Ok(plan)
 }

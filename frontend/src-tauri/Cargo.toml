@@ -32,7 +32,7 @@ url = "2.5.0"
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "chrono"] }
 bincode = "1"
 chrono = { version = "0.4", features = ["serde"] }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 dotenvy = "0.15"
 
 # ── Local Workspace Persistence (SQLite) ────────────────────────────────
