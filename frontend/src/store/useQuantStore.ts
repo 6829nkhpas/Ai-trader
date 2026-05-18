@@ -29,6 +29,16 @@ export interface AiExecutionPlan {
   execution_plan: string;
 }
 
+// ── Decoupled Sentiment Payload (independent of Kafka/WS ticks) ─────────
+
+export interface SentimentPayload {
+  symbol: string;
+  score: number;           // -100 to +100
+  label: string;           // "Bullish", "Bearish", "Neutral"
+  top_headline: string;
+  impact: 'positive' | 'negative' | 'neutral';
+}
+
 // ── Paper Trading Position ──────────────────────────────────────────────
 
 export interface Position {
@@ -64,8 +74,14 @@ interface QuantStore {
   activePositions: Position[];
   completedTrades: CompletedTrade[];
 
+  // ── Decoupled Sentiment (independent of tick data) ──────────────────
+  activeSentiment: SentimentPayload | null;
+  isFetchingSentiment: boolean;
+  sentimentError: string | null;
+
   setConsensusData: (data: ConsensusReport) => void;
   fetchDeepAnalysis: (symbol: string) => Promise<void>;
+  loadSentimentForSymbol: (symbol: string) => Promise<void>;
   clearAiPlan: () => void;
   openPosition: (symbol: string, plan: AiExecutionPlan) => void;
   closePosition: (id: string, exitPrice: number) => void;
@@ -118,7 +134,30 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
   activePositions: [],
   completedTrades: [],
 
+  // ── Decoupled Sentiment State ──────────────────────────────────────
+  activeSentiment: null,
+  isFetchingSentiment: false,
+  sentimentError: null,
+
   setConsensusData: (data: ConsensusReport) => set({ consensusData: data }),
+
+  loadSentimentForSymbol: async (symbol: string) => {
+    console.log(`[QuantStore] ▶ Sentiment fetch START symbol=${symbol}`);
+    set({ isFetchingSentiment: true, sentimentError: null });
+
+    try {
+      const payload = await tauriInvoke<SentimentPayload>(
+        'fetch_symbol_sentiment',
+        { symbol }
+      );
+      console.log(`[QuantStore] ✔ Sentiment OK symbol=${symbol} score=${payload.score} label=${payload.label}`);
+      set({ activeSentiment: payload, isFetchingSentiment: false });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[QuantStore] ✘ Sentiment FAIL symbol=${symbol}: ${message}`);
+      set({ isFetchingSentiment: false, sentimentError: message });
+    }
+  },
 
   fetchDeepAnalysis: async (symbol: string) => {
     const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());

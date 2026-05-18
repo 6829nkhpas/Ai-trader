@@ -5,3 +5,4 @@
 
 pub mod charts;
 pub mod deep_quant;
+pub mod sentiment;

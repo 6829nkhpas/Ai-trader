@@ -295,6 +295,7 @@ pub fn run() {
         commands::charts::fetch_questdb,
         commands::charts::get_pool_status,
         commands::deep_quant::run_deep_quant_analysis,
+        commands::sentiment::fetch_symbol_sentiment,
         db::save_workspace,
         db::load_workspace,
         db::log_completed_trade,

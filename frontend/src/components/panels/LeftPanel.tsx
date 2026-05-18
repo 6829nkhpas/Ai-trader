@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { useTradeStore } from '../../store/useTradeStore';
 import { useQuantStore } from '../../store/useQuantStore';
-import type { ConsensusReport } from '../../store/useQuantStore';
+import type { ConsensusReport, SentimentPayload } from '../../store/useQuantStore';
 
 // ── Static Watchlist ────────────────────────────────────────────────────
 const TOP_WATCHLIST = [
@@ -104,6 +104,19 @@ export default function LeftPanel() {
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
   const setSelectedSymbol = useTradeStore((s) => s.setSelectedSymbol);
   const consensusData = useQuantStore((s) => s.consensusData);
+
+  // ── Decoupled Sentiment (independent of tick data) ────────────────
+  const activeSentiment = useQuantStore((s) => s.activeSentiment);
+  const isFetchingSentiment = useQuantStore((s) => s.isFetchingSentiment);
+  const sentimentError = useQuantStore((s) => s.sentimentError);
+  const loadSentimentForSymbol = useQuantStore((s) => s.loadSentimentForSymbol);
+
+  // Trigger sentiment fetch on symbol change — fully independent of market hours
+  useEffect(() => {
+    if (selectedSymbol) {
+      loadSentimentForSymbol(selectedSymbol);
+    }
+  }, [selectedSymbol, loadSentimentForSymbol]);
 
   // ── Fetch quotes ──────────────────────────────────────────────────
   const fetchQuotes = useCallback(async () => {
@@ -310,17 +323,21 @@ export default function LeftPanel() {
           </div>
         </div>
 
+        {/* Sentiment section — always renders, independent of tick data */}
+        <SentimentBlock sentiment={activeSentiment} isLoading={isFetchingSentiment} error={sentimentError} />
+
+        {/* Technical consensus — requires OHLC candle data */}
         {!consensusData ? (
-          <div className="flex flex-col items-center justify-center gap-3 p-4 py-8">
+          <div className="flex flex-col items-center justify-center gap-3 p-4 py-6">
             <div className="relative">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-elevated border border-border-subtle">
-                <Activity size={20} className="text-text-muted animate-pulse" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-elevated border border-border-subtle">
+                <Activity size={16} className="text-text-muted animate-pulse" />
               </div>
-              <div className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-amber-500/30 border border-amber-500/50 animate-ping" />
+              <div className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-amber-500/30 border border-amber-500/50 animate-ping" />
             </div>
             <div className="text-center">
-              <p className="text-[10px] font-semibold text-text-muted">Awaiting Tick Data...</p>
-              <p className="text-[8px] text-text-muted/50 mt-1">Consensus engine activates on<br />first candle ingestion</p>
+              <p className="text-[9px] font-semibold text-text-muted">Awaiting OHLC Data...</p>
+              <p className="text-[8px] text-text-muted/50 mt-0.5">Technical indicators activate on<br />first candle ingestion</p>
             </div>
           </div>
         ) : (
@@ -334,7 +351,7 @@ export default function LeftPanel() {
 // ── Live Asset HUD Sub-component ────────────────────────────────────────
 
 function LiveAssetHUD({ data }: { data: ConsensusReport }) {
-  const { trend_score, momentum_state, volatility_state, volume_flow_state, active_patterns, active_strategies, sentiment } = data;
+  const { trend_score, momentum_state, volatility_state, volume_flow_state, active_patterns, active_strategies } = data;
   const gaugePercent = Math.round(((trend_score + 100) / 200) * 100);
 
   const stateEntries = [
@@ -437,53 +454,72 @@ function LiveAssetHUD({ data }: { data: ConsensusReport }) {
           <p className="text-[9px] text-text-muted/50 italic">No strategies active</p>
         )}
       </div>
+    </div>
+  );
+}
 
-      {/* ── Section 3: Live Sentiment ───────────────────────── */}
-      <div className="px-3 py-2.5">
-        <div className="flex items-center gap-1.5 mb-1.5">
-          <Newspaper size={10} className="text-text-muted" />
-          <h3 className="text-[9px] font-bold text-text-secondary uppercase tracking-wider">Live Sentiment</h3>
-        </div>
+// ── Decoupled Sentiment Block (renders independently of tick data) ───────
 
-        {sentiment ? (
-          <div className="flex flex-col gap-1.5">
-            {/* Sentiment score + label */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <span className={`text-lg font-black tabular-nums ${
-                  sentiment.impact === 'positive' ? 'text-emerald-400' :
-                  sentiment.impact === 'negative' ? 'text-rose-400' : 'text-slate-400'
-                }`}>
-                  {sentiment.score > 0 ? '+' : ''}{sentiment.score}
-                </span>
-                <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[8px] font-bold border ${sentimentImpactColor(sentiment.impact)}`}>
-                  {sentiment.label}
-                </span>
-              </div>
-              <span className={`h-2 w-2 rounded-full ${
-                sentiment.impact === 'positive' ? 'bg-emerald-400 animate-pulse' :
-                sentiment.impact === 'negative' ? 'bg-rose-400 animate-pulse' : 'bg-slate-500'
-              }`} />
-            </div>
-
-            {/* Top headline */}
-            <div className={`rounded-md px-2 py-1.5 border text-[9px] leading-relaxed font-medium ${
-              sentiment.impact === 'positive'
-                ? 'border-emerald-500/20 bg-emerald-500/5 text-emerald-300/90'
-                : sentiment.impact === 'negative'
-                  ? 'border-rose-500/20 bg-rose-500/5 text-rose-300/90'
-                  : 'border-slate-500/20 bg-slate-500/5 text-slate-300/90'
-            }`}>
-              {sentiment.top_headline.length > 100 ? sentiment.top_headline.slice(0, 100) + '…' : sentiment.top_headline}
-            </div>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 rounded-md px-2 py-2 bg-elevated/50 border border-border-default">
-            <div className="h-1.5 w-1.5 rounded-full bg-slate-500/40 animate-pulse" />
-            <p className="text-[9px] text-text-muted/60 italic">No sentiment data available</p>
-          </div>
+function SentimentBlock({ sentiment, isLoading, error }: {
+  sentiment: SentimentPayload | null;
+  isLoading: boolean;
+  error: string | null;
+}) {
+  return (
+    <div className="border-b border-border-default px-3 py-2.5">
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <Newspaper size={10} className="text-text-muted" />
+        <h3 className="text-[9px] font-bold text-text-secondary uppercase tracking-wider">Live Sentiment</h3>
+        {isLoading && (
+          <Loader2 size={9} className="ml-auto animate-spin text-blue-400" />
         )}
       </div>
+
+      {isLoading ? (
+        <div className="flex items-center gap-2 rounded-md px-2 py-2 bg-blue-500/5 border border-blue-500/20">
+          <div className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" />
+          <p className="text-[9px] text-blue-300/80 font-medium">Analyzing latest news...</p>
+        </div>
+      ) : error ? (
+        <div className="flex items-center gap-2 rounded-md px-2 py-2 bg-rose-500/5 border border-rose-500/20">
+          <div className="h-1.5 w-1.5 rounded-full bg-rose-400" />
+          <p className="text-[9px] text-rose-300/80 font-medium truncate">{error}</p>
+        </div>
+      ) : sentiment ? (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <span className={`text-lg font-black tabular-nums ${
+                sentiment.impact === 'positive' ? 'text-emerald-400' :
+                sentiment.impact === 'negative' ? 'text-rose-400' : 'text-slate-400'
+              }`}>
+                {sentiment.score > 0 ? '+' : ''}{sentiment.score}
+              </span>
+              <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[8px] font-bold border ${sentimentImpactColor(sentiment.impact)}`}>
+                {sentiment.label}
+              </span>
+            </div>
+            <span className={`h-2 w-2 rounded-full ${
+              sentiment.impact === 'positive' ? 'bg-emerald-400 animate-pulse' :
+              sentiment.impact === 'negative' ? 'bg-rose-400 animate-pulse' : 'bg-slate-500'
+            }`} />
+          </div>
+          <div className={`rounded-md px-2 py-1.5 border text-[9px] leading-relaxed font-medium ${
+            sentiment.impact === 'positive'
+              ? 'border-emerald-500/20 bg-emerald-500/5 text-emerald-300/90'
+              : sentiment.impact === 'negative'
+                ? 'border-rose-500/20 bg-rose-500/5 text-rose-300/90'
+                : 'border-slate-500/20 bg-slate-500/5 text-slate-300/90'
+          }`}>
+            {sentiment.top_headline.length > 100 ? sentiment.top_headline.slice(0, 100) + '…' : sentiment.top_headline}
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 rounded-md px-2 py-2 bg-elevated/50 border border-border-default">
+          <div className="h-1.5 w-1.5 rounded-full bg-slate-500/40 animate-pulse" />
+          <p className="text-[9px] text-text-muted/60 italic">Select a symbol to load sentiment</p>
+        </div>
+      )}
     </div>
   );
 }

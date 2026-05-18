@@ -34,6 +34,7 @@ bincode = "1"
 chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 dotenvy = "0.15"
+urlencoding = "2.1"
 
 # ── Local Workspace Persistence (SQLite) ────────────────────────────────
 # rusqlite 0.31 uses libsqlite3-sys 0.28 — same as sqlx, avoiding link conflicts.
