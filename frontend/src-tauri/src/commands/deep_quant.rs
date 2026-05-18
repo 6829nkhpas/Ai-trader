@@ -21,11 +21,17 @@ use crate::services::llm;
 
 /// Fetch recent news headlines for a symbol from the aggregator's REST API.
 /// Falls back to a "No recent news available" string on any failure.
+///
+/// Wrapped with the Alpha Crucible audit logger so every News API request
+/// and response is recorded verbatim when `ALPHA_TEST_MODE=1`.
 async fn fetch_news_context(symbol: &str) -> String {
+    use crate::services::audit_logger;
+
     let news_api_url = std::env::var("NEWS_API_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:8084".to_string());
 
     let url = format!("{}/api/news?symbol={}", news_api_url, symbol);
+    let req_json = serde_json::json!({ "method": "GET", "url": url, "symbol": symbol });
 
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
@@ -34,23 +40,43 @@ async fn fetch_news_context(symbol: &str) -> String {
         Ok(c) => c,
         Err(e) => {
             warn!("News HTTP client failed: {} — using fallback", e);
+            audit_logger::log_api_error(
+                &format!("GET {}", url),
+                &req_json,
+                &format!("client build failed: {}", e),
+            );
             return format!("No recent news available for {}.", symbol);
         }
     };
 
     match client.get(&url).send().await {
-        Ok(resp) if resp.status().is_success() => {
-            match resp.text().await {
-                Ok(body) if !body.trim().is_empty() => body,
-                _ => format!("No recent news available for {}.", symbol),
-            }
-        }
         Ok(resp) => {
-            warn!("News API returned HTTP {} for {}", resp.status(), symbol);
-            format!("No recent news available for {}.", symbol)
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            let res_json: serde_json::Value = serde_json::from_str(&body)
+                .unwrap_or_else(|_| serde_json::Value::String(body.clone()));
+            audit_logger::log_api_transaction(
+                &format!("GET {}", url),
+                &req_json,
+                &res_json,
+                status.as_u16(),
+            );
+            if status.is_success() && !body.trim().is_empty() {
+                body
+            } else {
+                if !status.is_success() {
+                    warn!("News API returned HTTP {} for {}", status, symbol);
+                }
+                format!("No recent news available for {}.", symbol)
+            }
         }
         Err(e) => {
             warn!("News fetch failed for {}: {} — using fallback", symbol, e);
+            audit_logger::log_api_error(
+                &format!("GET {}", url),
+                &req_json,
+                &format!("transport error: {}", e),
+            );
             format!("No recent news available for {}.", symbol)
         }
     }
@@ -163,9 +189,14 @@ pub async fn run_deep_quant_analysis(
     let news = fetch_news_context(&symbol).await;
     info!("Step 3 complete: news context ({} chars)", news.len());
 
-    // ── Step 4: Call DeepSeek via LLM bridge ────────────────────────────
-    info!("Step 4: calling DeepSeek API...");
-    let plan = llm::generate_deep_quant_plan(&symbol, &consensus, &news).await?;
+    // ── Step 4: Call DeepSeek via LLM bridge (or mock in test mode) ────
+    let plan = if crate::is_test_mode() {
+        info!("Step 4: [TEST MODE] Returning mocked AiExecutionPlan — no network call.");
+        crate::mock_ai_execution_plan()
+    } else {
+        info!("Step 4: calling DeepSeek API...");
+        llm::generate_deep_quant_plan(&symbol, &consensus, &news).await?
+    };
 
     info!(
         "Step 4 complete: conviction={}, plan preview: {}...",

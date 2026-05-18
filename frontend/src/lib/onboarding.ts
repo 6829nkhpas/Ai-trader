@@ -2,6 +2,11 @@ import axios from 'axios';
 import { kycApi } from './api-client';
 
 export async function isOnboardingComplete(): Promise<boolean> {
+  // In E2E test mode, bypass the KYC check entirely
+  if (typeof window !== 'undefined' && (window as unknown as Record<string, unknown>).__ALPHA_TEST_MODE__) {
+    return true;
+  }
+
   try {
     const res = await kycApi.getProfile();
     const profile = (res.data as { profile?: { kyc_status?: string } }).profile;

@@ -18,6 +18,8 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const isTestMode = process.env.ALPHA_TEST_MODE === '1' || process.env.ALPHA_TEST_MODE === 'true';
+
   return (
     <html
       lang="en"
@@ -25,6 +27,14 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
+        {/* Inject test mode flag for client-side detection */}
+        {isTestMode && (
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `window.__ALPHA_TEST_MODE__ = true;`,
+            }}
+          />
+        )}
         {/*
           SessionProvider is rendered in a Client Component (AuthContext.tsx).
           Next.js App Router allows Server Components to import Client Component
