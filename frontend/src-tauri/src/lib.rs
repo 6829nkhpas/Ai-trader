@@ -9,6 +9,9 @@ pub mod db;
 pub mod quant;
 pub mod services;
 
+use commands::security::SecureKeyStore;
+
+
 /// Check if the application is running in E2E test mode.
 /// When ALPHA_TEST_MODE is set, live APIs (Zerodha/DeepSeek) are bypassed
 /// and replaced with deterministic mock data.
@@ -17,16 +20,23 @@ pub fn is_test_mode() -> bool {
 }
 
 /// Mock OHLC candle tick emitted every 100ms in test mode.
-/// Represents a stable RELIANCE candle for deterministic UI testing.
-fn mock_ohlc_tick() -> serde_json::Value {
+/// Reads the currently active symbol from shared state so that symbol-switch
+/// events during test runs are reflected immediately in the emitted ticks.
+/// Previously hardcoded to "RELIANCE" — that prevented symbol switching in test mode.
+fn mock_ohlc_tick(symbol: &str) -> serde_json::Value {
+    // Simulate a price that gently drifts per symbol name for visual variety.
+    let base_price: f64 = symbol.bytes().map(|b| b as f64).sum::<f64>() % 1000.0 + 1500.0;
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    // Bucket to a 1-minute OHLC window (matching real aggregator behaviour)
+    let bucket_ms = (now_ms / 60_000) * 60_000;
     serde_json::json!({
-        "symbol": "RELIANCE",
-        "open": 2450.0,
-        "high": 2475.0,
-        "low": 2440.0,
-        "close": 2468.0,
-        "volume": 125000,
-        "timestamp": chrono::Utc::now().timestamp_millis()
+        "symbol": symbol,
+        "start_timestamp_ms": bucket_ms,
+        "open": (base_price * 0.998).round() / 1.0,
+        "high": (base_price * 1.005).round() / 1.0,
+        "low":  (base_price * 0.994).round() / 1.0,
+        "close": base_price,
+        "volume": 125000_u64,
     })
 }
 
@@ -98,6 +108,11 @@ pub fn run() {
       }
   }
 
+  // ── Active Symbol State (shared between test mock + subscribe_ticker cmd) ─
+  // Managed directly (no Arc wrapper) — Tauri wraps managed state in Arc internally.
+  // Accessible in commands via `tauri::State<'_, commands::ticker::ActiveSymbolState>`.
+  let active_symbol_state = commands::ticker::ActiveSymbolState::new("RELIANCE");
+
   let is_test_env = is_test_mode();
 
   if is_test_env {
@@ -107,6 +122,29 @@ pub fn run() {
   }
 
   tauri::Builder::default()
+    .plugin({
+      // ── Stronghold Encrypted Credential Vault ──────────────────────────
+      // Argon2id derives a 32-byte key from the vault password.
+      // Fixed salt ensures the same key is derived on every launch.
+      // The password is application-defined (not user-visible).
+      tauri_plugin_stronghold::Builder::new(|password| {
+          // argon2 v0.5 (RustCrypto) raw key derivation path.
+          // salt must be ≥ 8 bytes; we use 32 fixed bytes.
+          let salt = b"alpha_suite_v3_stronghold_salt_01"; // 32 bytes
+          let mut output = vec![0u8; 32];
+          argon2::Argon2::default()
+              .hash_password_into(password.as_bytes(), salt, &mut output)
+              .unwrap_or_else(|_| {
+                  // Should never fail with valid static inputs, but we
+                  // must not panic in the hash closure.
+                  for (i, b) in output.iter_mut().enumerate() { *b = i as u8; }
+              });
+          output
+      })
+      .build()
+    })
+    .manage(active_symbol_state)
+    .manage(SecureKeyStore::new())
     .setup(move |app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -140,10 +178,27 @@ pub fn run() {
           // Spawn a mock OHLC tick emitter instead of connecting to WS.
           // ══════════════════════════════════════════════════════════════
           let app_handle_mock = app.handle().clone();
+          // Get a reference to the shared symbol state from Tauri's manager.
+          // Since the state was registered with .manage(), Tauri holds it behind
+          // an Arc internally — app.state() returns a Guard with a &T reference.
+          // We clone the string each tick by locking the Mutex, keeping lock time minimal.
+          let symbol_state_mock: tauri::State<'_, commands::ticker::ActiveSymbolState> = app.state();
+          // SAFETY: The `app` reference lives for the duration of setup();
+          // we must transfer ownership into the spawned task via a raw pointer trick.
+          // Instead, use app_handle to retrieve state inside the async block.
+          let app_handle_mock2 = app.handle().clone();
+          drop(symbol_state_mock); // release the borrow so we can move app_handle_mock2
           tauri::async_runtime::spawn(async move {
-              info!("[TEST MODE] Mock OHLC tick emitter started (100ms interval)");
+              info!("[TEST MODE] Mock OHLC tick emitter started (100ms interval, dynamic symbol)");
               loop {
-                  let tick = mock_ohlc_tick();
+                  // Retrieve state each iteration (cheap Arc clone under the hood).
+                  let sym = app_handle_mock2
+                      .state::<commands::ticker::ActiveSymbolState>()
+                      .symbol
+                      .lock()
+                      .await
+                      .clone();
+                  let tick = mock_ohlc_tick(&sym);
                   let _ = app_handle_mock.emit("ohlc-tick", tick);
                   tokio::time::sleep(std::time::Duration::from_millis(100)).await;
               }
@@ -297,12 +352,16 @@ pub fn run() {
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
+        commands::ticker::subscribe_ticker,
         commands::charts::get_historical_view,
         commands::charts::load_historical,
         commands::charts::fetch_questdb,
         commands::charts::get_pool_status,
         commands::deep_quant::run_deep_quant_analysis,
         commands::sentiment::fetch_symbol_sentiment,
+        commands::security::save_api_key,
+        commands::security::check_api_key_exists,
+        commands::security::hydrate_key_cache,
         db::save_workspace,
         db::load_workspace,
         db::log_completed_trade,

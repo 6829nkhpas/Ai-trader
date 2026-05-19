@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Activity,
   RefreshCcw,
@@ -96,11 +96,16 @@ import {
   Monitor,
   Signpost,
   Flag,
+  // Settings
+  Settings,
+  X as XIcon,
+  Shield,
 } from 'lucide-react';
 import { useTradeStore, TradeProfile } from '../../store/useTradeStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
 import { ToolMenu, type ToolMenuEntry } from '../chart/ToolMenu';
 import QuantRadar from '../quant/QuantRadar';
+import SecurityVault from '../settings/SecurityVault';
 
 const PROFILES: { key: TradeProfile; label: string; shortcut: string }[] = [
   { key: 'INTRADAY', label: 'Intraday', shortcut: 'Scalp' },
@@ -115,6 +120,7 @@ interface TerminalLayoutProps {
 
 export default function TerminalLayout({ children, leftPanel }: TerminalLayoutProps) {
   const { activeProfile, setActiveProfile, resetSession } = useTradeStore();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const {
     activeCursor,
@@ -323,6 +329,18 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
             <span className="absolute top-0 right-0 h-2 w-2 rounded-full bg-red-500 border border-surface"></span>
           </button>
 
+          {/* Settings — Security Vault */}
+          <button
+            type="button"
+            id="settings-security-vault-btn"
+            onClick={() => setSettingsOpen(true)}
+            className="flex items-center gap-1.5 rounded-full border border-violet-500/30 bg-violet-500/8 px-3 py-1 text-xs font-medium text-violet-400 transition-all hover:bg-violet-500/15 hover:border-violet-500/50"
+            title="Security Vault — API Key Management"
+          >
+            <Shield size={13} />
+            <span className="hidden sm:inline">Vault</span>
+          </button>
+
           <button
             type="button"
             className="flex items-center gap-2 rounded-full border border-border-default bg-surface px-3 py-1 text-xs font-medium text-text-secondary transition-colors hover:bg-elevated"
@@ -485,6 +503,55 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
 
       {/* ── Quant Radar Overlay ──────────────────────────────────── */}
       <QuantRadar />
+
+      {/* ── Security Vault Settings Modal ────────────────────────── */}
+      {settingsOpen && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-start justify-end"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Security Vault Settings"
+        >
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => setSettingsOpen(false)}
+          />
+
+          {/* Slide-in Panel */}
+          <div
+            className="relative z-10 flex h-full w-[380px] max-w-[95vw] flex-col border-l border-border-default shadow-2xl overflow-hidden"
+            style={{
+              background: 'var(--color-surface)',
+              animation: 'slideInRight 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
+            }}
+          >
+            {/* Panel Header */}
+            <div className="flex shrink-0 items-center gap-2 border-b border-border-default px-4 py-3" style={{ background: 'var(--color-surface)' }}>
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-500/15 border border-violet-500/30">
+                <Shield size={14} className="text-violet-400" />
+              </div>
+              <div>
+                <h2 className="text-sm font-bold text-text-primary tracking-tight">Security Vault</h2>
+                <p className="text-[9px] text-text-muted">Encrypted credential management · AES-256</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(false)}
+                className="ml-auto flex h-7 w-7 items-center justify-center rounded-lg border border-border-default text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
+                aria-label="Close settings"
+              >
+                <XIcon size={14} />
+              </button>
+            </div>
+
+            {/* Panel Body */}
+            <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin">
+              <SecurityVault />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

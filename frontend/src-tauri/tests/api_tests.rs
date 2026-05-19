@@ -171,6 +171,7 @@ async fn test_deepseek_happy_path_parses_into_struct() {
         &fixture_consensus(),
         FIXTURE_NEWS,
         &url,
+        None, // no AppHandle in tests — falls back to env var key resolution
     )
     .await;
 
@@ -211,6 +212,7 @@ async fn test_deepseek_handles_429_rate_limit() {
         &fixture_consensus(),
         FIXTURE_NEWS,
         &url,
+        None,
     )
     .await;
 
@@ -254,6 +256,7 @@ async fn test_deepseek_handles_malformed_json() {
         &fixture_consensus(),
         FIXTURE_NEWS,
         &url,
+        None,
     )
     .await;
 
@@ -304,6 +307,7 @@ async fn test_deepseek_handles_malformed_inner_content() {
         &fixture_consensus(),
         FIXTURE_NEWS,
         &url,
+        None,
     )
     .await;
 
@@ -376,6 +380,7 @@ async fn test_audit_logger_writes_to_disk_in_test_mode() {
         &fixture_consensus(),
         FIXTURE_NEWS,
         &url,
+        None,
     )
     .await
     .expect("audit happy-path must succeed");

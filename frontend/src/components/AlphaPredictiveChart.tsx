@@ -61,6 +61,21 @@ export default function AlphaPredictiveChart({
     }
   }, [activeSymbol]);
 
+  // ── Clear live buffer on timeframe change ─────────────────────────────
+  // Live ticks from the Kafka OHLC aggregator are ALWAYS 1-minute buckets.
+  // When the user switches to a higher timeframe (e.g. 1D), those live
+  // 1-minute candles don't belong in the merged data set — they corrupt the
+  // aggregated chart. Flush them every time the timeframe changes.
+  // Also invalidate the historical cache for this symbol+interval pair so
+  // the next fetch always retrieves the correct aggregation from Kite API.
+  const previousTimeframeRef = useRef<string>(activeTimeframe);
+  useEffect(() => {
+    if (previousTimeframeRef.current !== activeTimeframe) {
+      useTradeStore.getState().clearLiveBuffer();
+      previousTimeframeRef.current = activeTimeframe;
+    }
+  }, [activeTimeframe]);
+
   // ── Historical Data ──────────────────────────────────────────────────
   const effectiveTimeframe = (activeTimeframe as Timeframe) ?? timeframe;
   const rangeDays = RANGE_DAYS[activeRange] ?? 365;

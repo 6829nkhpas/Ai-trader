@@ -5,4 +5,6 @@
 
 pub mod charts;
 pub mod deep_quant;
+pub mod security;
 pub mod sentiment;
+pub mod ticker;

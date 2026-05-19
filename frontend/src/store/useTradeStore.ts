@@ -215,7 +215,28 @@ export const useTradeStore = create<TradeStore>((set) => {
     },
 
     setSelectedSymbol: (symbol: string) => {
-      set({ selectedSymbol: symbol.toUpperCase() });
+      const upper = symbol.toUpperCase();
+      set((state) => {
+        // Invalidate all cached timeframe variants for the OLD symbol so that
+        // switching back later always fetches fresh data instead of serving
+        // a potentially-stale cache from the previous session.
+        const prevSymbol = state.selectedSymbol.toUpperCase();
+        const prunedCache: Record<string, typeof state.historicalCache[string]> = {};
+        for (const [key, val] of Object.entries(state.historicalCache)) {
+          // Cache keys are "SYMBOL::interval" — drop all keys for the old symbol
+          if (!key.startsWith(`${prevSymbol}::`) || prevSymbol === upper) {
+            prunedCache[key] = val;
+          }
+        }
+        return {
+          selectedSymbol: upper,
+          // Immediately wipe live candles + predictive signals so the chart
+          // shows a clean slate before the async historical fetch resolves.
+          ohlcCandles: [],
+          predictiveSignals: [],
+          historicalCache: prunedCache,
+        };
+      });
     },
 
     clearLiveBuffer: () => {

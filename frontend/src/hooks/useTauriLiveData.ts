@@ -39,6 +39,19 @@ export function useTauriLiveData(activeSymbol: string) {
     }
     previousSymbolRef.current = activeSymbol;
 
+    // ── Notify Rust backend of active symbol ───────────────────────────
+    // In test mode: switches the mock OHLC emitter to the new symbol.
+    // In production: keeps backend state in sync for future server-side
+    // symbol-filtered routing (currently the WS bridge sends all symbols).
+    (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('subscribe_ticker', { symbol: activeSymbol });
+      } catch {
+        // Not fatal — production WS bridge is symbol-agnostic.
+      }
+    })();
+
     (async () => {
       try {
         const { listen } = await import('@tauri-apps/api/event');

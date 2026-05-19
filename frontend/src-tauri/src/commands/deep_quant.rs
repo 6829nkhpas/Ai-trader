@@ -234,7 +234,7 @@ pub async fn run_deep_quant_analysis(
         mocked
     } else {
         info!("[deep_quant] step=4/5 llm_call_start mode=LIVE");
-        match llm::generate_deep_quant_plan(&symbol, &consensus, &news).await {
+        match llm::generate_deep_quant_plan(&symbol, &consensus, &news, Some(&app)).await {
             Ok(p) => {
                 info!(
                     "[deep_quant] step=4/5 llm_call_done elapsed_ms={} conviction={}",

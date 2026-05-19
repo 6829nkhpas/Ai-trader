@@ -214,13 +214,19 @@ fn mask_key(k: &str) -> String {
 /// configured LLM provider (Hugging Face router by default), and return a
 /// structured `AiExecutionPlan`. Delegates to
 /// `generate_deep_quant_plan_with_url` so contract tests can pin the URL.
+///
+/// Key resolution order (first non-empty wins):
+///   1. SecureKeyStore vault cache (populated by SecurityVault UI)
+///   2. Environment variables (HF_API_KEY, NVIDIA_API_KEY, DEEPSEEK_API_KEY)
+///   3. "TEST_KEY" when ALPHA_TEST_MODE=1
 pub async fn generate_deep_quant_plan(
     symbol: &str,
     consensus: &ConsensusReport,
     news: &str,
+    app: Option<&tauri::AppHandle>,
 ) -> Result<AiExecutionPlan, String> {
     let api_url = resolve_endpoint();
-    generate_deep_quant_plan_with_url(symbol, consensus, news, &api_url).await
+    generate_deep_quant_plan_with_url(symbol, consensus, news, &api_url, app).await
 }
 
 /// Same as `generate_deep_quant_plan` but accepts an explicit endpoint URL.
@@ -231,18 +237,39 @@ pub async fn generate_deep_quant_plan_with_url(
     consensus: &ConsensusReport,
     news: &str,
     api_url: &str,
+    app: Option<&tauri::AppHandle>,
 ) -> Result<AiExecutionPlan, String> {
     let t0 = Instant::now();
 
     // ── Resolve API key ─────────────────────────────────────────────────
-    let api_key = match resolve_api_key() {
-        Some(k) => k,
-        None => {
-            error!("[llm] no API key configured (HF_API_KEY / NVIDIA_API_KEY / DEEPSEEK_API_KEY)");
-            return Err(
-                "LLM API Failure: no API key set in .env (HF_API_KEY, NVIDIA_API_KEY, or DEEPSEEK_API_KEY)"
-                    .to_string(),
-            );
+    // Priority 1: SecureKeyStore vault cache (set by the SecurityVault UI).
+    //   Covers provider names: "deepseek", "hf_key", "nvidia"
+    // Priority 2: Environment variables (legacy / fallback)
+    // Priority 3: TEST_KEY in test mode
+    let vault_key = app.and_then(|handle| {
+        use crate::commands::security::get_api_key_from_vault;
+        // Try common provider keys stored by the SecurityVault UI
+        get_api_key_from_vault(handle, "hf_key")
+            .or_else(|| get_api_key_from_vault(handle, "deepseek"))
+            .or_else(|| get_api_key_from_vault(handle, "nvidia"))
+    });
+
+    let api_key = if let Some(k) = vault_key {
+        info!("[llm] step=resolve_key source=SECURE_VAULT");
+        k
+    } else {
+        match resolve_api_key() {
+            Some(k) => {
+                info!("[llm] step=resolve_key source=ENV_FALLBACK");
+                k
+            }
+            None => {
+                error!("[llm] no API key configured (SecureVault / HF_API_KEY / NVIDIA_API_KEY / DEEPSEEK_API_KEY)");
+                return Err(
+                    "LLM API Failure: no API key found in secure vault or .env (save your HF/DeepSeek API key via Settings → Security Vault)"
+                        .to_string(),
+                );
+            }
         }
     };
 

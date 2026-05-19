@@ -295,11 +295,13 @@ export default function QuantRadar() {
                 const isBullish = alert.trend_score > 0;
 
                 return (
-                  <button
+                  <div
                     key={`${alert.symbol}-${alert.timestamp_ms}-${idx}`}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => handleAlertClick(alert)}
-                    className={`group flex flex-col gap-1 px-3 py-2.5 text-left transition-all duration-200 border-b border-border-default/50 hover:bg-elevated/50 ${config.bg} ${config.glow}`}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleAlertClick(alert); }}
+                    className={`group flex flex-col gap-1 px-3 py-2.5 text-left transition-all duration-200 border-b border-border-default/50 hover:bg-elevated/50 cursor-pointer ${config.bg} ${config.glow}`}
                   >
                     {/* Row 1: Symbol + severity + time */}
                     <div className="flex items-center justify-between gap-2">
@@ -348,7 +350,7 @@ export default function QuantRadar() {
                         </span>
                       )}
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
