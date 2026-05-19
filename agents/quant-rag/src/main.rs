@@ -35,7 +35,7 @@ async fn main() {
     // ── Initialise the LLM client ────────────────────────────────────────
     let llm_client = match LlmClient::new() {
         Ok(c) => {
-            info!("✅ LlmClient initialized — NVIDIA_API_KEY loaded");
+            info!("✅ LlmClient initialized — LLM_API_KEY loaded");
             c
         }
         Err(e) => {

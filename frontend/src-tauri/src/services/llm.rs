@@ -1,33 +1,29 @@
-// services/llm.rs — Hugging Face Inference Router → DeepSeek (V3.1).
+// services/llm.rs — Unified LLM Client (Provider-Agnostic)
 //
-// V3.1 transition note:
-//   We migrated off NVIDIA NIM because NIM's free tier was queueing
-//   `deepseek-v4-pro` requests for >60s, exceeding our UI budget.
-//   We now route through Hugging Face's OpenAI-compatible router
-//   (https://router.huggingface.co/v1/chat/completions), which
-//   transparently picks the fastest provider hosting the model.
+// All AI inference in the system routes through this module. The provider
+// is configured entirely via three environment variables:
 //
-// Endpoint resolution:
-//   1. LLM_API_URL          — explicit override (tests, ops)
-//   2. HF_API_URL           — alias kept for symmetry with HF_API_KEY
-//   3. DEEPSEEK_API_URL     — legacy override
-//   4. NVIDIA_NIM_API_URL   — legacy override
-//   5. Built-in HF router URL
+//   LLM_API_URL   — OpenAI-compatible chat/completions endpoint
+//   LLM_API_KEY   — Bearer token for the provider
+//   LLM_MODEL     — Model identifier (provider-specific)
 //
-// API key resolution (first non-empty wins):
-//   1. HF_API_KEY / HUGGINGFACE_API_KEY  — Hugging Face token (preferred)
-//   2. NVIDIA_API_KEY                    — legacy NIM key
-//   3. DEEPSEEK_API_KEY                  — legacy / test key
-//   4. "TEST_KEY" when ALPHA_TEST_MODE=1
+// To switch providers, just change these three values in .env:
 //
-// Model resolution:
-//   1. LLM_MODEL                         — explicit override
-//   2. HF_MODEL / DEEPSEEK_MODEL / NVIDIA_NIM_MODEL — legacy
-//   3. Built-in default ("deepseek-ai/DeepSeek-V3.1-Terminus:novita")
+//   HuggingFace:  LLM_API_URL=https://router.huggingface.co/v1/chat/completions
+//                 LLM_API_KEY=hf_xxxxx
+//                 LLM_MODEL=deepseek-ai/DeepSeek-V3-0324
 //
-// Every step is logged with elapsed-millis timing and forwarded to
-// `audit_logger`, so the Tauri terminal narrates the full pipeline
-// the moment the user hits the AI Quant Analysis button.
+//   OpenAI:       LLM_API_URL=https://api.openai.com/v1/chat/completions
+//                 LLM_API_KEY=sk-xxxxx
+//                 LLM_MODEL=gpt-4o
+//
+//   Groq:         LLM_API_URL=https://api.groq.com/openai/v1/chat/completions
+//                 LLM_API_KEY=gsk_xxxxx
+//                 LLM_MODEL=llama-3.3-70b-versatile
+//
+//   Local:        LLM_API_URL=http://localhost:11434/v1/chat/completions
+//                 LLM_API_KEY=ollama
+//                 LLM_MODEL=deepseek-r1:14b
 
 use log::{info, warn, error};
 use serde::{Deserialize, Serialize};
@@ -50,9 +46,6 @@ pub struct ChatRequest {
     pub messages: Vec<ChatMessage>,
     pub temperature: f64,
     pub max_tokens: u32,
-    /// Some providers (Together, Fireworks via HF) accept `response_format`,
-    /// others reject it with 400. Default: not sent. The system prompt plus
-    /// the post-fence stripper guarantee parseable JSON.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_format: Option<ResponseFormat>,
 }
@@ -93,20 +86,49 @@ Output ONLY the raw JSON object.";
 
 // ── Defaults ────────────────────────────────────────────────────────────────
 
-/// Hugging Face's OpenAI-compatible inference router. Picks the fastest
-/// provider hosting the requested model under the hood.
 const DEFAULT_LLM_URL: &str = "https://router.huggingface.co/v1/chat/completions";
+const DEFAULT_LLM_MODEL: &str = "deepseek-ai/DeepSeek-V3-0324";
+const DEFAULT_TIMEOUT_SECS: u64 = 120;
 
-/// Default DeepSeek variant served via the HF router.
-/// Format `<repo_id>:<provider>` lets HF pin a specific provider.
-const DEFAULT_LLM_MODEL: &str = "deepseek-ai/DeepSeek-V4-Pro";
+// ── Config Resolution (clean, no fallbacks) ─────────────────────────────────
+
+fn resolve_endpoint() -> String {
+    std::env::var("LLM_API_URL")
+        .unwrap_or_else(|_| DEFAULT_LLM_URL.to_string())
+}
+
+fn resolve_model() -> String {
+    std::env::var("LLM_MODEL")
+        .unwrap_or_else(|_| DEFAULT_LLM_MODEL.to_string())
+}
+
+fn resolve_api_key() -> Option<String> {
+    if let Ok(key) = std::env::var("LLM_API_KEY") {
+        if !key.trim().is_empty() {
+            return Some(key);
+        }
+    }
+    if crate::is_test_mode() {
+        return Some("TEST_KEY".to_string());
+    }
+    None
+}
+
+fn resolve_timeout() -> u64 {
+    std::env::var("LLM_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_TIMEOUT_SECS)
+}
+
+/// Mask all but the first 6 chars of an API key for safe logging.
+fn mask_key(k: &str) -> String {
+    let prefix: String = k.chars().take(6).collect();
+    format!("{}…(len={})", prefix, k.chars().count())
+}
 
 // ── Request Builder (pure, side-effect free) ────────────────────────────────
 
-/// Build the chat-completions request body from the consensus report and news
-/// context. Pure helper — performs no network I/O. Exposed so contract tests
-/// can verify that every ConsensusReport field is correctly interpolated
-/// into the user prompt before it leaves the process.
 pub fn build_request_body(
     symbol: &str,
     consensus: &ConsensusReport,
@@ -153,72 +175,8 @@ pub fn build_request_body(
     }
 }
 
-// ── Resolvers ───────────────────────────────────────────────────────────────
-
-fn first_non_empty(vars: &[&str]) -> Option<String> {
-    for v in vars {
-        if let Ok(val) = std::env::var(v) {
-            if !val.trim().is_empty() {
-                return Some(val);
-            }
-        }
-    }
-    None
-}
-
-fn resolve_endpoint() -> String {
-    first_non_empty(&[
-        "LLM_API_URL",
-        "HF_API_URL",
-        "DEEPSEEK_API_URL",
-        "NVIDIA_NIM_API_URL",
-    ])
-    .unwrap_or_else(|| DEFAULT_LLM_URL.to_string())
-}
-
-fn resolve_model() -> String {
-    first_non_empty(&[
-        "LLM_MODEL",
-        "HF_MODEL",
-        "DEEPSEEK_MODEL",
-        "NVIDIA_NIM_MODEL",
-    ])
-    .unwrap_or_else(|| DEFAULT_LLM_MODEL.to_string())
-}
-
-fn resolve_api_key() -> Option<String> {
-    if let Some(k) = first_non_empty(&[
-        "HF_API_KEY",
-        "HUGGINGFACE_API_KEY",
-        "HUGGING_FACE_API_KEY",
-        "NVIDIA_API_KEY",
-        "DEEPSEEK_API_KEY",
-    ]) {
-        return Some(k);
-    }
-    if crate::is_test_mode() {
-        return Some("TEST_KEY".to_string());
-    }
-    None
-}
-
-/// Mask all but the first 6 chars of an API key for safe logging.
-fn mask_key(k: &str) -> String {
-    let prefix: String = k.chars().take(6).collect();
-    format!("{}…(len={})", prefix, k.chars().count())
-}
-
 // ── Public API ──────────────────────────────────────────────────────────────
 
-/// Build the master prompt from the consensus report and news, call the
-/// configured LLM provider (Hugging Face router by default), and return a
-/// structured `AiExecutionPlan`. Delegates to
-/// `generate_deep_quant_plan_with_url` so contract tests can pin the URL.
-///
-/// Key resolution order (first non-empty wins):
-///   1. SecureKeyStore vault cache (populated by SecurityVault UI)
-///   2. Environment variables (HF_API_KEY, NVIDIA_API_KEY, DEEPSEEK_API_KEY)
-///   3. "TEST_KEY" when ALPHA_TEST_MODE=1
 pub async fn generate_deep_quant_plan(
     symbol: &str,
     consensus: &ConsensusReport,
@@ -230,8 +188,7 @@ pub async fn generate_deep_quant_plan(
 }
 
 /// Same as `generate_deep_quant_plan` but accepts an explicit endpoint URL.
-/// Used by the Alpha Crucible test suite to redirect traffic to a mock
-/// HTTP server while exercising the *real* code path end-to-end.
+/// Used by the test suite to redirect traffic to a mock HTTP server.
 pub async fn generate_deep_quant_plan_with_url(
     symbol: &str,
     consensus: &ConsensusReport,
@@ -242,16 +199,11 @@ pub async fn generate_deep_quant_plan_with_url(
     let t0 = Instant::now();
 
     // ── Resolve API key ─────────────────────────────────────────────────
-    // Priority 1: SecureKeyStore vault cache (set by the SecurityVault UI).
-    //   Covers provider names: "deepseek", "hf_key", "nvidia"
-    // Priority 2: Environment variables (legacy / fallback)
-    // Priority 3: TEST_KEY in test mode
     let vault_key = app.and_then(|handle| {
         use crate::commands::security::get_api_key_from_vault;
-        // Try common provider keys stored by the SecurityVault UI
-        get_api_key_from_vault(handle, "hf_key")
+        get_api_key_from_vault(handle, "llm_key")
+            .or_else(|| get_api_key_from_vault(handle, "hf_key"))
             .or_else(|| get_api_key_from_vault(handle, "deepseek"))
-            .or_else(|| get_api_key_from_vault(handle, "nvidia"))
     });
 
     let api_key = if let Some(k) = vault_key {
@@ -260,13 +212,13 @@ pub async fn generate_deep_quant_plan_with_url(
     } else {
         match resolve_api_key() {
             Some(k) => {
-                info!("[llm] step=resolve_key source=ENV_FALLBACK");
+                info!("[llm] step=resolve_key source=LLM_API_KEY");
                 k
             }
             None => {
-                error!("[llm] no API key configured (SecureVault / HF_API_KEY / NVIDIA_API_KEY / DEEPSEEK_API_KEY)");
+                error!("[llm] no API key configured (set LLM_API_KEY in .env or save via Settings → Security Vault)");
                 return Err(
-                    "LLM API Failure: no API key found in secure vault or .env (save your HF/DeepSeek API key via Settings → Security Vault)"
+                    "LLM API Failure: no API key found. Set LLM_API_KEY in .env or save via Settings → Security Vault."
                         .to_string(),
                 );
             }
@@ -274,15 +226,14 @@ pub async fn generate_deep_quant_plan_with_url(
     };
 
     let model = resolve_model();
+    let timeout_secs = resolve_timeout();
 
     info!(
         "[llm] step=resolve_config endpoint={} model={} key={}",
-        api_url,
-        model,
-        mask_key(&api_key)
+        api_url, model, mask_key(&api_key)
     );
 
-    // ── Construct the request body via the pure builder ─────────────────
+    // ── Construct the request body ──────────────────────────────────────
     let request_body = build_request_body(symbol, consensus, news, &model);
 
     info!(
@@ -296,20 +247,14 @@ pub async fn generate_deep_quant_plan_with_url(
     );
 
     // ── HTTP client ─────────────────────────────────────────────────────
-    let timeout_secs: u64 = std::env::var("LLM_TIMEOUT_SECS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(120);
-
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
         .map_err(|e| format!("HTTP client build failed: {}", e))?;
 
-    // Snapshot the request as JSON for the audit log (and tests).
     let req_json = serde_json::to_value(&request_body).unwrap_or(serde_json::Value::Null);
-
     let req_bytes = serde_json::to_vec(&request_body).map(|v| v.len()).unwrap_or(0);
+
     info!(
         "[llm] step=http_send POST {} timeout={}s payload_bytes={}",
         api_url, timeout_secs, req_bytes
@@ -351,13 +296,9 @@ pub async fn generate_deep_quant_plan_with_url(
 
     info!(
         "[llm] step=http_recv status={} body_bytes={} send_elapsed_ms={} read_elapsed_ms={}",
-        status,
-        response_body.len(),
-        send_elapsed,
-        read_started.elapsed().as_millis()
+        status, response_body.len(), send_elapsed, read_started.elapsed().as_millis()
     );
 
-    // Best-effort JSON parse for the audit record; raw body if not JSON.
     let res_json: serde_json::Value = serde_json::from_str(&response_body)
         .unwrap_or_else(|_| serde_json::Value::String(response_body.clone()));
 
@@ -371,28 +312,18 @@ pub async fn generate_deep_quant_plan_with_url(
     if !status.is_success() {
         error!(
             "[llm] step=http_status_error status={} body={}",
-            status,
-            truncate(&response_body, 400)
+            status, truncate(&response_body, 400)
         );
         return Err(format!(
             "LLM API Failure: provider returned HTTP {} — {}",
-            status,
-            truncate(&response_body, 400)
+            status, truncate(&response_body, 400)
         ));
     }
 
     // ── Parse the API envelope ──────────────────────────────────────────
     let chat_response: ChatResponse = serde_json::from_str(&response_body).map_err(|e| {
-        error!(
-            "[llm] step=envelope_parse_fail err={} body={}",
-            e,
-            truncate(&response_body, 200)
-        );
-        format!(
-            "LLM API Failure: malformed envelope — {} | body: {}",
-            e,
-            truncate(&response_body, 200)
-        )
+        error!("[llm] step=envelope_parse_fail err={} body={}", e, truncate(&response_body, 200));
+        format!("LLM API Failure: malformed envelope — {} | body: {}", e, truncate(&response_body, 200))
     })?;
 
     let content = chat_response
@@ -415,37 +346,20 @@ pub async fn generate_deep_quant_plan_with_url(
         .trim();
 
     let plan: AiExecutionPlan = serde_json::from_str(cleaned).map_err(|e| {
-        error!(
-            "[llm] step=plan_parse_fail err={} raw={}",
-            e,
-            truncate(cleaned, 300)
-        );
-        format!(
-            "LLM API Failure: output is not valid AiExecutionPlan JSON — {} | raw: {}",
-            e,
-            truncate(cleaned, 300)
-        )
+        error!("[llm] step=plan_parse_fail err={} raw={}", e, truncate(cleaned, 300));
+        format!("LLM API Failure: output is not valid AiExecutionPlan JSON — {} | raw: {}", e, truncate(cleaned, 300))
     })?;
 
-    // ── Validate bounds ─────────────────────────────────────────────────
     let plan = if plan.conviction_score < 1 || plan.conviction_score > 100 {
-        warn!(
-            "[llm] step=plan_clamp original_score={} clamped",
-            plan.conviction_score
-        );
-        AiExecutionPlan {
-            conviction_score: plan.conviction_score.clamp(1, 100),
-            ..plan
-        }
+        warn!("[llm] step=plan_clamp original_score={} clamped", plan.conviction_score);
+        AiExecutionPlan { conviction_score: plan.conviction_score.clamp(1, 100), ..plan }
     } else {
         plan
     };
 
     info!(
         "[llm] step=done total_elapsed_ms={} conviction={} plan_preview={}",
-        t0.elapsed().as_millis(),
-        plan.conviction_score,
-        truncate(&plan.execution_plan, 80)
+        t0.elapsed().as_millis(), plan.conviction_score, truncate(&plan.execution_plan, 80)
     );
 
     Ok(plan)
@@ -455,21 +369,16 @@ pub async fn generate_deep_quant_plan_with_url(
 
 #[inline]
 fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        s
-    } else {
+    if s.len() <= max { s }
+    else {
         let mut end = max;
-        while end > 0 && !s.is_char_boundary(end) {
-            end -= 1;
-        }
+        while end > 0 && !s.is_char_boundary(end) { end -= 1; }
         &s[..end]
     }
 }
 
-/// Render a `reqwest::Error` together with its full `source()` chain.
 fn format_reqwest_error(err: &reqwest::Error) -> String {
     use std::error::Error as _;
-
     let mut parts: Vec<String> = vec![err.to_string()];
     let mut src: Option<&dyn std::error::Error> = err.source();
     let mut depth = 0;
@@ -477,11 +386,8 @@ fn format_reqwest_error(err: &reqwest::Error) -> String {
         parts.push(format!("caused by: {}", e));
         src = e.source();
         depth += 1;
-        if depth > 8 {
-            break;
-        }
+        if depth > 8 { break; }
     }
-
     let mut tags: Vec<&str> = Vec::new();
     if err.is_timeout() { tags.push("timeout"); }
     if err.is_connect() { tags.push("connect"); }
@@ -490,9 +396,6 @@ fn format_reqwest_error(err: &reqwest::Error) -> String {
     if err.is_decode()  { tags.push("decode"); }
     if err.is_redirect(){ tags.push("redirect"); }
     if err.is_status()  { tags.push("status"); }
-    if !tags.is_empty() {
-        parts.push(format!("kind: [{}]", tags.join(", ")));
-    }
-
+    if !tags.is_empty() { parts.push(format!("kind: [{}]", tags.join(", "))); }
     parts.join(" | ")
 }

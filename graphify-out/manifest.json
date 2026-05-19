@@ -32,12 +32,12 @@
     "hash": "7308ec17717f6b11bbfbf625ff564a71"
   },
   "D:\\projects\\Ai-trader\\agents\\quant-rag\\src\\llm.rs": {
-    "mtime": 1778272515.3823283,
-    "hash": "d7a805fc2bff7a039e179841af70bb0f"
+    "mtime": 1779205663.346562,
+    "hash": "9dca12756effcd0aacee57c6f16c6c2b"
   },
   "D:\\projects\\Ai-trader\\agents\\quant-rag\\src\\main.rs": {
-    "mtime": 1778148021.5742214,
-    "hash": "13630f02ae852f6865209e31c060ce29"
+    "mtime": 1779205672.8216503,
+    "hash": "ff9dd9312accea7142b18cb3eefbb57d"
   },
   "D:\\projects\\Ai-trader\\agents\\quant-rag\\src\\proto.rs": {
     "mtime": 1779184156.9963865,
@@ -48,24 +48,24 @@
     "hash": "41d41081609c0ba9ecbf93355a1aa423"
   },
   "D:\\projects\\Ai-trader\\agents\\sentiment\\src\\analyzer.js": {
-    "mtime": 1779204532.7697177,
-    "hash": "2f8d9b747f4f49618d0daafe877581cf"
+    "mtime": 1779205737.4053314,
+    "hash": "76c6c1d3700540d03a0f90bb1e15bdc6"
   },
   "D:\\projects\\Ai-trader\\agents\\sentiment\\src\\cache.js": {
     "mtime": 1776894058.6775098,
     "hash": "e147ac41c372bbe6d456149f1214a6ae"
   },
   "D:\\projects\\Ai-trader\\agents\\sentiment\\src\\claude.js": {
-    "mtime": 1779204512.2837286,
-    "hash": "a3cd75f75807da3ab04cccbf36727977"
+    "mtime": 1779205717.6509209,
+    "hash": "317622667978e4fe90f35aeeb72b17c1"
   },
   "D:\\projects\\Ai-trader\\agents\\sentiment\\src\\fetcher.js": {
     "mtime": 1778410412.8063433,
     "hash": "59a26643c5f4e0ac6e9d2cb6fcd1c09b"
   },
   "D:\\projects\\Ai-trader\\agents\\sentiment\\src\\index.js": {
-    "mtime": 1779204646.3246243,
-    "hash": "52c48cf9b38e35945cb1c3d2e6ce8e94"
+    "mtime": 1779205779.4357958,
+    "hash": "c27c3061c39b763abb4f0787fcc74466"
   },
   "D:\\projects\\Ai-trader\\agents\\sentiment\\src\\kafkaProducer.js": {
     "mtime": 1776895237.4014194,
@@ -620,8 +620,8 @@
     "hash": "cb7e4bd9ecf84bec3551c62afcbbf743"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\commands\\sentiment.rs": {
-    "mtime": 1779184156.9984813,
-    "hash": "5c6c3a4ee599972d62e994e9866ad28d"
+    "mtime": 1779205642.0869215,
+    "hash": "386c1e824832aedefaface68b7d109d1"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\commands\\ticker.rs": {
     "mtime": 1779199831.7408917,
@@ -660,8 +660,8 @@
     "hash": "0dd938b4fef5539b7a843ed15357272c"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\services\\llm.rs": {
-    "mtime": 1779183450.4337819,
-    "hash": "4c351bef78279657eb0e786b257a0213"
+    "mtime": 1779205627.6996565,
+    "hash": "d0ef6521500d9bbd83d147503019fd24"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\services\\mod.rs": {
     "mtime": 1779199755.3078349,
@@ -756,8 +756,8 @@
     "hash": "0ae54f51d45a3ec04e7632624fdd3546"
   },
   "D:\\projects\\Ai-trader\\ARCHITECTURE.md": {
-    "mtime": 1778272000.3127854,
-    "hash": "cc9a4956812738b8db9b04c5186cdd8c"
+    "mtime": 1779204676.2929778,
+    "hash": "a9c583accd69321adca21c2880d7644e"
   },
   "D:\\projects\\Ai-trader\\CONTRACTS.md": {
     "mtime": 1778011199.4740665,

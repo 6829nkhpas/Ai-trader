@@ -17,7 +17,7 @@
 //
 // Configuration (env vars):
 //   NEWSDATA_API_KEY           — NewsData.io API key         (required)
-//   HF_API_KEY                 — HuggingFace API token       (required for scoring)
+//   LLM_API_KEY                — LLM provider API key        (required for scoring)
 //   KAFKA_BROKER_URL           — Kafka broker                (default: localhost:9092)
 //   REDIS_URL                  — Redis connection string     (default: redis://localhost:6379)
 //   SENTIMENT_SYMBOLS          — comma-separated ticker list (default: RELIANCE)

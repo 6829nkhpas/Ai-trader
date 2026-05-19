@@ -312,40 +312,28 @@ async fn analyze_sentiment_via_llm(symbol: &str, news: &str, headlines: Vec<Stri
     })
 }
 
-// ── Resolver helpers (mirrors llm.rs pattern) ───────────────────────────────
-
-fn first_non_empty(vars: &[&str]) -> Option<String> {
-    for v in vars {
-        if let Ok(val) = std::env::var(v) {
-            if !val.trim().is_empty() {
-                return Some(val);
-            }
-        }
-    }
-    None
-}
+// ── LLM Config Resolution (unified — reads LLM_API_URL, LLM_API_KEY, LLM_MODEL) ──
 
 fn resolve_llm_endpoint() -> String {
-    first_non_empty(&["LLM_API_URL", "HF_API_URL", "DEEPSEEK_API_URL", "NVIDIA_NIM_API_URL"])
-        .unwrap_or_else(|| "https://router.huggingface.co/v1/chat/completions".to_string())
+    std::env::var("LLM_API_URL")
+        .unwrap_or_else(|_| "https://router.huggingface.co/v1/chat/completions".to_string())
 }
 
 fn resolve_llm_model() -> String {
-    first_non_empty(&["LLM_MODEL", "HF_MODEL", "DEEPSEEK_MODEL", "NVIDIA_NIM_MODEL"])
-        .unwrap_or_else(|| "deepseek-ai/DeepSeek-V4-Pro".to_string())
+    std::env::var("LLM_MODEL")
+        .unwrap_or_else(|_| "deepseek-ai/DeepSeek-V3-0324".to_string())
 }
 
 fn resolve_llm_key() -> Result<String, String> {
-    if let Some(k) = first_non_empty(&[
-        "HF_API_KEY", "HUGGINGFACE_API_KEY", "HUGGING_FACE_API_KEY",
-        "NVIDIA_API_KEY", "DEEPSEEK_API_KEY",
-    ]) {
-        return Ok(k);
+    if let Ok(key) = std::env::var("LLM_API_KEY") {
+        if !key.trim().is_empty() {
+            return Ok(key);
+        }
     }
     if crate::is_test_mode() {
         return Ok("TEST_KEY".to_string());
     }
-    Err("No API key configured for sentiment LLM".to_string())
+    Err("No LLM_API_KEY configured in .env".to_string())
 }
 
 // ── Mock for test mode ──────────────────────────────────────────────────────

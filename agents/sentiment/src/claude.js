@@ -12,11 +12,11 @@
 //   • If parsing fails the article is skipped (non-fatal).
 //
 // Required env vars:
-//   HF_API_KEY  — your HuggingFace API token (read scope)
+//   LLM_API_KEY  — your LLM provider API token
 //
 // Optional env vars:
-//   HF_MODEL    — model ID (default: deepseek-ai/DeepSeek-V3-0324)
-//   HF_API_URL  — endpoint URL (default: https://router.huggingface.co/v1/chat/completions)
+//   LLM_MODEL    — model ID (default: deepseek-ai/DeepSeek-V3-0324)
+//   LLM_API_URL  — endpoint URL (default: https://router.huggingface.co/v1/chat/completions)
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -51,14 +51,14 @@ Response format (strict):
  *   Returns null if the API call fails or the response cannot be parsed.
  */
 export async function scoreArticle(symbol, article) {
-  const apiKey = process.env.HF_API_KEY;
+  const apiKey = process.env.LLM_API_KEY;
   if (!apiKey) {
-    console.warn('[scorer] HF_API_KEY not set — skipping scoring.');
+    console.warn('[scorer] LLM_API_KEY not set — skipping scoring.');
     return null;
   }
 
-  const endpoint = process.env.HF_API_URL || DEFAULT_URL;
-  const model = process.env.HF_MODEL || DEFAULT_MODEL;
+  const endpoint = process.env.LLM_API_URL || DEFAULT_URL;
+  const model = process.env.LLM_MODEL || DEFAULT_MODEL;
 
   const headline    = article.title ?? '(no title)';
   const description = article.description ?? '';

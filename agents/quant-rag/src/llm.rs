@@ -1,20 +1,12 @@
-// llm.rs — NVIDIA NIM DeepSeek v4 Pro LLM Client for the Quant-RAG Agent.
+// llm.rs — Unified LLM Client for the Quant-RAG Agent.
 //
-// Perfection Phase 1 — Uses NVIDIA's NIM inference platform to run
-// DeepSeek v4 Pro via the OpenAI-compatible chat/completions endpoint.
+// Uses the same three env vars as the rest of the system:
+//   LLM_API_URL   — OpenAI-compatible chat/completions endpoint
+//   LLM_API_KEY   — Bearer token
+//   LLM_MODEL     — Model identifier
 //
 // Environment:
-//   NVIDIA_API_KEY — required.  The agent will refuse to start without it.
-//
-// API contract:
-//   POST https://integrate.api.nvidia.com/v1/chat/completions
-//   model: "deepseek-ai/deepseek-v4-pro"
-//   System prompt forces JSON output with keys:
-//     { "headline": string, "analysis_text": string, "sentiment_score": int 1-100 }
-//
-// Error handling:
-//   Every failure path returns a descriptive Err(Box<dyn Error>) so the caller
-//   can construct a fallback MarketInsight and broadcast the error to the UI.
+//   LLM_API_KEY — required. The agent will refuse to start without it.
 
 use reqwest::Client;
 use serde_json::{json, Value};
@@ -23,33 +15,40 @@ use std::error::Error;
 use std::time::Duration;
 use tokio::time::sleep;
 
-/// NVIDIA NIM inference endpoint (OpenAI-compatible).
-const NIM_API_URL: &str = "https://integrate.api.nvidia.com/v1/chat/completions";
+/// Default endpoint (HuggingFace Inference Router).
+const DEFAULT_API_URL: &str = "https://router.huggingface.co/v1/chat/completions";
 
-/// Model identifier for DeepSeek v4 Pro hosted on NVIDIA NIM.
-const NIM_MODEL: &str = "deepseek-ai/deepseek-v4-pro";
+/// Default model.
+const DEFAULT_MODEL: &str = "deepseek-ai/DeepSeek-V3-0324";
 
 pub struct LlmClient {
     client: Client,
     api_key: String,
+    api_url: String,
+    model: String,
 }
 
 impl LlmClient {
-    /// Creates a new `LlmClient`, reading `NVIDIA_API_KEY` from the environment.
+    /// Creates a new `LlmClient`, reading `LLM_API_KEY` from the environment.
     ///
     /// # Errors
-    /// Returns an error if `NVIDIA_API_KEY` is not set.
+    /// Returns an error if `LLM_API_KEY` is not set.
     pub fn new() -> Result<Self, Box<dyn Error>> {
-        let api_key = env::var("NVIDIA_API_KEY")
-            .map_err(|_| "NVIDIA_API_KEY environment variable is not set")?;
+        let api_key = env::var("LLM_API_KEY")
+            .map_err(|_| "LLM_API_KEY environment variable is not set")?;
+        let api_url = env::var("LLM_API_URL")
+            .unwrap_or_else(|_| DEFAULT_API_URL.to_string());
+        let model = env::var("LLM_MODEL")
+            .unwrap_or_else(|_| DEFAULT_MODEL.to_string());
         Ok(Self {
             client: Client::new(),
             api_key,
+            api_url,
+            model,
         })
     }
 
-    /// Invokes DeepSeek v4 Pro (via NVIDIA NIM) to generate a market insight
-    /// for a detected anomaly.
+    /// Invokes the LLM to generate a market insight for a detected anomaly.
     ///
     /// Returns `(headline, analysis_text, sentiment_score)` on success.
     ///
@@ -83,7 +82,7 @@ impl LlmClient {
         );
 
         let payload = json!({
-            "model": NIM_MODEL,
+            "model": self.model,
             "messages": [
                 {
                     "role": "system",
@@ -108,7 +107,7 @@ impl LlmClient {
 
             let resp = self
                 .client
-                .post(NIM_API_URL)
+                .post(&self.api_url)
                 .header("Authorization", format!("Bearer {}", self.api_key))
                 .header("Content-Type", "application/json")
                 .json(&payload)
@@ -116,14 +115,12 @@ impl LlmClient {
                 .await
                 .map_err(|e| {
                     format!(
-                        "NVIDIA NIM HTTP request failed (network/timeout): {}",
+                        "HF LLM HTTP request failed (network/timeout): {}",
                         e
                     )
                 })?;
 
             // ── Rate-limit backoff ────────────────────────────────────────
-            // NVIDIA NIM returns 429 when we exceed the API rate limit.
-            // Retry with exponential backoff: 2s → 4s → 8s.
             if resp.status().as_u16() == 429 && attempt <= max_retries {
                 let backoff_secs = 2u64.pow(attempt);
                 log::warn!(
@@ -142,7 +139,7 @@ impl LlmClient {
                     .await
                     .unwrap_or_else(|_| "Unable to read error body".to_string());
                 return Err(format!(
-                    "NVIDIA NIM API returned HTTP {} — {}",
+                    "HF LLM API returned HTTP {} — {}",
                     status.as_u16(),
                     error_body
                 )
@@ -154,7 +151,7 @@ impl LlmClient {
 
         // ── Parse the outer response envelope ────────────────────────────
         let json_resp: Value = response.json().await.map_err(|e| {
-            format!("NVIDIA NIM response is not valid JSON: {}", e)
+            format!("LLM response is not valid JSON: {}", e)
         })?;
 
         // Extract the assistant's message content.
@@ -167,21 +164,18 @@ impl LlmClient {
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
                 format!(
-                    "NVIDIA NIM response missing choices[0].message.content — raw: {}",
+                    "LLM response missing choices[0].message.content — raw: {}",
                     serde_json::to_string_pretty(&json_resp).unwrap_or_default()
                 )
             })?;
 
         // ── Strip markdown code fences if present ────────────────────────
-        // Some models wrap JSON in ```json ... ``` despite instructions.
         let cleaned = content_str.trim();
         let cleaned = if cleaned.starts_with("```") {
-            // Remove opening fence (```json or ```)
             let after_open = cleaned
                 .find('\n')
                 .map(|i| &cleaned[i + 1..])
                 .unwrap_or(cleaned);
-            // Remove closing fence
             after_open
                 .rfind("```")
                 .map(|i| &after_open[..i])
@@ -191,10 +185,10 @@ impl LlmClient {
             cleaned
         };
 
-        // ── Parse the inner JSON generated by DeepSeek ───────────────────
+        // ── Parse the inner JSON generated by the LLM ────────────────────
         let insight_json: Value = serde_json::from_str(cleaned).map_err(|e| {
             format!(
-                "Failed to parse DeepSeek inner JSON: {} — raw content: {}",
+                "Failed to parse LLM inner JSON: {} — raw content: {}",
                 e, content_str
             )
         })?;
@@ -208,7 +202,7 @@ impl LlmClient {
         let analysis = insight_json
             .get("analysis_text")
             .and_then(|v| v.as_str())
-            .unwrap_or("No analysis provided by DeepSeek.")
+            .unwrap_or("No analysis provided.")
             .to_string();
 
         let sentiment = insight_json

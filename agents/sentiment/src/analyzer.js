@@ -16,11 +16,11 @@
 //     handle the error and treat the result as non-fatal.
 //
 // Required env vars:
-//   HF_API_KEY  — your HuggingFace API token (read scope)
+//   LLM_API_KEY  — your LLM provider API token
 //
 // Optional env vars:
-//   HF_MODEL    — model ID (default: deepseek-ai/DeepSeek-V3-0324)
-//   HF_API_URL  — endpoint URL (default: https://router.huggingface.co/v1/chat/completions)
+//   LLM_MODEL    — model ID (default: deepseek-ai/DeepSeek-V3-0324)
+//   LLM_API_URL  — endpoint URL (default: https://router.huggingface.co/v1/chat/completions)
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -63,17 +63,17 @@ Required output schema (exact field names, no extras):
  * // { conviction_score: 82, reasoning_snippet: "Strong earnings and capex signal robust bullish momentum." }
  */
 export async function analyzeSentiment(symbol, headlinesArray) {
-  const apiKey = process.env.HF_API_KEY;
+  const apiKey = process.env.LLM_API_KEY;
   if (!apiKey) {
-    throw new Error('[analyzer] HF_API_KEY is not set.');
+    throw new Error('[analyzer] LLM_API_KEY is not set.');
   }
 
   if (!headlinesArray || headlinesArray.length === 0) {
     throw new Error('[analyzer] headlinesArray must contain at least one headline.');
   }
 
-  const endpoint = process.env.HF_API_URL || DEFAULT_URL;
-  const model = process.env.HF_MODEL || DEFAULT_MODEL;
+  const endpoint = process.env.LLM_API_URL || DEFAULT_URL;
+  const model = process.env.LLM_MODEL || DEFAULT_MODEL;
 
   // Build the numbered headlines list for the user message.
   const numberedHeadlines = headlinesArray
