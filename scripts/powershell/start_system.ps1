@@ -40,14 +40,29 @@ function Cleanup {
 }
 
 try {
-    # ── Pre-flight: Kill anything occupying our ports ────────────────────────
-    # Ports: 3000=Next.js, 3001=Auth, 8080-8083=WS agents,
-    #        9000/9009=QuestDB, 5432=PG, 6379=Redis, 19092=Kafka
+    # ── Pre-flight: Graceful shutdown of any previous run ────────────────────
     Write-Host "==> Cleaning up stale processes and ports..." -ForegroundColor Magenta
 
-    $portsToKill = @(3000, 3001, 8080, 8081, 8082, 8083, 9000, 9009, 5432, 6379, 19092)
+    # 1. Bring down Docker stack cleanly first (avoids network/container state corruption)
+    Write-Host "  Stopping Docker stack (if running)..." -ForegroundColor DarkGray
+    docker-compose down 2>$null | Out-Null
+
+    # 2. Kill Node and Rust app processes (not Docker — handled above)
+    $processesToKill = @("node", "cargo")
+    foreach ($procName in $processesToKill) {
+        $found = Get-Process -Name $procName -ErrorAction SilentlyContinue
+        if ($found) {
+            foreach ($proc in $found) {
+                taskkill /PID $proc.Id /T /F 2>$null | Out-Null
+                Write-Host "  [killed] $procName PID $($proc.Id)" -ForegroundColor DarkGray
+            }
+        }
+    }
+
+    # 3. Kill anything still occupying app ports (3000, 3001, 8080-8083)
+    $portsToKill = @(3000, 3001, 8080, 8081, 8082, 8083)
+    $netstatOut = netstat -ano 2>$null
     foreach ($port in $portsToKill) {
-        $netstatOut = netstat -ano 2>$null
         $matched = $netstatOut | Select-String (":$port\s")
         foreach ($line in $matched) {
             $parts = ("$line".Trim() -split "\s+")
@@ -59,16 +74,6 @@ try {
         }
     }
 
-    $processesToKill = @("node", "cargo", "tauri", "predictive", "aggregator", "ingestion", "technical")
-    foreach ($procName in $processesToKill) {
-        $found = Get-Process -Name $procName -ErrorAction SilentlyContinue
-        if ($found) {
-            foreach ($proc in $found) {
-                taskkill /PID $proc.Id /T /F 2>$null | Out-Null
-                Write-Host "  [killed] $procName PID $($proc.Id)" -ForegroundColor DarkGray
-            }
-        }
-    }
     Write-Host "  Pre-flight cleanup done." -ForegroundColor Green
     Start-Sleep -Seconds 2
 
