@@ -335,14 +335,20 @@ async function fetchFromKiteHistorical(
 /**
  * React hook to fetch historical OHLCV data from QuestDB's REST API.
  *
- * @param symbol       — Instrument symbol (e.g., "RELIANCE"). Empty string skips fetch.
- * @param rangeDays    — How many days of historical data to request (default 365).
- * @param kiteInterval — Kite API interval string for the active timeframe (default '10minute').
+ * @param symbol            — Instrument symbol (e.g., "RELIANCE"). Empty string skips fetch.
+ * @param rangeDays         — How many days of historical data to request (default 365).
+ * @param kiteInterval      — Kite API interval string for the active timeframe (default '10minute').
+ * @param effectiveTimeframe — UI timeframe string (e.g. '1m', '2m'). Included in fetchData deps
+ *                            so that switching between timeframes with the same kiteInterval
+ *                            (e.g. 1m→2m, both 'minute') still triggers a cache re-evaluation
+ *                            and causes historicalCandles to get a new array reference, which
+ *                            in turn allows aggregateCandles() to re-run with the new timeframe.
  */
 export function useHistoricalData(
   symbol: string,
   rangeDays: number = 365,
   kiteInterval: string = '10minute',
+  effectiveTimeframe: string = '10m',
 ): UseHistoricalDataReturn {
   const [candles, setCandles] = useState<HistoricalCandle[]>([]);
   const [loading, setLoading] = useState(false);
@@ -351,9 +357,12 @@ export function useHistoricalData(
   const fetchData = useCallback(async () => {
     if (!symbol) return;
 
-    // ── Cache-first: return instantly if we already have this symbol+interval ──
-    // Key includes kiteInterval so switching timeframes doesn't serve stale
-    // data from a different resolution (e.g. daily candles for a 10m chart).
+    // BUG-1: Cache-first with effectiveTimeframe awareness.
+    // The cache key is still symbol::kiteInterval (e.g. RELIANCE::minute) so
+    // that 1m and 2m share the same raw 1-min candle data. But because
+    // effectiveTimeframe is a dep of this callback, switching 1m→2m creates
+    // a new fetchData reference — the effect fires, hits the cache, calls
+    // setCandles() with a new array, and aggregateCandles() re-runs for '2m'.
     const cacheKey = `${symbol.toUpperCase()}::${kiteInterval}`;
     const cached = useTradeStore.getState().historicalCache[cacheKey];
     if (cached && cached.length > 0) {
@@ -365,7 +374,7 @@ export function useHistoricalData(
         close: c.close,
         volume: c.volume,
       }));
-      console.log(`[Historical] ${symbol}: ${asHistorical.length} candles served from cache (interval=${kiteInterval})`);
+      console.log(`[Historical] ${symbol}: ${asHistorical.length} candles from cache (interval=${kiteInterval}, tf=${effectiveTimeframe})`);
       setCandles(asHistorical);
       setLoading(false);
       return;
@@ -490,10 +499,42 @@ export function useHistoricalData(
       const msg = typeof e === 'string' ? e : e?.message || 'Unknown error';
       console.error(`[Historical] Failed to fetch ${symbol}:`, msg);
       setError(msg);
+
+      // BUG-8: Cross-interval fallback with direction guard.
+      // Can aggregate finer data UP (1m→5m) but CANNOT split coarser DOWN (10m→1m).
+      const INTERVAL_MINUTES: Record<string, number> = {
+        'minute': 1, '3minute': 3, '5minute': 5, '10minute': 10,
+        '15minute': 15, '30minute': 30, '60minute': 60, 'day': 1440,
+      };
+      const requestedMinutes = INTERVAL_MINUTES[kiteInterval] ?? 10;
+      const allCache = useTradeStore.getState().historicalCache;
+      const symPrefix = `${symbol.toUpperCase()}::`;
+      const fallbackEntry = Object.entries(allCache).find(([key, val]) => {
+        if (!key.startsWith(symPrefix) || !val || val.length === 0) return false;
+        const fallbackInterval = key.split('::')[1] ?? '';
+        const fallbackMinutes = INTERVAL_MINUTES[fallbackInterval] ?? 99999;
+        // Only use fallback whose resolution is FINER (smaller) than requested.
+        return fallbackMinutes <= requestedMinutes;
+      });
+      if (fallbackEntry) {
+        const [fallbackKey, fallbackData] = fallbackEntry;
+        console.warn(
+          `[Historical] ${symbol}: cross-interval fallback — '${fallbackKey}' ` +
+          `(${fallbackData.length} candles) for tf=${effectiveTimeframe}`
+        );
+        const asHistorical: HistoricalCandle[] = fallbackData.map((c) => ({
+          time: Math.floor(c.start_timestamp_ms / 1000),
+          open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
+        }));
+        setCandles(asHistorical);
+      }
     } finally {
       setLoading(false);
     }
-  }, [symbol, rangeDays, kiteInterval]);
+  // BUG-1: effectiveTimeframe in deps forces a new fetchData when switching 1m↔2m
+  // (same kiteInterval='minute') so setCandles() is always called with a fresh array
+  // reference, enabling aggregateCandles() to recompute for the new timeframe.
+  }, [symbol, rangeDays, kiteInterval, effectiveTimeframe]);
 
   useEffect(() => {
     fetchData();

@@ -42,7 +42,6 @@ export function useChartDataSync(
   // ── Smart data sync: setData on full reset, update() for last candle ─
   useEffect(() => {
     if (!candleSeriesRef.current || !volumeSeriesRef.current) return;
-    if (chartData.length === 0) return;
 
     const prevTimeframe = lastPaintedTimeframeRef.current;
     const prevSymbol = lastPaintedSymbolRef.current;
@@ -50,6 +49,24 @@ export function useChartDataSync(
 
     const timeframeChanged = prevTimeframe !== effectiveTimeframe;
     const symbolChanged = prevSymbol !== activeSymbol;
+
+    // ── Empty data: chart is loading or had a failed fetch ──────────────
+    // Always clear the canvas and update refs so the next data arrival
+    // triggers a full setData() correctly (fixes stuck lastPaintedTimeframeRef).
+    if (chartData.length === 0) {
+      if (timeframeChanged || symbolChanged) {
+        candleSeriesRef.current.setData([]);
+        volumeSeriesRef.current.setData([]);
+        if (ema9SeriesRef.current) ema9SeriesRef.current.setData([]);
+        if (ema21SeriesRef.current) ema21SeriesRef.current.setData([]);
+        if (ghostLineRef.current) ghostLineRef.current.setData([]);
+        lastPaintedTimeframeRef.current = effectiveTimeframe;
+        lastPaintedSymbolRef.current = activeSymbol;
+        lastPaintedCandleCountRef.current = 0;
+      }
+      return;
+    }
+
     const newCandleArrived = chartData.length !== prevCount;
 
     if (timeframeChanged || symbolChanged || newCandleArrived) {
@@ -71,25 +88,31 @@ export function useChartDataSync(
       lastPaintedCandleCountRef.current = chartData.length;
 
       if (timeframeChanged || symbolChanged || prevCount === 0) {
-        // Force chart to auto-fit both time and price axes to the new data.
-        // Without this, switching symbols/timeframes can leave the chart
-        // zoomed to the previous data's price range, causing visual distortion.
         chartRef.current?.timeScale().fitContent();
       }
     } else {
       // ── SMOOTH UPDATE PATH ─────────────────────────────────────────
+      // BUG-6: Wrapped in try-catch. series.update() throws when the new
+      // candle's timestamp is earlier than the last painted one — this happens
+      // when a live WS tick is superseded by a historical candle at a slightly
+      // different ms boundary. Full setData() is always safe as a fallback.
       const lastCandle = chartData[chartData.length - 1];
       const lastVolume = volumeData[volumeData.length - 1];
       const lastEma9 = ema9Data[ema9Data.length - 1];
       const lastEma21 = ema21Data[ema21Data.length - 1];
 
-      candleSeriesRef.current.update(lastCandle as { time: Time; open: number; high: number; low: number; close: number });
-      volumeSeriesRef.current.update(lastVolume as { time: Time; value: number; color: string });
-      if (ema9SeriesRef.current && lastEma9) {
-        ema9SeriesRef.current.update(lastEma9 as { time: Time; value: number });
-      }
-      if (ema21SeriesRef.current && lastEma21) {
-        ema21SeriesRef.current.update(lastEma21 as { time: Time; value: number });
+      try {
+        candleSeriesRef.current.update(lastCandle as { time: Time; open: number; high: number; low: number; close: number });
+        volumeSeriesRef.current.update(lastVolume as { time: Time; value: number; color: string });
+        if (ema9SeriesRef.current && lastEma9) ema9SeriesRef.current.update(lastEma9 as { time: Time; value: number });
+        if (ema21SeriesRef.current && lastEma21) ema21SeriesRef.current.update(lastEma21 as { time: Time; value: number });
+      } catch (_err) {
+        // Fallback: full repaint is safe and produces no visual artifacts.
+        candleSeriesRef.current.setData(chartData as Array<{ time: Time; open: number; high: number; low: number; close: number }>);
+        volumeSeriesRef.current.setData(volumeData as Array<{ time: Time; value: number; color: string }>);
+        if (ema9SeriesRef.current) ema9SeriesRef.current.setData(ema9Data as Array<{ time: Time; value: number }>);
+        if (ema21SeriesRef.current) ema21SeriesRef.current.setData(ema21Data as Array<{ time: Time; value: number }>);
+        lastPaintedCandleCountRef.current = chartData.length;
       }
     }
   }, [chartData, volumeData, ema9Data, ema21Data, effectiveTimeframe, activeSymbol, candleSeriesRef, volumeSeriesRef, ema9SeriesRef, ema21SeriesRef, chartRef]);

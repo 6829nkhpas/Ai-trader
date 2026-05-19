@@ -16,9 +16,16 @@ const nextConfig: NextConfig = {
   },
 
   async rewrites() {
-    // In test mode, don't proxy to external services — use local API route handlers
+    // In test mode: route /kite/* → local Next.js mock API routes so that
+    // useHistoricalData can fetch synthetic candles for any symbol without
+    // needing the real aggregator running. /questdb/* returns 503 (no mock).
     if (isTestMode) {
-      return [];
+      return [
+        {
+          source: '/kite/:path*',
+          destination: '/api/kite/:path*',
+        },
+      ];
     }
 
     return [

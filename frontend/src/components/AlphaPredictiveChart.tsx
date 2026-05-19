@@ -61,26 +61,19 @@ export default function AlphaPredictiveChart({
     }
   }, [activeSymbol]);
 
-  // ── Clear live buffer on timeframe change ─────────────────────────────
-  // Live ticks from the Kafka OHLC aggregator are ALWAYS 1-minute buckets.
-  // When the user switches to a higher timeframe (e.g. 1D), those live
-  // 1-minute candles don't belong in the merged data set — they corrupt the
-  // aggregated chart. Flush them every time the timeframe changes.
-  // Also invalidate the historical cache for this symbol+interval pair so
-  // the next fetch always retrieves the correct aggregation from Kite API.
-  const previousTimeframeRef = useRef<string>(activeTimeframe);
-  useEffect(() => {
-    if (previousTimeframeRef.current !== activeTimeframe) {
-      useTradeStore.getState().clearLiveBuffer();
-      previousTimeframeRef.current = activeTimeframe;
-    }
-  }, [activeTimeframe]);
+  // BUG-7: Removed redundant clearLiveBuffer effect on timeframe change.
+  // setActiveTimeframe() atomically sets ohlcCandles:[] in the store, so
+  // a separate effect here caused a double-clear extra render cycle.
 
   // ── Historical Data ──────────────────────────────────────────────────
   const effectiveTimeframe = (activeTimeframe as Timeframe) ?? timeframe;
   const rangeDays = RANGE_DAYS[activeRange] ?? 365;
   const kiteInterval = KITE_INTERVAL_MAP[effectiveTimeframe] ?? '10minute';
-  const { candles: historicalCandles, loading: histLoading } = useHistoricalData(activeSymbol, rangeDays, kiteInterval);
+  // BUG-1: effectiveTimeframe passed to hook so switching 1m↔2m (same kiteInterval)
+  // still fires fetchData, hits cache, returns new array ref → aggregateCandles reruns.
+  const { candles: historicalCandles, loading: histLoading } = useHistoricalData(
+    activeSymbol, rangeDays, kiteInterval, effectiveTimeframe
+  );
 
   // ── Merge Historical + Live ──────────────────────────────────────────
   const mergedCandles = useMemo(() => {
@@ -121,7 +114,11 @@ export default function AlphaPredictiveChart({
     }
 
     return merged;
-  }, [historicalCandles, ohlcCandles, activeSymbol, effectiveTimeframe, kiteInterval]);
+  // BUG-2: Removed phantom deps effectiveTimeframe and kiteInterval.
+  // They were not used inside the memo body — just triggered wasteful
+  // extra re-computations. The aggregateCandles memo below correctly
+  // depends on effectiveTimeframe for bucket sizing.
+  }, [historicalCandles, ohlcCandles, activeSymbol]);
 
   // ── Aggregation ──────────────────────────────────────────────────────
   const { candles: chartData, volumes: volumeData, ema9: ema9Data, ema21: ema21Data } = useMemo(

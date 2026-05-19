@@ -6,6 +6,10 @@
 // using pre-computed indicator values. Each strategy uses precise crossover
 // and price-action logic — no approximations, no placeholders.
 //
+// STATUS: Fully implemented & unit-tested.
+// PENDING: Called by ConsensusEngine::compile_consensus. Will become active once
+//          ConsensusEngine is wired into ohlc_server. Remove allow at that point.
+#![allow(dead_code)]
 // Detected strategies:
 //   1. Golden Cross      — SMA50 crosses above SMA200 (bullish trend shift)
 //   2. Death Cross       — SMA50 crosses below SMA200 (bearish trend shift)

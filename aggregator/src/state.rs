@@ -32,6 +32,8 @@ use crate::proto::sentiment_data::NewsSentiment;
 pub struct AggregatorState {
     /// Maps `symbol → latest NewsSentiment` for that symbol.
     /// Wrapped in `RwLock` for concurrent read access with exclusive writes.
+    /// Only active when the `kafka` feature is enabled (consumer loop wires it up).
+    #[cfg_attr(not(feature = "kafka"), allow(dead_code))]
     sentiments: Arc<RwLock<HashMap<String, NewsSentiment>>>,
 }
 
@@ -47,6 +49,7 @@ impl AggregatorState {
     ///
     /// Called when a `NewsSentiment` message arrives from Kafka.
     /// Acquires a write lock — blocks concurrent readers momentarily.
+    #[cfg(feature = "kafka")]
     pub async fn update_sentiment(&self, symbol: String, sentiment: NewsSentiment) {
         let mut guard = self.sentiments.write().await;
         guard.insert(symbol, sentiment);
@@ -56,6 +59,7 @@ impl AggregatorState {
     ///
     /// Called when a `TechSignal` arrives and the engine needs sentiment context.
     /// Acquires a read lock — does NOT block other readers.
+    #[cfg(feature = "kafka")]
     pub async fn get_sentiment(&self, symbol: &str) -> Option<NewsSentiment> {
         let guard = self.sentiments.read().await;
         guard.get(symbol).cloned()

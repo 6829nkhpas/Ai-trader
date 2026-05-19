@@ -88,7 +88,11 @@ export default function QuantRadar() {
   const [isMinimized, setIsMinimized] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
+  // Filter: true = only show current symbol's alerts; false = show all
+  const [filterToSymbol, setFilterToSymbol] = useState(true);
   const alertListRef = useRef<HTMLDivElement>(null);
+
+  const activeSymbol = useTradeStore((s) => s.selectedSymbol);
 
   // ── Tauri Event Subscription ─────────────────────────────────────
   useEffect(() => {
@@ -164,6 +168,18 @@ export default function QuantRadar() {
     setUnreadCount(0);
   }, []);
 
+  // ── Derived: filtered alerts ─────────────────────────────────────
+  const displayedAlerts = filterToSymbol && activeSymbol
+    ? alerts.filter((a) => a.symbol.toUpperCase() === activeSymbol.toUpperCase())
+    : alerts;
+
+  const filteredUnread = filterToSymbol && activeSymbol
+    ? alerts.filter((a) =>
+        a.symbol.toUpperCase() === activeSymbol.toUpperCase() &&
+        Date.now() - a.timestamp_ms < 60_000
+      ).length
+    : unreadCount;
+
   // ── Dismiss Alert ────────────────────────────────────────────────
   const dismissAlert = useCallback((index: number, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -223,9 +239,22 @@ export default function QuantRadar() {
             )}
           </div>
           <span className="text-xs font-bold tracking-wide text-text-primary uppercase">Quant Radar</span>
-          {alerts.length > 0 && (
+          {/* Symbol filter badge */}
+          <button
+            type="button"
+            onClick={() => setFilterToSymbol((v) => !v)}
+            className={`rounded px-1.5 py-0.5 text-[9px] font-bold border transition-colors ${
+              filterToSymbol
+                ? 'bg-blue-500/15 text-blue-400 border-blue-500/30 hover:bg-blue-500/25'
+                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20'
+            }`}
+            title={filterToSymbol ? 'Showing current symbol only — click to show all' : 'Showing all symbols — click to filter to current symbol'}
+          >
+            {filterToSymbol ? activeSymbol || 'SYMBOL' : 'ALL'}
+          </button>
+          {displayedAlerts.length > 0 && (
             <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400 tabular-nums">
-              {alerts.length} alert{alerts.length !== 1 ? 's' : ''}
+              {displayedAlerts.length} alert{displayedAlerts.length !== 1 ? 's' : ''}
             </span>
           )}
         </div>
@@ -282,15 +311,19 @@ export default function QuantRadar() {
           className="flex-1 overflow-y-auto scrollbar-thin"
           style={{ maxHeight: '400px' }}
         >
-          {alerts.length === 0 ? (
+          {displayedAlerts.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 py-8 text-text-muted">
               <Radar size={28} className="opacity-30" />
-              <p className="text-xs">Scanning {DEFAULT_SYMBOL_COUNT} F&O instruments…</p>
+              <p className="text-xs">
+                {filterToSymbol
+                  ? `No alerts yet for ${activeSymbol || 'selected symbol'}`
+                  : 'Scanning all F&O instruments…'}
+              </p>
               <p className="text-[10px] opacity-50">Alerts will appear when setups are detected</p>
             </div>
           ) : (
             <div className="flex flex-col">
-              {alerts.map((alert, idx) => {
+              {displayedAlerts.map((alert, idx) => {
                 const config = severityConfig(alert.severity);
                 const isBullish = alert.trend_score > 0;
 

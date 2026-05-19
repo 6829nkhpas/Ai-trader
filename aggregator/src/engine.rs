@@ -53,10 +53,10 @@ const CONFLICT_PENALTY_FACTOR: f64 = 0.60;
 
 // ── Action mapping thresholds ────────────────────────────────────────────
 
-/// Final score above this → BUY.
+#[cfg(feature = "kafka")]
 const BUY_THRESHOLD: f64 = 65.0;
 
-/// Final score below this → SELL.
+#[cfg(feature = "kafka")]
 const SELL_THRESHOLD: f64 = 35.0;
 
 /// Calculates the aggregated decision by blending a technical signal with
@@ -70,6 +70,7 @@ const SELL_THRESHOLD: f64 = 35.0;
 /// # Returns
 /// A fully populated `AggregatedDecision` ready for Kafka publishing or
 /// console output.
+#[cfg(feature = "kafka")]
 pub fn calculate_decision(
     tech: &TechSignal,
     latest_sentiment: Option<&NewsSentiment>,

@@ -29,6 +29,9 @@ pub mod decision {
 
 /// Generated Rust structs from `shared_protos/market_data.proto`.
 /// Primary types: `Tick` (raw market tick), `OhlcCandle` (aggregated candle).
+/// `#[allow(dead_code)]`: generated code — structs are consumed by ohlc_server,
+/// not directly by the aggregator binary.
+#[allow(dead_code)]
 pub mod market_data {
     include!(concat!(env!("OUT_DIR"), "/ai_trade.market_data.rs"));
 }

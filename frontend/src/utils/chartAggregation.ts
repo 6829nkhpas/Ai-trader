@@ -39,7 +39,18 @@ export function aggregateCandles(
     ? rawCandles.filter((c) => c.symbol.toUpperCase() === symbol.toUpperCase())
     : rawCandles;
 
-  const sorted = [...filtered].sort((a, b) => a.start_timestamp_ms - b.start_timestamp_ms);
+  // BUG-3: Guard against zero/negative timestamps and invalid OHLC values.
+  // lightweight-charts throws "Data must be in ascending order" if any candle
+  // has time <= 0, and NaN prices cause invisible (zero-height) candles.
+  const valid = filtered.filter((c) =>
+    c.start_timestamp_ms > 0 &&
+    Number.isFinite(c.open) && c.open > 0 &&
+    Number.isFinite(c.high) && c.high >= c.open &&
+    Number.isFinite(c.low)  && c.low  > 0 &&
+    Number.isFinite(c.close) && c.close > 0
+  );
+
+  const sorted = [...valid].sort((a, b) => a.start_timestamp_ms - b.start_timestamp_ms);
 
   const buckets = new Map<
     number,

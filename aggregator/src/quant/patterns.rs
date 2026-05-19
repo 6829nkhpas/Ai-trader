@@ -6,6 +6,11 @@
 // on the most recent candle relative to its predecessor. Each pattern uses
 // precise body/wick geometry — no approximations, no placeholders.
 //
+// STATUS: Fully implemented & unit-tested.
+// PENDING: Called by ConsensusEngine::compile_consensus. Will become active once
+//          ConsensusEngine is wired into ohlc_server. Remove allow at that point.
+#![allow(dead_code)]
+//
 // Detected patterns:
 //   1. Bullish Engulfing  — green candle body fully wraps prior red body
 //   2. Bearish Engulfing  — red candle body fully wraps prior green body

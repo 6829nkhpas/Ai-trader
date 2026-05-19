@@ -245,15 +245,34 @@ async fn analyze_sentiment_via_llm(symbol: &str, news: &str, headlines: Vec<Stri
         .map(|c| c.message.content.clone())
         .ok_or_else(|| "Empty choices in sentiment response".to_string())?;
 
-    let cleaned = content
-        .trim()
-        .trim_start_matches("```json")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
+    // ── Robust JSON extraction ──────────────────────────────────────────
+    // The LLM sometimes outputs text before/after the JSON, wraps it in
+    // markdown fences, or truncates the closing fence.  Find the first '{'
+    // and last '}' to extract the raw JSON object regardless of surrounding text.
+    let extracted = {
+        let start = content.find('{');
+        let end   = content.rfind('}');
+        match (start, end) {
+            (Some(s), Some(e)) if e >= s => &content[s..=e],
+            _ => {
+                // Fallback: strip fences and trim
+                content
+                    .trim()
+                    .trim_start_matches("```json")
+                    .trim_start_matches("```")
+                    .trim_end_matches("```")
+                    .trim()
+            }
+        }
+    };
 
-    let parsed: LlmSentimentResponse = serde_json::from_str(cleaned)
-        .map_err(|e| format!("Sentiment JSON parse failed: {} | raw: {}", e, &cleaned[..cleaned.len().min(200)]))?;
+    let parsed: LlmSentimentResponse = serde_json::from_str(extracted).map_err(|e| {
+        error!(
+            "[sentiment] JSON parse failed for {}: {} | raw (first 400 chars): {:?}",
+            symbol, e, &content[..content.len().min(400)]
+        );
+        format!("Sentiment JSON parse failed: {} | snippet: {:?}", e, &extracted[..extracted.len().min(100)])
+    })?;
 
     let score = parsed.score.unwrap_or(0).clamp(-100, 100);
     let label = parsed.label.unwrap_or_else(|| {

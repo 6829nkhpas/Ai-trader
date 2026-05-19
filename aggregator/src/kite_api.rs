@@ -39,6 +39,7 @@ pub struct Instrument {
     pub exchange: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 pub struct QuoteData {
     pub symbol: String,
@@ -59,6 +60,10 @@ pub struct InstrumentSearchParams {
     exchange: Option<String>,
 }
 
+// PENDING: GET /api/kite/quote?i=NSE:RELIANCE&i=NSE:TCS
+// QuoteParams and QuoteData are the skeleton for the Kite Quote API proxy.
+// Once the quote_handler function is added to the router, remove these allows.
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct QuoteParams {
     /// Kite instrument identifiers, e.g. "NSE:RELIANCE"
@@ -85,6 +90,10 @@ pub struct HistoricalParams {
 struct InstrumentCache {
     instruments: Vec<Instrument>,
     fetched_at: Option<Instant>,
+    /// Timestamp of the last FAILED fetch attempt (0 instruments or HTTP error).
+    /// Used to enforce a 60-second cooldown so a bad token doesn't cause
+    /// per-request hammering of the Kite instruments endpoint.
+    last_failed_at: Option<Instant>,
     exchange: String,
 }
 
@@ -99,6 +108,17 @@ pub struct KiteApiState {
 }
 
 const CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60); // 24 hours
+/// Disk path for persisted instrument cache — survives aggregator restarts.
+const DISK_CACHE_PATH: &str = "instruments_cache.json";
+
+// Per-symbol token cache: symbol → instrument_token.
+// Avoids re-scanning the full instrument CSV on every historical request.
+use std::collections::HashMap;
+use std::sync::OnceLock;
+static TOKEN_CACHE: OnceLock<tokio::sync::RwLock<HashMap<String, u64>>> = OnceLock::new();
+fn token_cache() -> &'static tokio::sync::RwLock<HashMap<String, u64>> {
+    TOKEN_CACHE.get_or_init(|| tokio::sync::RwLock::new(HashMap::new()))
+}
 
 impl KiteApiState {
     fn new() -> Self {
@@ -111,6 +131,9 @@ impl KiteApiState {
             log::warn!("KITE_API_KEY or KITE_ACCESS_TOKEN not set — Kite REST API will return errors");
         }
 
+        // Pre-load from disk cache on startup so the first request is instant.
+        let disk_instruments = Self::load_disk_cache();
+
         Self {
             api_key,
             access_token,
@@ -119,9 +142,10 @@ impl KiteApiState {
                 .build()
                 .expect("Failed to create HTTP client"),
             cache: RwLock::new(InstrumentCache {
-                instruments: Vec::new(),
+                instruments: disk_instruments,
                 fetched_at: None,
-                exchange: String::new(),
+                last_failed_at: None,
+                exchange: "NSE".to_string(),
             }),
             fetch_lock: tokio::sync::Mutex::new(()),
         }
@@ -131,11 +155,62 @@ impl KiteApiState {
         format!("token {}:{}", self.api_key, self.access_token)
     }
 
+    /// Load instrument cache from disk. Returns empty vec on any error.
+    fn load_disk_cache() -> Vec<Instrument> {
+        match std::fs::read_to_string(DISK_CACHE_PATH) {
+            Ok(json) => {
+                match serde_json::from_str::<Vec<Instrument>>(&json) {
+                    Ok(instruments) if !instruments.is_empty() => {
+                        log::info!("[Kite API] Loaded {} instruments from disk cache", instruments.len());
+                        instruments
+                    }
+                    _ => Vec::new(),
+                }
+            }
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// Save instrument list to disk as JSON for persistence across restarts.
+    fn save_disk_cache(instruments: &[Instrument]) {
+        if let Ok(json) = serde_json::to_string(instruments) {
+            if let Err(e) = std::fs::write(DISK_CACHE_PATH, &json) {
+                log::warn!("[Kite API] Failed to write disk cache: {}", e);
+            } else {
+                log::info!("[Kite API] Persisted {} instruments to disk cache", instruments.len());
+            }
+        }
+    }
+
+    /// Resolve an NSE symbol to its instrument_token.
+    /// Uses a fast in-process cache before falling back to get_instruments.
+    pub async fn resolve_token(&self, symbol: &str) -> Option<u64> {
+        let sym = symbol.trim().to_uppercase();
+
+        // Fast path: per-symbol memory cache
+        {
+            let cache = token_cache().read().await;
+            if let Some(&token) = cache.get(&sym) {
+                return Some(token);
+            }
+        }
+
+        // Slow path: scan instrument list
+        let instruments = self.get_instruments("NSE").await.ok()?;
+        let found = instruments.iter().find(|i| i.tradingsymbol.to_uppercase() == sym);
+        if let Some(inst) = found {
+            let token = inst.instrument_token;
+            token_cache().write().await.insert(sym, token);
+            Some(token)
+        } else {
+            None
+        }
+    }
+
     /// Fetch instruments from Kite and cache them. Returns cached data if fresh.
-    /// Uses a fetch lock to prevent thundering herd — only one concurrent
-    /// download is allowed; other callers wait and read from the populated cache.
+    /// Priority: memory cache → disk cache → Kite API (with 429 back-off).
     async fn get_instruments(&self, exchange: &str) -> Result<Vec<Instrument>, String> {
-        // Check cache under read lock first (fast path)
+        // ── Level 1: Memory cache (fast path) ────────────────────────────
         {
             let cache = self.cache.read().await;
             if cache.exchange == exchange {
@@ -144,14 +219,39 @@ impl KiteApiState {
                         return Ok(cache.instruments.clone());
                     }
                 }
+                // Disk cache loaded on startup has fetched_at=None.
+                // Serve it immediately but allow a background refresh.
+                if cache.fetched_at.is_none() && !cache.instruments.is_empty() {
+                    log::info!("[Kite API] Serving {} instruments from disk cache (will refresh)", cache.instruments.len());
+                    return Ok(cache.instruments.clone());
+                }
+            }
+        }
+        // ── Level 1b: Cooldown check ─────────────────────────────────
+        // If the last API attempt failed (0 instruments / HTTP error) less than
+        // 60 seconds ago, return immediately with whatever cache we have.
+        // This prevents per-second hammering when the Kite token is invalid.
+        {
+            let cache = self.cache.read().await;
+            if let Some(failed_at) = cache.last_failed_at {
+                const COOLDOWN: Duration = Duration::from_secs(60);
+                if failed_at.elapsed() < COOLDOWN {
+                    if !cache.instruments.is_empty() {
+                        log::debug!("[Kite API] Cooldown active — serving stale cache");
+                        return Ok(cache.instruments.clone());
+                    } else {
+                        return Err(format!(
+                            "Kite instruments unavailable (cooldown {}s remaining)",
+                            COOLDOWN.saturating_sub(failed_at.elapsed()).as_secs()
+                        ));
+                    }
+                }
             }
         }
 
-        // Acquire the fetch lock — only ONE task downloads at a time.
-        // Others will block here and then re-check the cache above.
         let _guard = self.fetch_lock.lock().await;
 
-        // Double-check cache after acquiring lock (another task may have filled it)
+        // Double-check after acquiring lock
         {
             let cache = self.cache.read().await;
             if cache.exchange == exchange {
@@ -163,16 +263,17 @@ impl KiteApiState {
             }
         }
 
-        // Cache miss — fetch from Kite with retry-on-429
+        // ── Level 2: Kite API fetch with 429-aware backoff ────────────────
         log::info!("[Kite API] Fetching instruments for exchange: {}", exchange);
 
         let url = format!("https://api.kite.trade/instruments/{}", exchange);
         let mut last_err = String::new();
 
-        for attempt in 0..3 {
+        for attempt in 0..3u32 {
             if attempt > 0 {
-                let backoff = Duration::from_millis(1000 * (1 << attempt)); // 2s, 4s
-                log::warn!("[Kite API] Retry #{} after {:?} backoff", attempt, backoff);
+                // Exponential backoff: 4s, 8s — longer than before to respect Kite limits
+                let backoff = Duration::from_secs(4 * (1u64 << (attempt - 1)));
+                log::warn!("[Kite API] Retry #{} after {}s backoff", attempt, backoff.as_secs());
                 tokio::time::sleep(backoff).await;
             }
 
@@ -212,26 +313,50 @@ impl KiteApiState {
             };
 
             let instruments = parse_instruments_csv(&csv_text);
-            log::info!("[Kite API] Cached {} instruments for {}", instruments.len(), exchange);
 
-            // Update cache under write lock
+            // Validate: NSE should have thousands of instruments.
+            // 0 (or very few) means the response was an error JSON, HTML, or
+            // empty body — NOT the real instruments CSV.
+            if instruments.len() < 100 {
+                last_err = format!(
+                    "Kite API returned only {} instruments (expected >100). Response snippet: {:?}",
+                    instruments.len(),
+                    &csv_text[..csv_text.len().min(200)]
+                );
+                log::warn!("[Kite API] {}", last_err);
+                // Mark failed — 60s cooldown kicks in below
+                continue;
+            }
+
+            log::info!("[Kite API] Fetched {} instruments for {}", instruments.len(), exchange);
+
+            // Persist to disk so next restart is instant
+            Self::save_disk_cache(&instruments);
+
+            // Update memory cache — clear any previous failure mark
             {
                 let mut cache = self.cache.write().await;
                 cache.instruments = instruments.clone();
                 cache.fetched_at = Some(Instant::now());
+                cache.last_failed_at = None; // clear cooldown on success
                 cache.exchange = exchange.to_string();
             }
 
             return Ok(instruments);
         }
 
-        // All retries failed — try to serve stale cache as fallback
+        // All attempts failed — set cooldown so we don't hammer Kite.
+        {
+            let mut cache = self.cache.write().await;
+            cache.last_failed_at = Some(Instant::now());
+        }
+        log::warn!("[Kite API] Instruments fetch failed after 3 attempts: {}", last_err);
         {
             let cache = self.cache.read().await;
             if !cache.instruments.is_empty() && cache.exchange == exchange {
                 log::warn!(
-                    "[Kite API] All retries failed, serving stale cache ({} instruments)",
-                    cache.instruments.len()
+                    "[Kite API] All retries failed — serving stale cache ({} instruments). Error: {}",
+                    cache.instruments.len(), last_err
                 );
                 return Ok(cache.instruments.clone());
             }
@@ -241,45 +366,102 @@ impl KiteApiState {
     }
 }
 
+/// Parse a single CSV line respecting RFC-4180 quoting (fields may contain commas).
+/// Kite's instruments CSV wraps `name` fields like "DR. REDDY'S LABS, LTD" in quotes.
+/// A naive split(',') would shatter those into extra columns, shifting every index right.
+fn parse_csv_line(line: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '"' {
+            if in_quotes && i + 1 < chars.len() && chars[i + 1] == '"' {
+                // Escaped quote inside quoted field
+                current.push('"');
+                i += 1;
+            } else {
+                in_quotes = !in_quotes;
+            }
+        } else if c == ',' && !in_quotes {
+            fields.push(current.trim().to_string());
+            current = String::new();
+        } else {
+            current.push(c);
+        }
+        i += 1;
+    }
+    fields.push(current.trim().to_string());
+    fields
+}
+
 /// Parse the Kite instruments CSV into a Vec<Instrument>.
 /// Only includes EQ (equity) and INDEX types for cleaner search results.
+///
+/// Kite CSV columns (0-indexed):
+///   0  instrument_token
+///   1  exchange_token
+///   2  tradingsymbol
+///   3  name           ← may contain commas inside quotes
+///   4  last_price
+///   5  expiry
+///   6  strike
+///   7  tick_size
+///   8  lot_size
+///   9  instrument_type  ← "EQ", "INDEX", "FUT", "CE", "PE" etc.
+///   10 segment
+///   11 exchange
 fn parse_instruments_csv(csv: &str) -> Vec<Instrument> {
     let mut instruments = Vec::new();
     let mut lines = csv.lines();
 
-    // Skip header
+    // Skip header row
     lines.next();
 
     for line in lines {
-        let cols: Vec<&str> = line.split(',').collect();
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let cols = parse_csv_line(line);
+
+        // Need at least 12 columns (0..=11)
         if cols.len() < 12 {
             continue;
         }
 
-        let instrument_type = cols[7].trim();
-        // Only include equity and index instruments
-        if instrument_type != "EQ" && instrument_type != "" && instrument_type != "INDEX" {
+        // col 9 = instrument_type
+        let instrument_type = cols[9].as_str();
+        if instrument_type != "EQ" && instrument_type != "INDEX" {
             continue;
         }
 
         let instrument = Instrument {
-            instrument_token: cols[0].trim().parse().unwrap_or(0),
-            exchange_token: cols[1].trim().parse().unwrap_or(0),
-            tradingsymbol: cols[2].trim().to_string(),
-            name: cols[3].trim().to_string(),
-            last_price: cols[4].trim().parse().unwrap_or(0.0),
-            tick_size: cols[5].trim().parse().unwrap_or(0.0),
-            lot_size: cols[6].trim().parse().unwrap_or(0),
-            instrument_type: instrument_type.to_string(),
-            segment: cols[10].trim().to_string(),
-            exchange: cols[11].trim().to_string(),
+            instrument_token: cols[0].parse().unwrap_or(0),
+            exchange_token:   cols[1].parse().unwrap_or(0),
+            tradingsymbol:    cols[2].clone(),
+            name:             cols[3].clone(),
+            last_price:       cols[4].parse().unwrap_or(0.0),
+            tick_size:        cols[7].parse().unwrap_or(0.0), // col 7, NOT 5
+            lot_size:         cols[8].parse().unwrap_or(0),   // col 8, NOT 6
+            instrument_type:  instrument_type.to_string(),
+            segment:          cols[10].clone(),
+            exchange:         cols[11].clone(),
         };
+
+        // Skip instruments with no tradingsymbol (malformed rows)
+        if instrument.tradingsymbol.is_empty() || instrument.instrument_token == 0 {
+            continue;
+        }
 
         instruments.push(instrument);
     }
 
     instruments
 }
+
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
@@ -452,25 +634,21 @@ async fn historical_handler(
     let token: u64 = if let Some(t) = params.instrument_token {
         t
     } else if !symbol.is_empty() {
-        // Look up from cached instruments
-        let instruments = state.get_instruments("NSE").await.map_err(|e| {
-            log::error!("[Kite historical] Instrument lookup failed: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e, "candles": [] })),
-            )
-        })?;
-
-        instruments
-            .iter()
-            .find(|i| i.tradingsymbol.to_uppercase() == symbol)
-            .map(|i| i.instrument_token)
-            .ok_or_else(|| {
-                (
+        // Use the cached resolve_token helper — avoids re-scanning the full
+        // instruments list on every request after the first lookup.
+        match state.resolve_token(&symbol).await {
+            Some(t) => t,
+            None => {
+                log::error!("[Kite historical] Could not resolve token for symbol '{}'", symbol);
+                return Err((
                     StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({ "error": format!("Symbol '{}' not found in NSE instruments", symbol), "candles": [] })),
-                )
-            })?
+                    Json(serde_json::json!({
+                        "error": format!("Symbol '{}' not found in NSE instruments", symbol),
+                        "candles": []
+                    })),
+                ));
+            }
+        }
     } else {
         return Err((
             StatusCode::BAD_REQUEST,

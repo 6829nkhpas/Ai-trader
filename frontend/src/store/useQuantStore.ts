@@ -79,7 +79,8 @@ interface QuantStore {
   activeSentiment: SentimentPayload | null;
   isFetchingSentiment: boolean;
   sentimentError: string | null;
-  sentimentCache: Record<string, SentimentPayload>;
+  /** Cache entry: payload + timestamp fetched + optional rate-limit cooldown */
+  sentimentCache: Record<string, { payload: SentimentPayload; fetchedAt: number; rateLimitedUntil?: number }>;
 
   setConsensusData: (data: ConsensusReport) => void;
   fetchDeepAnalysis: (symbol: string) => Promise<void>;
@@ -89,6 +90,14 @@ interface QuantStore {
   openPosition: (symbol: string, plan: AiExecutionPlan) => void;
   closePosition: (id: string, exitPrice: number) => void;
 }
+
+// ── Module-level in-flight deduplication set ─────────────────────────────
+// If two components simultaneously request sentiment for the same symbol,
+// only the first call makes a network request. Others wait or skip.
+const sentimentInFlight = new Set<string>();
+
+const SENTIMENT_TTL_MS   = 10 * 60 * 1000;  // 10 minutes
+const SENTIMENT_429_COOL = 5  * 60 * 1000;  // 5 minutes cooldown after 429
 
 // ── Tauri invoke helper ─────────────────────────────────────────────────
 
@@ -137,7 +146,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
   activePositions: [],
   completedTrades: [],
 
-  // ── Decoupled Sentiment State ──────────────────────────────────────
+  // ── Decoupled Sentiment State ────────────────────────────────────
   activeSentiment: null,
   isFetchingSentiment: false,
   sentimentError: null,
@@ -145,56 +154,124 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
 
   setConsensusData: (data: ConsensusReport) => set({ consensusData: data }),
 
-  // Cache-aware: serves cached data on symbol click, skips network if already fetched
+  // Cache-aware with TTL: serves cached data on symbol click.
+  // Skips network call if:
+  //   • Data is fresh (< 10 minutes old)
+  //   • Same symbol is already being fetched (deduplication)
+  //   • HF returned 429 recently (5-minute cooldown per symbol)
   loadSentimentForSymbol: async (symbol: string) => {
-    const cached = get().sentimentCache[symbol];
-    if (cached) {
-      console.log(`[QuantStore] ✔ Sentiment CACHE HIT symbol=${symbol} score=${cached.score}`);
-      set({ activeSentiment: cached, isFetchingSentiment: false, sentimentError: null });
+    const entry = get().sentimentCache[symbol];
+    const now = Date.now();
+
+    // Serve fresh cache hit
+    if (entry && (now - entry.fetchedAt) < SENTIMENT_TTL_MS) {
+      console.log(`[QuantStore] ✔ Sentiment CACHE HIT symbol=${symbol} score=${entry.payload.score} age=${Math.round((now - entry.fetchedAt) / 1000)}s`);
+      set({ activeSentiment: entry.payload, isFetchingSentiment: false, sentimentError: null });
       return;
     }
 
-    console.log(`[QuantStore] ▶ Sentiment fetch (first load) symbol=${symbol}`);
+    // Rate-limit cooldown active?
+    if (entry?.rateLimitedUntil && now < entry.rateLimitedUntil) {
+      const secs = Math.round((entry.rateLimitedUntil - now) / 1000);
+      console.warn(`[QuantStore] ⚠ Sentiment 429 cooldown active for ${symbol} — ${secs}s remaining`);
+      if (entry.payload) set({ activeSentiment: entry.payload });
+      return;
+    }
+
+    // In-flight deduplication
+    if (sentimentInFlight.has(symbol)) {
+      console.log(`[QuantStore] ⏳ Sentiment already in-flight for ${symbol} — skipping duplicate`);
+      return;
+    }
+
+    console.log(`[QuantStore] ▶ Sentiment fetch symbol=${symbol}`);
+    sentimentInFlight.add(symbol);
     set({ isFetchingSentiment: true, sentimentError: null });
 
     try {
-      const payload = await tauriInvoke<SentimentPayload>(
-        'fetch_symbol_sentiment',
-        { symbol }
-      );
+      const payload = await tauriInvoke<SentimentPayload>('fetch_symbol_sentiment', { symbol });
       console.log(`[QuantStore] ✔ Sentiment OK symbol=${symbol} score=${payload.score} label=${payload.label}`);
       set((state) => ({
         activeSentiment: payload,
         isFetchingSentiment: false,
-        sentimentCache: { ...state.sentimentCache, [symbol]: payload },
+        sentimentCache: {
+          ...state.sentimentCache,
+          [symbol]: { payload, fetchedAt: Date.now() },
+        },
       }));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      const is429 = message.includes('429') || message.toLowerCase().includes('too many');
       console.error(`[QuantStore] ✘ Sentiment FAIL symbol=${symbol}: ${message}`);
-      set({ isFetchingSentiment: false, sentimentError: message });
+      set((state) => ({
+        isFetchingSentiment: false,
+        sentimentError: message,
+        // On 429: set cooldown so we don't hammer again for 5 minutes
+        sentimentCache: is429 ? {
+          ...state.sentimentCache,
+          [symbol]: {
+            payload: state.sentimentCache[symbol]?.payload ?? (state.activeSentiment?.symbol === symbol ? state.activeSentiment : null as unknown as SentimentPayload),
+            fetchedAt: state.sentimentCache[symbol]?.fetchedAt ?? 0,
+            rateLimitedUntil: Date.now() + SENTIMENT_429_COOL,
+          },
+        } : state.sentimentCache,
+      }));
+    } finally {
+      sentimentInFlight.delete(symbol);
     }
   },
 
-  // Force-refresh: bypasses cache, called from AI Quant Analysis button
+  // Force-refresh: bypasses TTL cache (but still respects 429 cooldown).
+  // Called from AI Quant Analysis button.
   refreshSentimentForSymbol: async (symbol: string) => {
+    const entry = get().sentimentCache[symbol];
+    const now = Date.now();
+
+    // Respect 429 cooldown even on force-refresh
+    if (entry?.rateLimitedUntil && now < entry.rateLimitedUntil) {
+      const secs = Math.round((entry.rateLimitedUntil - now) / 1000);
+      console.warn(`[QuantStore] ⚠ Sentiment 429 cooldown — skipping refresh for ${symbol} (${secs}s remaining)`);
+      return;
+    }
+
+    if (sentimentInFlight.has(symbol)) {
+      console.log(`[QuantStore] ⏳ Sentiment already in-flight for ${symbol} — skipping refresh`);
+      return;
+    }
+
     console.log(`[QuantStore] ▶ Sentiment REFRESH (force) symbol=${symbol}`);
+    sentimentInFlight.add(symbol);
     set({ isFetchingSentiment: true, sentimentError: null });
 
     try {
-      const payload = await tauriInvoke<SentimentPayload>(
-        'fetch_symbol_sentiment',
-        { symbol }
-      );
+      const payload = await tauriInvoke<SentimentPayload>('fetch_symbol_sentiment', { symbol });
       console.log(`[QuantStore] ✔ Sentiment REFRESHED symbol=${symbol} score=${payload.score}`);
       set((state) => ({
         activeSentiment: payload,
         isFetchingSentiment: false,
-        sentimentCache: { ...state.sentimentCache, [symbol]: payload },
+        sentimentCache: {
+          ...state.sentimentCache,
+          [symbol]: { payload, fetchedAt: Date.now() },
+        },
       }));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      const is429 = message.includes('429') || message.toLowerCase().includes('too many');
       console.error(`[QuantStore] ✘ Sentiment refresh FAIL symbol=${symbol}: ${message}`);
-      set({ isFetchingSentiment: false, sentimentError: message });
+      set((state) => ({
+        isFetchingSentiment: false,
+        sentimentError: message,
+        sentimentCache: is429 ? {
+          ...state.sentimentCache,
+          [symbol]: {
+            payload: state.sentimentCache[symbol]?.payload ?? (state.activeSentiment?.symbol === symbol ? state.activeSentiment : null as unknown as SentimentPayload),
+            fetchedAt: state.sentimentCache[symbol]?.fetchedAt ?? 0,
+            rateLimitedUntil: Date.now() + SENTIMENT_429_COOL,
+          },
+        } : state.sentimentCache,
+      }));
+    } finally {
+      sentimentInFlight.delete(symbol);
     }
   },
 

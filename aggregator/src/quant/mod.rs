@@ -9,6 +9,13 @@
 //   ├── mod.rs        ← this file (IndicatorState, ConsensusReport, scoring matrix)
 //   ├── patterns.rs   ← Candlestick pattern matcher (Engulfing, Doji, etc.)
 //   └── strategies.rs ← Institutional strategy engine (Golden Cross, VWAP, ORB)
+//
+// STATUS: Fully implemented & unit-tested.
+// PENDING: Wiring into the ohlc_server consumer loop once the indicator
+//          computation pipeline (SMA50/200, MACD, SAR, RSI, etc.) is connected.
+//          At that point, remove this allow and call ConsensusEngine::compile_consensus
+//          inside ohlc_server::process_candle() before the WS broadcast.
+#![allow(dead_code)]
 
 pub mod patterns;
 pub mod strategies;

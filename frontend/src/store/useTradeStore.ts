@@ -121,10 +121,17 @@ interface TradeStore {
   connectAlphaWebSocket: (url: string) => void;
   connectPredictiveWebSocket: (url: string) => void;
   connectInsightWebSocket: (url: string) => void;
+  /** Stop all WebSocket reconnect loops (call on app unmount). */
+  destroyWebSockets: () => void;
   executeTrade: (decision: AggregatedDecision, quantity: number) => void;
   rejectTrade: (decision: AggregatedDecision) => void;
   resetSession: () => void;
 }
+
+// ── Module-level WS destroy flags (BUG-5) ─────────────────────────────────
+// Using a mutable object instead of `const destroyed = false` inside closures,
+// which could never be set to true and caused infinite reconnect loops on unmount.
+const wsFlags = { alpha: false, predictive: false, insight: false };
 
 export const useTradeStore = create<TradeStore>((set) => {
   let ws: WebSocket | null = null;
@@ -197,11 +204,26 @@ export const useTradeStore = create<TradeStore>((set) => {
     },
 
     setActiveTimeframe: (tf: ChartTimeframe) => {
-      set({ activeTimeframe: tf });
+      // BUG-1/BUG-7 fix: Just flush live ticks and update the timeframe.
+      // The useHistoricalData hook now has `effectiveTimeframe` in its
+      // fetchData deps, so it will automatically re-evaluate the cache
+      // (cache hit → instant re-aggregate, cache miss → fresh Kite fetch).
+      // We deliberately keep historicalCache intact so the cross-interval
+      // fallback can serve existing data when the Kite API is unavailable.
+      set({ activeTimeframe: tf, ohlcCandles: [], predictiveSignals: [] });
     },
 
     setActiveRange: (range: DataRange) => {
-      set({ activeRange: range });
+      set((state) => {
+        // Range change means more/fewer candles — drop all cache entries for
+        // the current symbol so every timeframe re-fetches at the new range.
+        const sym = state.selectedSymbol.toUpperCase();
+        const pruned = { ...state.historicalCache };
+        for (const key of Object.keys(pruned)) {
+          if (key.startsWith(`${sym}::`)) delete pruned[key];
+        }
+        return { activeRange: range, historicalCache: pruned };
+      });
     },
 
     addSystemLog: (level: SystemLog['level'], message: string) => {
@@ -217,21 +239,21 @@ export const useTradeStore = create<TradeStore>((set) => {
     setSelectedSymbol: (symbol: string) => {
       const upper = symbol.toUpperCase();
       set((state) => {
-        // Invalidate all cached timeframe variants for the OLD symbol so that
-        // switching back later always fetches fresh data instead of serving
-        // a potentially-stale cache from the previous session.
         const prevSymbol = state.selectedSymbol.toUpperCase();
-        const prunedCache: Record<string, typeof state.historicalCache[string]> = {};
-        for (const [key, val] of Object.entries(state.historicalCache)) {
-          // Cache keys are "SYMBOL::interval" — drop all keys for the old symbol
-          if (!key.startsWith(`${prevSymbol}::`) || prevSymbol === upper) {
-            prunedCache[key] = val;
-          }
+        // BUG-4: Rewritten for clarity. Keep cache entries for every symbol
+        // EXCEPT the old one, so switching back later forces a fresh fetch
+        // (data may have moved significantly since last view).
+        // Skip pruning when same symbol (no-op) or no previous symbol.
+        let prunedCache = state.historicalCache;
+        if (prevSymbol && prevSymbol !== upper) {
+          prunedCache = Object.fromEntries(
+            Object.entries(state.historicalCache).filter(
+              ([key]) => !key.startsWith(`${prevSymbol}::`)
+            )
+          );
         }
         return {
           selectedSymbol: upper,
-          // Immediately wipe live candles + predictive signals so the chart
-          // shows a clean slate before the async historical fetch resolves.
           ohlcCandles: [],
           predictiveSignals: [],
           historicalCache: prunedCache,
@@ -266,10 +288,12 @@ export const useTradeStore = create<TradeStore>((set) => {
     },
 
     connectAlphaWebSocket: (url: string) => {
-      const destroyed = false;
+      // BUG-5: wsFlags.alpha replaces `const destroyed = false` which could
+      // never be set to true — causing infinite reconnect loops on app unmount.
+      wsFlags.alpha = false;
 
       const connect = () => {
-        if (destroyed) return;
+        if (wsFlags.alpha) return;
         const alphaWs = new WebSocket(url);
         syslog('INFO', `Alpha OHLC WS connecting → ${url}`);
 
@@ -281,8 +305,6 @@ export const useTradeStore = create<TradeStore>((set) => {
           try {
             const candle: OhlcCandle = JSON.parse(event.data);
 
-            // Validate required fields before storing — malformed messages
-            // (e.g. missing symbol or NaN prices) corrupt the chart silently.
             if (
               !candle.symbol ||
               typeof candle.start_timestamp_ms !== 'number' ||
@@ -294,9 +316,6 @@ export const useTradeStore = create<TradeStore>((set) => {
             }
 
             set((state) => {
-              // Upsert: if a candle with the same symbol + timestamp already
-              // exists, replace it in-place so the chart reflects live price
-              // movement within the current bucket. Otherwise append.
               const idx = state.ohlcCandles.findIndex(
                 (c) =>
                   c.symbol === candle.symbol &&
@@ -305,21 +324,16 @@ export const useTradeStore = create<TradeStore>((set) => {
 
               let newCandles: OhlcCandle[];
               if (idx !== -1) {
-                // Replace existing candle with updated OHLC values
                 newCandles = [...state.ohlcCandles];
                 newCandles[idx] = candle;
               } else {
                 newCandles = [...state.ohlcCandles, candle];
-                // Log the first few candles arriving to confirm data flow
                 if (newCandles.length <= 5) {
                   console.log(`[OHLC WS] Candle #${newCandles.length}:`, candle);
                 }
               }
 
-              if (newCandles.length > 3000) {
-                return { ohlcCandles: newCandles.slice(-3000) };
-              }
-              return { ohlcCandles: newCandles };
+              return { ohlcCandles: newCandles.length > 3000 ? newCandles.slice(-3000) : newCandles };
             });
           } catch (e) {
             syslog('ERROR', `Alpha OHLC parse error: ${e}`);
@@ -328,7 +342,7 @@ export const useTradeStore = create<TradeStore>((set) => {
 
         alphaWs.onclose = () => {
           syslog('WARN', 'Alpha OHLC WS disconnected. Reconnecting in 3s...');
-          if (!destroyed) setTimeout(connect, 3000);
+          if (!wsFlags.alpha) setTimeout(connect, 3000);
         };
 
         alphaWs.onerror = () => {
@@ -340,10 +354,10 @@ export const useTradeStore = create<TradeStore>((set) => {
     },
 
     connectPredictiveWebSocket: (url: string) => {
-      const destroyed = false;
+      wsFlags.predictive = false; // BUG-5: mutable flag
 
       const connect = () => {
-        if (destroyed) return;
+        if (wsFlags.predictive) return;
         const predictiveWs = new WebSocket(url);
         syslog('INFO', `Predictive WS connecting → ${url}`);
 
@@ -364,7 +378,7 @@ export const useTradeStore = create<TradeStore>((set) => {
 
         predictiveWs.onclose = () => {
           syslog('WARN', 'Predictive WS disconnected. Reconnecting in 3s...');
-          if (!destroyed) setTimeout(connect, 3000);
+          if (!wsFlags.predictive) setTimeout(connect, 3000);
         };
 
         predictiveWs.onerror = () => {
@@ -376,10 +390,10 @@ export const useTradeStore = create<TradeStore>((set) => {
     },
 
     connectInsightWebSocket: (url: string) => {
-      const destroyed = false;
+      wsFlags.insight = false; // BUG-5: mutable flag
 
       const connect = () => {
-        if (destroyed) return;
+        if (wsFlags.insight) return;
         const insightWs = new WebSocket(url);
         syslog('INFO', `Insight (DeepSeek) WS connecting → ${url}`);
 
@@ -403,7 +417,7 @@ export const useTradeStore = create<TradeStore>((set) => {
 
         insightWs.onclose = () => {
           syslog('WARN', 'Insight WS disconnected. Reconnecting in 3s...');
-          if (!destroyed) setTimeout(connect, 3000);
+          if (!wsFlags.insight) setTimeout(connect, 3000);
         };
 
         insightWs.onerror = () => {
@@ -412,6 +426,13 @@ export const useTradeStore = create<TradeStore>((set) => {
       };
 
       connect();
+    },
+
+    destroyWebSockets: () => {
+      // BUG-5: Stops all reconnect loops. Call on app unmount.
+      wsFlags.alpha = true;
+      wsFlags.predictive = true;
+      wsFlags.insight = true;
     },
 
     executeTrade: (decision: AggregatedDecision, quantity: number) => {

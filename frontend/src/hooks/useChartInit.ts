@@ -75,7 +75,7 @@ export function useChartInit(
       wickDownColor: COLORS.down,
       priceLineVisible: true,
       lastValueVisible: true,
-      priceFormat: { type: 'price', precision: 2, minMove: 0.05 },
+      priceFormat: { type: 'price', precision: 2, minMove: 0.01 }, // BUG-9: was 0.05, too coarse for sub-₹100 stocks
     });
 
     // ── Volume Histogram ───────────────────────────────────────────────
