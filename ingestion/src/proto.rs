@@ -10,6 +10,7 @@
 /// Generated Protobuf types for the `ai_trade.market_data` package.
 /// Exposes: `Tick` — the canonical real-time tick message used across the
 /// entire pipeline (Kafka topic: `market.ticks`).
+#[allow(dead_code)]
 pub mod market_data {
     include!(concat!(env!("OUT_DIR"), "/ai_trade.market_data.rs"));
 }

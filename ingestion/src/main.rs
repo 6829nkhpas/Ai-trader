@@ -39,7 +39,6 @@ mod proto;          // Protobuf contract â€” must be first (others depend o
 mod kite_client;    // Low-level WS transport: connect_ticker()
 mod parser;         // Binary tick frame parser: parse_binary_tick() / parse_binary_frame()
 mod kite_auth;      // OAuth access_token exchange
-mod kite_ws;        // High-level WS client: subscription + auto-reconnect loop
 mod questdb_writer; // ILP TCP writer â†’ QuestDB :9009  (highest-throughput path)
 mod questdb_sink;   // SQLx PG writer â†’ QuestDB :8812  (SQL-accessible archive path)
 mod types;          // ParsedTick â€” shared internal data contract
@@ -169,7 +168,7 @@ async fn main() {
         .await
         .expect("Failed to connect to QuestDB ILP â€” is the container running?");
 
-    // â”€â”€ 7. Legacy mpsc-channel pipeline (kept for kite_ws.rs auto-reconnect) â”€
+    // â”€â”€ 7. Legacy mpsc-channel pipeline (kept for ILP writer) â”€
     let (tx, mut rx) = mpsc::channel::<ParsedTick>(CHANNEL_CAPACITY);
 
     // Drain mpsc channel â†’ ILP writer (legacy path)

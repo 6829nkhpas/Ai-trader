@@ -1,16 +1,16 @@
 # Graph Report - Ai-trader  (2026-05-19)
 
 ## Corpus Check
-- 189 files · ~147,623 words
+- 188 files · ~146,588 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 876 nodes · 1410 edges · 83 communities (76 shown, 7 thin omitted)
+- 877 nodes · 1410 edges · 84 communities (77 shown, 7 thin omitted)
 - Extraction: 89% EXTRACTED · 11% INFERRED · 0% AMBIGUOUS · INFERRED: 150 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `81dc9d35`
+- Built from commit: `88b5cff0`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -69,7 +69,7 @@
 - `main()` --calls--> `run_consumer_loop()`  [INFERRED]
   tools/load_tester/src/main.rs → aggregator/src/consumer.rs
 
-## Communities (83 total, 7 thin omitted)
+## Communities (84 total, 7 thin omitted)
 
 ### Community 0 - "Community 0"
 Cohesion: 0.05
@@ -120,12 +120,12 @@ Cohesion: 0.2
 Nodes (10): Candle, detects_bearish_engulfing(), detects_bullish_engulfing(), detects_doji(), detects_hammer(), detects_shooting_star(), empty_history_returns_empty(), no_doji_on_large_body() (+2 more)
 
 ### Community 12 - "Community 12"
-Cohesion: 0.11
-Nodes (5): handler(), tauriInvoke(), hydrateWatchlist(), persistWatchlist(), invoke()
-
-### Community 13 - "Community 13"
 Cohesion: 0.15
 Nodes (11): InstrumentRecord, lookup_instrument_token(), resolve_instrument_token(), resolve_token_blocking(), ActiveSymbolState, notify_ingestion_subscribe(), send_subscribe_to_ingestion(), subscribe_ticker() (+3 more)
+
+### Community 13 - "Community 13"
+Cohesion: 0.11
+Nodes (5): handler(), tauriInvoke(), hydrateWatchlist(), persistWatchlist(), invoke()
 
 ### Community 14 - "Community 14"
 Cohesion: 0.12
@@ -169,10 +169,10 @@ _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `run()` connect `Community 1` to `Community 0`, `Community 2`, `Community 20`, `Community 15`?**
   _High betweenness centrality (0.245) - this node is a cross-community bridge._
-- **Why does `spawn()` connect `Community 1` to `Community 8`, `Community 13`, `Community 5`?**
+- **Why does `spawn()` connect `Community 1` to `Community 8`, `Community 12`, `Community 5`?**
   _High betweenness centrality (0.130) - this node is a cross-community bridge._
-- **Why does `main()` connect `Community 5` to `Community 8`, `Community 1`, `Community 10`, `Community 13`?**
-  _High betweenness centrality (0.110) - this node is a cross-community bridge._
+- **Why does `main()` connect `Community 5` to `Community 8`, `Community 1`, `Community 10`, `Community 12`?**
+  _High betweenness centrality (0.109) - this node is a cross-community bridge._
 - **Are the 17 inferred relationships involving `main()` (e.g. with `run_listener()` and `update_rsi()`) actually correct?**
   _`main()` has 17 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 21 inferred relationships involving `getPool()` (e.g. with `handleRegister()` and `handleLogin()`) actually correct?**

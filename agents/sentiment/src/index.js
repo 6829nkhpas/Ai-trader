@@ -1,17 +1,17 @@
 // index.js — Sentiment Agent — Full Production Polling Loop (Subphases 34-36).
 //
 // SP35-36: Replaces the single-pass integration test with a continuous
-// `setInterval` background process that polls Marketaux, deduplicates via
-// Redis, scores with Claude, and broadcasts to Kafka as Protobuf messages.
+// `setInterval` background process that polls NewsData.io, deduplicates via
+// Redis, scores with LLM, and broadcasts to Kafka as Protobuf messages.
 //
 // Pipeline (per tick per symbol):
 //   fetchLatestNews(symbol)
 //     ↓  raw NewsData.io article array
 //   filter via isArticleProcessed()      → Redis EXISTS (24 h dedup window)
 //     ↓  new articles only
-//   analyzeSentiment(symbol, headlines)  → Claude conviction score + snippet
+//   analyzeSentiment(symbol, headlines)  → LLM conviction score + snippet
 //     ↓  { conviction_score, reasoning_snippet }
-//   publishSentiment(symbol, claudeJson, NewsSentiment)
+//   publishSentiment(symbol, llmJson, NewsSentiment)
 //     ↓  NewsSentiment Protobuf → Kafka topic: sentiment_signals
 //   markArticleProcessed(articleUrl)     → Redis SET EX 86400
 //
@@ -59,7 +59,7 @@ let   redisClient = null; // initialised inside run()
  *   1. Fetch latest news from Marketaux.
  *   2. Filter out articles already in the Redis dedup cache.
  *   3. Collect headlines from new articles.
- *   4. Call Claude via analyzeSentiment() to get a conviction score.
+ *   4. Call LLM via analyzeSentiment() to get a conviction score.
  *   5. Publish the result to Kafka as an encoded NewsSentiment Protobuf.
  *   6. Mark the new articles as processed in Redis.
  *
@@ -125,21 +125,21 @@ async function processTicker(symbol, NewsSentiment) {
     return;
   }
 
-  // ── Step 4: Analyze with Claude ───────────────────────────────────────────
-  let claudeJson;
+  // ── Step 4: Analyze with LLM ───────────────────────────────────────────
+  let llmJson;
   try {
-    claudeJson = await analyzeSentiment(symbol, headlinesArray);
+    llmJson = await analyzeSentiment(symbol, headlinesArray);
   } catch (err) {
     console.error(`[index] analyzeSentiment failed for ${symbol}: ${err.message}`);
     return;
   }
 
   // Attach the most recent headline to the payload for Protobuf field `headline`.
-  claudeJson.headline = headlinesArray[0];
+  llmJson.headline = headlinesArray[0];
 
   // ── Step 5: Publish to Kafka ──────────────────────────────────────────────
   try {
-    await publishSentiment(symbol, claudeJson, NewsSentiment);
+    await publishSentiment(symbol, llmJson, NewsSentiment);
   } catch (err) {
     // publishSentiment already handles errors internally, but catch here too.
     console.error(`[index] publishSentiment failed for ${symbol}: ${err.message}`);
@@ -168,7 +168,7 @@ async function processTicker(symbol, NewsSentiment) {
 async function run() {
   console.log('╔═══════════════════════════════════════════════════════════╗');
   console.log('║  Sentiment Agent — NLP Polling Loop (Subphases 34-36)    ║');
-  console.log('║  Claude · Redis · Kafka Protobuf Pipeline                  ║');
+  console.log('║  LLM · Redis · Kafka Protobuf Pipeline                     ║');
   console.log('╚═══════════════════════════════════════════════════════════╝\n');
 
   // ── 1. Load Protobuf schema ───────────────────────────────────────────────

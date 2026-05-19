@@ -30,13 +30,18 @@ use crate::proto::market_data;
 use crate::types::ParsedTick;
 
 /// Topic name — matches the Kafka topic plan in SESSION_MEMORY.md
+#[allow(dead_code)]
 const TOPIC: &str = "market.ticks";
 
 /// Wraps an rdkafka `FutureProducer` with tick-specific encoding logic.
+/// Legacy struct API — kept for potential future use. The direct-stream loop
+/// in main.rs uses the free-function API (`init_producer` + `publish_tick`).
+#[allow(dead_code)]
 pub struct KafkaProducer {
     inner: FutureProducer,
 }
 
+#[allow(dead_code)]
 impl KafkaProducer {
     /// Construct a new producer from environment variables.
     ///
@@ -110,7 +115,7 @@ impl KafkaProducer {
 
     /// Flush all buffered messages — call on graceful shutdown.
     pub fn flush(&self) {
-        self.inner.flush(Timeout::After(Duration::from_secs(10)));
+        let _ = self.inner.flush(Timeout::After(Duration::from_secs(10)));
         info!("Kafka producer flushed.");
     }
 }

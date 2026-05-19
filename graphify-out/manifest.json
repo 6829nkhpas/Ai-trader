@@ -64,8 +64,8 @@
     "hash": "59a26643c5f4e0ac6e9d2cb6fcd1c09b"
   },
   "D:\\projects\\Ai-trader\\agents\\sentiment\\src\\index.js": {
-    "mtime": 1779205779.4357958,
-    "hash": "c27c3061c39b763abb4f0787fcc74466"
+    "mtime": 1779206509.4971018,
+    "hash": "f69d52777239d07d70592b0c4950b1bd"
   },
   "D:\\projects\\Ai-trader\\agents\\sentiment\\src\\kafkaProducer.js": {
     "mtime": 1776895237.4014194,
@@ -684,8 +684,8 @@
     "hash": "8f23b175fc048671767375d166973814"
   },
   "D:\\projects\\Ai-trader\\ingestion\\src\\kafka_producer.rs": {
-    "mtime": 1778223418.7006333,
-    "hash": "f2ee7906a6e10ea9cec7ce8442f1fac9"
+    "mtime": 1779206332.63988,
+    "hash": "5568cc6273d23f6fede1f0651d009f02"
   },
   "D:\\projects\\Ai-trader\\ingestion\\src\\kite_auth.rs": {
     "mtime": 1776887469.6788228,
@@ -695,21 +695,17 @@
     "mtime": 1776888239.8028872,
     "hash": "a2583117735c7633bb8e0a9eef46bb55"
   },
-  "D:\\projects\\Ai-trader\\ingestion\\src\\kite_ws.rs": {
-    "mtime": 1779187602.2775047,
-    "hash": "e5fc9dda85d9457fa15f8e39e25c7447"
-  },
   "D:\\projects\\Ai-trader\\ingestion\\src\\main.rs": {
-    "mtime": 1779199676.9868274,
-    "hash": "40f058e4b9019d10dd47bc243789b5f8"
+    "mtime": 1779206307.1905935,
+    "hash": "5bc2634efea00d6f0d73bbc78dc305a4"
   },
   "D:\\projects\\Ai-trader\\ingestion\\src\\parser.rs": {
     "mtime": 1777533528.4984872,
     "hash": "6cd33a2a622eea3f038180d35e016d8e"
   },
   "D:\\projects\\Ai-trader\\ingestion\\src\\proto.rs": {
-    "mtime": 1776888191.6218412,
-    "hash": "0f59653bfd67c0e9d6933c30389be1c5"
+    "mtime": 1779206357.6375103,
+    "hash": "647386708bdf2753bef80546090b8f51"
   },
   "D:\\projects\\Ai-trader\\ingestion\\src\\questdb_sink.rs": {
     "mtime": 1776889848.0880926,
