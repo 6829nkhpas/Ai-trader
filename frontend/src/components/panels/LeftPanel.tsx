@@ -397,26 +397,7 @@ export default function LeftPanel() {
           BOTTOM SECTION — Live Asset HUD (Consensus + Sentiment)
          ══════════════════════════════════════════════════════════════ */}
       <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin">
-        {/* Active Symbol Header */}
-        <div className="sticky top-0 z-10 shrink-0 border-b border-border-default px-3 py-2 bg-surface/95 backdrop-blur-sm">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="flex h-6 w-6 items-center justify-center rounded-md bg-primary/10">
-                <Activity size={12} className="text-primary" />
-              </div>
-              <span className="text-sm font-bold text-text-primary tracking-tight">{selectedSymbol}</span>
-            </div>
-            {activeQuote && (
-              <div className="flex items-center gap-1.5">
-                <span className="text-sm font-bold tabular-nums text-text-primary">{formatPrice(activeQuote.last_price)}</span>
-                <span className={`flex items-center gap-px text-[10px] font-semibold tabular-nums ${activeQuote.change >= 0 ? 'text-bull' : 'text-bear'}`}>
-                  {activeQuote.change >= 0 ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />}
-                  {formatChange(activeQuote.change)}
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
+        
 
         {/* Sentiment section — always renders, independent of tick data */}
         <SentimentBlock sentiment={activeSentiment} isLoading={isFetchingSentiment} error={sentimentError} />

@@ -1,7 +1,7 @@
 # Graph Report - Ai-trader  (2026-05-19)
 
 ## Corpus Check
-- 189 files · ~148,269 words
+- 189 files · ~148,183 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -10,7 +10,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `c7cf6f94`
+- Built from commit: `19d40aaa`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
