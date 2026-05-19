@@ -40,28 +40,12 @@ function Cleanup {
 }
 
 try {
-    # ── Pre-flight: Graceful shutdown of any previous run ────────────────────
+    # ── Pre-flight: Kill anything occupying our ports ────────────────────────
+    # Ports: 3000=Next.js, 8080-8083=WS agents,
+    #        9000/9009=QuestDB, 5432=PG, 6379=Redis, 19092=Kafka
     Write-Host "==> Cleaning up stale processes and ports..." -ForegroundColor Magenta
 
-    # 1. Bring down Docker stack cleanly first (avoids network/container state corruption)
-    Write-Host "  Stopping Docker stack (if running)..." -ForegroundColor DarkGray
-    docker-compose down 2>$null | Out-Null
-
-    # 2. Kill Node and Rust app processes (not Docker — handled above)
-    $processesToKill = @("node", "cargo")
-    foreach ($procName in $processesToKill) {
-        $found = Get-Process -Name $procName -ErrorAction SilentlyContinue
-        if ($found) {
-            foreach ($proc in $found) {
-                taskkill /PID $proc.Id /T /F 2>$null | Out-Null
-                Write-Host "  [killed] $procName PID $($proc.Id)" -ForegroundColor DarkGray
-            }
-        }
-    }
-
-    # 3. Kill anything still occupying app ports (3000, 3001, 8080-8083)
-    $portsToKill = @(3000, 3001, 8080, 8081, 8082, 8083)
-    $netstatOut = netstat -ano 2>$null
+    $portsToKill = @(3000, 8080, 8081, 8082, 8083, 9000, 9009, 5432, 6379, 19092)
     foreach ($port in $portsToKill) {
         $matched = $netstatOut | Select-String (":$port\s")
         foreach ($line in $matched) {
@@ -115,22 +99,8 @@ try {
 
     # ── Start PRODUCERS first, then CONSUMERS ───────────────────────────────
     # Order: ingestion -> technical -> sentiment -> aggregator -> frontend
-
-    # ── Generate JWT RSA keys if missing ────────────────────────────────────
-    if (-not (Test-Path "auth\keys\private.pem")) {
-        Write-Host "Generating RSA-2048 JWT key pair for auth service..." -ForegroundColor Cyan
-        New-Item -ItemType Directory -Path "auth\keys" -Force | Out-Null
-        node -e "const crypto = require('crypto'); const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048, publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } }); require('fs').writeFileSync('auth/keys/private.pem', privateKey); require('fs').writeFileSync('auth/keys/public.pem', publicKey); console.log('[KEYGEN] RSA key pair generated at auth/keys/');"
-        Write-Host "  [+] JWT key pair ready." -ForegroundColor Green
-    } else {
-        Write-Host "  [=] JWT key pair already exists, skipping keygen." -ForegroundColor DarkGray
-    }
-
-    Write-Host "Starting Auth Service..." -ForegroundColor Cyan
-    Push-Location auth
-    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cmd.exe" -ArgumentList "/c npm run dev"
-    Pop-Location
-    Wait-ForPort -Port 3001 -TimeoutSec 60 -Label "Auth Service (:3001)"
+    # NOTE: The standalone auth/profile service has been removed from the app.
+    # The dashboard at "/" is now directly accessible — no JWT keys, no /api/auth.
 
     Write-Host "Starting Rust Ingestion Service (Kite -> Kafka)..." -ForegroundColor Cyan
     Push-Location ingestion

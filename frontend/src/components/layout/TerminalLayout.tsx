@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Activity,
   RefreshCcw,
@@ -15,8 +15,6 @@ import {
   Eye,
   Trash2,
   Bell,
-  User as UserIcon,
-  LogOut,
   HelpCircle,
   ChevronDown,
   Circle,
@@ -100,9 +98,9 @@ import {
   Flag,
 } from 'lucide-react';
 import { useTradeStore, TradeProfile } from '../../store/useTradeStore';
-import { useAuth } from '../../context/AuthContext';
 import { useChartUIStore } from '../../store/useChartUIStore';
 import { ToolMenu, type ToolMenuEntry } from '../chart/ToolMenu';
+import QuantRadar from '../quant/QuantRadar';
 
 const PROFILES: { key: TradeProfile; label: string; shortcut: string }[] = [
   { key: 'INTRADAY', label: 'Intraday', shortcut: 'Scalp' },
@@ -117,8 +115,6 @@ interface TerminalLayoutProps {
 
 export default function TerminalLayout({ children, leftPanel }: TerminalLayoutProps) {
   const { activeProfile, setActiveProfile, resetSession } = useTradeStore();
-  const { user, logout } = useAuth();
-  const [isProfileOpen, setIsProfileOpen] = useState(false);
 
   const {
     activeCursor,
@@ -327,54 +323,14 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
             <span className="absolute top-0 right-0 h-2 w-2 rounded-full bg-red-500 border border-surface"></span>
           </button>
 
-          <div className="relative">
-            <button
-              onClick={() => setIsProfileOpen(!isProfileOpen)}
-              className="flex items-center gap-2 rounded-full border border-border-default bg-surface px-2 py-1 transition-colors hover:bg-elevated"
-            >
-              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/20 text-primary">
-                <UserIcon size={14} />
-              </div>
-              <ChevronDown size={14} className="text-text-secondary" />
-            </button>
-
-            {isProfileOpen && (
-              <>
-                <div
-                  className="fixed inset-0 z-40"
-                  onClick={() => setIsProfileOpen(false)}
-                />
-
-                <div className="absolute right-0 top-full z-50 mt-2 w-56 rounded-lg border border-border-default bg-surface py-2 shadow-lg panel-shadow">
-                  <div className="border-b border-border-default px-4 pb-3 pt-2">
-                    <p className="text-sm font-medium text-text-primary">
-                      {user?.displayName || 'User'}
-                    </p>
-                    <p className="text-xs text-text-secondary truncate">
-                      {user?.email || 'user@example.com'}
-                    </p>
-                  </div>
-
-                  <div className="flex flex-col py-1">
-                    <button className="flex items-center gap-3 px-4 py-2 text-sm text-text-secondary hover:bg-elevated hover:text-text-primary text-left">
-                      <HelpCircle size={16} />
-                      Customer Support
-                    </button>
-                    <button
-                      onClick={async () => {
-                        await logout();
-                        setIsProfileOpen(false);
-                      }}
-                      className="flex items-center gap-3 px-4 py-2 text-sm text-red-500 hover:bg-elevated hover:text-red-400 text-left"
-                    >
-                      <LogOut size={16} />
-                      Logout
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
+          <button
+            type="button"
+            className="flex items-center gap-2 rounded-full border border-border-default bg-surface px-3 py-1 text-xs font-medium text-text-secondary transition-colors hover:bg-elevated"
+            title="Help"
+          >
+            <HelpCircle size={14} />
+            <span className="hidden sm:inline">Help</span>
+          </button>
         </div>
       </header>
 
@@ -526,6 +482,9 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
         </main>
 
       </div>
+
+      {/* ── Quant Radar Overlay ──────────────────────────────────── */}
+      <QuantRadar />
     </div>
   );
 }

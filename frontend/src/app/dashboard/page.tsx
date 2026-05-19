@@ -1,17 +1,15 @@
 /**
- * /dashboard — Protected route stub
+ * /dashboard — Redirects to the trading terminal at the application root.
  *
- * The middleware at src/middleware.ts redirects any unauthenticated request
- * for /dashboard to /auth/login. This page acts as the authenticated landing
- * target while the full trading terminal lives at the root (/). In a future
- * phase this will be replaced with a proper dashboard hub.
+ * The terminal lives at `/`. This stub remains so historical bookmarks /
+ * deep-links keep working after the auth & onboarding routes were removed.
  */
-import DashboardRedirect from './DashboardRedirect';
+import { redirect } from "next/navigation";
 
 export const metadata = {
-  title: 'AI Trader - Dashboard',
+  title: "AI Trader - Dashboard",
 };
 
 export default function DashboardPage() {
-  return <DashboardRedirect />;
+  redirect("/");
 }

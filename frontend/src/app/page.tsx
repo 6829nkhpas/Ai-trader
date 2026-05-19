@@ -1,11 +1,10 @@
 'use client';
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { useRouter } from 'next/navigation';
-import { Loader2, PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight, ChevronDown } from 'lucide-react';
+import { PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight, ChevronDown } from 'lucide-react';
 import TradingChart from '../components/TradingChart';
 import TerminalLayout from '../components/layout/TerminalLayout';
-import WatchlistPanel from '../components/panels/WatchlistPanel';
+import LeftPanel from '../components/panels/LeftPanel';
 import OrderExecutionPanel from '../components/panels/OrderExecutionPanel';
 import AlphaPredictiveChart from '../components/AlphaPredictiveChart';
 import IntradayLayout from '../components/layouts/IntradayLayout';
@@ -13,12 +12,18 @@ import SwingLayout, { SwingConfluencePanel } from '../components/layouts/SwingLa
 import InvestorLayout, { MacroSentimentPanel } from '../components/layouts/InvestorLayout';
 import OrderBook from '../components/OrderBook';
 import SystemConsole from '../components/SystemConsole';
+
+import DeepQuantPanel from '../components/quant/DeepQuantPanel';
+import ActivePositions from '../components/quant/ActivePositions';
 import { useTradeStore, TradeProfile, ChartTimeframe } from '../store/useTradeStore';
+import { useQuantStore } from '../store/useQuantStore';
+import type { ConsensusReport } from '../store/useQuantStore';
 import type { DataRange } from '../utils/chartTypes';
 import { TIMEFRAME_GROUPS } from '../utils/chartTypes';
-import { isOnboardingComplete } from '@/lib/onboarding';
 
 // ── Sidebar labels per profile ──────────────────────────────────────────
+type SidebarTab = 'profile' | 'deepquant';
+
 const SIDEBAR_CONFIG: Record<TradeProfile, { label: string; badge: string; badgeColor: string }> = {
   INTRADAY: { label: 'Order Book', badge: 'INTRADAY', badgeColor: 'bg-emerald-500/10 text-emerald-400' },
   SWING: { label: 'Confluence', badge: 'SWING', badgeColor: 'bg-amber-500/10 text-amber-400' },
@@ -26,14 +31,47 @@ const SIDEBAR_CONFIG: Record<TradeProfile, { label: string; badge: string; badge
 };
 
 export default function Home() {
-  const router = useRouter();
   const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, setActiveTimeframe, activeRange, setActiveRange, selectedSymbol } = useTradeStore();
   const [indicatorsEnabled, setIndicatorsEnabled] = useState(true);
   const [aiEnabled, setAiEnabled] = useState(true);
-  const [isChecking, setIsChecking] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('profile');
   const [tfDropdownOpen, setTfDropdownOpen] = useState(false);
   const tfDropdownRef = useRef<HTMLDivElement>(null);
+  const consensusData = useQuantStore((s) => s.consensusData);
+  const setConsensusData = useQuantStore((s) => s.setConsensusData);
+
+  // Listen for Tauri consensus events
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        // Bail if the component unmounted while we were importing
+        if (cancelled) return;
+        const u = await listen<ConsensusReport>('quant-consensus', (event) => {
+          if (!cancelled) {
+            setConsensusData(event.payload);
+          }
+        });
+        if (cancelled) {
+          // Already unmounted — clean up immediately
+          u();
+        } else {
+          unlisten = u;
+        }
+      } catch {
+        // Not in Tauri context — ignore
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [setConsensusData]);
 
   // ── Real-time Kite quote for the active symbol ────────────────────
   interface SymbolQuote {
@@ -50,37 +88,8 @@ export default function Home() {
   const [symbolQuote, setSymbolQuote] = useState<SymbolQuote | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function gate() {
-      try {
-        const complete = await isOnboardingComplete();
-        if (cancelled) return;
-
-        if (!complete) {
-          router.replace('/auth/onboarding');
-          return;
-        }
-
-        setIsChecking(false);
-      } catch {
-        if (!cancelled) {
-          router.replace('/auth/login?reason=session_expired');
-        }
-      }
-    }
-
-    gate();
-    return () => {
-      cancelled = true;
-    };
-  }, [router]);
-
-  useEffect(() => {
-    if (!isChecking) {
-      connectWebSocket();
-    }
-  }, [connectWebSocket, isChecking]);
+    connectWebSocket();
+  }, [connectWebSocket]);
 
   useEffect(() => {
     connectAlphaWebSocket('ws://127.0.0.1:8081');
@@ -94,24 +103,30 @@ export default function Home() {
   const symbol = selectedSymbol || latestDecision?.symbol || 'RELIANCE';
 
   // Fetch real-time quote for the active symbol
-  const fetchSymbolQuote = useCallback(async () => {
+  const fetchSymbolQuote = useCallback(async (signal?: AbortSignal) => {
     if (!symbol || symbol === '---') return;
     try {
-      const res = await fetch(`/kite/quote?i=NSE:${symbol}`);
+      const res = await fetch(`/kite/quote?i=NSE:${symbol}`, { signal });
       if (!res.ok) return;
       const data = await res.json();
       if (data.quotes && data.quotes.length > 0) {
         setSymbolQuote(data.quotes[0]);
       }
     } catch (err) {
+      // Silence AbortError — expected on unmount
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       console.error('[Header] Quote fetch failed:', err);
     }
   }, [symbol]);
 
   useEffect(() => {
-    fetchSymbolQuote();
-    const interval = setInterval(fetchSymbolQuote, 30_000);
-    return () => clearInterval(interval);
+    const controller = new AbortController();
+    fetchSymbolQuote(controller.signal);
+    const interval = setInterval(() => fetchSymbolQuote(controller.signal), 30_000);
+    return () => {
+      controller.abort();
+      clearInterval(interval);
+    };
   }, [fetchSymbolQuote]);
 
   // Close timeframe dropdown on outside click
@@ -124,15 +139,6 @@ export default function Home() {
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
-
-  if (isChecking) {
-    return (
-      <div className="flex min-h-[40vh] items-center justify-center gap-3 text-sm text-text-secondary">
-        <Loader2 size={18} className="animate-spin" />
-        <span>Preparing your workspace...</span>
-      </div>
-    );
-  }
 
   const quickTimeframes: ChartTimeframe[] = ['1m', '5m', '10m', '15m', '1h', '1D'];
   const rangeOptions: DataRange[] = ['60D', '1Y', '2Y', '3Y', '5Y'];
@@ -165,6 +171,10 @@ export default function Home() {
 
   // ── Profile-Driven Sidebar Content ────────────────────────────────
   const renderSidebarContent = () => {
+    if (sidebarTab === 'deepquant') {
+      return <DeepQuantPanel />;
+    }
+    // Default: profile-driven
     switch (activeProfile) {
       case 'INTRADAY':
         return <OrderBook />;
@@ -177,11 +187,13 @@ export default function Home() {
     }
   };
 
+  const sidebarTitle = sidebarTab === 'deepquant' ? 'Deep Quant' : sidebarCfg.label;
+
   return (
     <div className="flex h-full flex-col bg-background">
       {/* ── Profile-Driven Terminal ────────────────────────── */}
       <div className="min-h-0 flex-1">
-        <TerminalLayout leftPanel={<WatchlistPanel />}>
+        <TerminalLayout leftPanel={<LeftPanel />}>
           <div className="flex h-full min-h-0 w-full gap-0">
             {/* ── Left: Chart + Order Execution ──────────────── */}
             <div className={`flex min-h-0 min-w-0 flex-col rounded-lg border border-border-default bg-surface panel-shadow-lg transition-all duration-300 ease-out ${sidebarOpen ? 'flex-1' : 'w-full'}`}>
@@ -275,6 +287,9 @@ export default function Home() {
                 {renderProfileContent()}
               </div>
 
+              {/* Live PNL Positions Drawer */}
+              <ActivePositions />
+
               {/* Buy/Sell Panel */}
               <div className="shrink-0 border-t border-border-default bg-surface rounded-b-lg">
                 <OrderExecutionPanel />
@@ -291,22 +306,44 @@ export default function Home() {
                 }
               `}
             >
-              {/* Sidebar Header with Collapse Toggle */}
-              <div className="flex shrink-0 items-center justify-between rounded-t-lg border border-b-0 border-border-default bg-surface px-3 py-1.5">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-text-primary tracking-wide">{sidebarCfg.label}</span>
-                  <span className={`rounded px-1.5 py-px text-[9px] font-bold uppercase tracking-widest ${sidebarCfg.badgeColor}`}>
-                    {sidebarCfg.badge}
-                  </span>
+              {/* Sidebar Header with Tab Switcher */}
+              <div className="flex shrink-0 flex-col rounded-t-lg border border-b-0 border-border-default bg-surface">
+                <div className="flex items-center justify-between px-3 py-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-text-primary tracking-wide">{sidebarTitle}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSidebarOpen(false)}
+                    className="rounded p-1 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
+                    title="Collapse sidebar"
+                  >
+                    <PanelRightClose size={14} />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setSidebarOpen(false)}
-                  className="rounded p-1 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
-                  title="Collapse sidebar"
-                >
-                  <PanelRightClose size={14} />
-                </button>
+
+                {/* Tab row */}
+                <div className="flex gap-0.5 px-2 pb-1">
+                  {[
+                    { key: 'profile' as SidebarTab, label: sidebarCfg.badge },
+                    { key: 'deepquant' as SidebarTab, label: 'AI QUANT' },
+                  ].map(({ key, label }) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setSidebarTab(key)}
+                      className={`flex-1 rounded-md px-1.5 py-1 text-[9px] font-bold uppercase tracking-wider transition-all duration-200 ${
+                        sidebarTab === key
+                          ? key === 'deepquant'
+                            ? 'bg-gradient-to-r from-blue-500/15 to-violet-500/15 text-blue-400 border border-blue-500/30'
+                            : 'bg-elevated text-text-primary border border-border-default'
+                          : 'text-text-muted hover:text-text-secondary hover:bg-elevated/50 border border-transparent'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Sidebar Content */}
