@@ -49,7 +49,7 @@
 ## Tech Stack
 
 - **Ingestion & Math/Aggregator**: Rust (tokio, rdkafka) - Low latency and high performance
-- **Sentiment Agent**: Node.js - Seamless interaction with Anthropic/Marketaux APIs
+- **Sentiment Agent**: Node.js - Seamless interaction with HuggingFace/NewsData APIs
 - **Frontend**: Next.js - Real-time WebSocket streaming and responsive UI
 
 ## Data Flow: Zerodha → Frontend

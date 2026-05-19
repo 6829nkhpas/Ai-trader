@@ -17,11 +17,11 @@
 //
 // Configuration (env vars):
 //   NEWSDATA_API_KEY           — NewsData.io API key         (required)
-//   ANTHROPIC_API_KEY          — Anthropic Claude API key    (required)
+//   HF_API_KEY                 — HuggingFace API token       (required for scoring)
 //   KAFKA_BROKER_URL           — Kafka broker                (default: localhost:9092)
 //   REDIS_URL                  — Redis connection string     (default: redis://localhost:6379)
-//   SENTIMENT_SYMBOLS          — comma-separated ticker list (default: TATA,RELIANCE)
-//   SENTIMENT_POLL_INTERVAL_MS — poll cadence in ms         (default: 60000)
+//   SENTIMENT_SYMBOLS          — comma-separated ticker list (default: RELIANCE)
+//   SENTIMENT_POLL_INTERVAL_MS — poll cadence in ms         (default: 600000)
 //
 // Graceful shutdown:
 //   SIGINT → disconnectProducer() + redis.quit() + process.exit(0)

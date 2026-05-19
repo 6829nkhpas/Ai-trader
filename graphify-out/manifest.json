@@ -48,24 +48,24 @@
     "hash": "41d41081609c0ba9ecbf93355a1aa423"
   },
   "D:\\projects\\Ai-trader\\agents\\sentiment\\src\\analyzer.js": {
-    "mtime": 1776894093.692682,
-    "hash": "b60991ff60999cad5a8935abe069872c"
+    "mtime": 1779204532.7697177,
+    "hash": "2f8d9b747f4f49618d0daafe877581cf"
   },
   "D:\\projects\\Ai-trader\\agents\\sentiment\\src\\cache.js": {
     "mtime": 1776894058.6775098,
     "hash": "e147ac41c372bbe6d456149f1214a6ae"
   },
   "D:\\projects\\Ai-trader\\agents\\sentiment\\src\\claude.js": {
-    "mtime": 1776893728.7343707,
-    "hash": "6aad425e66e0ca3ef93fd7c8452483e2"
+    "mtime": 1779204512.2837286,
+    "hash": "a3cd75f75807da3ab04cccbf36727977"
   },
   "D:\\projects\\Ai-trader\\agents\\sentiment\\src\\fetcher.js": {
     "mtime": 1778410412.8063433,
     "hash": "59a26643c5f4e0ac6e9d2cb6fcd1c09b"
   },
   "D:\\projects\\Ai-trader\\agents\\sentiment\\src\\index.js": {
-    "mtime": 1778410811.042074,
-    "hash": "627d3c8f1a481727878c296bef430f18"
+    "mtime": 1779204646.3246243,
+    "hash": "52c48cf9b38e35945cb1c3d2e6ce8e94"
   },
   "D:\\projects\\Ai-trader\\agents\\sentiment\\src\\kafkaProducer.js": {
     "mtime": 1776895237.4014194,
