@@ -14,6 +14,7 @@
 //      now uses the `fetch_questdb` IPC command that proxies through Rust.
 
 import { useState, useEffect, useCallback } from 'react';
+import { useTradeStore, type OhlcCandle } from '../store/useTradeStore';
 
 export interface HistoricalCandle {
   /** Seconds since Unix epoch (lightweight-charts format) */
@@ -350,6 +351,26 @@ export function useHistoricalData(
   const fetchData = useCallback(async () => {
     if (!symbol) return;
 
+    // ── Cache-first: return instantly if we already have this symbol+interval ──
+    // Key includes kiteInterval so switching timeframes doesn't serve stale
+    // data from a different resolution (e.g. daily candles for a 10m chart).
+    const cacheKey = `${symbol.toUpperCase()}::${kiteInterval}`;
+    const cached = useTradeStore.getState().historicalCache[cacheKey];
+    if (cached && cached.length > 0) {
+      const asHistorical: HistoricalCandle[] = cached.map((c) => ({
+        time: Math.floor(c.start_timestamp_ms / 1000),
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        volume: c.volume,
+      }));
+      console.log(`[Historical] ${symbol}: ${asHistorical.length} candles served from cache (interval=${kiteInterval})`);
+      setCandles(asHistorical);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setError(null);
     // Clear stale candles immediately so the old symbol's data doesn't
@@ -384,6 +405,15 @@ export function useHistoricalData(
             );
             if (parsed.length > 0) {
               setCandles(parsed);
+              // Populate cache for instant re-visits
+              // bincode timestamps are in microseconds → convert to milliseconds
+              const cacheKey = `${symbol.toUpperCase()}::${kiteInterval}`;
+              const asOhlc: OhlcCandle[] = parsed.map((c) => ({
+                symbol: symbol.toUpperCase(),
+                start_timestamp_ms: c.time * 1000, // seconds → milliseconds
+                open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
+              }));
+              useTradeStore.getState().setHistoricalCache(cacheKey, asOhlc);
               return; // Success — done
             }
             // IPC returned 0 candles — fall through to HTTP proxy
@@ -406,12 +436,30 @@ export function useHistoricalData(
         const parsed = await fetchViaIpcProxy(tauri, symbol);
         if (parsed.length > 0) {
           setCandles(parsed);
+          // Populate cache
+          const cacheKey = `${symbol.toUpperCase()}::${kiteInterval}`;
+          const asOhlc: OhlcCandle[] = parsed.map((c) => ({
+            symbol: symbol.toUpperCase(),
+            start_timestamp_ms: c.time * 1000, // seconds → ms
+            open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
+          }));
+          useTradeStore.getState().setHistoricalCache(cacheKey, asOhlc);
           return;
         }
 
         // Step 2c: Final fallback — fetch from Kite Historical API directly.
         // This handles symbols that were never ingested into QuestDB.
         const kiteCandles = await fetchFromKiteHistorical(symbol, rangeDays, kiteInterval);
+        if (kiteCandles.length > 0) {
+          // Populate cache
+          const cacheKey = `${symbol.toUpperCase()}::${kiteInterval}`;
+          const asOhlc: OhlcCandle[] = kiteCandles.map((c) => ({
+            symbol: symbol.toUpperCase(),
+            start_timestamp_ms: c.time * 1000, // seconds → ms
+            open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
+          }));
+          useTradeStore.getState().setHistoricalCache(cacheKey, asOhlc);
+        }
         setCandles(kiteCandles);
         return;
       }
@@ -424,6 +472,17 @@ export function useHistoricalData(
       // Historical API which can serve candles for any NSE instrument.
       if (parsed.length === 0) {
         parsed = await fetchFromKiteHistorical(symbol, rangeDays, kiteInterval);
+      }
+
+      // Populate cache for instant re-visits
+      if (parsed.length > 0) {
+        const cacheKey = `${symbol.toUpperCase()}::${kiteInterval}`;
+        const asOhlc: OhlcCandle[] = parsed.map((c) => ({
+          symbol: symbol.toUpperCase(),
+          start_timestamp_ms: c.time * 1000, // seconds → ms
+          open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
+        }));
+        useTradeStore.getState().setHistoricalCache(cacheKey, asOhlc);
       }
 
       setCandles(parsed);

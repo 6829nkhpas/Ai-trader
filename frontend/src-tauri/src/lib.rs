@@ -127,6 +127,13 @@ pub fn run() {
           }
       }
 
+      // ── Quant Radar: Live Market Scanner ──────────────────────────
+      // Spawns an async background worker that continuously evaluates
+      // ConsensusEngine across 50 F&O symbols and emits `radar-alert`
+      // events when institutional strategies fire.  Runs on a dedicated
+      // tokio task — never blocks the UI thread.
+      quant::radar::spawn_radar_worker(app.handle().clone());
+
       if is_test_env {
           // ══════════════════════════════════════════════════════════════
           // TEST MODE: Bypass all live API connections.

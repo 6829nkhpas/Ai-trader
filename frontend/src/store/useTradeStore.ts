@@ -99,6 +99,9 @@ interface TradeStore {
   /** Explicitly selected symbol from the watchlist. Takes priority over the
    *  AI decision symbol when set. Defaults to 'RELIANCE'. */
   selectedSymbol: string;
+  /** In-memory cache of historical candles keyed by symbol.
+   *  Prevents redundant backend fetches when switching between symbols. */
+  historicalCache: Record<string, OhlcCandle[]>;
   setActiveProfile: (profile: TradeProfile) => void;
   setActiveTimeframe: (tf: ChartTimeframe) => void;
   setActiveRange: (range: DataRange) => void;
@@ -106,6 +109,14 @@ interface TradeStore {
   addSystemLog: (level: SystemLog['level'], message: string) => void;
   /** Set the active chart symbol from the watchlist or search. */
   setSelectedSymbol: (symbol: string) => void;
+  /** Clear all live OHLC candles (used when switching symbols). */
+  clearLiveBuffer: () => void;
+  /** Cache historical candles for a symbol. */
+  setHistoricalCache: (symbol: string, candles: OhlcCandle[]) => void;
+  /** Retrieve cached historical candles (returns undefined if not cached). */
+  getHistoricalCache: (symbol: string) => OhlcCandle[] | undefined;
+  /** Invalidate one or all cached symbol entries. */
+  clearHistoricalCache: (symbol?: string) => void;
   connectWebSocket: () => void;
   connectAlphaWebSocket: (url: string) => void;
   connectPredictiveWebSocket: (url: string) => void;
@@ -179,6 +190,7 @@ export const useTradeStore = create<TradeStore>((set) => {
     activeRange: '1Y' as DataRange,
     systemLogs: [],
     selectedSymbol: 'RELIANCE',
+    historicalCache: {},
 
     setActiveProfile: (profile: TradeProfile) => {
       set({ activeProfile: profile });
@@ -204,6 +216,32 @@ export const useTradeStore = create<TradeStore>((set) => {
 
     setSelectedSymbol: (symbol: string) => {
       set({ selectedSymbol: symbol.toUpperCase() });
+    },
+
+    clearLiveBuffer: () => {
+      set({ ohlcCandles: [], predictiveSignals: [] });
+    },
+
+    setHistoricalCache: (symbol: string, candles: OhlcCandle[]) => {
+      set((state) => ({
+        historicalCache: { ...state.historicalCache, [symbol.toUpperCase()]: candles },
+      }));
+    },
+
+    getHistoricalCache: (symbol: string): OhlcCandle[] | undefined => {
+      return useTradeStore.getState().historicalCache[symbol.toUpperCase()];
+    },
+
+    clearHistoricalCache: (symbol?: string) => {
+      if (symbol) {
+        set((state) => {
+          const copy = { ...state.historicalCache };
+          delete copy[symbol.toUpperCase()];
+          return { historicalCache: copy };
+        });
+      } else {
+        set({ historicalCache: {} });
+      }
     },
 
     connectAlphaWebSocket: (url: string) => {

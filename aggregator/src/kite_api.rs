@@ -93,6 +93,9 @@ pub struct KiteApiState {
     access_token: String,
     http_client: reqwest::Client,
     cache: RwLock<InstrumentCache>,
+    /// Prevents thundering herd: only one task can fetch instruments at a time.
+    /// Others wait for the first to finish and then read from cache.
+    fetch_lock: tokio::sync::Mutex<()>,
 }
 
 const CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60); // 24 hours
@@ -120,6 +123,7 @@ impl KiteApiState {
                 fetched_at: None,
                 exchange: String::new(),
             }),
+            fetch_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -128,8 +132,10 @@ impl KiteApiState {
     }
 
     /// Fetch instruments from Kite and cache them. Returns cached data if fresh.
+    /// Uses a fetch lock to prevent thundering herd — only one concurrent
+    /// download is allowed; other callers wait and read from the populated cache.
     async fn get_instruments(&self, exchange: &str) -> Result<Vec<Instrument>, String> {
-        // Check cache under read lock first
+        // Check cache under read lock first (fast path)
         {
             let cache = self.cache.read().await;
             if cache.exchange == exchange {
@@ -141,39 +147,97 @@ impl KiteApiState {
             }
         }
 
-        // Cache miss — fetch from Kite
+        // Acquire the fetch lock — only ONE task downloads at a time.
+        // Others will block here and then re-check the cache above.
+        let _guard = self.fetch_lock.lock().await;
+
+        // Double-check cache after acquiring lock (another task may have filled it)
+        {
+            let cache = self.cache.read().await;
+            if cache.exchange == exchange {
+                if let Some(fetched_at) = cache.fetched_at {
+                    if fetched_at.elapsed() < CACHE_TTL && !cache.instruments.is_empty() {
+                        return Ok(cache.instruments.clone());
+                    }
+                }
+            }
+        }
+
+        // Cache miss — fetch from Kite with retry-on-429
         log::info!("[Kite API] Fetching instruments for exchange: {}", exchange);
 
         let url = format!("https://api.kite.trade/instruments/{}", exchange);
-        let response = self.http_client
-            .get(&url)
-            .header("X-Kite-Version", "3")
-            .header("Authorization", self.auth_header())
-            .send()
-            .await
-            .map_err(|e| format!("Kite HTTP request failed: {}", e))?;
+        let mut last_err = String::new();
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(format!("Kite API returned {}: {}", status, body));
+        for attempt in 0..3 {
+            if attempt > 0 {
+                let backoff = Duration::from_millis(1000 * (1 << attempt)); // 2s, 4s
+                log::warn!("[Kite API] Retry #{} after {:?} backoff", attempt, backoff);
+                tokio::time::sleep(backoff).await;
+            }
+
+            let response = match self.http_client
+                .get(&url)
+                .header("X-Kite-Version", "3")
+                .header("Authorization", self.auth_header())
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    last_err = format!("Kite HTTP request failed: {}", e);
+                    continue;
+                }
+            };
+
+            if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                last_err = "Kite API rate limited (429)".to_string();
+                log::warn!("[Kite API] 429 Too Many Requests — will retry");
+                continue;
+            }
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                last_err = format!("Kite API returned {}: {}", status, body);
+                continue;
+            }
+
+            let csv_text = match response.text().await {
+                Ok(t) => t,
+                Err(e) => {
+                    last_err = format!("Failed to read response body: {}", e);
+                    continue;
+                }
+            };
+
+            let instruments = parse_instruments_csv(&csv_text);
+            log::info!("[Kite API] Cached {} instruments for {}", instruments.len(), exchange);
+
+            // Update cache under write lock
+            {
+                let mut cache = self.cache.write().await;
+                cache.instruments = instruments.clone();
+                cache.fetched_at = Some(Instant::now());
+                cache.exchange = exchange.to_string();
+            }
+
+            return Ok(instruments);
         }
 
-        let csv_text = response.text().await
-            .map_err(|e| format!("Failed to read response body: {}", e))?;
-
-        let instruments = parse_instruments_csv(&csv_text);
-        log::info!("[Kite API] Cached {} instruments for {}", instruments.len(), exchange);
-
-        // Update cache under write lock
+        // All retries failed — try to serve stale cache as fallback
         {
-            let mut cache = self.cache.write().await;
-            cache.instruments = instruments.clone();
-            cache.fetched_at = Some(Instant::now());
-            cache.exchange = exchange.to_string();
+            let cache = self.cache.read().await;
+            if !cache.instruments.is_empty() && cache.exchange == exchange {
+                log::warn!(
+                    "[Kite API] All retries failed, serving stale cache ({} instruments)",
+                    cache.instruments.len()
+                );
+                return Ok(cache.instruments.clone());
+            }
         }
 
-        Ok(instruments)
+        Err(last_err)
     }
 }
 

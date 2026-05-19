@@ -100,6 +100,7 @@ import {
 import { useTradeStore, TradeProfile } from '../../store/useTradeStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
 import { ToolMenu, type ToolMenuEntry } from '../chart/ToolMenu';
+import QuantRadar from '../quant/QuantRadar';
 
 const PROFILES: { key: TradeProfile; label: string; shortcut: string }[] = [
   { key: 'INTRADAY', label: 'Intraday', shortcut: 'Scalp' },
@@ -481,6 +482,9 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
         </main>
 
       </div>
+
+      {/* ── Quant Radar Overlay ──────────────────────────────────── */}
+      <QuantRadar />
     </div>
   );
 }

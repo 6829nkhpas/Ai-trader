@@ -17,6 +17,7 @@ import { useDrawingInteraction } from '../hooks/useDrawingInteraction';
 import { DrawingOverlays } from './chart/DrawingOverlays';
 import { useDrawingRenderer } from '../hooks/useDrawingRenderer';
 import { useFibZoneOverlay } from '../hooks/useFibZoneOverlay';
+import { useTauriLiveData } from '../hooks/useTauriLiveData';
 
 export default function AlphaPredictiveChart({
   activeProfile = 'INTRADAY',
@@ -44,6 +45,21 @@ export default function AlphaPredictiveChart({
     const d = activeDecision ?? liveDecisions[liveDecisions.length - 1];
     return d?.symbol ?? 'RELIANCE';
   }, [selectedSymbol, activeDecision, liveDecisions]);
+
+  // ── Dynamic Live Data Binding ─────────────────────────────────────────
+  // Subscribes Tauri IPC event listeners to the current activeSymbol.
+  // When the symbol changes, old live buffers are flushed and listeners
+  // re-bound so the chart immediately switches to the new instrument.
+  useTauriLiveData(activeSymbol);
+
+  // ── Clear live buffer on symbol change (WebSocket path) ───────────────
+  const previousSymbolRef = useRef<string>(activeSymbol);
+  useEffect(() => {
+    if (previousSymbolRef.current !== activeSymbol) {
+      useTradeStore.getState().clearLiveBuffer();
+      previousSymbolRef.current = activeSymbol;
+    }
+  }, [activeSymbol]);
 
   // ── Historical Data ──────────────────────────────────────────────────
   const effectiveTimeframe = (activeTimeframe as Timeframe) ?? timeframe;
@@ -75,15 +91,18 @@ export default function AlphaPredictiveChart({
 
     // Debug: trace data sources to diagnose chart distortion
     if (merged.length > 0) {
-      const histPrices = histAsOhlc.map((c) => c.close);
-      const livePrices = liveForSymbol.map((c) => c.close);
-      const mergedPrices = merged.map((c) => c.close);
+      const range = (arr: OhlcCandle[]) => {
+        if (arr.length === 0) return 'empty';
+        const prices = arr.map((c) => c.close);
+        return `${Math.min(...prices).toFixed(1)}-${Math.max(...prices).toFixed(1)}`;
+      };
       console.log(
-        `[Chart Merge] ${activeSymbol} | hist=${histAsOhlc.length} [${Math.min(...histPrices).toFixed(1)}-${Math.max(...histPrices).toFixed(1)}]` +
-        ` | live=${liveForSymbol.length}${livePrices.length ? ` [${Math.min(...livePrices).toFixed(1)}-${Math.max(...livePrices).toFixed(1)}]` : ''}` +
-        ` | merged=${merged.length} [${Math.min(...mergedPrices).toFixed(1)}-${Math.max(...mergedPrices).toFixed(1)}]` +
-        ` | tf=${effectiveTimeframe} interval=${kiteInterval}`
+        `[Chart] ${activeSymbol} | hist=${histAsOhlc.length} [${range(histAsOhlc)}]` +
+        ` | live=${liveForSymbol.length} [${range(liveForSymbol)}]` +
+        ` | merged=${merged.length} | tf=${effectiveTimeframe}`
       );
+    } else if (histAsOhlc.length === 0) {
+      console.warn(`[Chart] ${activeSymbol}: No historical or live data available (interval=${kiteInterval})`);
     }
 
     return merged;

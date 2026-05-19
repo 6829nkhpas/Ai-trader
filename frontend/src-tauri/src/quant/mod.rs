@@ -5,6 +5,7 @@
 
 pub mod patterns;
 pub mod strategies;
+pub mod radar;
 
 use patterns::{Candle, PatternEngine};
 use strategies::{IndicatorSnapshot, StrategyEngine};

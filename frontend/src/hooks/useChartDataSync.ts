@@ -95,6 +95,18 @@ export function useChartDataSync(
   }, [chartData, volumeData, ema9Data, ema21Data, effectiveTimeframe, activeSymbol, candleSeriesRef, volumeSeriesRef, ema9SeriesRef, ema21SeriesRef, chartRef]);
 
   // ── Ghost Line (predictive forward projection) ──────────────────────
+  //
+  // Two paths:
+  //   1. If the backend Predictive Agent has published a signal for this
+  //      symbol, project a straight line from the current close to the
+  //      predicted close.
+  //   2. Fallback: compute a zero-based-index OLS regression over the last
+  //      8 EMA-9 values and project the slope forward.
+  //
+  // CRITICAL: all X-axis values use zero-based indices (0, 1, 2, …), NOT
+  // raw Unix timestamps.  Using timestamps causes float overflow in the
+  // OLS accumulators, producing NaN/Infinity slopes → ghost line dives
+  // off-screen.
   const GHOST_CANDLES = 5;
 
   useEffect(() => {
@@ -102,7 +114,15 @@ export function useChartDataSync(
 
     const lastCandle = chartData[chartData.length - 1];
     const intervalSec = Math.floor((TIMEFRAME_MS[effectiveTimeframe] ?? TIMEFRAME_MS['10m']) / 1000);
+    const currentPrice = lastCandle.close;
 
+    // Guard: current price must be a valid positive number
+    if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+      ghostLineRef.current.setData([]);
+      return;
+    }
+
+    // ── Path 1: Backend Predictive Signal ────────────────────────────
     if (predictiveSignals.length > 0) {
       const symbolSignals = activeSymbol
         ? predictiveSignals.filter((s) => s.symbol.toUpperCase() === activeSymbol.toUpperCase())
@@ -112,18 +132,26 @@ export function useChartDataSync(
 
       if (latest) {
         const targetTimeSec = Math.floor(latest.target_timestamp_ms / 1000);
+        const predictedPrice = latest.predicted_close_price;
         const minValidTime = lastCandle.time - intervalSec * 10;
-        if (targetTimeSec > minValidTime) {
+
+        // Sanity checks:
+        //   1. Target timestamp must be reasonably close to the current candle
+        //   2. Predicted price must be finite and positive
+        //   3. Predicted price must not deviate more than 20% from current
+        //      (a >20% move in one projection window is almost certainly bad data)
+        const priceDeviation = Math.abs(predictedPrice - currentPrice) / currentPrice;
+        const priceIsValid = Number.isFinite(predictedPrice) && predictedPrice > 0 && priceDeviation < 0.20;
+
+        if (targetTimeSec > minValidTime && priceIsValid) {
           const endTime = Math.max(targetTimeSec, lastCandle.time + intervalSec * GHOST_CANDLES);
-          const startPrice = lastCandle.close;
-          const endPrice = latest.predicted_close_price;
-          const slope = (endPrice - startPrice) / GHOST_CANDLES;
+          const slope = (predictedPrice - currentPrice) / GHOST_CANDLES;
 
           const points = Array.from({ length: GHOST_CANDLES + 1 }, (_, i) => ({
             time: (lastCandle.time + i * intervalSec) as Time,
-            value: +(startPrice + slope * i).toFixed(2),
+            value: +(currentPrice + slope * i).toFixed(2),
           }));
-          points[points.length - 1] = { time: endTime as Time, value: +(endPrice).toFixed(2) };
+          points[points.length - 1] = { time: endTime as Time, value: +(predictedPrice).toFixed(2) };
 
           ghostLineRef.current.setData(points);
           return;
@@ -131,28 +159,53 @@ export function useChartDataSync(
       }
     }
 
-    // ── Fallback: EMA-9 linear regression slope ─────────
+    // ── Path 2: EMA-9 OLS Linear Regression (zero-based index) ──────
+    //
+    // X values are 0, 1, 2, … (NOT timestamps).
+    // This prevents the float overflow that caused the ghost line to
+    // compute massive negative slopes and point straight down.
     if (ema9Data.length >= 8) {
       const window = ema9Data.slice(-8);
       const n = window.length;
 
+      // Zero-based index regression using deviation-from-mean form
+      // (numerically stable for small n)
       const xMean = (n - 1) / 2;
       const yMean = window.reduce((s, p) => s + p.value, 0) / n;
+
       let num = 0;
       let den = 0;
       for (let i = 0; i < n; i++) {
-        num += (i - xMean) * (window[i].value - yMean);
-        den += (i - xMean) ** 2;
+        const xDev = i - xMean;
+        const yDev = window[i].value - yMean;
+        num += xDev * yDev;
+        den += xDev * xDev;
       }
+
       const slope = den !== 0 ? num / den : 0;
+
+      // Guard: slope must be finite and not produce an absurd projection
+      if (!Number.isFinite(slope)) {
+        ghostLineRef.current.setData([]);
+        return;
+      }
+
+      // Clamp total move to ±5% of current price to prevent visual noise
+      const maxMove = currentPrice * 0.05;
+      const projectedEnd = currentPrice + slope * GHOST_CANDLES;
+      const clampedEnd = Math.max(
+        currentPrice - maxMove,
+        Math.min(currentPrice + maxMove, projectedEnd)
+      );
+      const clampedSlope = (clampedEnd - currentPrice) / GHOST_CANDLES;
 
       const points = Array.from({ length: GHOST_CANDLES + 1 }, (_, i) => ({
         time: (lastCandle.time + i * intervalSec) as Time,
-        value: +(lastCandle.close + slope * i).toFixed(2),
+        value: +(currentPrice + clampedSlope * i).toFixed(2),
       }));
 
-      const totalMove = Math.abs(points[GHOST_CANDLES].value - lastCandle.close);
-      if (totalMove / lastCandle.close >= 0.00005) {
+      const totalMove = Math.abs(points[GHOST_CANDLES].value - currentPrice);
+      if (totalMove / currentPrice >= 0.00005) {
         ghostLineRef.current.setData(points);
         return;
       }

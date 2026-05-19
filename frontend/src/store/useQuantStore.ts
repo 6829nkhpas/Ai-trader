@@ -79,10 +79,12 @@ interface QuantStore {
   activeSentiment: SentimentPayload | null;
   isFetchingSentiment: boolean;
   sentimentError: string | null;
+  sentimentCache: Record<string, SentimentPayload>;
 
   setConsensusData: (data: ConsensusReport) => void;
   fetchDeepAnalysis: (symbol: string) => Promise<void>;
   loadSentimentForSymbol: (symbol: string) => Promise<void>;
+  refreshSentimentForSymbol: (symbol: string) => Promise<void>;
   clearAiPlan: () => void;
   openPosition: (symbol: string, plan: AiExecutionPlan) => void;
   closePosition: (id: string, exitPrice: number) => void;
@@ -139,11 +141,20 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
   activeSentiment: null,
   isFetchingSentiment: false,
   sentimentError: null,
+  sentimentCache: {},
 
   setConsensusData: (data: ConsensusReport) => set({ consensusData: data }),
 
+  // Cache-aware: serves cached data on symbol click, skips network if already fetched
   loadSentimentForSymbol: async (symbol: string) => {
-    console.log(`[QuantStore] ▶ Sentiment fetch START symbol=${symbol}`);
+    const cached = get().sentimentCache[symbol];
+    if (cached) {
+      console.log(`[QuantStore] ✔ Sentiment CACHE HIT symbol=${symbol} score=${cached.score}`);
+      set({ activeSentiment: cached, isFetchingSentiment: false, sentimentError: null });
+      return;
+    }
+
+    console.log(`[QuantStore] ▶ Sentiment fetch (first load) symbol=${symbol}`);
     set({ isFetchingSentiment: true, sentimentError: null });
 
     try {
@@ -152,10 +163,37 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
         { symbol }
       );
       console.log(`[QuantStore] ✔ Sentiment OK symbol=${symbol} score=${payload.score} label=${payload.label}`);
-      set({ activeSentiment: payload, isFetchingSentiment: false });
+      set((state) => ({
+        activeSentiment: payload,
+        isFetchingSentiment: false,
+        sentimentCache: { ...state.sentimentCache, [symbol]: payload },
+      }));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[QuantStore] ✘ Sentiment FAIL symbol=${symbol}: ${message}`);
+      set({ isFetchingSentiment: false, sentimentError: message });
+    }
+  },
+
+  // Force-refresh: bypasses cache, called from AI Quant Analysis button
+  refreshSentimentForSymbol: async (symbol: string) => {
+    console.log(`[QuantStore] ▶ Sentiment REFRESH (force) symbol=${symbol}`);
+    set({ isFetchingSentiment: true, sentimentError: null });
+
+    try {
+      const payload = await tauriInvoke<SentimentPayload>(
+        'fetch_symbol_sentiment',
+        { symbol }
+      );
+      console.log(`[QuantStore] ✔ Sentiment REFRESHED symbol=${symbol} score=${payload.score}`);
+      set((state) => ({
+        activeSentiment: payload,
+        isFetchingSentiment: false,
+        sentimentCache: { ...state.sentimentCache, [symbol]: payload },
+      }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[QuantStore] ✘ Sentiment refresh FAIL symbol=${symbol}: ${message}`);
       set({ isFetchingSentiment: false, sentimentError: message });
     }
   },
@@ -164,6 +202,13 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     console.log(`[QuantStore] ▶ Deep analysis START symbol=${symbol} ts=${new Date().toISOString()}`);
     set({ isAnalyzing: true, analysisError: null, aiPlan: null });
+
+    // Force-refresh sentiment with latest news before LLM analysis
+    try {
+      await get().refreshSentimentForSymbol(symbol);
+    } catch {
+      console.warn('[QuantStore] Sentiment refresh failed, continuing with analysis...');
+    }
 
     try {
       console.log(`[QuantStore] → invoking 'run_deep_quant_analysis' (Tauri IPC)…`);
