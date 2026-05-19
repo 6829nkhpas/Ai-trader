@@ -46,6 +46,8 @@ export function useTauriLiveData(activeSymbol: string) {
     (async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
+        // ── DIAGNOSTIC TRACER — UI → RUST live subscribe dispatch ──
+        console.log("🔥 [UI DISPATCH] Subscribing Live - Symbol:", activeSymbol);
         await invoke('subscribe_ticker', { symbol: activeSymbol });
       } catch {
         // Not fatal — production WS bridge is symbol-agnostic.

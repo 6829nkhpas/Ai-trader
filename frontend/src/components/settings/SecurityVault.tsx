@@ -109,6 +109,11 @@ let vaultInstance: import('@tauri-apps/plugin-stronghold').Stronghold | null = n
 let vaultLoadPromise: Promise<void> | null = null;
 
 async function getOrLoadVault(): Promise<import('@tauri-apps/plugin-stronghold').Stronghold | null> {
+  // Hard guard: never attempt to evaluate the Tauri plugin during SSR or in
+  // any non-browser environment. The dynamic imports below are only safe
+  // inside the Tauri WebView (or any browser context), never on the server.
+  if (typeof window === 'undefined') return null;
+
   if (vaultInstance) return vaultInstance;
   if (vaultLoadPromise) {
     await vaultLoadPromise;

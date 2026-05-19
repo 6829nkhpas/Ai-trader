@@ -221,6 +221,14 @@ pub async fn run(
         let subscribe_msg = json!({ "a": "subscribe", "v": token_vals }).to_string();
         let mode_msg = json!({ "a": "mode", "v": ["full", token_vals] }).to_string();
 
+        // ── DIAGNOSTIC TRACER — Kite WS subscribe payload (kite_ws.rs path) ──
+        println!(
+            "⚡ [KITE WEBSOCKET kite_ws.rs] Sending Subscription Payload: {:?}",
+            token_vals
+        );
+        println!("⚡ [KITE WEBSOCKET kite_ws.rs] subscribe_msg = {}", subscribe_msg);
+        println!("⚡ [KITE WEBSOCKET kite_ws.rs] mode_msg      = {}", mode_msg);
+
         if let Err(e) = write.send(Message::Text(subscribe_msg)).await {
             error!("Failed to send subscribe message: {}", e);
             continue;

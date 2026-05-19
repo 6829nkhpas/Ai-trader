@@ -70,6 +70,45 @@ export function useChartDataSync(
     const newCandleArrived = chartData.length !== prevCount;
 
     if (timeframeChanged || symbolChanged || newCandleArrived) {
+      // ── DIAGNOSTIC TRACER — Final Mile (chartData → setData boundary) ──
+      // This is the very last gate before lightweight-charts. If Rust and
+      // React Parse logs both look healthy but THIS shows an integrity
+      // failure or zero items, the breakage is in the aggregation /
+      // merge layer (mergedCandles → aggregateCandles → chartData).
+      console.log(
+        `🎨 [CHART RENDER] Calling setData with ${chartData.length} items ` +
+        `(symbol=${activeSymbol}, tf=${effectiveTimeframe}).`
+      );
+      if (chartData.length > 0) {
+        const isValid = chartData.every(
+          (c) =>
+            c.time !== undefined &&
+            c.time !== null &&
+            !Number.isNaN(c.open) &&
+            !Number.isNaN(c.high) &&
+            !Number.isNaN(c.low) &&
+            !Number.isNaN(c.close)
+        );
+        console.log(`🎨 [CHART RENDER] Data Integrity Check Passed? : ${isValid}`);
+        console.log("🎨 [CHART RENDER] Sample First:", JSON.stringify(chartData[0]));
+        console.log(
+          "🎨 [CHART RENDER] Sample Last :",
+          JSON.stringify(chartData[chartData.length - 1])
+        );
+        if (!isValid) {
+          const bad = chartData.find(
+            (c) =>
+              c.time === undefined ||
+              c.time === null ||
+              Number.isNaN(c.open) ||
+              Number.isNaN(c.high) ||
+              Number.isNaN(c.low) ||
+              Number.isNaN(c.close)
+          );
+          console.error("🎨 [CHART RENDER ERROR] Malformed candle detected!", bad);
+        }
+      }
+
       candleSeriesRef.current.setData(
         chartData as Array<{ time: Time; open: number; high: number; low: number; close: number }>
       );
@@ -123,17 +162,32 @@ export function useChartDataSync(
   //   1. If the backend Predictive Agent has published a signal for this
   //      symbol, project a straight line from the current close to the
   //      predicted close.
-  //   2. Fallback: compute a zero-based-index OLS regression over the last
-  //      8 EMA-9 values and project the slope forward.
+  //   2. Fallback: compute an OLS linear regression directly over the
+  //      displayed merged candles (`chartData`), using the **array index**
+  //      as the X-axis. Project the slope forward `GHOST_CANDLES` bars.
   //
   // CRITICAL: all X-axis values use zero-based indices (0, 1, 2, …), NOT
-  // raw Unix timestamps.  Using timestamps causes float overflow in the
-  // OLS accumulators, producing NaN/Infinity slopes → ghost line dives
-  // off-screen.
+  // raw Unix timestamps.  Using timestamps overflows the OLS accumulators
+  // (n * sumXY and n * sumXX hit ~1e30+) producing NaN/Infinity slopes →
+  // ghost line dives off-screen.
+  //
+  // Reactivity:
+  //   The effect's dep array includes `chartData`, so every new live tick
+  //   that mutates `mergedCandles → aggregateCandles → chartData` triggers
+  //   a fresh regression and `ghostLineSeries.setData(projectedData)`.
   const GHOST_CANDLES = 5;
+  // Lookback window for the OLS regression. Capped to keep the slope
+  // responsive to recent action while remaining numerically stable.
+  const REGRESSION_WINDOW = 60;
 
   useEffect(() => {
-    if (!ghostLineRef.current || chartData.length < 8) return;
+    if (!ghostLineRef.current) return;
+
+    // Need enough bars for a meaningful slope.
+    if (chartData.length < 8) {
+      ghostLineRef.current.setData([]);
+      return;
+    }
 
     const lastCandle = chartData[chartData.length - 1];
     const intervalSec = Math.floor((TIMEFRAME_MS[effectiveTimeframe] ?? TIMEFRAME_MS['10m']) / 1000);
@@ -182,60 +236,80 @@ export function useChartDataSync(
       }
     }
 
-    // ── Path 2: EMA-9 OLS Linear Regression (zero-based index) ──────
+    // ── Path 2: OLS Linear Regression on chartData (zero-based index) ─
     //
-    // X values are 0, 1, 2, … (NOT timestamps).
-    // This prevents the float overflow that caused the ghost line to
-    // compute massive negative slopes and point straight down.
-    if (ema9Data.length >= 8) {
-      const window = ema9Data.slice(-8);
-      const n = window.length;
+    // Regress over the trailing window of merged candles. X = array index,
+    // Y = candle.close. This matches the directive's normalised-axis form
+    // exactly and prevents the float overflow that occurs when X = unix ts.
+    const window = chartData.slice(-REGRESSION_WINDOW);
+    const n = window.length;
 
-      // Zero-based index regression using deviation-from-mean form
-      // (numerically stable for small n)
-      const xMean = (n - 1) / 2;
-      const yMean = window.reduce((s, p) => s + p.value, 0) / n;
-
-      let num = 0;
-      let den = 0;
-      for (let i = 0; i < n; i++) {
-        const xDev = i - xMean;
-        const yDev = window[i].value - yMean;
-        num += xDev * yDev;
-        den += xDev * xDev;
-      }
-
-      const slope = den !== 0 ? num / den : 0;
-
-      // Guard: slope must be finite and not produce an absurd projection
-      if (!Number.isFinite(slope)) {
-        ghostLineRef.current.setData([]);
-        return;
-      }
-
-      // Clamp total move to ±5% of current price to prevent visual noise
-      const maxMove = currentPrice * 0.05;
-      const projectedEnd = currentPrice + slope * GHOST_CANDLES;
-      const clampedEnd = Math.max(
-        currentPrice - maxMove,
-        Math.min(currentPrice + maxMove, projectedEnd)
-      );
-      const clampedSlope = (clampedEnd - currentPrice) / GHOST_CANDLES;
-
-      const points = Array.from({ length: GHOST_CANDLES + 1 }, (_, i) => ({
-        time: (lastCandle.time + i * intervalSec) as Time,
-        value: +(currentPrice + clampedSlope * i).toFixed(2),
-      }));
-
-      const totalMove = Math.abs(points[GHOST_CANDLES].value - currentPrice);
-      if (totalMove / currentPrice >= 0.00005) {
-        ghostLineRef.current.setData(points);
-        return;
-      }
+    let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+    for (let i = 0; i < n; i++) {
+      const x = i;            // 0, 1, 2 … NOT candle.time
+      const y = window[i].close;
+      sumX  += x;
+      sumY  += y;
+      sumXY += x * y;
+      sumXX += x * x;
     }
 
-    ghostLineRef.current.setData([]);
-  }, [predictiveSignals, activeSymbol, chartData, ema9Data, effectiveTimeframe, ghostLineRef]);
+    const denom = n * sumXX - sumX * sumX;
+    if (denom === 0) {
+      ghostLineRef.current.setData([]);
+      return;
+    }
+    const slope = (n * sumXY - sumX * sumY) / denom;
+    const intercept = (sumY - slope * sumX) / n;
+
+    // Guard: slope/intercept must be finite numbers.
+    if (!Number.isFinite(slope) || !Number.isFinite(intercept)) {
+      ghostLineRef.current.setData([]);
+      return;
+    }
+
+    // ── Project forward ─────────────────────────────────────────────────
+    // y(n + projectionIndex) = slope * (n + projectionIndex) + intercept
+    // The first ghost point overlaps the last real candle (i = n - 1) so
+    // the line visually anchors to the chart and continues outward.
+    //
+    // Map the index axis back to UNIX seconds based on the active
+    // timeframe interval so lightweight-charts can render it.
+    const rawProjection = Array.from({ length: GHOST_CANDLES + 1 }, (_, k) => {
+      const projIndex = (n - 1) + k; // anchor at the last real bar
+      const value = slope * projIndex + intercept;
+      const time = (lastCandle.time + k * intervalSec) as Time;
+      return { time, value };
+    });
+
+    // Clamp the terminal projection to ±5% of current price to keep the
+    // ghost line visible even when slope * GHOST_CANDLES would push it
+    // off-screen (a runaway trend bar can otherwise dwarf the y-axis).
+    const maxMove = currentPrice * 0.05;
+    const terminal = rawProjection[GHOST_CANDLES].value;
+    const clampedTerminal = Math.max(
+      currentPrice - maxMove,
+      Math.min(currentPrice + maxMove, terminal)
+    );
+
+    // Re-blend the projection between the real anchor (k=0) and the clamped
+    // terminal so the line is straight and never exceeds the band.
+    const anchor = rawProjection[0].value;
+    const projectedData = rawProjection.map((p, k) => {
+      const t = k / GHOST_CANDLES;
+      const blended = anchor + (clampedTerminal - anchor) * t;
+      return { time: p.time, value: +blended.toFixed(2) };
+    });
+
+    // Suppress noise: don't draw if the total move is < 0.005% of price.
+    const totalMove = Math.abs(projectedData[GHOST_CANDLES].value - currentPrice);
+    if (totalMove / currentPrice < 0.00005) {
+      ghostLineRef.current.setData([]);
+      return;
+    }
+
+    ghostLineRef.current.setData(projectedData);
+  }, [predictiveSignals, activeSymbol, chartData, effectiveTimeframe, ghostLineRef]);
 
   // ── Update time scale on timeframe change ───────────────────────────
   useEffect(() => {

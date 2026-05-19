@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import dynamic from 'next/dynamic';
 import {
   Activity,
   RefreshCcw,
@@ -105,7 +106,22 @@ import { useTradeStore, TradeProfile } from '../../store/useTradeStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
 import { ToolMenu, type ToolMenuEntry } from '../chart/ToolMenu';
 import QuantRadar from '../quant/QuantRadar';
-import SecurityVault from '../settings/SecurityVault';
+
+// SSR-disabled dynamic import: Tauri plugins (Stronghold, Path API) are only
+// available in the desktop WebView. Loading them during Next.js server render
+// triggers `Module not found: Can't resolve '@tauri-apps/plugin-stronghold'`.
+// `{ ssr: false }` ensures this component is mounted strictly on the client.
+const SecurityVault = dynamic(
+  () => import('../settings/SecurityVault'),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-32 items-center justify-center text-[10px] text-text-muted">
+        Loading vault…
+      </div>
+    ),
+  }
+);
 
 const PROFILES: { key: TradeProfile; label: string; shortcut: string }[] = [
   { key: 'INTRADAY', label: 'Intraday', shortcut: 'Scalp' },

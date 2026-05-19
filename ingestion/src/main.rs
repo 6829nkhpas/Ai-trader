@@ -148,6 +148,14 @@ async fn main() {
                 }
             }
         }
+        // ── DIAGNOSTIC TRACER — Boot-up instrument map ──
+        println!(
+            "⚙️ [BOOT] Instrument Map Loaded. Total records: {}",
+            map.len()
+        );
+        for (token, sym) in map.iter() {
+            println!("⚙️ [BOOT]   token={} → symbol={}", token, sym);
+        }
         info!(
             "Subscribing to {} instruments: {:?}",
             instrument_tokens.len(),
@@ -308,6 +316,14 @@ async fn main() {
             let subscribe_msg = serde_json::json!({ "a": "subscribe", "v": token_vals }).to_string();
             let mode_msg = serde_json::json!({ "a": "mode", "v": ["full", token_vals] }).to_string();
 
+            // ── DIAGNOSTIC TRACER — Kite WS initial bulk subscribe payload ──
+            println!(
+                "⚡ [KITE WEBSOCKET] Sending Initial Subscription Payload: {:?}",
+                token_vals
+            );
+            println!("⚡ [KITE WEBSOCKET] subscribe_msg = {}", subscribe_msg);
+            println!("⚡ [KITE WEBSOCKET] mode_msg      = {}", mode_msg);
+
             let mut writer = ws_writer.lock().await;
             if let Err(e) = writer.send(Message::Text(subscribe_msg)).await {
                 error!("Failed to send subscribe message: {}", e);
@@ -328,6 +344,14 @@ async fn main() {
                         let token_val = serde_json::json!([token]);
                         let subscribe_msg = serde_json::json!({ "a": "subscribe", "v": token_val }).to_string();
                         let mode_msg = serde_json::json!({ "a": "mode", "v": ["full", token_val] }).to_string();
+
+                        // ── DIAGNOSTIC TRACER — Kite WS dynamic subscribe payload ──
+                        println!(
+                            "⚡ [KITE WEBSOCKET] Sending Dynamic Subscription Payload: tokens=[{}] symbol={}",
+                            token, symbol
+                        );
+                        println!("⚡ [KITE WEBSOCKET] subscribe_msg = {}", subscribe_msg);
+                        println!("⚡ [KITE WEBSOCKET] mode_msg      = {}", mode_msg);
 
                         let mut writer = ws_writer_sub.lock().await;
                         let ok = writer.send(Message::Text(subscribe_msg)).await.is_ok()

@@ -69,7 +69,33 @@ pub struct RadarAlert {
 ///
 /// This function returns immediately — the scan loop runs asynchronously
 /// and emits `radar-alert` events via the Tauri AppHandle.
+///
+/// ── Lazy-loading guard ────────────────────────────────────────────────
+/// The radar is **disabled by default** (Alpha Suite V3 lazy-loading
+/// directive). It iterates 50+ F&O symbols every 60s, hitting the Kite
+/// REST proxy and the consensus engine for each — exactly the kind of
+/// pre-emptive global analysis we no longer want to run on cold start.
+///
+/// To opt in, set the env var `RADAR_ENABLED=true`. When unset (or any
+/// value other than `true` / `1`), this function logs and returns
+/// immediately, leaving zero background work behind.
 pub fn spawn_radar_worker(app_handle: tauri::AppHandle) {
+    // ── Opt-in switch ────────────────────────────────────────────────
+    let enabled = std::env::var("RADAR_ENABLED")
+        .ok()
+        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "1" | "yes" | "on"))
+        .unwrap_or(false);
+
+    if !enabled {
+        info!(
+            "[Radar] Disabled (set RADAR_ENABLED=true to opt in). \
+             Background F&O scanner will not start — analysis runs lazily \
+             per-symbol on subscribe_ticker."
+        );
+        let _ = app_handle; // explicit consume; no work to do.
+        return;
+    }
+
     // ── Read configuration from environment ──────────────────────────
     let interval_secs = std::env::var("RADAR_INTERVAL_SECS")
         .ok()

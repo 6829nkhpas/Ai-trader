@@ -357,13 +357,23 @@ export function useHistoricalData(
   const fetchData = useCallback(async () => {
     if (!symbol) return;
 
-    // BUG-1: Cache-first with effectiveTimeframe awareness.
-    // The cache key is still symbol::kiteInterval (e.g. RELIANCE::minute) so
-    // that 1m and 2m share the same raw 1-min candle data. But because
-    // effectiveTimeframe is a dep of this callback, switching 1m→2m creates
-    // a new fetchData reference — the effect fires, hits the cache, calls
-    // setCandles() with a new array, and aggregateCandles() re-runs for '2m'.
-    const cacheKey = `${symbol.toUpperCase()}::${kiteInterval}`;
+    // ── DIAGNOSTIC TRACER — UI → RUST historical fetch dispatch ──
+    // The Rust `get_historical_view` IPC now accepts a `timeframe` arg and
+    // dynamically aggregates QuestDB ticks via SAMPLE BY. We pass the live
+    // UI timeframe verbatim so the backend returns bars at the requested
+    // resolution (no client-side resampling needed for the primary path).
+    console.log(
+      "🔥 [UI DISPATCH] Fetching History - Symbol:", symbol,
+      "Timeframe:", effectiveTimeframe,
+      "(kiteInterval:", kiteInterval, ", rangeDays:", rangeDays, ")"
+    );
+
+    // ── Cache key includes the UI timeframe ─────────────────────────────
+    // Two timeframes can map to the same Kite interval (e.g. 1m & 2m both
+    // → 'minute') but the Rust backend now returns *different* SAMPLE BY
+    // aggregations per timeframe, so they must NOT share a cache slot.
+    // Including effectiveTimeframe keeps each tf's data isolated.
+    const cacheKey = `${symbol.toUpperCase()}::${effectiveTimeframe}::${kiteInterval}`;
     const cached = useTradeStore.getState().historicalCache[cacheKey];
     if (cached && cached.length > 0) {
       const asHistorical: HistoricalCandle[] = cached.map((c) => ({
@@ -374,7 +384,7 @@ export function useHistoricalData(
         close: c.close,
         volume: c.volume,
       }));
-      console.log(`[Historical] ${symbol}: ${asHistorical.length} candles from cache (interval=${kiteInterval}, tf=${effectiveTimeframe})`);
+      console.log(`[Historical] ${symbol}: ${asHistorical.length} candles from cache (tf=${effectiveTimeframe}, interval=${kiteInterval})`);
       setCandles(asHistorical);
       setLoading(false);
       return;
@@ -382,8 +392,13 @@ export function useHistoricalData(
 
     setLoading(true);
     setError(null);
-    // Clear stale candles immediately so the old symbol's data doesn't
-    // bleed into the new symbol's chart while the fetch is in-flight.
+    // ── Hard data wipe before fetching ─────────────────────────────────
+    // The merged-candle wipe at the store level (clearLiveBuffer / activeTf
+    // flush) handles live ticks. Here we wipe the hook's local historical
+    // state so the parent's useMemo recomputes mergedCandles=[] →
+    // chartData=[] → useChartDataSync calls setData([]) on every series.
+    // This prevents 1m live candles from being stitched onto a fresh 1H
+    // historical pull during the IPC roundtrip.
     setCandles([]);
 
     try {
@@ -399,24 +414,48 @@ export function useHistoricalData(
         const poolReady = await waitForPool(tauri);
 
         if (poolReady) {
-          // Step 2a: Try the primary bincode IPC path (zero-latency)
+          // Step 2a: Try the primary bincode IPC path (zero-latency).
+          // Pass the active UI timeframe so the Rust side picks the right
+          // SAMPLE BY interval (1m / 5m / 15m / 1h / 1d / 7d).
           try {
             const response = await tauri.invoke<number[] | Uint8Array>(
               'get_historical_view',
-              { symbol }
+              { symbol, timeframe: effectiveTimeframe }
             );
             const binaryBuffer =
               response instanceof Uint8Array ? response : new Uint8Array(response);
+
+            // ── DIAGNOSTIC TRACER — IPC ingestion (Rust → React) ──
+            // Verifies the raw payload landed intact across the Tauri bridge.
+            // Compare this byte count against `🛑 [RUST EXIT] Bincode payload
+            // size:` in the Rust console — they MUST match.
+            console.log(
+              `🔥 [REACT INGEST] Received Payload Size: ${binaryBuffer?.length ?? 0} bytes ` +
+              `(symbol=${symbol}, tf=${effectiveTimeframe})`
+            );
+
             const parsed = parseBincodeCandles(binaryBuffer);
 
+            // ── DIAGNOSTIC TRACER — Bincode → JS object boundary ──
+            // Verifies parseBincodeCandles produced a non-empty, well-formed
+            // array. If this prints `Parsed 0 candles` while the byte count
+            // above is non-zero, the parser's offset arithmetic is wrong.
+            console.log(`🔥 [REACT PARSE] Parsed ${parsed.length} candles.`);
+            if (parsed.length > 0) {
+              console.log("🔥 [REACT PARSE] Sample First Candle:", JSON.stringify(parsed[0]));
+              console.log(
+                "🔥 [REACT PARSE] Sample Last  Candle:",
+                JSON.stringify(parsed[parsed.length - 1])
+              );
+            }
+
             console.log(
-              `[Historical Tauri IPC] ${symbol}: ${parsed.length} candles loaded via zero-latency buffer`
+              `[Historical Tauri IPC] ${symbol} (tf=${effectiveTimeframe}): ${parsed.length} candles loaded via zero-latency buffer`
             );
             if (parsed.length > 0) {
               setCandles(parsed);
-              // Populate cache for instant re-visits
-              // bincode timestamps are in microseconds → convert to milliseconds
-              const cacheKey = `${symbol.toUpperCase()}::${kiteInterval}`;
+              // Populate cache for instant re-visits.
+              // bincode timestamps are in microseconds → convert to milliseconds.
               const asOhlc: OhlcCandle[] = parsed.map((c) => ({
                 symbol: symbol.toUpperCase(),
                 start_timestamp_ms: c.time * 1000, // seconds → milliseconds
@@ -428,7 +467,7 @@ export function useHistoricalData(
             // IPC returned 0 candles — fall through to HTTP proxy
           } catch (ipcErr) {
             console.warn(
-              `[Historical] Tauri IPC 'get_historical_view' failed for ${symbol}:`,
+              `[Historical] Tauri IPC 'get_historical_view' failed for ${symbol} (tf=${effectiveTimeframe}):`,
               ipcErr,
               '→ falling back to IPC proxy'
             );
@@ -446,7 +485,6 @@ export function useHistoricalData(
         if (parsed.length > 0) {
           setCandles(parsed);
           // Populate cache
-          const cacheKey = `${symbol.toUpperCase()}::${kiteInterval}`;
           const asOhlc: OhlcCandle[] = parsed.map((c) => ({
             symbol: symbol.toUpperCase(),
             start_timestamp_ms: c.time * 1000, // seconds → ms
@@ -461,7 +499,6 @@ export function useHistoricalData(
         const kiteCandles = await fetchFromKiteHistorical(symbol, rangeDays, kiteInterval);
         if (kiteCandles.length > 0) {
           // Populate cache
-          const cacheKey = `${symbol.toUpperCase()}::${kiteInterval}`;
           const asOhlc: OhlcCandle[] = kiteCandles.map((c) => ({
             symbol: symbol.toUpperCase(),
             start_timestamp_ms: c.time * 1000, // seconds → ms
@@ -485,7 +522,6 @@ export function useHistoricalData(
 
       // Populate cache for instant re-visits
       if (parsed.length > 0) {
-        const cacheKey = `${symbol.toUpperCase()}::${kiteInterval}`;
         const asOhlc: OhlcCandle[] = parsed.map((c) => ({
           symbol: symbol.toUpperCase(),
           start_timestamp_ms: c.time * 1000, // seconds → ms
@@ -502,6 +538,8 @@ export function useHistoricalData(
 
       // BUG-8: Cross-interval fallback with direction guard.
       // Can aggregate finer data UP (1m→5m) but CANNOT split coarser DOWN (10m→1m).
+      // Cache keys are now `${SYMBOL}::${TF}::${INTERVAL}` — split on '::'
+      // and read [2] for the Kite interval portion.
       const INTERVAL_MINUTES: Record<string, number> = {
         'minute': 1, '3minute': 3, '5minute': 5, '10minute': 10,
         '15minute': 15, '30minute': 30, '60minute': 60, 'day': 1440,
@@ -511,7 +549,8 @@ export function useHistoricalData(
       const symPrefix = `${symbol.toUpperCase()}::`;
       const fallbackEntry = Object.entries(allCache).find(([key, val]) => {
         if (!key.startsWith(symPrefix) || !val || val.length === 0) return false;
-        const fallbackInterval = key.split('::')[1] ?? '';
+        const parts = key.split('::');
+        const fallbackInterval = parts[2] ?? parts[1] ?? '';
         const fallbackMinutes = INTERVAL_MINUTES[fallbackInterval] ?? 99999;
         // Only use fallback whose resolution is FINER (smaller) than requested.
         return fallbackMinutes <= requestedMinutes;
@@ -531,9 +570,8 @@ export function useHistoricalData(
     } finally {
       setLoading(false);
     }
-  // BUG-1: effectiveTimeframe in deps forces a new fetchData when switching 1m↔2m
-  // (same kiteInterval='minute') so setCandles() is always called with a fresh array
-  // reference, enabling aggregateCandles() to recompute for the new timeframe.
+  // effectiveTimeframe in deps drives a fresh fetchData on tf switch — the
+  // backend's SAMPLE BY pipeline now returns the correct aggregation directly.
   }, [symbol, rangeDays, kiteInterval, effectiveTimeframe]);
 
   useEffect(() => {

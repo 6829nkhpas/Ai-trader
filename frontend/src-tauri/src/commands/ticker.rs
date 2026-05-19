@@ -36,13 +36,22 @@ impl ActiveSymbolState {
 /// ```
 #[tauri::command]
 pub async fn subscribe_ticker(
+    app: tauri::AppHandle,
     state: tauri::State<'_, ActiveSymbolState>,
     symbol: String,
 ) -> Result<(), String> {
+    // ── DIAGNOSTIC TRACER — Tauri command boundary (UI → Rust) ──
+    println!("🛑 [RUST RECEIVE] Live Subscribe Request - Symbol: {}", symbol);
+
     let upper = symbol.trim().to_uppercase();
     if upper.is_empty() {
         return Err("subscribe_ticker: symbol must not be empty".to_string());
     }
+
+    // ── Lazy bring-up of the internal WS → IPC bridges ──────────────────
+    // First UI-driven subscribe spins up the OHLC / Predictive / Insight
+    // bridges. Subsequent calls are no-ops (atomic guard inside).
+    crate::services::live_bridges::ensure_bootstrapped(&app);
 
     {
         let mut lock = state.symbol.lock().await;
@@ -52,6 +61,9 @@ pub async fn subscribe_ticker(
     }
 
     // Fire-and-forget: resolve token and notify ingestion — does NOT block the UI.
+    // Note: the ingestion service's bulk Kite WS stays untouched (rate-limit
+    // compliant raw tick pool). We only steer it via the control socket so
+    // the analysis layer downstream sees ticks for the active symbol only.
     let sym = upper.clone();
     tokio::spawn(async move {
         notify_ingestion_subscribe(&sym).await;
@@ -122,6 +134,11 @@ async fn notify_ingestion_subscribe(symbol: &str) {
     match tokio::net::TcpStream::connect(&addr).await {
         Ok(mut stream) => {
             let cmd = format!("subscribe:{}:{}\n", token, symbol);
+            // ── DIAGNOSTIC TRACER — Tauri → ingestion control TCP payload ──
+            println!(
+                "⚡ [INGESTION CONTROL] Sending Subscribe Payload: {:?} (symbol={}, token={})",
+                cmd.trim_end(), symbol, token
+            );
             match stream.write_all(cmd.as_bytes()).await {
                 Ok(_) => info!(
                     "[subscribe_ticker] ✓ {} (token {}) → ingestion subscribed",
