@@ -1,4 +1,4 @@
-// src/main.rs â€” AI-Trade Ingestion Service (Power Phase 1.2 â€” Subphases 16-18)
+﻿// src/main.rs â€” AI-Trade Ingestion Service (Power Phase 1.2 â€” Subphases 16-18)
 //
 // Pipeline topology â€” DUAL SINK ARCHITECTURE:
 //
@@ -127,41 +127,19 @@ async fn main() {
         }
     };
 
-    // â”€â”€ 3. Build instrument token â†’ symbol map â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // KITE_INSTRUMENT_TOKENS = "738561:RELIANCE,260105:BANKNIFTY,..."
-    let tokens_env = std::env::var("KITE_INSTRUMENT_TOKENS")
-        .unwrap_or_else(|_| "738561:RELIANCE,260105:BANKNIFTY".to_string());
-
-    // Use Arc<RwLock<HashMap>> so both the event loop and control server can
-    // look up / insert new symbols without blocking each other.
+    // â”€â”€ 3. Dynamic instrument map (starts EMPTY â€” no env scaffolding) â”€â”€â”€â”€â”€â”€â”€
+    //
+    // KITE_INSTRUMENT_TOKENS is NO LONGER read from the environment.
+    // The service boots with zero subscriptions and waits for dynamic
+    // `subscribe:TOKEN:SYMBOL` commands on the TCP control socket (:8085).
+    // This is driven by the Tauri frontend's subscribe_ticker IPC command
+    // when the user selects a symbol from the search bar / watchlist.
     let symbol_map: Arc<RwLock<HashMap<u32, String>>> = Arc::new(RwLock::new(HashMap::new()));
-    let mut instrument_tokens: Vec<u32> = Vec::new();
 
-    {
-        let mut map = symbol_map.write().await;
-        for pair in tokens_env.split(',') {
-            let parts: Vec<&str> = pair.trim().splitn(2, ':').collect();
-            if parts.len() == 2 {
-                if let Ok(token) = parts[0].parse::<u32>() {
-                    map.insert(token, parts[1].to_string());
-                    instrument_tokens.push(token);
-                }
-            }
-        }
-        // ── DIAGNOSTIC TRACER — Boot-up instrument map ──
-        println!(
-            "⚙️ [BOOT] Instrument Map Loaded. Total records: {}",
-            map.len()
-        );
-        for (token, sym) in map.iter() {
-            println!("⚙️ [BOOT]   token={} → symbol={}", token, sym);
-        }
-        info!(
-            "Subscribing to {} instruments: {:?}",
-            instrument_tokens.len(),
-            map.values().collect::<Vec<_>>()
-        );
-    }
+    info!(
+        "Instrument map initialised EMPTY. \
+         Subscriptions arrive dynamically via TCP control port."
+    );
 
     // â”€â”€ 4. Initialise Kafka producer (Subphase 16) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     #[cfg(feature = "kafka")]
@@ -305,33 +283,34 @@ async fn main() {
 
         info!("Direct-stream loop: WebSocket connected. Sending subscription.");
 
-        // Subscribe to all configured tokens
+        // Subscribe to any pre-existing tokens (will be empty on clean boot).
+        // Dynamic subscriptions arrive via the control socket as the user
+        // selects symbols in the UI.
         {
             let map = symbol_map_arc.read().await;
-            let token_vals: Vec<serde_json::Value> = map
-                .keys()
-                .map(|&t| serde_json::Value::Number(t.into()))
-                .collect();
+            if map.is_empty() {
+                info!(
+                    "Direct-stream: No initial subscriptions. \
+                     Sitting idle — awaiting dynamic subscribe commands on TCP control port."
+                );
+            } else {
+                let token_vals: Vec<serde_json::Value> = map
+                    .keys()
+                    .map(|&t| serde_json::Value::Number(t.into()))
+                    .collect();
 
-            let subscribe_msg = serde_json::json!({ "a": "subscribe", "v": token_vals }).to_string();
-            let mode_msg = serde_json::json!({ "a": "mode", "v": ["full", token_vals] }).to_string();
+                let subscribe_msg = serde_json::json!({ "a": "subscribe", "v": token_vals }).to_string();
+                let mode_msg = serde_json::json!({ "a": "mode", "v": ["full", token_vals] }).to_string();
 
-            // ── DIAGNOSTIC TRACER — Kite WS initial bulk subscribe payload ──
-            println!(
-                "⚡ [KITE WEBSOCKET] Sending Initial Subscription Payload: {:?}",
-                token_vals
-            );
-            println!("⚡ [KITE WEBSOCKET] subscribe_msg = {}", subscribe_msg);
-            println!("⚡ [KITE WEBSOCKET] mode_msg      = {}", mode_msg);
-
-            let mut writer = ws_writer.lock().await;
-            if let Err(e) = writer.send(Message::Text(subscribe_msg)).await {
-                error!("Failed to send subscribe message: {}", e);
+                let mut writer = ws_writer.lock().await;
+                if let Err(e) = writer.send(Message::Text(subscribe_msg)).await {
+                    error!("Failed to send subscribe message: {}", e);
+                }
+                if let Err(e) = writer.send(Message::Text(mode_msg)).await {
+                    error!("Failed to send mode message: {}", e);
+                }
+                info!("Subscribed to {} instruments in Full mode", map.len());
             }
-            if let Err(e) = writer.send(Message::Text(mode_msg)).await {
-                error!("Failed to send mode message: {}", e);
-            }
-            info!("Subscribed to {} instruments in Full mode", map.len());
         }
 
         // â”€â”€ Dynamic subscribe handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -346,12 +325,9 @@ async fn main() {
                         let mode_msg = serde_json::json!({ "a": "mode", "v": ["full", token_val] }).to_string();
 
                         // ── DIAGNOSTIC TRACER — Kite WS dynamic subscribe payload ──
-                        println!(
-                            "⚡ [KITE WEBSOCKET] Sending Dynamic Subscription Payload: tokens=[{}] symbol={}",
-                            token, symbol
+                        info!(
+                            "[Control] Subscribing token={} symbol={}", token, symbol
                         );
-                        println!("⚡ [KITE WEBSOCKET] subscribe_msg = {}", subscribe_msg);
-                        println!("⚡ [KITE WEBSOCKET] mode_msg      = {}", mode_msg);
 
                         let mut writer = ws_writer_sub.lock().await;
                         let ok = writer.send(Message::Text(subscribe_msg)).await.is_ok()

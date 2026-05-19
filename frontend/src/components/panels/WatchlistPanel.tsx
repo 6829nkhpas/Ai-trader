@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Search, Loader2, X, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import { useTradeStore } from '../../store/useTradeStore';
 
 // ── Static Top-10 Watchlist Symbols (NIFTY 50 Blue Chips) ──────────────
@@ -101,7 +102,7 @@ export default function WatchlistPanel() {
     };
   }, []);
 
-  // ── Debounced search ──────────────────────────────────────────────
+  // ── Debounced search via Tauri IPC (local SQLite) ──────────────
   const handleSearch = useCallback(async (searchQuery: string) => {
     const normalized = searchQuery.trim();
     if (normalized.length < 2) {
@@ -115,12 +116,10 @@ export default function WatchlistPanel() {
     setShowDropdown(true);
 
     try {
-      const res = await fetch(`/kite/instruments?q=${encodeURIComponent(normalized)}&exchange=NSE`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setSearchResults(data.results || []);
+      const results = await invoke<SearchInstrument[]>('search_instruments', { query: normalized });
+      setSearchResults(results || []);
     } catch (err) {
-      console.error('[Watchlist] Search failed:', err);
+      console.error('[Watchlist] search_instruments failed:', err);
       setSearchResults([]);
     } finally {
       setIsSearching(false);

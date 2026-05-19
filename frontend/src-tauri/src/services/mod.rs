@@ -4,5 +4,6 @@
 
 pub mod audit_logger;
 pub mod history_loader;
+pub mod instrument_master;
 pub mod live_bridges;
 pub mod llm;

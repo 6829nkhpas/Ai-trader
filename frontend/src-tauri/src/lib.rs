@@ -157,6 +157,14 @@ pub fn run() {
           Ok(db_state) => {
               app.manage(db_state);
               info!("Workspace SQLite database initialised and registered.");
+
+              // ── Instrument Master: Non-blocking daily CSV sync ─────────
+              // Downloads the full NSE instrument list from Kite and caches
+              // it in the local SQLite DB for fast search. Runs in background.
+              let app_handle_instruments = app.handle().clone();
+              tauri::async_runtime::spawn(async move {
+                  services::instrument_master::run_instrument_sync(app_handle_instruments).await;
+              });
           }
           Err(e) => {
               error!("Workspace DB init failed: {} — drawings will not persist.", e);
@@ -296,6 +304,7 @@ pub fn run() {
     })
     .invoke_handler(tauri::generate_handler![
         commands::ticker::subscribe_ticker,
+        commands::instruments::search_instruments,
         commands::charts::get_historical_view,
         commands::charts::load_historical,
         commands::charts::fetch_questdb,

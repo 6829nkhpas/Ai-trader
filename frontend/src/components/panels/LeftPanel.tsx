@@ -5,24 +5,15 @@ import {
   Search, Loader2, X, ArrowUpRight, ArrowDownRight,
   TrendingUp, TrendingDown, Minus, Activity, Gauge, Waves,
   BarChart3, Hexagon, Target, Newspaper, ChevronUp, ChevronDown,
+  Plus, Trash2, GripVertical,
 } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import { useTradeStore } from '../../store/useTradeStore';
 import { useQuantStore } from '../../store/useQuantStore';
 import type { ConsensusReport, SentimentPayload } from '../../store/useQuantStore';
+import { hydrateWatchlist } from '../../store/useTradeStore';
 
-// ── Static Watchlist ────────────────────────────────────────────────────
-const TOP_WATCHLIST = [
-  { symbol: 'RELIANCE', name: 'Reliance Industries', sector: 'Energy' },
-  { symbol: 'TCS', name: 'Tata Consultancy', sector: 'IT' },
-  { symbol: 'HDFCBANK', name: 'HDFC Bank', sector: 'Banking' },
-  { symbol: 'INFY', name: 'Infosys', sector: 'IT' },
-  { symbol: 'ICICIBANK', name: 'ICICI Bank', sector: 'Banking' },
-  { symbol: 'HINDUNILVR', name: 'Hindustan Unilever', sector: 'FMCG' },
-  { symbol: 'SBIN', name: 'State Bank of India', sector: 'Banking' },
-  { symbol: 'BHARTIARTL', name: 'Bharti Airtel', sector: 'Telecom' },
-  { symbol: 'KOTAKBANK', name: 'Kotak Mahindra Bank', sector: 'Banking' },
-  { symbol: 'LT', name: 'Larsen & Toubro', sector: 'Infra' },
-];
+// ── Static Watchlist (removed — now fully dynamic + persisted) ──────────
 
 const SECTOR_COLORS: Record<string, string> = {
   Energy: 'bg-amber-500/10 text-amber-400',
@@ -31,6 +22,15 @@ const SECTOR_COLORS: Record<string, string> = {
   FMCG: 'bg-purple-500/10 text-purple-400',
   Telecom: 'bg-rose-500/10 text-rose-400',
   Infra: 'bg-orange-500/10 text-orange-400',
+  Auto: 'bg-sky-500/10 text-sky-400',
+  Pharma: 'bg-teal-500/10 text-teal-400',
+  Metal: 'bg-zinc-500/10 text-zinc-400',
+  Realty: 'bg-lime-500/10 text-lime-400',
+  Media: 'bg-pink-500/10 text-pink-400',
+  EQ: 'bg-slate-500/10 text-slate-400',
+  FUT: 'bg-indigo-500/10 text-indigo-400',
+  CE: 'bg-emerald-500/10 text-emerald-400',
+  PE: 'bg-rose-500/10 text-rose-400',
 };
 
 interface QuoteData {
@@ -97,13 +97,24 @@ export default function LeftPanel() {
   const [isSearching, setIsSearching] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const [watchlistCollapsed, setWatchlistCollapsed] = useState(false);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const quoteIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
   const setSelectedSymbol = useTradeStore((s) => s.setSelectedSymbol);
+  const watchlist = useTradeStore((s) => s.watchlist);
+  const addToWatchlist = useTradeStore((s) => s.addToWatchlist);
+  const removeFromWatchlist = useTradeStore((s) => s.removeFromWatchlist);
+  const reorderWatchlist = useTradeStore((s) => s.reorderWatchlist);
   const consensusData = useQuantStore((s) => s.consensusData);
+
+  // ── Hydrate persisted watchlist on mount ───────────────────────────
+  useEffect(() => {
+    hydrateWatchlist();
+  }, []);
 
   // ── Decoupled Sentiment (independent of tick data) ────────────────
   const activeSentiment = useQuantStore((s) => s.activeSentiment);
@@ -118,16 +129,22 @@ export default function LeftPanel() {
     }
   }, [selectedSymbol, loadSentimentForSymbol]);
 
-  // ── Fetch quotes ──────────────────────────────────────────────────
+  // ── Fetch quotes for all watchlist symbols ─────────────────────
   const fetchQuotes = useCallback(async () => {
     try {
-      const params = TOP_WATCHLIST.map((s) => `i=NSE:${s.symbol}`).join('&');
+      const allSymbols = useTradeStore.getState().watchlist.map((w) => w.symbol);
+      if (allSymbols.length === 0) { setQuotesLoading(false); return; }
+
+      const params = allSymbols.map((s) => `i=NSE:${s}`).join('&');
       const res = await fetch(`/kite/quote?${params}`);
       if (!res.ok) return;
       const data = await res.json();
       if (data.quotes) {
         const map: Record<string, QuoteData> = {};
-        for (const q of data.quotes) map[q.symbol] = q;
+        for (const q of data.quotes) {
+          map[q.symbol] = q;
+          useTradeStore.getState().updateWatchlistQuote(q.symbol, q.last_price, q.change);
+        }
         setQuotes(map);
       }
     } catch (err) {
@@ -145,17 +162,26 @@ export default function LeftPanel() {
     return () => { if (quoteIntervalRef.current) clearInterval(quoteIntervalRef.current); };
   }, []);
 
-  // ── Search ────────────────────────────────────────────────────────
+  // Re-fetch quotes immediately when a new symbol is added to the dynamic watchlist
+  const watchlistLength = watchlist.length;
+  useEffect(() => {
+    if (watchlistLength > 0) {
+      fetchQuotesRef.current();
+    }
+  }, [watchlistLength]);
+
+  // ── Search via Tauri IPC (local SQLite) ─────────────────────────
   const handleSearch = useCallback(async (searchQuery: string) => {
     const normalized = searchQuery.trim();
     if (normalized.length < 2) { setSearchResults([]); setShowDropdown(false); setIsSearching(false); return; }
     setIsSearching(true); setShowDropdown(true);
     try {
-      const res = await fetch(`/kite/instruments?q=${encodeURIComponent(normalized)}&exchange=NSE`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setSearchResults(data.results || []);
-    } catch { setSearchResults([]); }
+      const results = await invoke<SearchInstrument[]>('search_instruments', { query: normalized });
+      setSearchResults(results || []);
+    } catch (err) {
+      console.error('[LeftPanel] search_instruments failed:', err);
+      setSearchResults([]);
+    }
     finally { setIsSearching(false); }
   }, []);
 
@@ -222,14 +248,31 @@ export default function LeftPanel() {
                     <button
                       key={inst.instrument_token}
                       type="button"
-                      onClick={() => { setSelectedSymbol(inst.tradingsymbol); setShowDropdown(false); setQuery(''); setSearchResults([]); }}
+                      onClick={() => {
+                        // Add to dynamic watchlist + select
+                        addToWatchlist({
+                          symbol: inst.tradingsymbol,
+                          token: inst.instrument_token,
+                          name: inst.name || inst.tradingsymbol,
+                          sector: inst.instrument_type || 'EQ',
+                          lastPrice: 0,
+                          change: 0,
+                        });
+                        setSelectedSymbol(inst.tradingsymbol);
+                        setShowDropdown(false);
+                        setQuery('');
+                        setSearchResults([]);
+                      }}
                       className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition-colors hover:bg-elevated/70"
                     >
                       <div className="flex flex-col min-w-0">
                         <span className="text-[11px] font-semibold text-text-primary truncate">{inst.tradingsymbol}</span>
                         <span className="text-[9px] text-text-muted truncate">{inst.name}</span>
                       </div>
-                      <span className="rounded px-1 py-px text-[7px] font-semibold uppercase tracking-wider bg-elevated text-text-muted">{inst.instrument_type || 'EQ'}</span>
+                      <div className="flex items-center gap-1">
+                        <Plus size={10} className="text-primary" />
+                        <span className="rounded px-1 py-px text-[7px] font-semibold uppercase tracking-wider bg-elevated text-text-muted">{inst.instrument_type || 'EQ'}</span>
+                      </div>
                     </button>
                   ))
                 )}
@@ -249,36 +292,70 @@ export default function LeftPanel() {
         </button>
       </div>
 
-      {/* Watchlist rows */}
+      {/* Unified watchlist — all items are draggable, removable, persisted */}
       {!watchlistCollapsed && (
-        <div className="shrink-0 max-h-[200px] overflow-y-auto scrollbar-thin border-b border-border-default">
+        <div className="shrink-0 max-h-[240px] overflow-y-auto scrollbar-thin border-b border-border-default">
           {quotesLoading ? (
             <div className="flex items-center justify-center gap-2 py-4">
               <Loader2 size={14} className="animate-spin text-primary" />
               <span className="text-[10px] text-text-secondary">Loading...</span>
             </div>
+          ) : watchlist.length === 0 ? (
+            <div className="flex items-center justify-center py-6">
+              <p className="text-[10px] text-text-muted/60 italic">Search and add symbols to your watchlist</p>
+            </div>
           ) : (
-            TOP_WATCHLIST.map((stock) => {
-              const quote = quotes[stock.symbol];
-              const isPositive = quote ? quote.change >= 0 : false;
-              const isActive = selectedSymbol === stock.symbol;
-              const sectorColor = SECTOR_COLORS[stock.sector] ?? 'bg-elevated text-text-muted';
+            watchlist.map((item, idx) => {
+              const isActive = selectedSymbol === item.symbol;
+              const quote = quotes[item.symbol];
+              const isPositive = quote ? quote.change >= 0 : item.change >= 0;
+              const sectorColor = SECTOR_COLORS[item.sector] ?? SECTOR_COLORS['EQ'] ?? 'bg-slate-500/10 text-slate-400';
+              const isDragging = dragIndex === idx;
+              const isDragOver = dragOverIndex === idx;
+
               return (
-                <button
-                  key={stock.symbol}
-                  type="button"
-                  onClick={() => setSelectedSymbol(stock.symbol)}
-                  className={`group flex w-full items-center justify-between gap-1 px-3 py-1.5 text-[11px] text-left transition-colors cursor-pointer border-l-2 ${
+                <div
+                  key={item.symbol}
+                  draggable
+                  onDragStart={() => setDragIndex(idx)}
+                  onDragOver={(e) => { e.preventDefault(); setDragOverIndex(idx); }}
+                  onDragLeave={() => setDragOverIndex(null)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (dragIndex !== null && dragIndex !== idx) {
+                      reorderWatchlist(dragIndex, idx);
+                    }
+                    setDragIndex(null);
+                    setDragOverIndex(null);
+                  }}
+                  onDragEnd={() => { setDragIndex(null); setDragOverIndex(null); }}
+                  className={`group flex w-full items-center gap-1 px-1.5 py-1.5 text-[11px] text-left transition-all border-l-2 ${
+                    isDragging ? 'opacity-40 scale-95' : ''
+                  } ${isDragOver ? 'bg-primary/5 border-t-2 border-t-primary/40' : ''} ${
                     isActive
                       ? 'bg-primary/10 border-primary text-text-primary'
                       : 'hover:bg-elevated/70 border-transparent hover:border-primary/50'
                   }`}
                 >
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <span className="font-semibold text-text-primary truncate">{stock.symbol}</span>
-                    <span className={`rounded px-1 py-px text-[6px] font-semibold uppercase tracking-wider ${sectorColor}`}>{stock.sector}</span>
+                  {/* Drag handle */}
+                  <div className="shrink-0 cursor-grab opacity-0 group-hover:opacity-60 transition-opacity active:cursor-grabbing">
+                    <GripVertical size={10} className="text-text-muted" />
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
+
+                  {/* Symbol + sector */}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSymbol(item.symbol)}
+                    className="flex items-center gap-1.5 min-w-0 flex-1 cursor-pointer"
+                  >
+                    <span className="font-semibold text-text-primary truncate">{item.symbol}</span>
+                    <span className={`rounded px-1 py-px text-[6px] font-semibold uppercase tracking-wider ${sectorColor}`}>
+                      {item.sector}
+                    </span>
+                  </button>
+
+                  {/* Price + change */}
+                  <div className="flex items-center gap-1 shrink-0">
                     {quote ? (
                       <>
                         <span className="font-semibold text-text-primary tabular-nums text-[10px]">{formatPrice(quote.last_price)}</span>
@@ -287,11 +364,29 @@ export default function LeftPanel() {
                           {formatChange(quote.change)}
                         </span>
                       </>
+                    ) : item.lastPrice > 0 ? (
+                      <>
+                        <span className="font-semibold text-text-primary tabular-nums text-[10px]">{formatPrice(item.lastPrice)}</span>
+                        <span className={`flex items-center gap-px text-[9px] font-medium tabular-nums ${isPositive ? 'text-bull' : 'text-bear'}`}>
+                          {isPositive ? <ArrowUpRight size={8} /> : <ArrowDownRight size={8} />}
+                          {formatChange(item.change)}
+                        </span>
+                      </>
                     ) : (
                       <span className="text-[9px] text-text-muted/50">—</span>
                     )}
+
+                    {/* Remove button — visible on hover */}
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); removeFromWatchlist(item.symbol); }}
+                      className="opacity-0 group-hover:opacity-100 ml-0.5 p-0.5 rounded text-text-muted hover:text-rose-400 hover:bg-rose-500/10 transition-all"
+                      aria-label={`Remove ${item.symbol} from watchlist`}
+                    >
+                      <Trash2 size={9} />
+                    </button>
                   </div>
-                </button>
+                </div>
               );
             })
           )}

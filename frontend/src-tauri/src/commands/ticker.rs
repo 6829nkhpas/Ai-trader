@@ -40,17 +40,12 @@ pub async fn subscribe_ticker(
     state: tauri::State<'_, ActiveSymbolState>,
     symbol: String,
 ) -> Result<(), String> {
-    // ── DIAGNOSTIC TRACER — Tauri command boundary (UI → Rust) ──
-    println!("🛑 [RUST RECEIVE] Live Subscribe Request - Symbol: {}", symbol);
-
     let upper = symbol.trim().to_uppercase();
     if upper.is_empty() {
         return Err("subscribe_ticker: symbol must not be empty".to_string());
     }
 
     // ── Lazy bring-up of the internal WS → IPC bridges ──────────────────
-    // First UI-driven subscribe spins up the OHLC / Predictive / Insight
-    // bridges. Subsequent calls are no-ops (atomic guard inside).
     crate::services::live_bridges::ensure_bootstrapped(&app);
 
     {
@@ -60,16 +55,56 @@ pub async fn subscribe_ticker(
         info!("[subscribe_ticker] Active symbol: {} → {}", prev, upper);
     }
 
-    // Fire-and-forget: resolve token and notify ingestion — does NOT block the UI.
-    // Note: the ingestion service's bulk Kite WS stays untouched (rate-limit
-    // compliant raw tick pool). We only steer it via the control socket so
-    // the analysis layer downstream sees ticks for the active symbol only.
+    // ── Resolve instrument token from local SQLite cache first ───────────
+    let local_token: Option<u32> = {
+        use tauri::Manager;
+        let db_state: tauri::State<'_, crate::db::DbState> = app.state();
+        crate::commands::instruments::resolve_instrument_token(&db_state, &upper)
+    };
+
+    // Fire-and-forget: notify ingestion service
     let sym = upper.clone();
     tokio::spawn(async move {
-        notify_ingestion_subscribe(&sym).await;
+        if let Some(token) = local_token {
+            // Fast path: token resolved locally — skip HTTP lookup
+            info!("[subscribe_ticker] Token {} resolved locally for {}", token, sym);
+            send_subscribe_to_ingestion(&sym, token).await;
+        } else {
+            // Fallback: resolve via aggregator HTTP API
+            notify_ingestion_subscribe(&sym).await;
+        }
     });
 
     Ok(())
+}
+
+/// Direct path: send subscribe command to ingestion when token is already known.
+/// Skips the HTTP lookup entirely — used when the local SQLite cache has the token.
+async fn send_subscribe_to_ingestion(symbol: &str, token: u32) {
+    let control_port = std::env::var("INGESTION_CONTROL_PORT")
+        .unwrap_or_else(|_| "8085".to_string());
+
+    use tokio::io::AsyncWriteExt;
+    let addr = format!("127.0.0.1:{}", control_port);
+    match tokio::net::TcpStream::connect(&addr).await {
+        Ok(mut stream) => {
+            let cmd = format!("subscribe:{}:{}\n", token, symbol);
+            match stream.write_all(cmd.as_bytes()).await {
+                Ok(_) => info!(
+                    "[subscribe_ticker] ✓ {} (token {}) → ingestion subscribed (local resolve)",
+                    symbol, token
+                ),
+                Err(e) => log::warn!("[subscribe_ticker] Control write error: {}", e),
+            }
+        }
+        Err(e) => {
+            log::warn!(
+                "[subscribe_ticker] Cannot reach ingestion control :{} — {}\
+                 \n  (ingestion may not be running or INGESTION_CONTROL_PORT is wrong)",
+                control_port, e
+            );
+        }
+    }
 }
 
 /// Resolves the Kite instrument token for `symbol` from the aggregator's
@@ -134,14 +169,9 @@ async fn notify_ingestion_subscribe(symbol: &str) {
     match tokio::net::TcpStream::connect(&addr).await {
         Ok(mut stream) => {
             let cmd = format!("subscribe:{}:{}\n", token, symbol);
-            // ── DIAGNOSTIC TRACER — Tauri → ingestion control TCP payload ──
-            println!(
-                "⚡ [INGESTION CONTROL] Sending Subscribe Payload: {:?} (symbol={}, token={})",
-                cmd.trim_end(), symbol, token
-            );
             match stream.write_all(cmd.as_bytes()).await {
                 Ok(_) => info!(
-                    "[subscribe_ticker] ✓ {} (token {}) → ingestion subscribed",
+                    "[subscribe_ticker] ✓ {} (token {}) → ingestion subscribed (HTTP resolve)",
                     symbol, token
                 ),
                 Err(e) => log::warn!("[subscribe_ticker] Control write error: {}", e),
