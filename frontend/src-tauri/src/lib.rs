@@ -208,8 +208,16 @@ pub fn run() {
           let app_handle_consensus = app.handle().clone();
           tauri::async_runtime::spawn(async move {
               tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+              // Read the active symbol from state so the mock consensus reflects
+              // whatever the user has selected (not hardcoded RELIANCE).
+              let sym = app_handle_consensus
+                  .state::<commands::ticker::ActiveSymbolState>()
+                  .symbol
+                  .lock()
+                  .await
+                  .clone();
               let mock_consensus = serde_json::json!({
-                  "symbol": "RELIANCE",
+                  "symbol": sym,
                   "trend_score": 75,
                   "momentum_state": "NEUTRAL",
                   "volatility_state": "NORMAL",

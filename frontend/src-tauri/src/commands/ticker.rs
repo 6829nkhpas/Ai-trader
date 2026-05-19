@@ -4,20 +4,16 @@
 // Called by the frontend on every symbol switch to keep the Rust backend
 // in sync with the chart's active instrument.
 //
-// In TEST MODE: the mock OHLC emitter reads this state on each tick so that
-//   switching symbols immediately changes what the mock emits.
-// In PRODUCTION: the WS bridge (lib.rs) is symbol-agnostic (all symbols flow
-//   from the aggregator); this state is available for future server-side
-//   symbol-filtered broadcasting.
+// On symbol switch (PRODUCTION):
+//   1. Updates ActiveSymbolState so the mock emitter and UI reads the correct symbol.
+//   2. Resolves the Kite instrument token via the aggregator's /api/kite/instruments.
+//   3. Sends "subscribe:TOKEN:SYMBOL\n" to the ingestion control TCP server (:8085)
+//      so the Kite WebSocket immediately starts streaming the new symbol's ticks.
 
 use tokio::sync::Mutex;
 use log::info;
 
 /// Thread-safe container for the currently active chart symbol.
-/// Managed as Tauri state — accessible from any #[tauri::command] function
-/// and from the background tokio tasks in lib.rs.
-///
-/// Defaults to "RELIANCE" on startup.
 pub struct ActiveSymbolState {
     pub symbol: Mutex<String>,
 }
@@ -30,15 +26,12 @@ impl ActiveSymbolState {
     }
 }
 
-/// Tauri IPC command: set the active chart symbol.
+/// Tauri IPC command: switch the active chart symbol.
 ///
-/// Called by the frontend whenever the user switches instruments.
-/// Updates shared Tauri state read by the mock emitter and available
-/// to any future server-side filtering logic.
+/// Returns immediately — all network side-effects run in a background task.
 ///
 /// # Frontend usage
 /// ```ts
-/// import { invoke } from '@tauri-apps/api/core';
 /// await invoke('subscribe_ticker', { symbol: 'INFY' });
 /// ```
 #[tauri::command]
@@ -50,9 +43,99 @@ pub async fn subscribe_ticker(
     if upper.is_empty() {
         return Err("subscribe_ticker: symbol must not be empty".to_string());
     }
-    let mut lock = state.symbol.lock().await;
-    let prev = lock.clone();
-    *lock = upper.clone();
-    info!("[subscribe_ticker] Active symbol: {} → {}", prev, upper);
+
+    {
+        let mut lock = state.symbol.lock().await;
+        let prev = lock.clone();
+        *lock = upper.clone();
+        info!("[subscribe_ticker] Active symbol: {} → {}", prev, upper);
+    }
+
+    // Fire-and-forget: resolve token and notify ingestion — does NOT block the UI.
+    let sym = upper.clone();
+    tokio::spawn(async move {
+        notify_ingestion_subscribe(&sym).await;
+    });
+
     Ok(())
+}
+
+/// Resolves the Kite instrument token for `symbol` from the aggregator's
+/// instrument cache, then sends a `subscribe:TOKEN:SYMBOL\n` command to
+/// the ingestion service's TCP control port.
+async fn notify_ingestion_subscribe(symbol: &str) {
+    let kite_port    = std::env::var("KITE_API_PORT")
+        .unwrap_or_else(|_| "8084".to_string());
+    let control_port = std::env::var("INGESTION_CONTROL_PORT")
+        .unwrap_or_else(|_| "8085".to_string());
+
+    // ── Step 1: Token lookup ─────────────────────────────────────────────────
+    let url = format!(
+        "http://127.0.0.1:{}/api/kite/instruments?q={}&exchange=NSE",
+        kite_port,
+        urlencoding::encode(symbol)
+    );
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap_or_default();
+
+    let token: Option<u32> = match client.get(&url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            resp.json::<serde_json::Value>().await.ok()
+                .and_then(|json| {
+                    json.as_array()?.iter().find(|inst| {
+                        inst.get("tradingsymbol")
+                            .and_then(|s| s.as_str())
+                            .map(|s| s.eq_ignore_ascii_case(symbol))
+                            .unwrap_or(false)
+                    }).cloned()
+                })
+                .and_then(|inst| inst.get("instrument_token")?.as_u64())
+                .map(|t| t as u32)
+        }
+        Ok(resp) => {
+            log::warn!("[subscribe_ticker] Instrument lookup HTTP {} for {}", resp.status(), symbol);
+            None
+        }
+        Err(e) => {
+            log::warn!("[subscribe_ticker] Instrument lookup failed for {}: {}", symbol, e);
+            None
+        }
+    };
+
+    let token = match token {
+        Some(t) => t,
+        None => {
+            log::warn!(
+                "[subscribe_ticker] No token found for {} — live ticks unavailable until resolved.",
+                symbol
+            );
+            return;
+        }
+    };
+
+    // ── Step 2: Notify ingestion control server ───────────────────────────────
+    use tokio::io::AsyncWriteExt;
+    let addr = format!("127.0.0.1:{}", control_port);
+    match tokio::net::TcpStream::connect(&addr).await {
+        Ok(mut stream) => {
+            let cmd = format!("subscribe:{}:{}\n", token, symbol);
+            match stream.write_all(cmd.as_bytes()).await {
+                Ok(_) => info!(
+                    "[subscribe_ticker] ✓ {} (token {}) → ingestion subscribed",
+                    symbol, token
+                ),
+                Err(e) => log::warn!("[subscribe_ticker] Control write error: {}", e),
+            }
+        }
+        Err(e) => {
+            log::warn!(
+                "[subscribe_ticker] Cannot reach ingestion control :{} — {}\
+                 \n  (ingestion may not be running or INGESTION_CONTROL_PORT is wrong)",
+                control_port, e
+            );
+        }
+    }
 }

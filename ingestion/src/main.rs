@@ -1,54 +1,62 @@
-// src/main.rs — AI-Trade Ingestion Service (Power Phase 1.2 — Subphases 16-18)
+// src/main.rs â€” AI-Trade Ingestion Service (Power Phase 1.2 â€” Subphases 16-18)
 //
-// Pipeline topology — DUAL SINK ARCHITECTURE:
+// Pipeline topology â€” DUAL SINK ARCHITECTURE:
 //
-//   [Kite WebSocket] ──binary frame──► [parser::parse_binary_frame]
-//                                              │
+//   [Kite WebSocket] â”€â”€binary frameâ”€â”€â–º [parser::parse_binary_frame]
+//                                              â”‚
 //                                    Vec<proto::Tick> produced
-//                                              │
-//                            for each Tick ─  tokio::spawn (×2, concurrent):
-//                                    ├─► [kafka_producer::publish_tick]  → topic: market.ticks
-//                                    └─► [questdb_sink::insert_tick]     → live_ticks table (:8812)
+//                                              â”‚
+//                            for each Tick â”€  tokio::spawn (Ã—2, concurrent):
+//                                    â”œâ”€â–º [kafka_producer::publish_tick]  â†’ topic: market.ticks
+//                                    â””â”€â–º [questdb_sink::insert_tick]     â†’ live_ticks table (:8812)
 //
 // Additionally, the legacy high-throughput ILP writer is available:
-//                                    └─► [questdb_writer::write_tick]    → ILP TCP :9009
+//                                    â””â”€â–º [questdb_writer::write_tick]    â†’ ILP TCP :9009
+//
+// Dynamic subscription:
+//   POST tcp://localhost:8085  "subscribe:TOKEN:SYMBOL\n"
+//   â†’ Sends a new Kite WS subscribe + mode message for the given token.
+//   â†’ Called by the Tauri frontend's subscribe_ticker command on symbol switch.
 //
 // Environment variables required:
-//   KAFKA_BROKER_URL       — Kafka bootstrap servers  (default: localhost:9092)
-//   QUESTDB_POSTGRES_URL   — QuestDB PG wire URL      (default: postgresql://admin:quest@localhost:8812/qdb)
-//   KITE_API_KEY           — Kite Connect API key
-//   KITE_API_SECRET        — Kite Connect API secret  (used only when KITE_ACCESS_TOKEN absent)
-//   KITE_REQUEST_TOKEN     — OAuth request token      (used only when KITE_ACCESS_TOKEN absent)
-//   KITE_ACCESS_TOKEN      — Pre-fetched access token (if set, skips OAuth exchange)
-//   KITE_INSTRUMENT_TOKENS — "token:SYMBOL,..." pairs (default: 738561:RELIANCE,260105:BANKNIFTY)
-//   QUESTDB_ILP_ADDR       — QuestDB ILP endpoint     (default: 127.0.0.1:9009)
-//   KAFKA_BROKERS          — alias for KAFKA_BROKER_URL used by KafkaProducer struct
+//   KAFKA_BROKER_URL         â€” Kafka bootstrap servers  (default: localhost:9092)
+//   QUESTDB_POSTGRES_URL     â€” QuestDB PG wire URL      (default: postgresql://admin:quest@localhost:8812/qdb)
+//   KITE_API_KEY             â€” Kite Connect API key
+//   KITE_API_SECRET          â€” Kite Connect API secret  (used only when KITE_ACCESS_TOKEN absent)
+//   KITE_REQUEST_TOKEN       â€” OAuth request token      (used only when KITE_ACCESS_TOKEN absent)
+//   KITE_ACCESS_TOKEN        â€” Pre-fetched access token (if set, skips OAuth exchange)
+//   KITE_INSTRUMENT_TOKENS   â€” "token:SYMBOL,..." pairs (default: 738561:RELIANCE,260105:BANKNIFTY)
+//   QUESTDB_ILP_ADDR         â€” QuestDB ILP endpoint     (default: 127.0.0.1:9009)
+//   KAFKA_BROKERS            â€” alias for KAFKA_BROKER_URL used by KafkaProducer struct
+//   INGESTION_CONTROL_PORT   â€” TCP control port for dynamic subscribe (default: 8085)
 //
 // Feature flags:
-//   kafka (default = on) — enables rdkafka / Kafka paths.
+//   kafka (default = on) â€” enables rdkafka / Kafka paths.
 //   Disable with `cargo check --no-default-features` on Windows without CMake.
 
-// ── Module declarations ───────────────────────────────────────────────────────
-mod proto;          // Protobuf contract — must be first (others depend on crate::proto)
+// â”€â”€ Module declarations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+mod proto;          // Protobuf contract â€” must be first (others depend on crate::proto)
 mod kite_client;    // Low-level WS transport: connect_ticker()
 mod parser;         // Binary tick frame parser: parse_binary_tick() / parse_binary_frame()
 mod kite_auth;      // OAuth access_token exchange
 mod kite_ws;        // High-level WS client: subscription + auto-reconnect loop
-mod questdb_writer; // ILP TCP writer → QuestDB :9009  (highest-throughput path)
-mod questdb_sink;   // SQLx PG writer → QuestDB :8812  (SQL-accessible archive path)
-mod types;          // ParsedTick — shared internal data contract
+mod questdb_writer; // ILP TCP writer â†’ QuestDB :9009  (highest-throughput path)
+mod questdb_sink;   // SQLx PG writer â†’ QuestDB :8812  (SQL-accessible archive path)
+mod types;          // ParsedTick â€” shared internal data contract
 
 #[cfg(feature = "kafka")]
-mod kafka_producer; // rdkafka FutureProducer → market.ticks  (requires CMake)
+mod kafka_producer; // rdkafka FutureProducer â†’ market.ticks  (requires CMake)
 
-// ── Imports ───────────────────────────────────────────────────────────────────
+// â”€â”€ Imports â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use log::{error, info, warn};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::net::TcpListener;
 use tokio::signal;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio_tungstenite::tungstenite::Message;
 
 #[cfg(feature = "kafka")]
@@ -65,23 +73,30 @@ const CHANNEL_CAPACITY: usize = 10_000;
 #[cfg(feature = "kafka")]
 const KAFKA_TOPIC: &str = "market.ticks";
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+/// Command from the control server to the WS writer task.
+enum SubscribeCmd {
+    /// Subscribe to a new instrument token with the given symbol name.
+    Add { token: u32, symbol: String },
+}
 
 #[tokio::main]
 async fn main() {
-    // ── 1. Load environment ──────────────────────────────────────────────────
+    // â”€â”€ 1. Load environment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     dotenvy::dotenv().ok();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    info!("╔══════════════════════════════════════════════════════════╗");
-    info!("║       AI-Trade Ingestion Service — Power Phase 1.2      ║");
-    info!("╠══════════════════════════════════════════════════════════╣");
-    info!("║  Kite WS  →  parser  →  Kafka (market.ticks)           ║");
-    info!("║  Kite WS  →  parser  →  QuestDB PG  (:8812 / live_ticks) ║");
-    info!("║  Kite WS  →  parser  →  QuestDB ILP (:9009)             ║");
-    info!("╚══════════════════════════════════════════════════════════╝");
+    info!("â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—");
+    info!("â•‘       AI-Trade Ingestion Service â€” Power Phase 1.2      â•‘");
+    info!("â• â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•£");
+    info!("â•‘  Kite WS  â†’  parser  â†’  Kafka (market.ticks)           â•‘");
+    info!("â•‘  Kite WS  â†’  parser  â†’  QuestDB PG  (:8812 / live_ticks) â•‘");
+    info!("â•‘  Kite WS  â†’  parser  â†’  QuestDB ILP (:9009)             â•‘");
+    info!("â•‘  Control  â†’  TCP :8085  â†’  dynamic subscribe            â•‘");
+    info!("â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•");
 
-    // ── 2. Read required config from environment ─────────────────────────────
+    // â”€â”€ 2. Read required config from environment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     #[cfg_attr(not(feature = "kafka"), allow(unused_variables))]
     let kafka_broker_url = std::env::var("KAFKA_BROKER_URL")
         .or_else(|_| std::env::var("KAFKA_BROKERS"))
@@ -112,37 +127,42 @@ async fn main() {
         }
     };
 
-    // ── 3. Build instrument token → symbol map ───────────────────────────────
-    // KITE_INSTRUMENT_TOKENS = "738561:RELIANCE,260105:BANKNIFTY,256265:NIFTY 50"
+    // â”€â”€ 3. Build instrument token â†’ symbol map â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // KITE_INSTRUMENT_TOKENS = "738561:RELIANCE,260105:BANKNIFTY,..."
     let tokens_env = std::env::var("KITE_INSTRUMENT_TOKENS")
         .unwrap_or_else(|_| "738561:RELIANCE,260105:BANKNIFTY".to_string());
 
-    let mut symbol_map: HashMap<u32, String> = HashMap::new();
+    // Use Arc<RwLock<HashMap>> so both the event loop and control server can
+    // look up / insert new symbols without blocking each other.
+    let symbol_map: Arc<RwLock<HashMap<u32, String>>> = Arc::new(RwLock::new(HashMap::new()));
     let mut instrument_tokens: Vec<u32> = Vec::new();
 
-    for pair in tokens_env.split(',') {
-        let parts: Vec<&str> = pair.trim().splitn(2, ':').collect();
-        if parts.len() == 2 {
-            if let Ok(token) = parts[0].parse::<u32>() {
-                symbol_map.insert(token, parts[1].to_string());
-                instrument_tokens.push(token);
+    {
+        let mut map = symbol_map.write().await;
+        for pair in tokens_env.split(',') {
+            let parts: Vec<&str> = pair.trim().splitn(2, ':').collect();
+            if parts.len() == 2 {
+                if let Ok(token) = parts[0].parse::<u32>() {
+                    map.insert(token, parts[1].to_string());
+                    instrument_tokens.push(token);
+                }
             }
         }
+        info!(
+            "Subscribing to {} instruments: {:?}",
+            instrument_tokens.len(),
+            map.values().collect::<Vec<_>>()
+        );
     }
-    info!(
-        "Subscribing to {} instruments: {:?}",
-        instrument_tokens.len(),
-        symbol_map.values().collect::<Vec<_>>()
-    );
 
-    // ── 4. Initialise Kafka producer (Subphase 16) ───────────────────────────
+    // â”€â”€ 4. Initialise Kafka producer (Subphase 16) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     #[cfg(feature = "kafka")]
     let kafka_producer: Arc<FutureProducer> = {
-        info!("Initialising Kafka producer → {}", kafka_broker_url);
+        info!("Initialising Kafka producer â†’ {}", kafka_broker_url);
         Arc::new(kafka_producer::init_producer(&kafka_broker_url))
     };
 
-    // ── 5. Initialise QuestDB PG pool + create table (Subphases 16-17) ───────
+    // â”€â”€ 5. Initialise QuestDB PG pool + create table (Subphases 16-17) â”€â”€â”€â”€â”€â”€â”€
     let pg_pool = match questdb_sink::init_pool(&questdb_postgres_url).await {
         Ok(pool) => {
             questdb_sink::create_table_if_not_exists(&pool).await;
@@ -154,43 +174,106 @@ async fn main() {
                  live_ticks inserts will be skipped. Cause: {}",
                 questdb_postgres_url, e
             );
-            // Continue running — ILP path still works.
-            // Use an explicit type annotation to satisfy the Arc<PgPool> type.
-            // We wrap a dummy pool that will always fail its queries.
-            // In practice you'd abort here; we log and continue for resilience.
-            panic!("Cannot continue without QuestDB — fix QUESTDB_POSTGRES_URL and retry.");
+            panic!("Cannot continue without QuestDB â€” fix QUESTDB_POSTGRES_URL and retry.");
         }
     };
 
-    // ── 6. Initialise QuestDB ILP writer (Subphase 15, legacy high-throughput) ─
+    // â”€â”€ 6. Initialise QuestDB ILP writer (Subphase 15, legacy high-throughput) â”€
     let mut ilp_writer = QuestDbWriter::connect()
         .await
-        .expect("Failed to connect to QuestDB ILP — is the container running?");
+        .expect("Failed to connect to QuestDB ILP â€” is the container running?");
 
-    // ── 7. Legacy mpsc-channel pipeline (kept for kite_ws.rs auto-reconnect) ─
-    //    The raw direct-stream loop below is the new primary path (Subphase 18).
-    //    The mpsc channel feeds the ILP writer from the high-level kite_ws task.
+    // â”€â”€ 7. Legacy mpsc-channel pipeline (kept for kite_ws.rs auto-reconnect) â”€
     let (tx, mut rx) = mpsc::channel::<ParsedTick>(CHANNEL_CAPACITY);
 
-    // Secondary Kite WS task removed (merged into primary loop)
-
-    // Drain mpsc channel → ILP writer (legacy path)
+    // Drain mpsc channel â†’ ILP writer (legacy path)
     let ilp_handle = tokio::spawn(async move {
         while let Some(tick) = rx.recv().await {
             ilp_writer.write_tick(&tick).await;
         }
-        info!("ILP channel closed — legacy writer task exiting");
+        info!("ILP channel closed â€” legacy writer task exiting");
     });
 
-    // ── 8. Direct-stream event loop (Subphase 18 — primary path) ────────────
-    //    Opens a *second* WebSocket connection directly via kite_client,
-    //    parses binary frames inline, and concurrently dispatches each Tick to
-    //    both Kafka and QuestDB PG via tokio::spawn.
-    //
-    //    This is the canonical Power Phase 1.2 event loop specified in the
-    //    subphase directive.
+    // â”€â”€ 8. Dynamic subscribe command channel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Control server â†’ WS writer task.  Buffer of 64 is plenty (human-speed input).
+    let (sub_tx, mut sub_rx) = mpsc::channel::<SubscribeCmd>(64);
 
-    let symbol_map_arc = Arc::new(symbol_map.clone());
+    // â”€â”€ 9. Control server: TCP :8085 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Accepts newline-delimited commands:
+    //   subscribe:TOKEN:SYMBOL   â€” subscribe to a new Kite instrument token
+    //
+    // Called by the Tauri `subscribe_ticker` command after updating local state.
+    let control_port = std::env::var("INGESTION_CONTROL_PORT")
+        .unwrap_or_else(|_| "8085".to_string());
+    let control_addr = format!("127.0.0.1:{}", control_port);
+    let sub_tx_control = sub_tx.clone();
+    let symbol_map_control = Arc::clone(&symbol_map);
+
+    tokio::spawn(async move {
+        let listener = match TcpListener::bind(&control_addr).await {
+            Ok(l) => {
+                info!("[Control] TCP control server listening on {}", control_addr);
+                l
+            }
+            Err(e) => {
+                error!("[Control] Failed to bind control port {}: {}", control_addr, e);
+                return;
+            }
+        };
+
+        loop {
+            match listener.accept().await {
+                Ok((stream, peer)) => {
+                    let sub_tx = sub_tx_control.clone();
+                    let symbol_map = Arc::clone(&symbol_map_control);
+                    tokio::spawn(async move {
+                        let reader = BufReader::new(stream);
+                        let mut lines = reader.lines();
+                        while let Ok(Some(line)) = lines.next_line().await {
+                            let line = line.trim().to_string();
+                            if line.starts_with("subscribe:") {
+                                // Format: subscribe:TOKEN:SYMBOL
+                                let parts: Vec<&str> = line.splitn(3, ':').collect();
+                                if parts.len() == 3 {
+                                    if let Ok(token) = parts[1].parse::<u32>() {
+                                        let symbol = parts[2].to_uppercase();
+                                        // Update symbol map
+                                        {
+                                            let mut map = symbol_map.write().await;
+                                            if map.contains_key(&token) {
+                                                info!("[Control] {} (token {}) already subscribed.", symbol, token);
+                                                continue;
+                                            }
+                                            map.insert(token, symbol.clone());
+                                        }
+                                        info!("[Control] {} â€” new subscribe request from {}", symbol, peer);
+                                        let _ = sub_tx.send(SubscribeCmd::Add { token, symbol }).await;
+                                    } else {
+                                        warn!("[Control] Invalid token in command: {}", line);
+                                    }
+                                } else {
+                                    warn!("[Control] Malformed subscribe command: {}", line);
+                                }
+                            } else if !line.is_empty() {
+                                warn!("[Control] Unknown command from {}: {}", peer, line);
+                            }
+                        }
+                    });
+                }
+                Err(e) => {
+                    error!("[Control] Accept error: {}", e);
+                }
+            }
+        }
+    });
+
+    // â”€â”€ 10. Direct-stream event loop (Subphase 18 â€” primary path) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    //    Opens a WebSocket connection directly via kite_client, subscribes to
+    //    all configured tokens, parses binary frames, and dispatches each Tick
+    //    to both Kafka and QuestDB PG via tokio::spawn.
+    //    Also listens on sub_rx for dynamic subscribe commands from the control server.
+
+    let symbol_map_arc = Arc::clone(&symbol_map);
 
     #[cfg(feature = "kafka")]
     let kafka_producer_clone = Arc::clone(&kafka_producer);
@@ -199,7 +282,7 @@ async fn main() {
     let direct_handle = tokio::spawn(async move {
         info!("Direct-stream loop: connecting to Kite WebSocket...");
 
-        let (mut ws_reader, mut ws_writer) =
+        let (ws_reader, ws_writer) =
             match kite_client::connect_ticker(&api_key, &access_token).await {
                 Ok(pair) => pair,
                 Err(e) => {
@@ -208,31 +291,69 @@ async fn main() {
                 }
             };
 
+        // Wrap the writer in Arc<Mutex> so the sub_rx handler can send messages
+        // while the reader loop is running concurrently.
+        let ws_writer = Arc::new(Mutex::new(ws_writer));
+
         info!("Direct-stream loop: WebSocket connected. Sending subscription.");
 
-        use futures_util::SinkExt;
-        use serde_json::json;
-        let token_vals: Vec<serde_json::Value> = instrument_tokens
-            .iter()
-            .map(|&t| serde_json::Value::Number(t.into()))
-            .collect();
+        // Subscribe to all configured tokens
+        {
+            let map = symbol_map_arc.read().await;
+            let token_vals: Vec<serde_json::Value> = map
+                .keys()
+                .map(|&t| serde_json::Value::Number(t.into()))
+                .collect();
 
-        let subscribe_msg = json!({ "a": "subscribe", "v": token_vals }).to_string();
-        let mode_msg = json!({ "a": "mode", "v": ["full", token_vals] }).to_string();
+            let subscribe_msg = serde_json::json!({ "a": "subscribe", "v": token_vals }).to_string();
+            let mode_msg = serde_json::json!({ "a": "mode", "v": ["full", token_vals] }).to_string();
 
-        if let Err(e) = ws_writer.send(tokio_tungstenite::tungstenite::Message::Text(subscribe_msg)).await {
-            error!("Failed to send subscribe message: {}", e);
+            let mut writer = ws_writer.lock().await;
+            if let Err(e) = writer.send(Message::Text(subscribe_msg)).await {
+                error!("Failed to send subscribe message: {}", e);
+            }
+            if let Err(e) = writer.send(Message::Text(mode_msg)).await {
+                error!("Failed to send mode message: {}", e);
+            }
+            info!("Subscribed to {} instruments in Full mode", map.len());
         }
-        if let Err(e) = ws_writer.send(tokio_tungstenite::tungstenite::Message::Text(mode_msg)).await {
-            error!("Failed to send mode message: {}", e);
-        }
 
-        // ── Main event loop ──────────────────────────────────────────────────
+        // â”€â”€ Dynamic subscribe handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // Runs as a separate task so the reader loop isn't blocked waiting for commands.
+        let ws_writer_sub = Arc::clone(&ws_writer);
+        tokio::spawn(async move {
+            while let Some(cmd) = sub_rx.recv().await {
+                match cmd {
+                    SubscribeCmd::Add { token, symbol } => {
+                        let token_val = serde_json::json!([token]);
+                        let subscribe_msg = serde_json::json!({ "a": "subscribe", "v": token_val }).to_string();
+                        let mode_msg = serde_json::json!({ "a": "mode", "v": ["full", token_val] }).to_string();
+
+                        let mut writer = ws_writer_sub.lock().await;
+                        let ok = writer.send(Message::Text(subscribe_msg)).await.is_ok()
+                            && writer.send(Message::Text(mode_msg)).await.is_ok();
+
+                        if ok {
+                            info!("[Control] âœ“ Dynamically subscribed: {} (token {})", symbol, token);
+                        } else {
+                            error!("[Control] âœ— Failed to subscribe {} â€” WS may be disconnected", symbol);
+                        }
+                    }
+                }
+            }
+        });
+
+        // â”€â”€ Main event loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        let mut ws_reader = ws_reader;
         while let Some(msg) = ws_reader.next().await {
             match msg {
                 Ok(Message::Binary(payload)) => {
-                    // Parse all tick packets from the binary frame
-                    let ticks = parser::parse_binary_frame(&payload, &symbol_map_arc);
+                    // Parse all tick packets from the binary frame.
+                    // Hold the read lock for the duration of parsing only.
+                    let ticks = {
+                        let map = symbol_map_arc.read().await;
+                        parser::parse_binary_frame(&payload, &*map)
+                    };
 
                     for tick in ticks {
                         let parsed_tick = crate::types::ParsedTick {
@@ -279,7 +400,7 @@ async fn main() {
                     warn!("Direct-stream: WebSocket closed by server: {:?}", frame);
                     break;
                 }
-                Ok(_) => { /* Text / Pong / Frame — ignore */ }
+                Ok(_) => { /* Text / Pong / Frame â€” ignore */ }
                 Err(e) => {
                     error!("Direct-stream: WebSocket error: {}", e);
                     break;
@@ -290,10 +411,10 @@ async fn main() {
         info!("Direct-stream loop exited.");
     });
 
-    // ── 9. Graceful shutdown on Ctrl-C / SIGTERM ─────────────────────────────
+    // â”€â”€ 11. Graceful shutdown on Ctrl-C / SIGTERM â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     tokio::select! {
         _ = signal::ctrl_c() => {
-            info!("SIGINT received — shutting down ingestion service...");
+            info!("SIGINT received â€” shutting down ingestion service...");
         }
         res = ilp_handle => {
             error!("ILP writer task exited unexpectedly: {:?}", res);
