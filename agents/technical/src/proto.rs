@@ -9,6 +9,8 @@
 
 /// Generated Rust structs from `shared_protos/market_data.proto`.
 /// Primary type: `Tick` — the raw market tick published by the ingestion service.
+/// `#[allow(dead_code)]`: OhlcCandle is generated but not constructed in this agent.
+#[allow(dead_code)]
 pub mod market_data {
     include!(concat!(env!("OUT_DIR"), "/ai_trade.market_data.rs"));
 }

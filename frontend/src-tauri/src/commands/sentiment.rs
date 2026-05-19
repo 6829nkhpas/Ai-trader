@@ -247,22 +247,36 @@ async fn analyze_sentiment_via_llm(symbol: &str, news: &str, headlines: Vec<Stri
 
     // ── Robust JSON extraction ──────────────────────────────────────────
     // The LLM sometimes outputs text before/after the JSON, wraps it in
-    // markdown fences, or truncates the closing fence.  Find the first '{'
-    // and last '}' to extract the raw JSON object regardless of surrounding text.
-    let extracted = {
-        let start = content.find('{');
-        let end   = content.rfind('}');
-        match (start, end) {
-            (Some(s), Some(e)) if e >= s => &content[s..=e],
-            _ => {
-                // Fallback: strip fences and trim
-                content
-                    .trim()
-                    .trim_start_matches("```json")
-                    .trim_start_matches("```")
-                    .trim_end_matches("```")
-                    .trim()
-            }
+    // markdown fences, or outputs pure prose with no JSON at all.
+    // Strategy:
+    //   1. Find the first '{' and last '}' — handles surrounding text & fences.
+    //   2. If no '{' found → the model output prose (wrong model / rate limit).
+    //      Return a neutral fallback payload so the UI stays functional.
+    let start = content.find('{');
+    let end   = content.rfind('}');
+
+    let extracted: &str = match (start, end) {
+        (Some(s), Some(e)) if e >= s => &content[s..=e],
+        _ => {
+            // No JSON object found at all — model output pure prose.
+            // Log the snippet for diagnosis, return a neutral payload.
+            warn!(
+                "[sentiment] LLM returned prose (no JSON) for {} — model may be wrong. \
+                 Raw snippet: {:?}",
+                symbol,
+                &content[..content.len().min(200)]
+            );
+            // Return a neutral fallback — the headline list is still shown.
+            let top = headlines.first().cloned()
+                .unwrap_or_else(|| format!("No notable headline for {}.", symbol));
+            return Ok(SentimentPayload {
+                symbol: symbol.to_string(),
+                score: 0,
+                label: "Neutral".to_string(),
+                top_headline: top,
+                impact: "neutral".to_string(),
+                headlines,
+            });
         }
     };
 
