@@ -121,7 +121,7 @@ export default function AlphaPredictiveChart({
   }, [historicalCandles, ohlcCandles, activeSymbol]);
 
   // ── Aggregation ──────────────────────────────────────────────────────
-  const { candles: chartData, volumes: volumeData, ema9: ema9Data, ema21: ema21Data } = useMemo(
+  const { candles: chartData, volumes: volumeData, ema9: ema9Data, ema21: ema21Data, isIndexVolume } = useMemo(
     () => aggregateCandles(mergedCandles, effectiveTimeframe, activeSymbol),
     [mergedCandles, effectiveTimeframe, activeSymbol]
   );
@@ -210,6 +210,14 @@ export default function AlphaPredictiveChart({
       {ohlcLabel && (
         <div className="pointer-events-none absolute left-3 top-2 text-[10px] font-mono text-text-muted/60 select-none">
           {ohlcLabel}
+        </div>
+      )}
+
+      {/* ── Index Volume Proxy Label ──────────────────────────────── */}
+      {isIndexVolume && chartData.length > 0 && (
+        <div className="pointer-events-none absolute left-3 bottom-1 text-[9px] font-mono select-none"
+             style={{ color: 'rgba(255,255,255,0.25)' }}>
+          Vol: Price Range (Index)
         </div>
       )}
 

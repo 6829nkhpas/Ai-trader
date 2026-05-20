@@ -247,13 +247,19 @@ pub async fn get_historical_view(
                 .await;
 
             // Query 2: Today's live ticks aggregated to the requested interval
+            //
+            // IMPORTANT: The volume column in live_ticks is CUMULATIVE day volume
+            // (total traded since market open), NOT per-tick volume. We must use
+            // last(volume) - first(volume) to get the actual volume traded within
+            // each SAMPLE BY interval. Using sum(volume) would sum cumulative
+            // values, producing wildly inflated numbers.
             let live_query = format!(
                 "SELECT timestamp AS ts, \
                         first(last_traded_price) AS open, \
                         max(last_traded_price)   AS high, \
                         min(last_traded_price)   AS low, \
                         last(last_traded_price)  AS close, \
-                        sum(volume)              AS volume \
+                        (last(volume) - first(volume)) AS volume \
                  FROM live_ticks \
                  WHERE symbol = $1 \
                    AND timestamp > dateadd('d', -1, now()) \
@@ -292,7 +298,7 @@ pub async fn get_historical_view(
                         max(last_traded_price)   AS high, \
                         min(last_traded_price)   AS low, \
                         last(last_traded_price)  AS close, \
-                        sum(volume)              AS volume \
+                        (last(volume) - first(volume)) AS volume \
                  FROM live_ticks \
                  WHERE symbol = $1 \
                  SAMPLE BY {} ALIGN TO CALENDAR",

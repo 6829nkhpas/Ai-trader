@@ -1,16 +1,16 @@
-# Graph Report - Ai-trader  (2026-05-19)
+# Graph Report - Ai-trader  (2026-05-20)
 
 ## Corpus Check
-- 188 files · ~149,333 words
+- 188 files · ~152,086 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 877 nodes · 1410 edges · 84 communities (77 shown, 7 thin omitted)
-- Extraction: 89% EXTRACTED · 11% INFERRED · 0% AMBIGUOUS · INFERRED: 150 edges (avg confidence: 0.8)
+- 882 nodes · 1422 edges · 84 communities (77 shown, 7 thin omitted)
+- Extraction: 89% EXTRACTED · 11% INFERRED · 0% AMBIGUOUS · INFERRED: 152 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `41a70a37`
+- Built from commit: `8e1c2065`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -73,31 +73,31 @@
 
 ### Community 0 - "Community 0"
 Cohesion: 0.05
-Nodes (36): hashPassword(), verifyPassword(), AuthenticationError, DuplicateEmailError, NotFoundError, PasswordComplexityError, TokenReuseError, registerErrorHandler() (+28 more)
+Nodes (37): hashPassword(), verifyPassword(), AuthenticationError, DuplicateEmailError, NotFoundError, PasswordComplexityError, TokenReuseError, registerErrorHandler() (+29 more)
 
 ### Community 1 - "Community 1"
 Cohesion: 0.06
-Nodes (44): fetch_candles_for_symbol(), RadarAlert, spawn_radar_worker(), current_count(), download_csv(), ensure_schema(), is_stale(), parse_and_persist() (+36 more)
+Nodes (42): fetch_candles_for_symbol(), RadarAlert, spawn_radar_worker(), current_count(), download_csv(), ensure_schema(), is_stale(), parse_and_persist() (+34 more)
 
 ### Community 2 - "Community 2"
-Cohesion: 0.06
-Nodes (34): handleGenerateMfa(), handleGoogleLogin(), handleHealth(), handleLogin(), handleLogout(), handleRefresh(), handleRegister(), handleSession() (+26 more)
+Cohesion: 0.07
+Nodes (33): handleGenerateMfa(), handleGoogleLogin(), handleHealth(), handleLogin(), handleLogout(), handleRefresh(), handleRegister(), handleSession() (+25 more)
 
 ### Community 3 - "Community 3"
-Cohesion: 0.06
-Nodes (52): fetch_news_context(), load_candles_from_db(), run_deep_quant_analysis(), is_audit_enabled(), log_api_error(), log_api_transaction(), build_request_body(), ChatChoice (+44 more)
-
-### Community 4 - "Community 4"
 Cohesion: 0.05
 Nodes (20): gate(), AuthLayout(), handleEmailBlur(), handlePassBlur(), validateEmail(), validatePassword(), ToolMenu(), OAuthCompleteInner() (+12 more)
 
-### Community 5 - "Community 5"
+### Community 4 - "Community 4"
 Cohesion: 0.06
 Nodes (32): rsi_warm_up_gating(), update_rsi(), update_vwap(), vwap_basic_calculation(), vwap_no_volume_returns_none(), generate_access_token(), KiteSessionData, KiteSessionResponse (+24 more)
 
-### Community 6 - "Community 6"
+### Community 5 - "Community 5"
 Cohesion: 0.08
 Nodes (31): AiExecutionPlan, base_state(), candle(), compile_consensus_full_bullish(), compile_consensus_serializes_to_json(), ConsensusEngine, ConsensusReport, derive_bias_bearish() (+23 more)
+
+### Community 6 - "Community 6"
+Cohesion: 0.08
+Nodes (45): build_request_body(), ChatChoice, ChatMessage, ChatMessageResponse, ChatRequest, ChatResponse, first_non_empty(), format_reqwest_error() (+37 more)
 
 ### Community 7 - "Community 7"
 Cohesion: 0.07
@@ -112,36 +112,36 @@ Cohesion: 0.1
 Nodes (25): handleGetProfile(), handleGetUploadUrl(), handleLivenessCheck(), handleUpsertProfile(), handleVerifyPan(), decryptSymmetric(), encryptSymmetric(), getKey() (+17 more)
 
 ### Community 10 - "Community 10"
+Cohesion: 0.1
+Nodes (24): BinaryCandle, broadcast_error(), get_historical_view(), HistorySource, load_historical(), InstrumentRecord, lookup_instrument_token(), resolve_instrument_token() (+16 more)
+
+### Community 11 - "Community 11"
 Cohesion: 0.14
 Nodes (17): fetchInstruments(), GET(), GET(), historical_handler(), HistoricalParams, Instrument, InstrumentCache, instruments_search() (+9 more)
 
-### Community 11 - "Community 11"
+### Community 12 - "Community 12"
+Cohesion: 0.14
+Nodes (20): fetch_news_context(), load_candles_from_db(), run_deep_quant_analysis(), analyze_sentiment_via_llm(), fetch_google_news_rss(), fetch_news_headlines(), fetch_symbol_sentiment(), first_non_empty() (+12 more)
+
+### Community 13 - "Community 13"
 Cohesion: 0.2
 Nodes (10): Candle, detects_bearish_engulfing(), detects_bullish_engulfing(), detects_doji(), detects_hammer(), detects_shooting_star(), empty_history_returns_empty(), no_doji_on_large_body() (+2 more)
 
-### Community 12 - "Community 12"
-Cohesion: 0.15
-Nodes (11): InstrumentRecord, lookup_instrument_token(), resolve_instrument_token(), resolve_token_blocking(), ActiveSymbolState, notify_ingestion_subscribe(), send_subscribe_to_ingestion(), subscribe_ticker() (+3 more)
-
-### Community 13 - "Community 13"
+### Community 14 - "Community 14"
 Cohesion: 0.11
 Nodes (5): handler(), tauriInvoke(), hydrateWatchlist(), persistWatchlist(), invoke()
 
-### Community 14 - "Community 14"
+### Community 15 - "Community 15"
 Cohesion: 0.12
 Nodes (4): calculateEMA(), calculateRSI(), computeTrend(), useMultiTimeframeTrend()
-
-### Community 15 - "Community 15"
-Cohesion: 0.14
-Nodes (15): BinaryCandle, broadcast_error(), get_historical_view(), HistorySource, load_historical(), bulk_insert(), ExistingRange, fetch_kite_candles() (+7 more)
 
 ### Community 16 - "Community 16"
 Cohesion: 0.32
 Nodes (14): base_indicators(), candle(), detects_death_cross(), detects_golden_cross(), detects_orb_breakdown_bearish(), detects_orb_breakout_bullish(), detects_vwap_bounce_bullish(), empty_history_returns_empty() (+6 more)
 
-### Community 18 - "Community 18"
-Cohesion: 0.32
-Nodes (11): analyze_sentiment_via_llm(), fetch_google_news_rss(), fetch_news_headlines(), fetch_symbol_sentiment(), first_non_empty(), LlmSentimentResponse, mock_sentiment(), resolve_llm_endpoint() (+3 more)
+### Community 17 - "Community 17"
+Cohesion: 0.24
+Nodes (7): ActiveSymbolState, notify_ingestion_subscribe(), send_subscribe_to_ingestion(), subscribe_ticker(), ensure_bootstrapped(), spawn_bridge(), QuestDbWriter
 
 ### Community 19 - "Community 19"
 Cohesion: 0.29
@@ -160,18 +160,18 @@ Cohesion: 0.83
 Nodes (3): generateMockCandles(), GET(), symToBasePrice()
 
 ## Knowledge Gaps
-- **37 isolated node(s):** `Instrument`, `QuoteData`, `InstrumentSearchParams`, `QuoteParams`, `HistoricalParams` (+32 more)
+- **38 isolated node(s):** `Instrument`, `QuoteData`, `InstrumentSearchParams`, `QuoteParams`, `HistoricalParams` (+33 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **7 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `run()` connect `Community 1` to `Community 0`, `Community 2`, `Community 20`, `Community 15`?**
-  _High betweenness centrality (0.245) - this node is a cross-community bridge._
-- **Why does `spawn()` connect `Community 1` to `Community 8`, `Community 12`, `Community 5`?**
+- **Why does `run()` connect `Community 1` to `Community 0`, `Community 2`, `Community 10`, `Community 12`, `Community 20`?**
+  _High betweenness centrality (0.247) - this node is a cross-community bridge._
+- **Why does `spawn()` connect `Community 1` to `Community 8`, `Community 17`, `Community 4`?**
   _High betweenness centrality (0.130) - this node is a cross-community bridge._
-- **Why does `main()` connect `Community 5` to `Community 8`, `Community 1`, `Community 10`, `Community 12`?**
+- **Why does `main()` connect `Community 4` to `Community 8`, `Community 1`, `Community 11`, `Community 17`?**
   _High betweenness centrality (0.109) - this node is a cross-community bridge._
 - **Are the 17 inferred relationships involving `main()` (e.g. with `run_listener()` and `update_rsi()`) actually correct?**
   _`main()` has 17 INFERRED edges - model-reasoned connections that need verification._

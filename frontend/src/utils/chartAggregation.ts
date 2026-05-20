@@ -30,8 +30,8 @@ export function aggregateCandles(
   rawCandles: OhlcCandle[],
   timeframe: Timeframe,
   symbol: string
-): { candles: ChartCandle[]; volumes: VolumeBar[]; ema9: EmaPoint[]; ema21: EmaPoint[] } {
-  const empty = { candles: [], volumes: [], ema9: [], ema21: [] };
+): { candles: ChartCandle[]; volumes: VolumeBar[]; ema9: EmaPoint[]; ema21: EmaPoint[]; isIndexVolume: boolean } {
+  const empty = { candles: [], volumes: [], ema9: [], ema21: [], isIndexVolume: false };
   const intervalMs = TIMEFRAME_MS[timeframe];
   if (!intervalMs) return empty;
 
@@ -90,8 +90,29 @@ export function aggregateCandles(
     closes.push({ time: timeSec, value: b.close });
   }
 
+  // ── Index Volume Proxy ──────────────────────────────────────────────
+  // Indices (NIFTY 50, BANK NIFTY, etc.) have volume=0 from the Kite API
+  // because they are calculated values, not directly traded instruments.
+  // When all volume values are zero, generate synthetic "activity bars"
+  // based on the candle's price range (high - low). This gives visual
+  // context about intra-bar volatility — a common technique used by
+  // platforms like TradingView for index charts.
+  const allZeroVolume = volumes.length > 0 && volumes.every((v) => v.value === 0);
+  if (allZeroVolume && candles.length > 0) {
+    for (let i = 0; i < candles.length; i++) {
+      const c = candles[i];
+      // Price spread as a proxy for activity (in absolute INR terms)
+      const spread = c.high - c.low;
+      volumes[i] = {
+        time: c.time,
+        value: spread > 0 ? spread : 0.01, // Tiny fallback so bars are visible
+        color: c.close >= c.open ? COLORS.volumeUp : COLORS.volumeDown,
+      };
+    }
+  }
+
   const ema9 = calculateEMA(closes, 9);
   const ema21 = calculateEMA(closes, 21);
 
-  return { candles, volumes, ema9, ema21 };
+  return { candles, volumes, ema9, ema21, isIndexVolume: allZeroVolume };
 }

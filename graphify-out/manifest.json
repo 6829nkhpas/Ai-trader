@@ -436,8 +436,8 @@
     "hash": "67fce45a9853bf9c489d85dbd9b2276b"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\AlphaPredictiveChart.tsx": {
-    "mtime": 1779183450.4373858,
-    "hash": "6e9f40b49ed6e4e774298fc148636a5a"
+    "mtime": 1779266372.8252947,
+    "hash": "1f1f37ca75868e36921073f374be37d4"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\OrderBook.tsx": {
     "mtime": 1778412029.0964186,
@@ -524,12 +524,12 @@
     "hash": "dd7a0c05be3d59aa366456f8258b53f6"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useChartDataSync.ts": {
-    "mtime": 1779196769.1911008,
-    "hash": "a4f2d7309f45770eacf773074157cff6"
+    "mtime": 1779264604.2818637,
+    "hash": "32b676c4f676bd266937e5a34c7f19fd"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useChartInit.ts": {
-    "mtime": 1779183450.440813,
-    "hash": "9b6b9e1870c3995279a2a706a663ca76"
+    "mtime": 1779264148.661715,
+    "hash": "96e165db670ee3a4ca25d85eedcccaa2"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useDrawingEngine.ts": {
     "mtime": 1778654009.7766213,
@@ -548,8 +548,8 @@
     "hash": "d04f98611d144e17416ba31a1dd1a17a"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useHistoricalData.ts": {
-    "mtime": 1779196756.0068197,
-    "hash": "468d82880c2c32794d5f613650d7d826"
+    "mtime": 1779262871.6463544,
+    "hash": "483606ed49fc371bb10933c48a2a9a79"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useMacroIndicators.ts": {
     "mtime": 1778427276.4766312,
@@ -572,16 +572,16 @@
     "hash": "855a7e1504db78161e3b3796818cab27"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\store\\useTradeStore.ts": {
-    "mtime": 1779202733.7641554,
-    "hash": "b053f8d5e2154db18f838d9723c6e5bf"
+    "mtime": 1779264105.2661583,
+    "hash": "8a48c27cddbc829869464dc26ca581c9"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\utils\\chartAggregation.ts": {
-    "mtime": 1779183450.4447649,
-    "hash": "5ee5c95b15400fa89116d4af42c721b0"
+    "mtime": 1779266352.7503402,
+    "hash": "d5c89800e4c75bf3b801298aaac8f07f"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\utils\\chartTypes.ts": {
-    "mtime": 1778668578.931898,
-    "hash": "d98309e36539cdc9f30c4f7582ff6225"
+    "mtime": 1779261218.9566429,
+    "hash": "ccbc56a60cf314223c1de157b1197b3b"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\build.rs": {
     "mtime": 1778012051.5296266,
@@ -600,8 +600,8 @@
     "hash": "a8e64e9b6bd150703cbc12bc0d188f24"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\commands\\charts.rs": {
-    "mtime": 1779196731.3628619,
-    "hash": "1d42c0408be0d9a1fdb43e21846fad13"
+    "mtime": 1779266605.4046328,
+    "hash": "ee66edf56ccd137eb04a7503e60205b2"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\commands\\deep_quant.rs": {
     "mtime": 1779183450.4296267,
@@ -648,8 +648,8 @@
     "hash": "98d5369fb7cf02f1c49192b047519181"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\services\\history_loader.rs": {
-    "mtime": 1778238063.9683084,
-    "hash": "bfb92b0213c90b8be1292a0f8e649aae"
+    "mtime": 1779262537.9109712,
+    "hash": "92f90f9def5070dea85346559456a29a"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\services\\instrument_master.rs": {
     "mtime": 1779200047.5316806,
