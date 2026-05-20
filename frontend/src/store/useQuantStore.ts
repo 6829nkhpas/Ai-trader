@@ -69,6 +69,8 @@ export interface CompletedTrade {
 
 interface QuantStore {
   consensusData: ConsensusReport | null;
+  /** Per-symbol consensus cache — retains results from previous Deep Quant runs */
+  consensusCache: Record<string, ConsensusReport>;
   aiPlan: AiExecutionPlan | null;
   isAnalyzing: boolean;
   analysisError: string | null;
@@ -83,6 +85,8 @@ interface QuantStore {
   sentimentCache: Record<string, { payload: SentimentPayload; fetchedAt: number; rateLimitedUntil?: number }>;
 
   setConsensusData: (data: ConsensusReport) => void;
+  clearConsensusData: () => void;
+  loadConsensusForSymbol: (symbol: string) => void;
   fetchDeepAnalysis: (symbol: string) => Promise<void>;
   loadSentimentForSymbol: (symbol: string) => Promise<void>;
   refreshSentimentForSymbol: (symbol: string) => Promise<void>;
@@ -140,6 +144,7 @@ function parseExecutionPlan(text: string): { entry: number; sl: number; tp: numb
 
 export const useQuantStore = create<QuantStore>((set, get) => ({
   consensusData: null,
+  consensusCache: {},
   aiPlan: null,
   isAnalyzing: false,
   analysisError: null,
@@ -152,7 +157,30 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
   sentimentError: null,
   sentimentCache: {},
 
-  setConsensusData: (data: ConsensusReport) => set({ consensusData: data }),
+  setConsensusData: (data: ConsensusReport) => {
+    const sym = data.symbol?.toUpperCase();
+    console.log(`[QuantStore] ✔ Consensus SET symbol=${sym} trend=${data.trend_score} momentum=${data.momentum_state}`);
+    set((state) => ({
+      consensusData: data,
+      consensusCache: sym
+        ? { ...state.consensusCache, [sym]: data }
+        : state.consensusCache,
+    }));
+  },
+
+  clearConsensusData: () => set({ consensusData: null }),
+
+  loadConsensusForSymbol: (symbol: string) => {
+    const sym = symbol.toUpperCase();
+    const cached = get().consensusCache[sym];
+    if (cached) {
+      console.log(`[QuantStore] ✔ Consensus CACHE HIT symbol=${sym} trend=${cached.trend_score}`);
+      set({ consensusData: cached });
+    } else {
+      console.log(`[QuantStore] ⏳ Consensus CACHE MISS symbol=${sym} — clearing stale data`);
+      set({ consensusData: null });
+    }
+  },
 
   // Cache-aware with TTL: serves cached data on symbol click.
   // Skips network call if:

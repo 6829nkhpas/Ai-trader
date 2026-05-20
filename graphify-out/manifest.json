@@ -400,8 +400,8 @@
     "hash": "dfa1f5f6a7037bf39dc510f30b180002"
   },
   "D:\\projects\\Ai-trader\\frontend\\next-env.d.ts": {
-    "mtime": 1779267543.332826,
-    "hash": "2a74d3909800ca5467fa83b0ab4a4890"
+    "mtime": 1779268637.6896715,
+    "hash": "d0f8375ae1199dc7acd3977fc33b78b8"
   },
   "D:\\projects\\Ai-trader\\frontend\\next.config.ts": {
     "mtime": 1779183450.4250655,
@@ -420,8 +420,8 @@
     "hash": "41f1b0c44c7ca1794f0fb196a5020061"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\app\\page.tsx": {
-    "mtime": 1779135763.6500223,
-    "hash": "985cdb051b3e2dff41b3e2dc021d43cd"
+    "mtime": 1779269176.9892178,
+    "hash": "696b7d0ac468ddd9d3392ca196b1a5c0"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\app\\api\\kite\\historical\\route.ts": {
     "mtime": 1779183450.435864,
@@ -484,8 +484,8 @@
     "hash": "d910f0ad0fd8da105e085ed34e03a9da"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\panels\\LeftPanel.tsx": {
-    "mtime": 1779203586.4748166,
-    "hash": "a91c2ca5e9c0036c646d321fe67b071b"
+    "mtime": 1779269207.0187542,
+    "hash": "ccb9a396ff5cc62956fbf62480432968"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\panels\\LiveFeedPanel.tsx": {
     "mtime": 1778414923.445413,
@@ -512,8 +512,8 @@
     "hash": "ea628c20f0af272c8ea226407fce4120"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\quant\\DeepQuantPanel.tsx": {
-    "mtime": 1779119267.4567864,
-    "hash": "657ebc0a11e70f80faca14920fa55f41"
+    "mtime": 1779268522.1926994,
+    "hash": "443d0e8ae90429eeb1369e4b9578ee3b"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\quant\\QuantRadar.tsx": {
     "mtime": 1779183450.4384592,
@@ -568,8 +568,8 @@
     "hash": "adca4805b5e77fc0ce911385faa99f5e"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\store\\useQuantStore.ts": {
-    "mtime": 1779183450.443352,
-    "hash": "855a7e1504db78161e3b3796818cab27"
+    "mtime": 1779269115.1990776,
+    "hash": "89f5dfd6d029b54b5957453e7f19fedb"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\store\\useTradeStore.ts": {
     "mtime": 1779264105.2661583,
@@ -604,8 +604,8 @@
     "hash": "ee66edf56ccd137eb04a7503e60205b2"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\commands\\deep_quant.rs": {
-    "mtime": 1779183450.4296267,
-    "hash": "a5c1e3d24edfdbee0e2d616c96e3936a"
+    "mtime": 1779270280.1221323,
+    "hash": "4ef6129f92c95b4442ca3f97223e84e0"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\commands\\instruments.rs": {
     "mtime": 1779199741.409152,

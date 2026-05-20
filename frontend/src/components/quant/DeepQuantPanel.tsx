@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useQuantStore } from '../../store/useQuantStore';
 import { useTradeStore } from '../../store/useTradeStore';
+import { useMemo } from 'react';
 
 // ── Conviction Helpers ──────────────────────────────────────────────────
 
@@ -98,7 +99,26 @@ function LoadingState() {
 export default function DeepQuantPanel() {
   const { aiPlan, isAnalyzing, analysisError, fetchDeepAnalysis, clearAiPlan, openPosition, activePositions } = useQuantStore();
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
+  const historicalCache = useTradeStore((s) => s.historicalCache);
   const symbol = selectedSymbol || 'RELIANCE';
+
+  // ── AI Handoff State Guard ────────────────────────────────────────────
+  // Check if the historicalCache has ANY entry for this symbol with > 0 candles.
+  // This is the cross-component proxy for "mergedCandles" since DeepQuantPanel
+  // doesn't have direct access to the chart's merged candle array.
+  const symbolCandleCount = useMemo(() => {
+    const symUpper = symbol.toUpperCase();
+    let maxCount = 0;
+    for (const [key, val] of Object.entries(historicalCache)) {
+      if (key.startsWith(`${symUpper}::`) && val && val.length > maxCount) {
+        maxCount = val.length;
+      }
+    }
+    return maxCount;
+  }, [historicalCache, symbol]);
+
+  const dataReady = symbolCandleCount > 0;
+  const insufficientData = symbolCandleCount > 0 && symbolCandleCount < 50;
 
   // Check if there's already an active position for this symbol from this plan
   const hasActivePosition = activePositions.some((p) => p.symbol === symbol);
@@ -109,6 +129,21 @@ export default function DeepQuantPanel() {
     setDeployed(false);
   }, [aiPlan]);
 
+  // ── AI Handoff Handler (with diagnostic tracers) ──────────────────────
+  const handleAIAnalysis = () => {
+    console.log(`🧠 [AI HANDOFF] Requesting analysis for Symbol: ${symbol}`);
+    console.log(`🧠 [AI HANDOFF] Current cached candle count: ${symbolCandleCount}`);
+
+    if (symbolCandleCount < 50) {
+      console.warn(
+        `🧠 [AI HANDOFF WARNING] Insufficient candles for AI analysis. ` +
+        `DeepSeek requires at least 50 periods. Current: ${symbolCandleCount}`
+      );
+    }
+
+    fetchDeepAnalysis(symbol);
+  };
+
   return (
     <div className="flex h-full flex-col text-sm select-none overflow-hidden">
       {/* ── Trigger Button ────────────────────────────────── */}
@@ -116,35 +151,47 @@ export default function DeepQuantPanel() {
         <button
           id="btn-run-deep-quant"
           type="button"
-          disabled={isAnalyzing}
-          onClick={() => fetchDeepAnalysis(symbol)}
+          disabled={isAnalyzing || !dataReady}
+          onClick={handleAIAnalysis}
           className={`
             group relative w-full flex items-center justify-center gap-2
             rounded-xl px-4 py-3 text-[13px] font-bold uppercase tracking-wider
             transition-all duration-300 ease-out
-            ${isAnalyzing
-              ? 'bg-blue-500/10 text-blue-300 border border-blue-500/20 cursor-wait'
-              : 'bg-gradient-to-r from-blue-600 to-violet-600 text-white border border-blue-500/40 hover:from-blue-500 hover:to-violet-500 hover:shadow-lg hover:shadow-blue-500/20 active:scale-[0.98]'
+            ${!dataReady
+              ? 'bg-slate-500/10 text-slate-400 border border-slate-500/20 opacity-50 cursor-not-allowed'
+              : isAnalyzing
+                ? 'bg-blue-500/10 text-blue-300 border border-blue-500/20 cursor-wait'
+                : 'bg-gradient-to-r from-blue-600 to-violet-600 text-white border border-blue-500/40 hover:from-blue-500 hover:to-violet-500 hover:shadow-lg hover:shadow-blue-500/20 active:scale-[0.98]'
             }
           `}
         >
           {/* Glow ring */}
-          {!isAnalyzing && (
+          {!isAnalyzing && dataReady && (
             <div className="absolute -inset-px rounded-xl bg-gradient-to-r from-blue-400/20 to-violet-400/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300 blur-sm" />
           )}
 
           <span className="relative flex items-center gap-2">
-            {isAnalyzing ? (
+            {!dataReady ? (
+              <Loader2 size={16} className="animate-spin text-slate-400" />
+            ) : isAnalyzing ? (
               <Loader2 size={16} className="animate-spin" />
             ) : (
               <Zap size={16} className="group-hover:animate-pulse" />
             )}
-            {isAnalyzing ? 'ANALYZING...' : 'RUN DEEP QUANT ANALYSIS'}
+            {!dataReady
+              ? 'AWAITING DATA…'
+              : isAnalyzing
+                ? 'ANALYZING...'
+                : 'RUN DEEP QUANT ANALYSIS'}
           </span>
         </button>
 
         <p className="text-[9px] text-text-muted/50 text-center mt-1.5">
-          {symbol} • Consensus + News → DeepSeek AI
+          {symbol} • {!dataReady
+            ? 'Loading candle data from QuestDB…'
+            : insufficientData
+              ? `⚠ Only ${symbolCandleCount} candles — may reduce accuracy`
+              : `${symbolCandleCount} candles • Consensus + News → DeepSeek AI`}
         </p>
       </div>
 
@@ -165,8 +212,9 @@ export default function DeepQuantPanel() {
               </p>
             </div>
             <button
-              onClick={() => fetchDeepAnalysis(symbol)}
-              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-semibold text-text-secondary bg-elevated border border-border-default hover:bg-surface transition-colors"
+              onClick={handleAIAnalysis}
+              disabled={!dataReady}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-semibold text-text-secondary bg-elevated border border-border-default hover:bg-surface transition-colors ${!dataReady ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <RotateCcw size={10} />
               Retry

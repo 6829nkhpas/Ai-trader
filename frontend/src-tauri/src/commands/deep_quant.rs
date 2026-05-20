@@ -85,10 +85,43 @@ async fn fetch_news_context(symbol: &str) -> String {
 // ── Candle Loader ───────────────────────────────────────────────────────────
 
 /// Load the most recent N candles from QuestDB for quant analysis.
+///
+/// Uses a multi-source waterfall strategy matching the chart's data pipeline:
+///   1. `historical_candles` — daily archive (5-year backfill via Kite)
+///   2. `historical_intraday` — intraday candles cached by chart views
+///   3. `live_ticks` — current session aggregated into 10m bars
+///
+/// Returns candles in chronological order (oldest first).
 async fn load_candles_from_db(pool: &PgPool, symbol: &str, limit: i64) -> Result<Vec<Candle>, String> {
     use sqlx::Row;
 
-    let rows = sqlx::query(
+    // Helper: parse rows into Candle vec (reverse to chronological order)
+    let parse_rows = |rows: &[sqlx::postgres::PgRow]| -> Vec<Candle> {
+        let mut candles: Vec<Candle> = rows
+            .iter()
+            .filter_map(|row| {
+                let open: f64 = row.try_get("open").ok()?;
+                let high: f64 = row.try_get("high").ok()?;
+                let low: f64 = row.try_get("low").ok()?;
+                let close: f64 = row.try_get("close").ok()?;
+                let volume: i64 = row.try_get::<i64, _>("volume")
+                    .or_else(|_| row.try_get::<i32, _>("volume").map(|v| v as i64))
+                    .unwrap_or(0);
+                Some(Candle {
+                    open,
+                    high,
+                    low,
+                    close,
+                    volume: volume as f64,
+                })
+            })
+            .collect();
+        candles.reverse();
+        candles
+    };
+
+    // ── Source 1: historical_candles (daily archive) ─────────────────────
+    let daily_rows = sqlx::query(
         "SELECT open, high, low, close, volume \
          FROM historical_candles \
          WHERE symbol = $1 \
@@ -98,31 +131,86 @@ async fn load_candles_from_db(pool: &PgPool, symbol: &str, limit: i64) -> Result
     .bind(symbol)
     .bind(limit)
     .fetch_all(pool)
-    .await
-    .map_err(|e| format!("QuestDB candle fetch failed for {}: {}", symbol, e))?;
+    .await;
 
-    // Reverse to chronological order (oldest first)
-    let mut candles: Vec<Candle> = rows
-        .iter()
-        .filter_map(|row| {
-            let open: f64 = row.try_get("open").ok()?;
-            let high: f64 = row.try_get("high").ok()?;
-            let low: f64 = row.try_get("low").ok()?;
-            let close: f64 = row.try_get("close").ok()?;
-            let volume: i64 = row.try_get("volume").ok()?;
-            Some(Candle {
-                open,
-                high,
-                low,
-                close,
-                volume: volume as f64,
-            })
-        })
-        .collect();
+    if let Ok(rows) = &daily_rows {
+        if !rows.is_empty() {
+            let candles = parse_rows(rows);
+            info!(
+                "[deep_quant] candle_source=historical_candles symbol={} count={}",
+                symbol, candles.len()
+            );
+            return Ok(candles);
+        }
+    }
 
-    candles.reverse();
-    Ok(candles)
+    // ── Source 2: historical_intraday (Kite intraday cached by chart) ────
+    let intraday_rows = sqlx::query(
+        "SELECT open, high, low, close, volume \
+         FROM historical_intraday \
+         WHERE symbol = $1 \
+         ORDER BY ts DESC \
+         LIMIT $2",
+    )
+    .bind(symbol)
+    .bind(limit)
+    .fetch_all(pool)
+    .await;
+
+    if let Ok(rows) = &intraday_rows {
+        if !rows.is_empty() {
+            let candles = parse_rows(rows);
+            info!(
+                "[deep_quant] candle_source=historical_intraday symbol={} count={}",
+                symbol, candles.len()
+            );
+            return Ok(candles);
+        }
+    }
+
+    // ── Source 3: live_ticks (current session, aggregated to 10m bars) ───
+    let live_rows = sqlx::query(
+        "SELECT first(last_traded_price) AS open, \
+                max(last_traded_price)   AS high, \
+                min(last_traded_price)   AS low, \
+                last(last_traded_price)  AS close, \
+                (last(volume) - first(volume)) AS volume \
+         FROM live_ticks \
+         WHERE symbol = $1 \
+         SAMPLE BY 10m ALIGN TO CALENDAR \
+         ORDER BY timestamp DESC \
+         LIMIT $2",
+    )
+    .bind(symbol)
+    .bind(limit)
+    .fetch_all(pool)
+    .await;
+
+    if let Ok(rows) = &live_rows {
+        if !rows.is_empty() {
+            let candles = parse_rows(rows);
+            info!(
+                "[deep_quant] candle_source=live_ticks symbol={} count={}",
+                symbol, candles.len()
+            );
+            return Ok(candles);
+        }
+    }
+
+    // All sources empty — log the failures for diagnostics
+    if let Err(e) = &daily_rows {
+        warn!("[deep_quant] historical_candles query failed: {}", e);
+    }
+    if let Err(e) = &intraday_rows {
+        warn!("[deep_quant] historical_intraday query failed: {}", e);
+    }
+    if let Err(e) = &live_rows {
+        warn!("[deep_quant] live_ticks query failed: {}", e);
+    }
+
+    Ok(vec![])
 }
+
 
 // ── Tauri IPC Command ───────────────────────────────────────────────────────
 
@@ -154,7 +242,7 @@ pub async fn run_deep_quant_analysis(
     info!("║  Symbol: {:<40} ║", symbol);
     info!("╚══════════════════════════════════════════════════╝");
 
-    // ── Step 1: Fetch candles from QuestDB ───────────────────────────────
+    // ── Step 1: Fetch candles from QuestDB (multi-source waterfall) ────
     let t_step = Instant::now();
     info!("[deep_quant] step=1/5 candle_load_start symbol={}", symbol);
 
@@ -164,22 +252,102 @@ pub async fn run_deep_quant_analysis(
         msg.to_string()
     })?;
 
-    let candles = load_candles_from_db(pool.inner(), &symbol, 200)
+    let mut candles = load_candles_from_db(pool.inner(), &symbol, 200)
         .await
         .map_err(|e| {
             warn!("[deep_quant] step=1/5 FAIL elapsed_ms={} err={}", t_step.elapsed().as_millis(), e);
             e
         })?;
 
-    if candles.len() < 2 {
+    // ── Proactive Kite Fetch (self-healing when DB is empty) ────────────
+    // If all QuestDB sources returned empty, try fetching daily candles
+    // from the Kite Historical API directly (like charts.rs does).
+    if candles.is_empty() {
+        info!(
+            "[deep_quant] step=1/5 all_sources_empty — triggering proactive Kite fetch for {}",
+            symbol
+        );
+
+        let api_key = std::env::var("KITE_API_KEY").ok();
+        let access_token = std::env::var("KITE_ACCESS_TOKEN").ok();
+
+        if let (Some(api_key), Some(access_token)) = (api_key, access_token) {
+            // Resolve instrument token from the local SQLite cache
+            let local_token: Option<u32> = {
+                app.try_state::<crate::db::DbState>()
+                    .and_then(|db_state| {
+                        crate::commands::instruments::resolve_instrument_token(
+                            &db_state, &symbol
+                        )
+                    })
+            };
+
+            if let Some(token) = local_token {
+                info!(
+                    "[deep_quant] proactive_fetch: {} token={} — calling Kite Historical API",
+                    symbol, token
+                );
+                match crate::services::history_loader::load_historical_data(
+                    pool.inner(),
+                    token,
+                    &symbol,
+                    &api_key,
+                    &access_token,
+                ).await {
+                    Ok(count) => {
+                        info!(
+                            "[deep_quant] proactive_fetch: {} — {} candles ingested. Retrying DB load.",
+                            symbol, count
+                        );
+                        // Retry the DB load now that data exists
+                        candles = load_candles_from_db(pool.inner(), &symbol, 200)
+                            .await
+                            .unwrap_or_default();
+                    }
+                    Err(e) => {
+                        warn!(
+                            "[deep_quant] proactive_fetch: Kite API failed for {}: {}",
+                            symbol, e
+                        );
+                    }
+                }
+            } else {
+                warn!(
+                    "[deep_quant] proactive_fetch: could not resolve instrument token for {} — cannot fetch from Kite",
+                    symbol
+                );
+            }
+        } else {
+            warn!(
+                "[deep_quant] proactive_fetch: KITE_API_KEY/KITE_ACCESS_TOKEN not set — cannot fetch for {}",
+                symbol
+            );
+        }
+    }
+
+    // ── AI RECEIVER TRACER ──────────────────────────────────────────────
+    // Diagnostic: verify exactly what Rust has before calling DeepSeek.
+    println!("🧠 [RUST AI RECEIVER] Symbol: {} | Candles received: {} (after waterfall + proactive fetch)", symbol, candles.len());
+
+    if candles.is_empty() {
         let msg = format!(
-            "Insufficient data for {}: only {} candles available (need ≥2).",
+            "Cannot run AI analysis for {}: No candle data found in any source (historical_candles, historical_intraday, live_ticks) and Kite API fetch failed or unavailable.",
+            symbol
+        );
+        warn!("[deep_quant] step=1/5 FAIL {}", msg);
+        return Err(msg);
+    }
+
+    if candles.len() < 50 {
+        let msg = format!(
+            "Insufficient data for {}: only {} candles available (DeepSeek requires ≥50 for meaningful analysis).",
             symbol,
             candles.len()
         );
         warn!("[deep_quant] step=1/5 FAIL {}", msg);
         return Err(msg);
     }
+
 
     info!(
         "[deep_quant] step=1/5 candle_load_done elapsed_ms={} candles={} symbol={}",

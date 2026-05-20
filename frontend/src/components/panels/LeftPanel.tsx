@@ -110,6 +110,7 @@ export default function LeftPanel() {
   const removeFromWatchlist = useTradeStore((s) => s.removeFromWatchlist);
   const reorderWatchlist = useTradeStore((s) => s.reorderWatchlist);
   const consensusData = useQuantStore((s) => s.consensusData);
+  const loadConsensusForSymbol = useQuantStore((s) => s.loadConsensusForSymbol);
 
   // ── Hydrate persisted watchlist on mount ───────────────────────────
   useEffect(() => {
@@ -128,6 +129,13 @@ export default function LeftPanel() {
       loadSentimentForSymbol(selectedSymbol);
     }
   }, [selectedSymbol, loadSentimentForSymbol]);
+
+  // Load cached consensus for the selected symbol (or clear if no cache exists)
+  useEffect(() => {
+    if (selectedSymbol) {
+      loadConsensusForSymbol(selectedSymbol);
+    }
+  }, [selectedSymbol, loadConsensusForSymbol]);
 
   // ── Fetch quotes for all watchlist symbols ─────────────────────
   const fetchQuotes = useCallback(async () => {
@@ -402,23 +410,32 @@ export default function LeftPanel() {
         {/* Sentiment section — always renders, independent of tick data */}
         <SentimentBlock sentiment={activeSentiment} isLoading={isFetchingSentiment} error={sentimentError} />
 
-        {/* Technical consensus — requires OHLC candle data */}
-        {!consensusData ? (
-          <div className="flex flex-col items-center justify-center gap-3 p-4 py-6">
-            <div className="relative">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-elevated border border-border-subtle">
-                <Activity size={16} className="text-text-muted animate-pulse" />
+        {/* Technical consensus — requires OHLC candle data + symbol match */}
+        {(() => {
+          // Guard: don't show stale consensus from a different symbol
+          const symbolMatch = consensusData && selectedSymbol
+            ? consensusData.symbol?.toUpperCase() === selectedSymbol.toUpperCase()
+            : !!consensusData; // no symbol selected = show whatever we have
+
+          if (!consensusData || !symbolMatch) {
+            return (
+              <div className="flex flex-col items-center justify-center gap-3 p-4 py-6">
+                <div className="relative">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-elevated border border-border-subtle">
+                    <Activity size={16} className="text-text-muted animate-pulse" />
+                  </div>
+                  <div className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-amber-500/30 border border-amber-500/50 animate-ping" />
+                </div>
+                <div className="text-center">
+                  <p className="text-[9px] font-semibold text-text-muted">No Technical Data for {selectedSymbol || 'symbol'}</p>
+                  <p className="text-[8px] text-text-muted/50 mt-0.5">Run Deep Quant Analysis to<br />compute technical consensus</p>
+                </div>
               </div>
-              <div className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-amber-500/30 border border-amber-500/50 animate-ping" />
-            </div>
-            <div className="text-center">
-              <p className="text-[9px] font-semibold text-text-muted">Awaiting OHLC Data...</p>
-              <p className="text-[8px] text-text-muted/50 mt-0.5">Technical indicators activate on<br />first candle ingestion</p>
-            </div>
-          </div>
-        ) : (
-          <LiveAssetHUD data={consensusData} />
-        )}
+            );
+          }
+
+          return <LiveAssetHUD data={consensusData} />;
+        })()}
       </div>
     </div>
   );
@@ -427,7 +444,7 @@ export default function LeftPanel() {
 // ── Live Asset HUD Sub-component ────────────────────────────────────────
 
 function LiveAssetHUD({ data }: { data: ConsensusReport }) {
-  const { trend_score, momentum_state, volatility_state, volume_flow_state, active_patterns, active_strategies } = data;
+  const { symbol, trend_score, momentum_state, volatility_state, volume_flow_state, active_patterns, active_strategies } = data;
   const gaugePercent = Math.round(((trend_score + 100) / 200) * 100);
 
   const stateEntries = [
@@ -444,6 +461,11 @@ function LiveAssetHUD({ data }: { data: ConsensusReport }) {
         <div className="flex items-center gap-1.5 mb-2">
           <TrendingUp size={10} className="text-text-muted" />
           <h3 className="text-[9px] font-bold text-text-secondary uppercase tracking-wider">Technical Consensus</h3>
+          {symbol && (
+            <span className="ml-auto rounded px-1.5 py-px text-[7px] font-bold uppercase tracking-wider bg-blue-500/10 text-blue-400 border border-blue-500/20">
+              {symbol}
+            </span>
+          )}
         </div>
 
         {/* Trend Score */}

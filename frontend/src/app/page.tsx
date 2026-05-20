@@ -40,6 +40,9 @@ export default function Home() {
   const tfDropdownRef = useRef<HTMLDivElement>(null);
   const consensusData = useQuantStore((s) => s.consensusData);
   const setConsensusData = useQuantStore((s) => s.setConsensusData);
+  const clearConsensusData = useQuantStore((s) => s.clearConsensusData);
+  const loadConsensusForSymbol = useQuantStore((s) => s.loadConsensusForSymbol);
+  const clearAiPlan = useQuantStore((s) => s.clearAiPlan);
 
   // Listen for Tauri consensus events
   useEffect(() => {
@@ -101,6 +104,15 @@ export default function Home() {
   // selectedSymbol (watchlist click) takes priority over the AI decision symbol.
   const latestDecision = activeDecision ?? liveDecisions[liveDecisions.length - 1] ?? null;
   const symbol = selectedSymbol || latestDecision?.symbol || 'RELIANCE';
+
+  // ── Clear stale quant data on symbol switch ───────────────────────────
+  // When the user clicks a new symbol, immediately load cached consensus
+  // (if we ran Deep Quant on it before) or clear to prevent stale cross-
+  // symbol data. Also clear any AI plan from the previous symbol.
+  useEffect(() => {
+    loadConsensusForSymbol(symbol);
+    clearAiPlan();
+  }, [symbol, loadConsensusForSymbol, clearAiPlan]);
 
   // Fetch real-time quote for the active symbol
   const fetchSymbolQuote = useCallback(async (signal?: AbortSignal) => {
