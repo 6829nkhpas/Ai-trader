@@ -122,8 +122,8 @@ interface TradeStore {
   setSelectedSymbol: (symbol: string) => void;
   /** Clear all live OHLC candles (used when switching symbols). */
   clearLiveBuffer: () => void;
-  /** Cache historical candles for a symbol. */
-  setHistoricalCache: (symbol: string, candles: OhlcCandle[]) => void;
+  /** Cache historical candles with a composite key (e.g., "RELIANCE::5m::5minute"). */
+  setHistoricalCache: (cacheKey: string, candles: OhlcCandle[]) => void;
   /** Retrieve cached historical candles (returns undefined if not cached). */
   getHistoricalCache: (symbol: string) => OhlcCandle[] | undefined;
   /** Invalidate one or all cached symbol entries. */
@@ -330,24 +330,13 @@ export const useTradeStore = create<TradeStore>((set) => {
     setSelectedSymbol: (symbol: string) => {
       const upper = symbol.toUpperCase();
       set((state) => {
-        const prevSymbol = state.selectedSymbol.toUpperCase();
-        // BUG-4: Rewritten for clarity. Keep cache entries for every symbol
-        // EXCEPT the old one, so switching back later forces a fresh fetch
-        // (data may have moved significantly since last view).
-        // Skip pruning when same symbol (no-op) or no previous symbol.
-        let prunedCache = state.historicalCache;
-        if (prevSymbol && prevSymbol !== upper) {
-          prunedCache = Object.fromEntries(
-            Object.entries(state.historicalCache).filter(
-              ([key]) => !key.startsWith(`${prevSymbol}::`)
-            )
-          );
-        }
+        // Preserve ALL cache entries across symbol switches.
+        // Historical data doesn't change — there's no reason to discard
+        // the old symbol's cache. Switching back will be instant (cache hit).
         return {
           selectedSymbol: upper,
           ohlcCandles: [],
           predictiveSignals: [],
-          historicalCache: prunedCache,
         };
       });
     },
@@ -356,9 +345,11 @@ export const useTradeStore = create<TradeStore>((set) => {
       set({ ohlcCandles: [], predictiveSignals: [] });
     },
 
-    setHistoricalCache: (symbol: string, candles: OhlcCandle[]) => {
+    setHistoricalCache: (cacheKey: string, candles: OhlcCandle[]) => {
       set((state) => ({
-        historicalCache: { ...state.historicalCache, [symbol.toUpperCase()]: candles },
+        // Store with the exact composite cache key (e.g., "RELIANCE::5m::5minute")
+        // Do NOT uppercase — the read side uses the exact same key format.
+        historicalCache: { ...state.historicalCache, [cacheKey]: candles },
       }));
     },
 

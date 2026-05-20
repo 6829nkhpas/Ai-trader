@@ -127,7 +127,22 @@ export function useChartDataSync(
       lastPaintedCandleCountRef.current = chartData.length;
 
       if (timeframeChanged || symbolChanged || prevCount === 0) {
-        chartRef.current?.timeScale().fitContent();
+        // Traditional chart viewport: show the latest ~100 candles with the
+        // newest candle on the right edge + rightOffset breathing room.
+        // This matches TradingView / Zerodha Kite / any professional chart.
+        //
+        // scrollToRealTime() alone doesn't work on first data load (no prior
+        // visible range). Setting an explicit visible logical range ensures
+        // the chart always opens at the latest data.
+        const ts = chartRef.current?.timeScale();
+        if (ts && chartData.length > 0) {
+          const visibleBars = Math.min(chartData.length, 100);
+          const fromIndex = chartData.length - visibleBars;
+          ts.setVisibleLogicalRange({
+            from: fromIndex,
+            to: chartData.length + 10, // +10 = rightOffset breathing room
+          });
+        }
       }
     } else {
       // ── SMOOTH UPDATE PATH ─────────────────────────────────────────
@@ -262,44 +277,55 @@ export function useChartDataSync(
     const slope = (n * sumXY - sumX * sumY) / denom;
     const intercept = (sumY - slope * sumX) / n;
 
+    // 👻 TASK 1 — Trace OLS Regression Output
+    console.log(`👻 [GHOST MATH] n=${n}, slope=${slope}, intercept=${intercept}, denom=${denom}, sumX=${sumX}, sumY=${sumY}, sumXY=${sumXY}, sumXX=${sumXX}`);
+
     // Guard: slope/intercept must be finite numbers.
     if (!Number.isFinite(slope) || !Number.isFinite(intercept)) {
+      console.warn(`👻 [GHOST MATH] ABORT — non-finite slope or intercept`);
       ghostLineRef.current.setData([]);
       return;
     }
 
     // ── Project forward ─────────────────────────────────────────────────
-    // y(n + projectionIndex) = slope * (n + projectionIndex) + intercept
-    // The first ghost point overlaps the last real candle (i = n - 1) so
-    // the line visually anchors to the chart and continues outward.
+    // ANCHORED PROJECTION: Discard the OLS intercept for forward points.
+    // The regression slope tells us the per-bar trend, but the intercept
+    // is valid only in the regression's index coordinate system. At the
+    // last bar (index n-1) the best-fit y can diverge significantly from
+    // the actual close price, causing a visible vertical drop/detachment.
+    //
+    // Instead: Point 0 = currentPrice @ lastCandle.time (perfect anchor),
+    // subsequent points = currentPrice + slope * k.
     //
     // Map the index axis back to UNIX seconds based on the active
     // timeframe interval so lightweight-charts can render it.
-    const rawProjection = Array.from({ length: GHOST_CANDLES + 1 }, (_, k) => {
-      const projIndex = (n - 1) + k; // anchor at the last real bar
-      const value = slope * projIndex + intercept;
-      const time = (lastCandle.time + k * intervalSec) as Time;
-      return { time, value };
-    });
 
-    // Clamp the terminal projection to ±5% of current price to keep the
-    // ghost line visible even when slope * GHOST_CANDLES would push it
-    // off-screen (a runaway trend bar can otherwise dwarf the y-axis).
+    // 👻 TASK 2 — Trace Future Time Mapping (pre-loop context)
+    console.log(`👻 [GHOST PROJECTION] intervalSec=${intervalSec}, lastCandle.time=${lastCandle.time}, effectiveTimeframe=${effectiveTimeframe}, TIMEFRAME_MS=${TIMEFRAME_MS[effectiveTimeframe]}, currentPrice=${currentPrice}`);
+
+    // Clamp slope so the terminal point stays within ±5% of current price.
+    // This keeps the ghost line visible even in a runaway trend.
     const maxMove = currentPrice * 0.05;
-    const terminal = rawProjection[GHOST_CANDLES].value;
+    const rawTerminal = currentPrice + slope * GHOST_CANDLES;
     const clampedTerminal = Math.max(
       currentPrice - maxMove,
-      Math.min(currentPrice + maxMove, terminal)
+      Math.min(currentPrice + maxMove, rawTerminal)
     );
+    const clampedSlope = (clampedTerminal - currentPrice) / GHOST_CANDLES;
 
-    // Re-blend the projection between the real anchor (k=0) and the clamped
-    // terminal so the line is straight and never exceeds the band.
-    const anchor = rawProjection[0].value;
-    const projectedData = rawProjection.map((p, k) => {
-      const t = k / GHOST_CANDLES;
-      const blended = anchor + (clampedTerminal - anchor) * t;
-      return { time: p.time, value: +blended.toFixed(2) };
-    });
+    console.log(`👻 [GHOST MATH] rawTerminal=${rawTerminal}, clampedTerminal=${clampedTerminal}, clampedSlope=${clampedSlope}, maxMove=${maxMove}`);
+
+    const projectedData: { time: Time; value: number }[] = [];
+
+    for (let k = 0; k <= GHOST_CANDLES; k++) {
+      const futureTime = (lastCandle.time + k * intervalSec) as Time;
+      const projectedValue = +(currentPrice + clampedSlope * k).toFixed(2);
+
+      // 👻 TASK 2 — Trace each projected step
+      console.log(`👻 [GHOST PROJECTION] Step ${k}: baseTime=${lastCandle.time}, k*intervalSec=${k * intervalSec}, calculatedTime=${futureTime}, projectedValue=${projectedValue}`);
+
+      projectedData.push({ time: futureTime, value: projectedValue });
+    }
 
     // Suppress noise: don't draw if the total move is < 0.005% of price.
     const totalMove = Math.abs(projectedData[GHOST_CANDLES].value - currentPrice);
@@ -307,6 +333,14 @@ export function useChartDataSync(
       ghostLineRef.current.setData([]);
       return;
     }
+
+    // 👻 TASK 3 — Trace Final Payload to Lightweight Charts
+    console.log("👻 [GHOST RENDER] Payload length:", projectedData.length);
+    if (projectedData.length > 0) {
+      console.log("👻 [GHOST RENDER] Point 1 (Current):", JSON.stringify(projectedData[0]));
+      console.log("👻 [GHOST RENDER] Point N (Future):", JSON.stringify(projectedData[projectedData.length - 1]));
+    }
+    console.log("👻 [GHOST RENDER] Full payload:", JSON.stringify(projectedData));
 
     ghostLineRef.current.setData(projectedData);
   }, [predictiveSignals, activeSymbol, chartData, effectiveTimeframe, ghostLineRef]);

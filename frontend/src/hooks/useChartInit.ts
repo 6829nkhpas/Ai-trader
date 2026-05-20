@@ -55,9 +55,10 @@ export function useChartInit(
         borderColor: COLORS.border,
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: 5,
-        fixLeftEdge: true,
+        rightOffset: 10,               // Breathing room after the latest candle
+        fixLeftEdge: false,             // Allow free scrolling (fixLeftEdge locks to oldest candle)
         fixRightEdge: false,
+        shiftVisibleRangeOnNewBar: true, // Auto-scroll right when new live candle arrives
         barSpacing: 8,
       },
       handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },

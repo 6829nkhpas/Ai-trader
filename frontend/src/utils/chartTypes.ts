@@ -99,7 +99,7 @@ export const KITE_INTERVAL_MAP: Record<Timeframe, string> = {
   '5m':   '5minute',
   '10m':  '10minute',
   '15m':  '15minute',
-  '30m':  '15minute',    // aggregate from 15-minute
+  '30m':  '30minute',
   '75m':  '15minute',    // aggregate from 15-minute
   '125m': '15minute',    // aggregate from 15-minute
   '1h':   '60minute',

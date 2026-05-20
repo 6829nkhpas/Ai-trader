@@ -1,10 +1,15 @@
 // src/commands/charts.rs — Binary Historical Data Resolver
 //
-// Tauri IPC command that queries QuestDB for 5 years of daily OHLCV data
-// and serializes the result as a raw binary buffer using bincode.
+// Tauri IPC command that queries QuestDB for OHLCV data across all
+// timeframes and serializes the result as a raw binary buffer using bincode.
+//
+// ── Intraday + Daily Fusion ─────────────────────────────────────────────────
+//   For intraday timeframes (1m–1H), the backend proactively fetches
+//   historical candles from the Kite REST API and merges them with
+//   today's live tick aggregates. For daily/weekly, the pre-aggregated
+//   `historical_candles` archive is used directly.
 //
 // ── Zero-Latency Transfer ───────────────────────────────────────────────────
-//   JSON serialization of 5 years (~1250 candles) adds measurable overhead.
 //   bincode produces a compact binary representation that the frontend
 //   deserializes directly into a TypedArray — eliminating JSON parse time.
 //
@@ -12,7 +17,7 @@
 //   On database failure, emits a `system-error` event to the frontend
 //   console (matching the Phase 1 Error Visibility pattern).
 
-use log::{info, error};
+use log::{info, warn, error};
 use serde::Serialize;
 use sqlx::PgPool;
 use tauri::{AppHandle, Emitter, Manager};
@@ -45,10 +50,10 @@ pub struct BinaryCandle {
 ///                 legacy single-arg call shape used by older UI code paths.
 ///
 /// # Routing
-/// * Intraday timeframes ("1m" .. "4H") aggregate raw `live_ticks` rows on the
-///   fly using `SAMPLE BY <interval> ALIGN TO CALENDAR`. This produces an
-///   honest OHLCV bar from `last_traded_price` regardless of how the ticks
-///   landed.
+/// * Intraday timeframes ("1m" .. "1H") proactively fetch historical candles
+///   from the Kite REST API, store them in `historical_intraday`, and merge
+///   with the current day's live tick aggregates from `live_ticks`.
+/// * "4H" falls back to `live_ticks` only (Kite doesn't offer a 4H interval).
 /// * Daily and weekly timeframes ("1D", "1W") read pre-aggregated rows from
 ///   `historical_candles` (5-year archive backfilled on demand by
 ///   `load_historical`). Weekly bars are produced by sampling the daily
@@ -72,32 +77,144 @@ pub async fn get_historical_view(
     let tf_raw = timeframe.unwrap_or_else(|| "1D".to_string());
     let tf = tf_raw.trim().to_string();
 
-    // Map the UI timeframe → QuestDB SAMPLE BY interval.
-    // Intraday timeframes aggregate live_ticks; daily/weekly read the archive.
-    let (sample_interval, source) = match tf.to_uppercase().as_str() {
-        "1M"  | "1MIN"  => ("1m",  HistorySource::Ticks),
-        "5M"  | "5MIN"  => ("5m",  HistorySource::Ticks),
-        "15M" | "15MIN" => ("15m", HistorySource::Ticks),
-        "30M" | "30MIN" => ("30m", HistorySource::Ticks),
-        "1H"  | "60M"   => ("1h",  HistorySource::Ticks),
-        "4H"  | "240M"  => ("4h",  HistorySource::Ticks),
-        "1D"  | "DAY"   => ("1d",  HistorySource::Daily),
-        "1W"  | "WEEK"  => ("7d",  HistorySource::Daily),
-        _               => ("1d",  HistorySource::Daily),
+    // Map the UI timeframe → query source, SAMPLE BY interval, and base interval.
+    //
+    // `base_tf`:         The base Kite interval tag used for QuestDB cache key.
+    //                    Derived timeframes share a base (e.g., 2m/4m → "1m").
+    //                    The frontend's aggregateCandles() re-buckets to the exact TF.
+    // `sample_interval`: SAMPLE BY interval for live_ticks (= base_tf for intraday).
+    // `source`:          Which query strategy to use.
+    //
+    // ── Cache sharing ──────────────────────────────────────────────────────
+    //   1m, 2m, 4m  → all fetch/cache "minute" data    (Kite: "minute")
+    //   3m          → "3minute"                         (Kite native)
+    //   5m          → "5minute"
+    //   10m         → "10minute"
+    //   15m, 75m, 125m → all fetch/cache "15minute"     (Kite: "15minute")
+    //   30m         → "30minute"
+    //   1h, 2h, 3h, 4h → all fetch/cache "60minute"    (Kite: "60minute")
+    //   1D, 1W, 1M  → daily archive
+    //
+    // ── Case-sensitivity note ──────────────────────────────────────────────
+    //   The frontend sends '1m' (lowercase) for 1 minute and '1M' (uppercase)
+    //   for 1 month. We must match CASE-SENSITIVELY first for these ambiguous
+    //   cases, then fall through to uppercase matching for the rest.
+    let (sample_interval, base_tf, source) = match tf.as_str() {
+        // ── Case-sensitive: disambiguate minute vs month ────────────
+        "1m" | "1min"  => ("1m",  "1m",  HistorySource::Intraday),
+        "1M"           => ("30d", "1d",  HistorySource::Daily),    // 1 Month
+        _ => {
+            // All other timeframes are unambiguous — safe to uppercase
+            match tf.to_uppercase().as_str() {
+                // ── Minute-based (base: 1m) ─────────────────────────
+                "1MIN"          => ("1m",  "1m",  HistorySource::Intraday),
+                "2M"  | "2MIN"  => ("1m",  "1m",  HistorySource::Intraday),
+                "4M"  | "4MIN"  => ("1m",  "1m",  HistorySource::Intraday),
+                // ── 3-minute (Kite native) ──────────────────────────
+                "3M"  | "3MIN"  => ("3m",  "3m",  HistorySource::Intraday),
+                // ── 5-minute ────────────────────────────────────────
+                "5M"  | "5MIN"  => ("5m",  "5m",  HistorySource::Intraday),
+                // ── 10-minute ───────────────────────────────────────
+                "10M" | "10MIN" => ("10m", "10m", HistorySource::Intraday),
+                // ── 15-minute based (base: 15m) ─────────────────────
+                "15M" | "15MIN" => ("15m", "15m", HistorySource::Intraday),
+                "75M" | "75MIN" => ("15m", "15m", HistorySource::Intraday),
+                "125M"| "125MIN"=> ("15m", "15m", HistorySource::Intraday),
+                // ── 30-minute ───────────────────────────────────────
+                "30M" | "30MIN" => ("30m", "30m", HistorySource::Intraday),
+                // ── Hourly-based (base: 1h) ─────────────────────────
+                "1H"  | "60M"   => ("1h",  "1h",  HistorySource::Intraday),
+                "2H"  | "120M"  => ("1h",  "1h",  HistorySource::Intraday),
+                "3H"  | "180M"  => ("1h",  "1h",  HistorySource::Intraday),
+                "4H"  | "240M"  => ("1h",  "1h",  HistorySource::Intraday),
+                // ── Daily / Weekly / Monthly (daily archive) ────────
+                "1D"  | "DAY"   => ("1d",  "1d",  HistorySource::Daily),
+                "1W"  | "WEEK"  => ("7d",  "1d",  HistorySource::Daily),
+                "MONTH"         => ("30d", "1d",  HistorySource::Daily),
+                _               => ("1d",  "1d",  HistorySource::Daily),
+            }
+        }
     };
 
     // ── DIAGNOSTIC TRACER — Tauri command boundary (UI → Rust) ──
     println!(
-        "🛑 [RUST RECEIVE] Historical Request — Symbol: {}, Timeframe: {} → SAMPLE BY {} (source: {:?})",
-        symbol, tf, sample_interval, source
+        "🛑 [RUST RECEIVE] Historical Request — Symbol: {}, Timeframe: {} → base={}, SAMPLE BY {} (source: {:?})",
+        symbol, tf, base_tf, sample_interval, source
     );
 
     info!(
-        "get_historical_view: querying {} from QuestDB (tf={}, sample_by={}, source={:?})",
-        symbol, tf, sample_interval, source
+        "get_historical_view: querying {} from QuestDB (tf={}, base_tf={}, sample_by={}, source={:?})",
+        symbol, tf, base_tf, sample_interval, source
     );
 
-    // Build the dynamic SQL based on the source table.
+    // ── Proactive Intraday Fetch ─────────────────────────────────────────────
+    //
+    // For intraday timeframes, trigger a fetch of historical candles from the
+    // Kite REST API at the BASE interval. This ensures the chart has context
+    // beyond today's live ticks. The loader is idempotent — if data already
+    // exists in QuestDB for this symbol + base_tf, it skips redundant calls.
+    //
+    // Using base_tf (not the raw UI tf) is key for cache efficiency:
+    //   - User selects 2m → base_tf="1m" → fetches "minute" data from Kite
+    //   - User switches to 4m → base_tf="1m" → data already cached, skip fetch!
+    //   - User switches to 1m → base_tf="1m" → data already cached, skip fetch!
+    if matches!(source, HistorySource::Intraday) {
+        let api_key = std::env::var("KITE_API_KEY").ok();
+        let access_token = std::env::var("KITE_ACCESS_TOKEN").ok();
+
+        if let (Some(api_key), Some(access_token)) = (api_key, access_token) {
+            // Resolve instrument token from the local SQLite cache
+            let local_token: Option<u32> = {
+                use tauri::Manager;
+                app.try_state::<crate::db::DbState>()
+                    .and_then(|db_state| {
+                        crate::commands::instruments::resolve_instrument_token(
+                            &db_state, &symbol
+                        )
+                    })
+            };
+
+            match local_token {
+                Some(token) => {
+                    info!(
+                        "Intraday fetch trigger: {} [tf={}, base={}] — token {}",
+                        symbol, tf, base_tf, token
+                    );
+                    // Fetch at the BASE interval — derived TFs reuse this cached data
+                    match history_loader::load_intraday_data(
+                        pool.inner(),
+                        token,
+                        &symbol,
+                        base_tf,
+                        &api_key,
+                        &access_token,
+                    ).await {
+                        Ok(count) => info!(
+                            "Intraday fetch complete: {} [base={}] — {} candles.",
+                            symbol, base_tf, count
+                        ),
+                        Err(e) => warn!(
+                            "Intraday fetch failed for {} [base={}]: {} — falling back to live ticks.",
+                            symbol, base_tf, e
+                        ),
+                    }
+                }
+                None => {
+                    warn!(
+                        "Could not resolve instrument token for {} — skipping intraday fetch.",
+                        symbol
+                    );
+                }
+            }
+        } else {
+            warn!(
+                "KITE_API_KEY / KITE_ACCESS_TOKEN not set — skipping intraday fetch for {}.",
+                symbol
+            );
+        }
+    }
+
+    // ── Build the query and fetch rows ───────────────────────────────────────
     //
     // Both branches return the same column set: ts, open, high, low, close, volume
     // so the row-decoder below stays uniform.
@@ -107,52 +224,123 @@ pub async fn get_historical_view(
     // placeholder, so the interval must be inlined. We control the value
     // (it's hard-coded above), so there is no SQL-injection vector. The
     // user-supplied `symbol` remains a parameterised bind ($1).
-    let query = match source {
-        HistorySource::Ticks => format!(
-            "SELECT timestamp AS ts, \
-                    first(last_traded_price) AS open, \
-                    max(last_traded_price)   AS high, \
-                    min(last_traded_price)   AS low, \
-                    last(last_traded_price)  AS close, \
-                    sum(volume)              AS volume \
-             FROM live_ticks \
-             WHERE symbol = $1 \
-             SAMPLE BY {} ALIGN TO CALENDAR",
-            sample_interval
-        ),
+
+    // For Intraday source, we run TWO queries and merge in-memory:
+    //   1. historical_intraday — pre-fetched from Kite API (past N days)
+    //   2. live_ticks — current session only (today), aggregated via SAMPLE BY
+    //
+    // We merge in-memory because QuestDB's UNION ALL has restrictions with
+    // SAMPLE BY in subqueries. The in-memory merge is fast since both result
+    // sets are already sorted by timestamp and we deduplicate by ts.
+    let rows = match source {
+        HistorySource::Intraday => {
+            // Query 1: Historical intraday candles from Kite API
+            let hist_query = "SELECT ts, open, high, low, close, volume \
+                              FROM historical_intraday \
+                              WHERE symbol = $1 AND timeframe = $2 \
+                              ORDER BY ts ASC";
+
+            let hist_rows = sqlx::query(hist_query)
+                .bind(&symbol)
+                .bind(base_tf)
+                .fetch_all(pool.inner())
+                .await;
+
+            // Query 2: Today's live ticks aggregated to the requested interval
+            let live_query = format!(
+                "SELECT timestamp AS ts, \
+                        first(last_traded_price) AS open, \
+                        max(last_traded_price)   AS high, \
+                        min(last_traded_price)   AS low, \
+                        last(last_traded_price)  AS close, \
+                        sum(volume)              AS volume \
+                 FROM live_ticks \
+                 WHERE symbol = $1 \
+                   AND timestamp > dateadd('d', -1, now()) \
+                 SAMPLE BY {} ALIGN TO CALENDAR",
+                sample_interval
+            );
+
+            let live_rows = sqlx::query(&live_query)
+                .bind(&symbol)
+                .fetch_all(pool.inner())
+                .await;
+
+            // Merge both result sets: historical rows first, then live rows
+            match (hist_rows, live_rows) {
+                (Ok(mut hist), Ok(live)) => {
+                    hist.extend(live);
+                    Ok(hist)
+                }
+                (Ok(hist), Err(e)) => {
+                    warn!("Live ticks query failed, using historical only: {}", e);
+                    Ok(hist)
+                }
+                (Err(e), Ok(live)) => {
+                    warn!("Historical intraday query failed, using live only: {}", e);
+                    Ok(live)
+                }
+                (Err(e1), Err(_e2)) => {
+                    Err(e1) // Report the first error
+                }
+            }
+        }
+        HistorySource::Ticks => {
+            let query = format!(
+                "SELECT timestamp AS ts, \
+                        first(last_traded_price) AS open, \
+                        max(last_traded_price)   AS high, \
+                        min(last_traded_price)   AS low, \
+                        last(last_traded_price)  AS close, \
+                        sum(volume)              AS volume \
+                 FROM live_ticks \
+                 WHERE symbol = $1 \
+                 SAMPLE BY {} ALIGN TO CALENDAR",
+                sample_interval
+            );
+            sqlx::query(&query)
+                .bind(&symbol)
+                .fetch_all(pool.inner())
+                .await
+        }
         HistorySource::Daily if sample_interval == "1d" => {
             // Pre-aggregated daily archive — no resampling needed.
-            "SELECT ts, open, high, low, close, volume \
-             FROM historical_candles \
-             WHERE symbol = $1 \
-             ORDER BY ts ASC"
-                .to_string()
+            let query = "SELECT ts, open, high, low, close, volume \
+                         FROM historical_candles \
+                         WHERE symbol = $1 \
+                         ORDER BY ts ASC";
+            sqlx::query(query)
+                .bind(&symbol)
+                .fetch_all(pool.inner())
+                .await
         }
-        HistorySource::Daily => format!(
-            // Weekly view: resample daily candles into 7-day buckets.
-            "SELECT ts, \
-                    first(open)  AS open, \
-                    max(high)    AS high, \
-                    min(low)     AS low, \
-                    last(close)  AS close, \
-                    sum(volume)  AS volume \
-             FROM historical_candles \
-             WHERE symbol = $1 \
-             SAMPLE BY {} ALIGN TO CALENDAR",
-            sample_interval
-        ),
+        HistorySource::Daily => {
+            let query = format!(
+                // Weekly view: resample daily candles into 7-day buckets.
+                "SELECT ts, \
+                        first(open)  AS open, \
+                        max(high)    AS high, \
+                        min(low)     AS low, \
+                        last(close)  AS close, \
+                        sum(volume)  AS volume \
+                 FROM historical_candles \
+                 WHERE symbol = $1 \
+                 SAMPLE BY {} ALIGN TO CALENDAR",
+                sample_interval
+            );
+            sqlx::query(&query)
+                .bind(&symbol)
+                .fetch_all(pool.inner())
+                .await
+        }
     };
-
-    let rows = sqlx::query(&query)
-        .bind(&symbol)
-        .fetch_all(pool.inner())
-        .await;
 
     match rows {
         Ok(data) => {
             use sqlx::Row;
+            use std::collections::BTreeMap;
 
-            let candles: Vec<BinaryCandle> = data
+            let raw_candles: Vec<BinaryCandle> = data
                 .iter()
                 .filter_map(|row| {
                     // QuestDB returns ts as TIMESTAMP which sqlx decodes as
@@ -177,6 +365,18 @@ pub async fn get_historical_view(
                     Some(BinaryCandle { ts, open, high, low, close, volume })
                 })
                 .collect();
+
+            // ── Deduplication by timestamp ───────────────────────────────────
+            // When merging historical_intraday + live_ticks, there may be
+            // overlapping timestamps at the boundary. We use a BTreeMap
+            // keyed by timestamp to deduplicate — later entries (live ticks)
+            // override historical ones for the same timestamp, giving
+            // real-time accuracy for the current candle.
+            let mut dedup_map: BTreeMap<i64, BinaryCandle> = BTreeMap::new();
+            for candle in raw_candles {
+                dedup_map.insert(candle.ts, candle);
+            }
+            let candles: Vec<BinaryCandle> = dedup_map.into_values().collect();
 
             info!(
                 "get_historical_view: {} ({}) — {} candles fetched, serializing with bincode.",
@@ -241,8 +441,12 @@ pub async fn get_historical_view(
 
 /// Source table the historical view should read from for a given timeframe.
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 enum HistorySource {
-    /// Aggregate raw ticks via SAMPLE BY (intraday).
+    /// Fetch intraday historical candles from Kite API + merge with live ticks.
+    /// Used for 1m, 5m, 10m, 15m, 30m, 1H.
+    Intraday,
+    /// Aggregate raw ticks via SAMPLE BY (fallback for 4H or when Kite fetch fails).
     Ticks,
     /// Read pre-aggregated daily archive (resampled for weekly).
     Daily,

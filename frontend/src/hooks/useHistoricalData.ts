@@ -368,11 +368,15 @@ export function useHistoricalData(
       "(kiteInterval:", kiteInterval, ", rangeDays:", rangeDays, ")"
     );
 
-    // ── Cache key includes the UI timeframe ─────────────────────────────
-    // Two timeframes can map to the same Kite interval (e.g. 1m & 2m both
-    // → 'minute') but the Rust backend now returns *different* SAMPLE BY
-    // aggregations per timeframe, so they must NOT share a cache slot.
-    // Including effectiveTimeframe keeps each tf's data isolated.
+
+    // ── Two-tier cache ──────────────────────────────────────────────────
+    // L1 (QuestDB, persistent): Backend stores Kite data at the BASE interval
+    //     (e.g., "minute" for 1m/2m/4m). Derived timeframes share the same L1
+    //     cache → no redundant Kite API calls.
+    // L2 (here, session): Each UI timeframe gets its own cache slot so
+    //     re-visiting a timeframe is instant (no backend IPC roundtrip).
+    //     aggregateCandles() re-buckets the base-interval data into the exact
+    //     UI timeframe on each cache hit.
     const cacheKey = `${symbol.toUpperCase()}::${effectiveTimeframe}::${kiteInterval}`;
     const cached = useTradeStore.getState().historicalCache[cacheKey];
     if (cached && cached.length > 0) {
