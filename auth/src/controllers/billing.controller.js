@@ -6,10 +6,7 @@
 import { billingService } from '../services/billing.service.js';
 
 export class BillingController {
-  /**
-   * GET /billing/plans
-   * Returns the product catalog mapping Polar price_ids to internal plan tiers.
-   */
+
   async getPlans(request, reply) {
     try {
       const plans = billingService.getPlans();
