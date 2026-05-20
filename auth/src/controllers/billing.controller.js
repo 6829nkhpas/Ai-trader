@@ -6,7 +6,10 @@
 import { billingService } from '../services/billing.service.js';
 
 export class BillingController {
-
+  /**
+   * GET /billing/plans
+   * Retrieves all available subscription plans.
+   */
   async getPlans(request, reply) {
     try {
       const plans = billingService.getPlans();
