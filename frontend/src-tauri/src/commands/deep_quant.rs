@@ -1,12 +1,13 @@
 // commands/deep_quant.rs — Tauri IPC Command: Deep Quant Analysis.
 //
-// V3 Phase 3: The frontend calls `invoke("run_deep_quant_analysis", { symbol })`
+// V3 Phase 4: The frontend calls `invoke("run_deep_quant_analysis", { symbol, timeframe })`
 // which triggers the full pipeline:
 //   1. Fetch recent candles from QuestDB
 //   2. Compute indicators → ConsensusReport via the quant engine
-//   3. Fetch recent news headlines (with graceful fallback)
-//   4. Call DeepSeek API with the Master Prompt
-//   5. Return AiExecutionPlan to React UI
+//   3. Extract RAG context (RSI, MACD, EMA-9/21, latest close)
+//   4. Fetch recent news headlines (with graceful fallback)
+//   5. Call DeepSeek API with data-aware Master Prompt
+//   6. Return AiExecutionPlan to React UI
 
 use log::{info, warn, error};
 use sqlx::PgPool;
@@ -219,20 +220,23 @@ async fn load_candles_from_db(pool: &PgPool, symbol: &str, limit: i64) -> Result
 /// # Frontend Usage
 /// ```typescript
 /// const plan = await invoke<AiExecutionPlan>("run_deep_quant_analysis", {
-///   symbol: "RELIANCE"
+///   symbol: "RELIANCE",
+///   timeframe: "10m"
 /// });
 /// ```
 ///
 /// # Pipeline
 /// 1. Load 200 most recent candles from QuestDB
 /// 2. Compute IndicatorState + ConsensusReport
-/// 3. Fetch recent news (with fallback)
-/// 4. Call LLM (Hugging Face router → DeepSeek) with the Master Prompt
-/// 5. Return structured AiExecutionPlan
+/// 3. Extract RAG context: RSI, MACD line/signal, EMA-9/21, latest close
+/// 4. Fetch recent news (with fallback)
+/// 5. Call LLM (Hugging Face router → DeepSeek) with data-aware Master Prompt
+/// 6. Return structured AiExecutionPlan
 #[tauri::command]
 pub async fn run_deep_quant_analysis(
     app: AppHandle,
     symbol: String,
+    timeframe: String,
 ) -> Result<AiExecutionPlan, String> {
     use std::time::Instant;
     let t_total = Instant::now();
@@ -240,6 +244,7 @@ pub async fn run_deep_quant_analysis(
     info!("╔══════════════════════════════════════════════════╗");
     info!("║  Deep Quant Analysis — V3 Pipeline Starting     ║");
     info!("║  Symbol: {:<40} ║", symbol);
+    info!("║  Timeframe: {:<37} ║", timeframe);
     info!("╚══════════════════════════════════════════════════╝");
 
     // ── Step 1: Fetch candles from QuestDB (multi-source waterfall) ────
@@ -327,7 +332,7 @@ pub async fn run_deep_quant_analysis(
 
     // ── AI RECEIVER TRACER ──────────────────────────────────────────────
     // Diagnostic: verify exactly what Rust has before calling DeepSeek.
-    println!("🧠 [RUST AI RECEIVER] Symbol: {} | Candles received: {} (after waterfall + proactive fetch)", symbol, candles.len());
+    println!("🧠 [RUST AI RECEIVER] Symbol: {} | Timeframe: {} | Candles received: {} (after waterfall + proactive fetch)", symbol, timeframe, candles.len());
 
     if candles.is_empty() {
         let msg = format!(
@@ -374,6 +379,19 @@ pub async fn run_deep_quant_analysis(
         consensus.active_strategies
     );
 
+    // ── Step 2b: Extract RAG context for LLM prompt injection ────────
+    let latest_close = candles.last().map(|c| c.close).unwrap_or(0.0);
+    let rsi_val = if indicators.rsi_14.is_finite() { indicators.rsi_14 } else { 50.0 };
+    let macd_val = if indicators.macd_line.is_finite() { indicators.macd_line } else { 0.0 };
+    let macd_signal = if indicators.macd_signal.is_finite() { indicators.macd_signal } else { 0.0 };
+    let ema9_val = if indicators.ema_9.is_finite() { indicators.ema_9 } else { latest_close };
+    let ema21_val = if indicators.ema_21.is_finite() { indicators.ema_21 } else { latest_close };
+
+    info!(
+        "[deep_quant] step=2b rag_context: close={:.2} rsi={:.2} macd={:.4} signal={:.4} ema9={:.2} ema21={:.2} tf={}",
+        latest_close, rsi_val, macd_val, macd_signal, ema9_val, ema21_val, timeframe
+    );
+
     // Emit consensus to frontend for real-time dashboard display
     let _ = app.emit("quant-consensus", serde_json::json!(&consensus));
     info!("[deep_quant] step=2/5 emit=quant-consensus");
@@ -402,7 +420,19 @@ pub async fn run_deep_quant_analysis(
         mocked
     } else {
         info!("[deep_quant] step=4/5 llm_call_start mode=LIVE");
-        match llm::generate_deep_quant_plan(&symbol, &consensus, &news, Some(&app)).await {
+        match llm::generate_deep_quant_plan(
+            &symbol,
+            &consensus,
+            &news,
+            &timeframe,
+            latest_close,
+            rsi_val,
+            macd_val,
+            macd_signal,
+            ema9_val,
+            ema21_val,
+            Some(&app),
+        ).await {
             Ok(p) => {
                 info!(
                     "[deep_quant] step=4/5 llm_call_done elapsed_ms={} conviction={}",

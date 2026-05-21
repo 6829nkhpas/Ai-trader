@@ -32,6 +32,11 @@ pub struct IndicatorState {
     pub average_volume: f64,
     pub orb_high: f64,
     pub orb_low: f64,
+    // ── RAG Context Injection fields (V3 Phase 4) ──────────────────────
+    pub ema_9: f64,
+    pub ema_21: f64,
+    pub macd_line: f64,
+    pub macd_signal: f64,
 }
 
 impl IndicatorState {
@@ -54,12 +59,20 @@ impl IndicatorState {
         let (sma_50, sma_200) = Self::compute_smas(candles);
         let avg_vol = Self::compute_avg_volume(candles, 20);
 
+        let ema_9 = Self::compute_ema(candles, 9);
+        let ema_21 = Self::compute_ema(candles, 21);
+        let (macd_line, macd_signal) = Self::compute_macd(candles);
+
         IndicatorState {
             sma_50,
             sma_200,
             prev_sma_50: f64::NAN,
             prev_sma_200: f64::NAN,
-            macd_histogram: f64::NAN,
+            macd_histogram: if macd_line.is_finite() && macd_signal.is_finite() {
+                macd_line - macd_signal
+            } else {
+                f64::NAN
+            },
             parabolic_sar: f64::NAN,
             rsi_14: Self::compute_rsi(candles, 14),
             stoch_k: f64::NAN,
@@ -73,6 +86,10 @@ impl IndicatorState {
             average_volume: avg_vol,
             orb_high: f64::NAN,
             orb_low: f64::NAN,
+            ema_9,
+            ema_21,
+            macd_line,
+            macd_signal,
         }
     }
 
@@ -105,6 +122,68 @@ impl IndicatorState {
         if avg_loss < 1e-12 { return 100.0; }
         let rs = avg_gain / avg_loss;
         100.0 - (100.0 / (1.0 + rs))
+    }
+
+    /// Compute Exponential Moving Average for the given period.
+    /// Returns f64::NAN if there aren't enough candles.
+    fn compute_ema(candles: &[Candle], period: usize) -> f64 {
+        if candles.len() < period {
+            return f64::NAN;
+        }
+        let multiplier = 2.0 / (period as f64 + 1.0);
+        // Seed EMA with SMA of first `period` candles
+        let sma: f64 = candles[..period].iter().map(|c| c.close).sum::<f64>() / period as f64;
+        let mut ema = sma;
+        for candle in &candles[period..] {
+            ema = (candle.close - ema) * multiplier + ema;
+        }
+        ema
+    }
+
+    /// Compute MACD line (EMA-12 − EMA-26) and signal line (EMA-9 of MACD).
+    /// Returns (macd_line, signal_line) — both NAN if insufficient data.
+    fn compute_macd(candles: &[Candle]) -> (f64, f64) {
+        if candles.len() < 35 {
+            // Need at least 26 + 9 periods for a meaningful signal
+            return (f64::NAN, f64::NAN);
+        }
+        let mult_12 = 2.0 / 13.0;
+        let mult_26 = 2.0 / 27.0;
+        let mult_signal = 2.0 / 10.0;
+
+        // Seed EMAs
+        let sma_12: f64 = candles[..12].iter().map(|c| c.close).sum::<f64>() / 12.0;
+        let sma_26: f64 = candles[..26].iter().map(|c| c.close).sum::<f64>() / 26.0;
+
+        let mut ema_12 = sma_12;
+        let mut ema_26 = sma_26;
+
+        // Build MACD history from candle index 26 onward
+        let mut macd_history: Vec<f64> = Vec::with_capacity(candles.len() - 26);
+
+        for (i, candle) in candles.iter().enumerate() {
+            if i >= 12 {
+                ema_12 = (candle.close - ema_12) * mult_12 + ema_12;
+            }
+            if i >= 26 {
+                ema_26 = (candle.close - ema_26) * mult_26 + ema_26;
+                macd_history.push(ema_12 - ema_26);
+            }
+        }
+
+        if macd_history.len() < 9 {
+            return (*macd_history.last().unwrap_or(&f64::NAN), f64::NAN);
+        }
+
+        // Signal line = EMA-9 of MACD series
+        let signal_sma: f64 = macd_history[..9].iter().sum::<f64>() / 9.0;
+        let mut signal = signal_sma;
+        for val in &macd_history[9..] {
+            signal = (val - signal) * mult_signal + signal;
+        }
+
+        let macd_line = *macd_history.last().unwrap();
+        (macd_line, signal)
     }
 }
 

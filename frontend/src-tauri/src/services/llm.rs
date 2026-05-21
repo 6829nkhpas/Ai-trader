@@ -71,18 +71,47 @@ struct ChatMessageResponse {
     content: String,
 }
 
-// ── System Prompt ───────────────────────────────────────────────────────────
+// ── System Prompt Builder (V3 Phase 4: RAG Context Injection) ───────────────
 
-pub const SYSTEM_PROMPT: &str = "\
-You are an Elite Quantitative Portfolio Manager. \
-You will be provided with a mathematical consensus report and real-time news for a specific asset. \
-You must evaluate if the 'Active Strategies' are valid or traps based on the supporting indicators and news. \
-You MUST output strictly in JSON format with exactly three keys: \
-'conviction_score' (integer 1-100), \
-'setup_validation' (string explaining your reasoning), \
-and 'execution_plan' (string detailing entry, invalidation, and targets). \
-Do NOT include any text outside the JSON object. Do NOT wrap in markdown code fences. \
-Output ONLY the raw JSON object.";
+/// Build the data-aware system prompt with calculated technicals injected.
+/// The LLM receives hard data computed by Rust — it must NOT guess indicator values.
+pub fn build_system_prompt(
+    symbol: &str,
+    timeframe: &str,
+    latest_close: f64,
+    rsi_val: f64,
+    macd_val: f64,
+    macd_signal: f64,
+    ema9_val: f64,
+    ema21_val: f64,
+) -> String {
+    format!(
+        "You are an institutional Quantitative Trading AI executing analysis on the Indian Stock Market (NSE). \n\
+        \n\
+        MARKET CONTEXT:\n\
+        - Symbol: {}\n\
+        - Active Timeframe: {} (CRITICAL: Calibrate your trend analysis strictly to this timeframe)\n\
+        - Current Close Price: {:.2}\n\
+        \n\
+        TECHNICAL STATE (Calculated by backend, do not guess):\n\
+        - RSI (14): {:.2}\n\
+        - MACD Line: {:.2} | Signal: {:.2}\n\
+        - EMA-9: {:.2} | EMA-21: {:.2}\n\
+        \n\
+        YOUR DIRECTIVE:\n\
+        Analyze the interaction between price, RSI momentum, and MACD divergence on the {} timeframe. \n\
+        You will also receive a mathematical consensus report and real-time news for this asset. \n\
+        Evaluate if the 'Active Strategies' are valid or traps based on the supporting indicators and news. \n\
+        \n\
+        You MUST output strictly in JSON format with exactly three keys: \n\
+        'conviction_score' (integer 1-100), \n\
+        'setup_validation' (string explaining your reasoning), \n\
+        and 'execution_plan' (string detailing entry, invalidation, and targets). \n\
+        Do NOT include any text outside the JSON object. Do NOT wrap in markdown code fences. \n\
+        Output ONLY the raw JSON object.",
+        symbol, timeframe, latest_close, rsi_val, macd_val, macd_signal, ema9_val, ema21_val, timeframe
+    )
+}
 
 // ── Defaults ────────────────────────────────────────────────────────────────
 
@@ -134,7 +163,19 @@ pub fn build_request_body(
     consensus: &ConsensusReport,
     news: &str,
     model: &str,
+    timeframe: &str,
+    latest_close: f64,
+    rsi_val: f64,
+    macd_val: f64,
+    macd_signal: f64,
+    ema9_val: f64,
+    ema21_val: f64,
 ) -> ChatRequest {
+    let system_prompt = build_system_prompt(
+        symbol, timeframe, latest_close,
+        rsi_val, macd_val, macd_signal, ema9_val, ema21_val,
+    );
+
     let user_prompt = format!(
         "Asset: {symbol}\n\
         Mathematical Consensus:\n\
@@ -162,7 +203,7 @@ pub fn build_request_body(
         messages: vec![
             ChatMessage {
                 role: "system".to_string(),
-                content: SYSTEM_PROMPT.to_string(),
+                content: system_prompt,
             },
             ChatMessage {
                 role: "user".to_string(),
@@ -181,10 +222,21 @@ pub async fn generate_deep_quant_plan(
     symbol: &str,
     consensus: &ConsensusReport,
     news: &str,
+    timeframe: &str,
+    latest_close: f64,
+    rsi_val: f64,
+    macd_val: f64,
+    macd_signal: f64,
+    ema9_val: f64,
+    ema21_val: f64,
     app: Option<&tauri::AppHandle>,
 ) -> Result<AiExecutionPlan, String> {
     let api_url = resolve_endpoint();
-    generate_deep_quant_plan_with_url(symbol, consensus, news, &api_url, app).await
+    generate_deep_quant_plan_with_url(
+        symbol, consensus, news, &api_url,
+        timeframe, latest_close, rsi_val, macd_val, macd_signal, ema9_val, ema21_val,
+        app,
+    ).await
 }
 
 /// Same as `generate_deep_quant_plan` but accepts an explicit endpoint URL.
@@ -194,6 +246,13 @@ pub async fn generate_deep_quant_plan_with_url(
     consensus: &ConsensusReport,
     news: &str,
     api_url: &str,
+    timeframe: &str,
+    latest_close: f64,
+    rsi_val: f64,
+    macd_val: f64,
+    macd_signal: f64,
+    ema9_val: f64,
+    ema21_val: f64,
     app: Option<&tauri::AppHandle>,
 ) -> Result<AiExecutionPlan, String> {
     let t0 = Instant::now();
@@ -234,7 +293,10 @@ pub async fn generate_deep_quant_plan_with_url(
     );
 
     // ── Construct the request body ──────────────────────────────────────
-    let request_body = build_request_body(symbol, consensus, news, &model);
+    let request_body = build_request_body(
+        symbol, consensus, news, &model,
+        timeframe, latest_close, rsi_val, macd_val, macd_signal, ema9_val, ema21_val,
+    );
 
     info!(
         "[llm] step=prompt_built symbol={} trend={} momentum={} patterns={} strategies={} news_chars={}",

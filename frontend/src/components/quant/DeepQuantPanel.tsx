@@ -100,6 +100,7 @@ export default function DeepQuantPanel() {
   const { aiPlan, isAnalyzing, analysisError, fetchDeepAnalysis, clearAiPlan, openPosition, activePositions } = useQuantStore();
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
   const historicalCache = useTradeStore((s) => s.historicalCache);
+  const activeTimeframe = useTradeStore((s) => s.activeTimeframe);
   const symbol = selectedSymbol || 'RELIANCE';
 
   // ── AI Handoff State Guard ────────────────────────────────────────────
@@ -131,7 +132,7 @@ export default function DeepQuantPanel() {
 
   // ── AI Handoff Handler (with diagnostic tracers) ──────────────────────
   const handleAIAnalysis = () => {
-    console.log(`🧠 [AI HANDOFF] Requesting analysis for Symbol: ${symbol}`);
+    console.log(`🧠 [AI HANDOFF] Requesting analysis for Symbol: ${symbol} | Timeframe: ${activeTimeframe}`);
     console.log(`🧠 [AI HANDOFF] Current cached candle count: ${symbolCandleCount}`);
 
     if (symbolCandleCount < 50) {
@@ -187,7 +188,7 @@ export default function DeepQuantPanel() {
         </button>
 
         <p className="text-[9px] text-text-muted/50 text-center mt-1.5">
-          {symbol} • {!dataReady
+          {symbol} • {activeTimeframe} • {!dataReady
             ? 'Loading candle data from QuestDB…'
             : insufficientData
               ? `⚠ Only ${symbolCandleCount} candles — may reduce accuracy`

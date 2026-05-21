@@ -315,13 +315,18 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       console.warn('[QuantStore] Sentiment refresh failed, continuing with analysis...');
     }
 
+    // Read the active timeframe from the trade store for RAG context injection
+    const { useTradeStore } = await import('./useTradeStore');
+    const activeTimeframe = useTradeStore.getState().activeTimeframe;
+    console.log(`[QuantStore] → Timeframe for AI context: ${activeTimeframe}`);
+
     try {
       console.log(`[QuantStore] → invoking 'run_deep_quant_analysis' (Tauri IPC)…`);
       const tInvoke = (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
       const plan = await tauriInvoke<AiExecutionPlan>(
         'run_deep_quant_analysis',
-        { symbol }
+        { symbol, timeframe: activeTimeframe }
       );
 
       const tDone = (typeof performance !== 'undefined' ? performance.now() : Date.now());
