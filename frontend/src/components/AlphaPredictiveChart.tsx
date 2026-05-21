@@ -18,6 +18,83 @@ import { DrawingOverlays } from './chart/DrawingOverlays';
 import { useDrawingRenderer } from '../hooks/useDrawingRenderer';
 import { useFibZoneOverlay } from '../hooks/useFibZoneOverlay';
 import { useTauriLiveData } from '../hooks/useTauriLiveData';
+import type { GhostLineMode } from '../store/useChartUIStore';
+
+// ── Ghost Line Engine Toggle ──────────────────────────────────────────────
+//
+// Compact pill overlay for switching between OLS (linear) and VWEPR (curved)
+// ghost line projections. Positioned in the chart's top-right corner.
+//
+// Also displays the acceleration coefficient as a color-coded micro-badge:
+//   • Green  = positive acceleration (bullish momentum)
+//   • Red    = negative acceleration (bearish momentum)
+//   • Muted  = near-zero (linear trend)
+function GhostLineToggle() {
+  const ghostLineMode = useChartUIStore((s) => s.ghostLineMode);
+  const accelCoeff = useChartUIStore((s) => s.accelerationCoefficient);
+  const setMode = useChartUIStore((s) => s.setGhostLineMode);
+
+  const modes: { key: GhostLineMode; label: string }[] = [
+    { key: 'curved', label: 'VWEPR' },
+    { key: 'linear', label: 'OLS' },
+  ];
+
+  // Color-code the acceleration coefficient
+  const accelColor = accelCoeff > 0.001 ? '#22c55e' // green (bullish)
+    : accelCoeff < -0.001 ? '#ef4444'               // red (bearish)
+    : 'rgba(255,255,255,0.3)';                       // muted (flat)
+
+  const accelLabel = accelCoeff >= 0 ? `+${accelCoeff.toFixed(4)}` : accelCoeff.toFixed(4);
+
+  return (
+    <div className="absolute right-3 top-2 flex items-center gap-2 z-10 select-none">
+      {/* Acceleration coefficient badge */}
+      <span
+        className="text-[9px] font-mono font-medium px-1.5 py-0.5 rounded"
+        style={{
+          color: accelColor,
+          background: 'rgba(255,255,255,0.04)',
+          border: `1px solid ${accelColor}33`,
+        }}
+        title={`VWEPR Acceleration Coefficient (a=${accelCoeff.toFixed(6)})`}
+      >
+        α {accelLabel}
+      </span>
+
+      {/* Engine mode toggle */}
+      <div
+        className="flex items-center rounded-md overflow-hidden"
+        style={{
+          background: 'rgba(255,255,255,0.04)',
+          border: '1px solid rgba(255,255,255,0.08)',
+        }}
+      >
+        {modes.map(({ key, label }) => {
+          const isActive = ghostLineMode === key;
+          return (
+            <button
+              key={key}
+              id={`ghost-mode-${key}`}
+              type="button"
+              onClick={() => setMode(key)}
+              className="text-[9px] font-semibold tracking-wide px-2 py-1 transition-all duration-150"
+              style={{
+                color: isActive ? '#f59e0b' : 'rgba(255,255,255,0.35)',
+                background: isActive ? 'rgba(245,158,11,0.10)' : 'transparent',
+              }}
+              title={key === 'curved'
+                ? 'Volume-Weighted Exponential Polynomial Regression'
+                : 'Ordinary Least Squares Linear Regression'
+              }
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export default function AlphaPredictiveChart({
   activeProfile = 'INTRADAY',
@@ -212,6 +289,9 @@ export default function AlphaPredictiveChart({
           {ohlcLabel}
         </div>
       )}
+
+      {/* ── Ghost Line Engine Toggle (top-right overlay) ─────────── */}
+      <GhostLineToggle />
 
       {/* ── Index Volume Proxy Label ──────────────────────────────── */}
       {isIndexVolume && chartData.length > 0 && (
