@@ -386,10 +386,23 @@ pub async fn run_deep_quant_analysis(
     let macd_signal = if indicators.macd_signal.is_finite() { indicators.macd_signal } else { 0.0 };
     let ema9_val = if indicators.ema_9.is_finite() { indicators.ema_9 } else { latest_close };
     let ema21_val = if indicators.ema_21.is_finite() { indicators.ema_21 } else { latest_close };
+    // Institutional expansion: VWAP, ATR, Bollinger Bands, Volume Anomaly
+    let vwap_val = if indicators.vwap.is_finite() { indicators.vwap } else { latest_close };
+    let atr_val = if indicators.atr_14.is_finite() { indicators.atr_14 } else { 0.0 };
+    let bb_upper = if indicators.bb_upper.is_finite() { indicators.bb_upper } else { latest_close };
+    let bb_mid = if indicators.bb_mid.is_finite() { indicators.bb_mid } else { latest_close };
+    let bb_lower = if indicators.bb_lower.is_finite() { indicators.bb_lower } else { latest_close };
+    // Volume spike multiplier: latest candle volume / 20-period average
+    let latest_vol = candles.last().map(|c| c.volume).unwrap_or(0.0);
+    let vol_multiplier = if indicators.average_volume > 1e-6 {
+        latest_vol / indicators.average_volume
+    } else {
+        1.0
+    };
 
     info!(
-        "[deep_quant] step=2b rag_context: close={:.2} rsi={:.2} macd={:.4} signal={:.4} ema9={:.2} ema21={:.2} tf={}",
-        latest_close, rsi_val, macd_val, macd_signal, ema9_val, ema21_val, timeframe
+        "[deep_quant] step=2b rag_context: close={:.2} rsi={:.2} macd={:.4} signal={:.4} ema9={:.2} ema21={:.2} vwap={:.2} atr={:.2} bb=[{:.2},{:.2},{:.2}] vol_mult={:.2}x tf={}",
+        latest_close, rsi_val, macd_val, macd_signal, ema9_val, ema21_val, vwap_val, atr_val, bb_upper, bb_mid, bb_lower, vol_multiplier, timeframe
     );
 
     // Emit consensus to frontend for real-time dashboard display
@@ -426,6 +439,12 @@ pub async fn run_deep_quant_analysis(
             &news,
             &timeframe,
             latest_close,
+            vwap_val,
+            atr_val,
+            bb_upper,
+            bb_mid,
+            bb_lower,
+            vol_multiplier,
             rsi_val,
             macd_val,
             macd_signal,

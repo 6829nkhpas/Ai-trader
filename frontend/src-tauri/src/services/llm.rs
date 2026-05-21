@@ -71,14 +71,20 @@ struct ChatMessageResponse {
     content: String,
 }
 
-// ── System Prompt Builder (V3 Phase 4: RAG Context Injection) ───────────────
+// ── System Prompt Builder (V3 Phase 5: Institutional RAG Expansion) ────────
 
-/// Build the data-aware system prompt with calculated technicals injected.
+/// Build the high-conviction system prompt with full institutional technical state.
 /// The LLM receives hard data computed by Rust — it must NOT guess indicator values.
 pub fn build_system_prompt(
     symbol: &str,
     timeframe: &str,
     latest_close: f64,
+    vwap_val: f64,
+    atr_val: f64,
+    bb_upper: f64,
+    bb_mid: f64,
+    bb_lower: f64,
+    vol_multiplier: f64,
     rsi_val: f64,
     macd_val: f64,
     macd_signal: f64,
@@ -86,30 +92,34 @@ pub fn build_system_prompt(
     ema21_val: f64,
 ) -> String {
     format!(
-        "You are an institutional Quantitative Trading AI executing analysis on the Indian Stock Market (NSE). \n\
+        "You are a ruthless, high-frequency Quantitative Trading AI executing analysis on the NSE. \n\
+        Your primary directive is capital preservation and high-probability directional conviction.\n\
         \n\
-        MARKET CONTEXT:\n\
-        - Symbol: {}\n\
-        - Active Timeframe: {} (CRITICAL: Calibrate your trend analysis strictly to this timeframe)\n\
-        - Current Close Price: {:.2}\n\
+        MARKET STATE:\n\
+        - Symbol: {} | Timeframe: {}\n\
+        - Last Close: {:.2} | VWAP: {:.2}\n\
         \n\
-        TECHNICAL STATE (Calculated by backend, do not guess):\n\
-        - RSI (14): {:.2}\n\
-        - MACD Line: {:.2} | Signal: {:.2}\n\
+        VOLATILITY & ANOMALIES:\n\
+        - ATR (14): {:.2} (Volatility baseline)\n\
+        - Bollinger Bands: [U: {:.2}, M: {:.2}, L: {:.2}]\n\
+        - Volume Spike: {:.2}x above 20-period average\n\
+        \n\
+        MOMENTUM & TREND:\n\
+        - RSI (14): {:.2} | MACD Line: {:.2} / Signal: {:.2}\n\
         - EMA-9: {:.2} | EMA-21: {:.2}\n\
         \n\
-        YOUR DIRECTIVE:\n\
-        Analyze the interaction between price, RSI momentum, and MACD divergence on the {} timeframe. \n\
-        You will also receive a mathematical consensus report and real-time news for this asset. \n\
-        Evaluate if the 'Active Strategies' are valid or traps based on the supporting indicators and news. \n\
+        STRICT DIRECTIVES:\n\
+        1. FORCED CONVICTION: Synthesize these parameters to find confluence. \n\
+        2. NO NEUTRALITY: Do NOT return a score between 40 and 60 unless Volume is dead and ATR is microscopic. \n\
+        3. SCORING: 0-39 = Bearish/Sell. 61-100 = Bullish/Buy. The closer to 0 or 100, the higher the confluence.\n\
         \n\
-        You MUST output strictly in JSON format with exactly three keys: \n\
-        'conviction_score' (integer 1-100), \n\
-        'setup_validation' (string explaining your reasoning), \n\
-        and 'execution_plan' (string detailing entry, invalidation, and targets). \n\
-        Do NOT include any text outside the JSON object. Do NOT wrap in markdown code fences. \n\
-        Output ONLY the raw JSON object.",
-        symbol, timeframe, latest_close, rsi_val, macd_val, macd_signal, ema9_val, ema21_val, timeframe
+        Return a JSON object EXACTLY matching this structure:\n\
+        {{\n\
+            \"conviction_score\": <int 0-100>,\n\
+            \"setup_validation\": \"<2-sentence aggressive quant breakdown of the technical state>\",\n\
+            \"execution_plan\": \"<Actionable trade plan with predicted Support/Resistance levels>\"\n\
+        }}",
+        symbol, timeframe, latest_close, vwap_val, atr_val, bb_upper, bb_mid, bb_lower, vol_multiplier, rsi_val, macd_val, macd_signal, ema9_val, ema21_val
     )
 }
 
@@ -165,6 +175,12 @@ pub fn build_request_body(
     model: &str,
     timeframe: &str,
     latest_close: f64,
+    vwap_val: f64,
+    atr_val: f64,
+    bb_upper: f64,
+    bb_mid: f64,
+    bb_lower: f64,
+    vol_multiplier: f64,
     rsi_val: f64,
     macd_val: f64,
     macd_signal: f64,
@@ -172,7 +188,8 @@ pub fn build_request_body(
     ema21_val: f64,
 ) -> ChatRequest {
     let system_prompt = build_system_prompt(
-        symbol, timeframe, latest_close,
+        symbol, timeframe, latest_close, vwap_val, atr_val,
+        bb_upper, bb_mid, bb_lower, vol_multiplier,
         rsi_val, macd_val, macd_signal, ema9_val, ema21_val,
     );
 
@@ -224,6 +241,12 @@ pub async fn generate_deep_quant_plan(
     news: &str,
     timeframe: &str,
     latest_close: f64,
+    vwap_val: f64,
+    atr_val: f64,
+    bb_upper: f64,
+    bb_mid: f64,
+    bb_lower: f64,
+    vol_multiplier: f64,
     rsi_val: f64,
     macd_val: f64,
     macd_signal: f64,
@@ -234,7 +257,8 @@ pub async fn generate_deep_quant_plan(
     let api_url = resolve_endpoint();
     generate_deep_quant_plan_with_url(
         symbol, consensus, news, &api_url,
-        timeframe, latest_close, rsi_val, macd_val, macd_signal, ema9_val, ema21_val,
+        timeframe, latest_close, vwap_val, atr_val, bb_upper, bb_mid, bb_lower, vol_multiplier,
+        rsi_val, macd_val, macd_signal, ema9_val, ema21_val,
         app,
     ).await
 }
@@ -248,6 +272,12 @@ pub async fn generate_deep_quant_plan_with_url(
     api_url: &str,
     timeframe: &str,
     latest_close: f64,
+    vwap_val: f64,
+    atr_val: f64,
+    bb_upper: f64,
+    bb_mid: f64,
+    bb_lower: f64,
+    vol_multiplier: f64,
     rsi_val: f64,
     macd_val: f64,
     macd_signal: f64,
@@ -295,7 +325,8 @@ pub async fn generate_deep_quant_plan_with_url(
     // ── Construct the request body ──────────────────────────────────────
     let request_body = build_request_body(
         symbol, consensus, news, &model,
-        timeframe, latest_close, rsi_val, macd_val, macd_signal, ema9_val, ema21_val,
+        timeframe, latest_close, vwap_val, atr_val, bb_upper, bb_mid, bb_lower, vol_multiplier,
+        rsi_val, macd_val, macd_signal, ema9_val, ema21_val,
     );
 
     info!(

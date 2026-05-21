@@ -37,6 +37,9 @@ pub struct IndicatorState {
     pub ema_21: f64,
     pub macd_line: f64,
     pub macd_signal: f64,
+    // ── Institutional RAG Expansion (V3 Phase 5) ─────────────────────
+    pub atr_14: f64,
+    pub bb_mid: f64,
 }
 
 impl IndicatorState {
@@ -62,6 +65,9 @@ impl IndicatorState {
         let ema_9 = Self::compute_ema(candles, 9);
         let ema_21 = Self::compute_ema(candles, 21);
         let (macd_line, macd_signal) = Self::compute_macd(candles);
+        let atr_14 = Self::compute_atr(candles, 14);
+        let (bb_upper, bb_mid, bb_lower) = Self::compute_bollinger_bands(candles, 20, 2.0);
+        let vwap = Self::compute_vwap(candles);
 
         IndicatorState {
             sma_50,
@@ -76,13 +82,13 @@ impl IndicatorState {
             parabolic_sar: f64::NAN,
             rsi_14: Self::compute_rsi(candles, 14),
             stoch_k: f64::NAN,
-            bb_upper: f64::NAN,
-            bb_lower: f64::NAN,
-            atr_20_ma: f64::NAN,
+            bb_upper,
+            bb_lower,
+            atr_20_ma: atr_14,  // reuse for volatility scoring
             obv_current: f64::NAN,
             obv_previous: f64::NAN,
             cmf: f64::NAN,
-            vwap: f64::NAN,
+            vwap,
             average_volume: avg_vol,
             orb_high: f64::NAN,
             orb_low: f64::NAN,
@@ -90,6 +96,8 @@ impl IndicatorState {
             ema_21,
             macd_line,
             macd_signal,
+            atr_14,
+            bb_mid,
         }
     }
 
@@ -184,6 +192,61 @@ impl IndicatorState {
 
         let macd_line = *macd_history.last().unwrap();
         (macd_line, signal)
+    }
+
+    /// Compute Average True Range over `period` candles.
+    /// ATR = SMA of True Range, where TR = max(H-L, |H-prevC|, |L-prevC|).
+    fn compute_atr(candles: &[Candle], period: usize) -> f64 {
+        if candles.len() < period + 1 {
+            return f64::NAN;
+        }
+        let start = candles.len() - period - 1;
+        let slice = &candles[start..];
+        let mut tr_sum = 0.0;
+        for i in 1..slice.len() {
+            let high = slice[i].high;
+            let low = slice[i].low;
+            let prev_close = slice[i - 1].close;
+            let tr = (high - low)
+                .max((high - prev_close).abs())
+                .max((low - prev_close).abs());
+            tr_sum += tr;
+        }
+        tr_sum / period as f64
+    }
+
+    /// Compute Bollinger Bands: (upper, middle, lower).
+    /// Middle = SMA(period), Upper/Lower = Middle ± (num_std_dev × σ).
+    fn compute_bollinger_bands(candles: &[Candle], period: usize, num_std_dev: f64) -> (f64, f64, f64) {
+        if candles.len() < period {
+            return (f64::NAN, f64::NAN, f64::NAN);
+        }
+        let slice = &candles[candles.len() - period..];
+        let mean: f64 = slice.iter().map(|c| c.close).sum::<f64>() / period as f64;
+        let variance: f64 = slice.iter()
+            .map(|c| (c.close - mean).powi(2))
+            .sum::<f64>() / period as f64;
+        let std_dev = variance.sqrt();
+        (mean + num_std_dev * std_dev, mean, mean - num_std_dev * std_dev)
+    }
+
+    /// Compute Volume-Weighted Average Price across all candles.
+    /// VWAP = Σ(Typical Price × Volume) / Σ(Volume).
+    fn compute_vwap(candles: &[Candle]) -> f64 {
+        if candles.is_empty() {
+            return f64::NAN;
+        }
+        let mut cumulative_tpv = 0.0;
+        let mut cumulative_vol = 0.0;
+        for c in candles {
+            let typical_price = (c.high + c.low + c.close) / 3.0;
+            cumulative_tpv += typical_price * c.volume;
+            cumulative_vol += c.volume;
+        }
+        if cumulative_vol < 1e-12 {
+            return f64::NAN;
+        }
+        cumulative_tpv / cumulative_vol
     }
 }
 

@@ -76,7 +76,8 @@ fn isolate_env() {
 fn test_request_contract_carries_consensus_strings() {
     let consensus = fixture_consensus();
     let req = build_request_body("RELIANCE", &consensus, FIXTURE_NEWS, "deepseek-chat",
-        "10m", 2470.0, 55.0, 1.5, 0.8, 2465.0, 2450.0);
+        "10m", 2470.0, 2468.0, 15.5, 2490.0, 2465.0, 2440.0, 1.85,
+        55.0, 1.5, 0.8, 2465.0, 2450.0);
 
     // Wire-format snapshot of the request — exactly what reqwest will send.
     let serialized = serde_json::to_string(&req).expect("serialize request");
@@ -93,7 +94,7 @@ fn test_request_contract_carries_consensus_strings() {
     assert!(serialized.contains("Reliance posts strong"), "news missing");
 
     // System prompt must constrain the LLM to JSON-only output.
-    assert!(serialized.contains("institutional Quantitative Trading AI"));
+    assert!(serialized.contains("ruthless, high-frequency Quantitative Trading AI"));
     assert!(serialized.contains("conviction_score"));
     assert!(serialized.contains("setup_validation"));
     assert!(serialized.contains("execution_plan"));
@@ -172,7 +173,8 @@ async fn test_deepseek_happy_path_parses_into_struct() {
         &fixture_consensus(),
         FIXTURE_NEWS,
         &url,
-        "10m", 2470.0, 55.0, 1.5, 0.8, 2465.0, 2450.0,
+        "10m", 2470.0, 2468.0, 15.5, 2490.0, 2465.0, 2440.0, 1.85,
+        55.0, 1.5, 0.8, 2465.0, 2450.0,
         None, // no AppHandle in tests — falls back to env var key resolution
     )
     .await;
@@ -214,7 +216,8 @@ async fn test_deepseek_handles_429_rate_limit() {
         &fixture_consensus(),
         FIXTURE_NEWS,
         &url,
-        "10m", 2470.0, 55.0, 1.5, 0.8, 2465.0, 2450.0,
+        "10m", 2470.0, 2468.0, 15.5, 2490.0, 2465.0, 2440.0, 1.85,
+        55.0, 1.5, 0.8, 2465.0, 2450.0,
         None,
     )
     .await;
@@ -259,7 +262,8 @@ async fn test_deepseek_handles_malformed_json() {
         &fixture_consensus(),
         FIXTURE_NEWS,
         &url,
-        "10m", 2470.0, 55.0, 1.5, 0.8, 2465.0, 2450.0,
+        "10m", 2470.0, 2468.0, 15.5, 2490.0, 2465.0, 2440.0, 1.85,
+        55.0, 1.5, 0.8, 2465.0, 2450.0,
         None,
     )
     .await;
@@ -311,7 +315,8 @@ async fn test_deepseek_handles_malformed_inner_content() {
         &fixture_consensus(),
         FIXTURE_NEWS,
         &url,
-        "10m", 2470.0, 55.0, 1.5, 0.8, 2465.0, 2450.0,
+        "10m", 2470.0, 2468.0, 15.5, 2490.0, 2465.0, 2440.0, 1.85,
+        55.0, 1.5, 0.8, 2465.0, 2450.0,
         None,
     )
     .await;
@@ -385,7 +390,8 @@ async fn test_audit_logger_writes_to_disk_in_test_mode() {
         &fixture_consensus(),
         FIXTURE_NEWS,
         &url,
-        "10m", 2470.0, 55.0, 1.5, 0.8, 2465.0, 2450.0,
+        "10m", 2470.0, 2468.0, 15.5, 2490.0, 2465.0, 2440.0, 1.85,
+        55.0, 1.5, 0.8, 2465.0, 2450.0,
         None,
     )
     .await
