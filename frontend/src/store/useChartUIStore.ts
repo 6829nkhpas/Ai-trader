@@ -2,6 +2,7 @@ import { create } from 'zustand';
 
 type CursorMode = 'cross' | 'dot' | 'arrow' | 'eraser';
 type MagnetMode = 'off' | 'weak' | 'strong';
+export type GhostLineMode = 'linear' | 'curved';
 
 export type Point = { time: number; price: number };
 export type Drawing = { id: string; tool: string; points: Point[]; color?: string; text?: string };
@@ -34,6 +35,13 @@ interface ChartUIState {
   selectedDrawingId: string | null;
   drawingColor: string;
 
+  // ── Ghost Line Dual-Engine ────────────────────────────────────────
+  /** Which regression engine to render: 'linear' (OLS) or 'curved' (VWEPR). */
+  ghostLineMode: GhostLineMode;
+  /** The quadratic acceleration coefficient from the VWEPR fit.
+   *  Positive = accelerating up, negative = accelerating down, ≈0 = linear. */
+  accelerationCoefficient: number;
+
   setActiveCursor: (cursor: CursorMode) => void;
   setActiveDrawingTool: (tool: string | null) => void;
   setMagnetMode: (mode: MagnetMode) => void;
@@ -46,6 +54,8 @@ interface ChartUIState {
   setSelectedDrawing: (id: string | null) => void;
   clearDrawings: () => void;
   setDrawingColor: (color: string) => void;
+  setGhostLineMode: (mode: GhostLineMode) => void;
+  setAccelerationCoefficient: (value: number) => void;
 
   // ── Workspace Persistence ──────────────────────────────────────────
   loadWorkspaceFromDB: (symbol: string) => Promise<void>;
@@ -61,6 +71,8 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
   drawings: [],
   selectedDrawingId: null,
   drawingColor: '#FF5722',
+  ghostLineMode: 'curved',
+  accelerationCoefficient: 0.0,
 
   setActiveCursor: (cursor) => set({ activeCursor: cursor, activeDrawingTool: null }),
   setActiveDrawingTool: (tool) => set({ activeDrawingTool: tool, selectedDrawingId: null }),
@@ -84,6 +96,8 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
   setSelectedDrawing: (id) => set({ selectedDrawingId: id }),
   clearDrawings: () => set({ drawings: [], selectedDrawingId: null }),
   setDrawingColor: (color) => set({ drawingColor: color }),
+  setGhostLineMode: (mode) => set({ ghostLineMode: mode }),
+  setAccelerationCoefficient: (value) => set({ accelerationCoefficient: value }),
 
   // ── Workspace Persistence Actions ──────────────────────────────────
 

@@ -1,8 +1,32 @@
 import { useEffect, useRef } from 'react';
 import type { Time } from 'lightweight-charts';
+import { invoke } from '@tauri-apps/api/core';
 import type { PredictiveSignal } from '../store/useTradeStore';
 import type { ChartCandle, VolumeBar, EmaPoint, ChartRefs, Timeframe } from '../utils/chartTypes';
 import { TIMEFRAME_MS } from '../utils/chartTypes';
+import { useChartUIStore } from '../store/useChartUIStore';
+
+// ── Dual-Engine IPC Types ────────────────────────────────────────────────────
+
+/** Minimal candle payload sent to the Rust predictive engines via Tauri IPC. */
+interface MinimalCandle {
+  time: number;   // UNIX timestamp in seconds
+  close: number;
+  volume: number;
+}
+
+/** A single projected point returned by a Rust regression engine. */
+interface ProjectedPoint {
+  time: number;   // UNIX timestamp in seconds
+  value: number;  // Projected price
+}
+
+/** Combined output of both predictive engines (OLS + VWEPR). */
+interface ProjectionPayload {
+  linear_points: ProjectedPoint[];  // OLS baseline
+  curved_points: ProjectedPoint[];  // VWEPR polynomial
+  acceleration_coefficient: number; // Quadratic 'a' from VWEPR
+}
 
 export function useChartDataSync(
   refs: ChartRefs,
@@ -177,29 +201,21 @@ export function useChartDataSync(
   //   1. If the backend Predictive Agent has published a signal for this
   //      symbol, project a straight line from the current close to the
   //      predicted close.
-  //   2. Fallback: compute an OLS linear regression directly over the
-  //      displayed merged candles (`chartData`), using the **array index**
-  //      as the X-axis. Project the slope forward `GHOST_CANDLES` bars.
-  //
-  // CRITICAL: all X-axis values use zero-based indices (0, 1, 2, …), NOT
-  // raw Unix timestamps.  Using timestamps overflows the OLS accumulators
-  // (n * sumXY and n * sumXX hit ~1e30+) producing NaN/Infinity slopes →
-  // ghost line dives off-screen.
+  //   2. Fallback: Volume-Weighted Exponential Polynomial Regression
+  //      (VWEPR) — delegates heavy matrix math to the Rust backend via
+  //      Tauri IPC. Zero JS-thread blocking.
   //
   // Reactivity:
   //   The effect's dep array includes `chartData`, so every new live tick
   //   that mutates `mergedCandles → aggregateCandles → chartData` triggers
-  //   a fresh regression and `ghostLineSeries.setData(projectedData)`.
-  const GHOST_CANDLES = 5;
-  // Lookback window for the OLS regression. Capped to keep the slope
-  // responsive to recent action while remaining numerically stable.
-  const REGRESSION_WINDOW = 60;
+  //   a fresh VWEPR computation.
+  const GHOST_CANDLES = 6;
 
   useEffect(() => {
     if (!ghostLineRef.current) return;
 
-    // Need enough bars for a meaningful slope.
-    if (chartData.length < 8) {
+    // Need enough bars for the VWEPR engine (Rust enforces min 20).
+    if (chartData.length < 20) {
       ghostLineRef.current.setData([]);
       return;
     }
@@ -227,11 +243,6 @@ export function useChartDataSync(
         const predictedPrice = latest.predicted_close_price;
         const minValidTime = lastCandle.time - intervalSec * 10;
 
-        // Sanity checks:
-        //   1. Target timestamp must be reasonably close to the current candle
-        //   2. Predicted price must be finite and positive
-        //   3. Predicted price must not deviate more than 20% from current
-        //      (a >20% move in one projection window is almost certainly bad data)
         const priceDeviation = Math.abs(predictedPrice - currentPrice) / currentPrice;
         const priceIsValid = Number.isFinite(predictedPrice) && predictedPrice > 0 && priceDeviation < 0.20;
 
@@ -251,98 +262,60 @@ export function useChartDataSync(
       }
     }
 
-    // ── Path 2: OLS Linear Regression on chartData (zero-based index) ─
+    // ── Path 2: Dual-Engine via Rust IPC ────────────────────────────
     //
-    // Regress over the trailing window of merged candles. X = array index,
-    // Y = candle.close. This matches the directive's normalised-axis form
-    // exactly and prevents the float overflow that occurs when X = unix ts.
-    const window = chartData.slice(-REGRESSION_WINDOW);
-    const n = window.length;
-
-    let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
-    for (let i = 0; i < n; i++) {
-      const x = i;            // 0, 1, 2 … NOT candle.time
-      const y = window[i].close;
-      sumX  += x;
-      sumY  += y;
-      sumXY += x * y;
-      sumXX += x * x;
-    }
-
-    const denom = n * sumXX - sumX * sumX;
-    if (denom === 0) {
-      ghostLineRef.current.setData([]);
-      return;
-    }
-    const slope = (n * sumXY - sumX * sumY) / denom;
-    const intercept = (sumY - slope * sumX) / n;
-
-    // 👻 TASK 1 — Trace OLS Regression Output
-    console.log(`👻 [GHOST MATH] n=${n}, slope=${slope}, intercept=${intercept}, denom=${denom}, sumX=${sumX}, sumY=${sumY}, sumXY=${sumXY}, sumXX=${sumXX}`);
-
-    // Guard: slope/intercept must be finite numbers.
-    if (!Number.isFinite(slope) || !Number.isFinite(intercept)) {
-      console.warn(`👻 [GHOST MATH] ABORT — non-finite slope or intercept`);
-      ghostLineRef.current.setData([]);
-      return;
-    }
-
-    // ── Project forward ─────────────────────────────────────────────────
-    // ANCHORED PROJECTION: Discard the OLS intercept for forward points.
-    // The regression slope tells us the per-bar trend, but the intercept
-    // is valid only in the regression's index coordinate system. At the
-    // last bar (index n-1) the best-fit y can diverge significantly from
-    // the actual close price, causing a visible vertical drop/detachment.
+    // Slice the trailing 60 candles, map to the lightweight MinimalCandle
+    // shape, and delegate both regression engines to the Rust backend.
+    // The async call runs off the JS main thread — zero blocking.
     //
-    // Instead: Point 0 = currentPrice @ lastCandle.time (perfect anchor),
-    // subsequent points = currentPrice + slope * k.
+    // The returned ProjectionPayload contains:
+    //   - curved_points  → VWEPR polynomial projection
+    //   - linear_points  → OLS baseline projection
+    //   - acceleration_coefficient → stored globally for DeepSeek injection
     //
-    // Map the index axis back to UNIX seconds based on the active
-    // timeframe interval so lightweight-charts can render it.
+    // The active dataset is chosen by `ghostLineMode` from the UI store.
+    const ghostSeries = ghostLineRef.current; // capture ref for async closure
 
-    // 👻 TASK 2 — Trace Future Time Mapping (pre-loop context)
-    console.log(`👻 [GHOST PROJECTION] intervalSec=${intervalSec}, lastCandle.time=${lastCandle.time}, effectiveTimeframe=${effectiveTimeframe}, TIMEFRAME_MS=${TIMEFRAME_MS[effectiveTimeframe]}, currentPrice=${currentPrice}`);
+    const lookbackCandles: MinimalCandle[] = chartData.slice(-60).map(c => ({
+      time: c.time as number,
+      close: c.close,
+      volume: (c as unknown as { volume?: number }).volume || 1.0,
+    }));
 
-    // Clamp slope so the terminal point stays within ±5% of current price.
-    // This keeps the ghost line visible even in a runaway trend.
-    const maxMove = currentPrice * 0.05;
-    const rawTerminal = currentPrice + slope * GHOST_CANDLES;
-    const clampedTerminal = Math.max(
-      currentPrice - maxMove,
-      Math.min(currentPrice + maxMove, rawTerminal)
-    );
-    const clampedSlope = (clampedTerminal - currentPrice) / GHOST_CANDLES;
+    (async () => {
+      try {
+        const payload = await invoke<ProjectionPayload>('compute_ghost_curve', {
+          candles: lookbackCandles,
+          intervalSec,
+          projectionLength: GHOST_CANDLES,
+        });
 
-    console.log(`👻 [GHOST MATH] rawTerminal=${rawTerminal}, clampedTerminal=${clampedTerminal}, clampedSlope=${clampedSlope}, maxMove=${maxMove}`);
+        // ── Persist acceleration coefficient for AI analysis ───────────
+        useChartUIStore.getState().setAccelerationCoefficient(
+          payload.acceleration_coefficient
+        );
 
-    const projectedData: { time: Time; value: number }[] = [];
+        // ── Route dataset based on ghost line mode ───────────────────
+        const mode = useChartUIStore.getState().ghostLineMode;
+        const activePoints = mode === 'linear'
+          ? payload.linear_points
+          : payload.curved_points;
 
-    for (let k = 0; k <= GHOST_CANDLES; k++) {
-      const futureTime = (lastCandle.time + k * intervalSec) as Time;
-      const projectedValue = +(currentPrice + clampedSlope * k).toFixed(2);
+        if (activePoints && activePoints.length > 0) {
+          const chartPayload = activePoints.map(p => ({
+            time: (p.time as number) as Time,
+            value: +p.value.toFixed(2),
+          }));
 
-      // 👻 TASK 2 — Trace each projected step
-      console.log(`👻 [GHOST PROJECTION] Step ${k}: baseTime=${lastCandle.time}, k*intervalSec=${k * intervalSec}, calculatedTime=${futureTime}, projectedValue=${projectedValue}`);
-
-      projectedData.push({ time: futureTime, value: projectedValue });
-    }
-
-    // Suppress noise: don't draw if the total move is < 0.005% of price.
-    const totalMove = Math.abs(projectedData[GHOST_CANDLES].value - currentPrice);
-    if (totalMove / currentPrice < 0.00005) {
-      ghostLineRef.current.setData([]);
-      return;
-    }
-
-    // 👻 TASK 3 — Trace Final Payload to Lightweight Charts
-    console.log("👻 [GHOST RENDER] Payload length:", projectedData.length);
-    if (projectedData.length > 0) {
-      console.log("👻 [GHOST RENDER] Point 1 (Current):", JSON.stringify(projectedData[0]));
-      console.log("👻 [GHOST RENDER] Point N (Future):", JSON.stringify(projectedData[projectedData.length - 1]));
-    }
-    console.log("👻 [GHOST RENDER] Full payload:", JSON.stringify(projectedData));
-
-    ghostLineRef.current.setData(projectedData);
+          ghostSeries.setData(chartPayload);
+        } else {
+          ghostSeries.setData([]);
+        }
+      } catch (error) {
+        console.error('👻 [GHOST ENGINE ERROR] Failed to compute projection:', error);
+        ghostSeries.setData([]);
+      }
+    })();
   }, [predictiveSignals, activeSymbol, chartData, effectiveTimeframe, ghostLineRef]);
 
   // ── Update time scale on timeframe change ───────────────────────────

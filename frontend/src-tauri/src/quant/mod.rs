@@ -6,6 +6,8 @@
 pub mod patterns;
 pub mod strategies;
 pub mod radar;
+pub mod vwepr;
+pub mod predictive;
 
 use patterns::{Candle, PatternEngine};
 use strategies::{IndicatorSnapshot, StrategyEngine};

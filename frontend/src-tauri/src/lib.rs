@@ -311,6 +311,7 @@ pub fn run() {
         commands::charts::get_pool_status,
         commands::deep_quant::run_deep_quant_analysis,
         commands::sentiment::fetch_symbol_sentiment,
+        commands::quant::compute_ghost_curve,
         commands::security::save_api_key,
         commands::security::check_api_key_exists,
         commands::security::hydrate_key_cache,
