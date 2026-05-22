@@ -430,6 +430,14 @@ pub async fn generate_deep_quant_plan_with_url(
 
     info!("[llm] step=content_extracted chars={}", content.len());
 
+    // ═══════════════════════════════════════════════════════════════════
+    // 🕵️‍♂️ AUDIT 4 - LLM RAW RESPONSE: Full unparsed string from the LLM
+    // This catches hallucinated JSON keys BEFORE serde tries to parse it.
+    // ═══════════════════════════════════════════════════════════════════
+    println!("🕵️‍♂️ [AUDIT 4 - LLM RAW RESPONSE] Content length: {} chars", content.len());
+    println!("🕵️‍♂️ [AUDIT 4 - LLM RAW RESPONSE]:\n{}", content);
+    // ═══════════════════════════════════════════════════════════════════
+
     // ── Parse the LLM's JSON output into AiExecutionPlan ────────────────
     let cleaned = content
         .trim()

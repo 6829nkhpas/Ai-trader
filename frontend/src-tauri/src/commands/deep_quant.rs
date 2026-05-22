@@ -18,39 +18,38 @@ use crate::quant::{
 };
 use crate::services::llm;
 
-// ── News Fetcher ────────────────────────────────────────────────────────────
+// ── News Fetcher (with Google News RSS fallback) ────────────────────────────
 
-/// Fetch recent news headlines for a symbol from the aggregator's REST API.
-/// Falls back to a "No recent news available" string on any failure.
+/// Fetch recent news headlines for a symbol.
 ///
-/// Wrapped with the Alpha Crucible audit logger so every News API request
-/// and response is recorded verbatim when `ALPHA_TEST_MODE=1`.
+/// Strategy:
+///   1. Try the local NEWS_API_URL aggregator (fast, curated).
+///   2. If 404 / failure → fall back to Google News RSS (same approach as
+///      the sentiment system in `commands/sentiment.rs`).
+///
+/// Returns a human-readable news block for the LLM prompt. Never returns
+/// an empty "No news" string if Google News is reachable.
 async fn fetch_news_context(symbol: &str) -> String {
     use crate::services::audit_logger;
 
-    let news_api_url = std::env::var("NEWS_API_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8084".to_string());
-
-    let url = format!("{}/api/news?symbol={}", news_api_url, symbol);
-    let req_json = serde_json::json!({ "method": "GET", "url": url, "symbol": symbol });
-
     let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(8))
         .build()
     {
         Ok(c) => c,
         Err(e) => {
-            warn!("News HTTP client failed: {} — using fallback", e);
-            audit_logger::log_api_error(
-                &format!("GET {}", url),
-                &req_json,
-                &format!("client build failed: {}", e),
-            );
+            warn!("[news] HTTP client build failed: {} — using empty fallback", e);
             return format!("No recent news available for {}.", symbol);
         }
     };
 
-    match client.get(&url).send().await {
+    // ── Primary: Local NEWS_API_URL ──────────────────────────────────────
+    let news_api_url = std::env::var("NEWS_API_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:8084".to_string());
+    let url = format!("{}/api/news?symbol={}", news_api_url, symbol);
+    let req_json = serde_json::json!({ "method": "GET", "url": &url, "symbol": symbol });
+
+    let local_ok = match client.get(&url).send().await {
         Ok(resp) => {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
@@ -62,44 +61,167 @@ async fn fetch_news_context(symbol: &str) -> String {
                 &res_json,
                 status.as_u16(),
             );
-            if status.is_success() && !body.trim().is_empty() {
-                body
+            if status.is_success() && !body.trim().is_empty() && !body.contains("No recent news") {
+                info!("[news] Local API returned {} chars for {}", body.len(), symbol);
+                Some(body)
             } else {
                 if !status.is_success() {
-                    warn!("News API returned HTTP {} for {}", status, symbol);
+                    warn!("[news] Local API returned HTTP {} for {} — trying RSS fallback", status, symbol);
                 }
-                format!("No recent news available for {}.", symbol)
+                None
             }
         }
         Err(e) => {
-            warn!("News fetch failed for {}: {} — using fallback", symbol, e);
+            warn!("[news] Local API unreachable for {}: {} — trying RSS fallback", symbol, e);
             audit_logger::log_api_error(
                 &format!("GET {}", url),
                 &req_json,
                 &format!("transport error: {}", e),
             );
-            format!("No recent news available for {}.", symbol)
+            None
         }
+    };
+
+    if let Some(body) = local_ok {
+        return body;
     }
+
+    // ── Fallback: Google News RSS (same as sentiment.rs) ─────────────────
+    info!("[news] Falling back to Google News RSS for {}", symbol);
+    let headlines = fetch_google_news_rss_for_context(&client, symbol).await;
+
+    if headlines.is_empty() {
+        warn!("[news] Google News RSS also returned 0 headlines for {}", symbol);
+        return format!("No recent news available for {}.", symbol);
+    }
+
+    info!("[news] Google News RSS returned {} headlines for {}", headlines.len(), symbol);
+
+    // Format as numbered list for the LLM prompt
+    headlines
+        .iter()
+        .enumerate()
+        .map(|(i, h)| format!("{}. {}", i + 1, h))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-// ── Candle Loader ───────────────────────────────────────────────────────────
+/// Scrape headlines from Google News RSS feed. No API key required.
+/// Mirrors the implementation in `commands/sentiment.rs::fetch_google_news_rss`.
+/// Returns up to 5 recent headlines as plain strings (kept small for prompt token budget).
+async fn fetch_google_news_rss_for_context(client: &reqwest::Client, symbol: &str) -> Vec<String> {
+    let query = format!("{} stock NSE India", symbol);
+    let rss_url = format!(
+        "https://news.google.com/rss/search?q={}&hl=en-IN&gl=IN&ceid=IN:en",
+        urlencoding::encode(&query)
+    );
+
+    let body = match client
+        .get(&rss_url)
+        .header("User-Agent", "Mozilla/5.0 (compatible; AlphaSuite/1.0)")
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            resp.text().await.unwrap_or_default()
+        }
+        Ok(resp) => {
+            warn!("[news] Google News RSS returned HTTP {}", resp.status());
+            return Vec::new();
+        }
+        Err(e) => {
+            warn!("[news] Google News RSS fetch failed: {}", e);
+            return Vec::new();
+        }
+    };
+
+    // Extract <title> tags from RSS XML via simple string parsing.
+    // Skip the first <title> (channel title, e.g. "RELIANCE stock NSE India - Google News")
+    let mut headlines: Vec<String> = Vec::new();
+    let mut search_from = 0usize;
+
+    loop {
+        let start_tag = match body[search_from..].find("<title>") {
+            Some(pos) => search_from + pos + 7, // skip "<title>"
+            None => break,
+        };
+        let end_tag = match body[start_tag..].find("</title>") {
+            Some(pos) => start_tag + pos,
+            None => break,
+        };
+
+        let raw = &body[start_tag..end_tag];
+        search_from = end_tag + 8; // skip "</title>"
+
+        // Decode basic XML entities
+        let decoded = raw
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("<![CDATA[", "")
+            .replace("]]>", "");
+
+        let trimmed = decoded.trim().to_string();
+
+        // Skip empty, channel-level titles, and junk entries
+        if trimmed.is_empty()
+            || trimmed == "Google News"
+            || trimmed.starts_with("\"")
+            || trimmed.len() < 10
+        {
+            continue;
+        }
+
+        headlines.push(trimmed);
+
+        // Keep top 5 for prompt token budget (vs 10 in sentiment)
+        if headlines.len() >= 5 {
+            break;
+        }
+    }
+
+    headlines
+}
+
+// ── Candle Loader (Merge Strategy) ──────────────────────────────────────────
 
 /// Load the most recent N candles from QuestDB for quant analysis.
 ///
-/// Uses a multi-source waterfall strategy matching the chart's data pipeline:
-///   1. `historical_candles` — daily archive (5-year backfill via Kite)
-///   2. `historical_intraday` — intraday candles cached by chart views
-///   3. `live_ticks` — current session aggregated into 10m bars
+/// **V3 Merge Strategy** — replaces the old early-return waterfall.
+///
+/// 1. Fetch from `historical_candles` (daily archive) — Array A.
+/// 2. Fetch from `historical_intraday` (chart-cached bars) — Array B.
+/// 3. Fetch from `live_ticks` (current session, aggregated) — Array C.
+/// 4. **Merge** A ∪ B ∪ C, sort by timestamp ascending.
+/// 5. **Deduplicate**: if multiple candles share the same timestamp,
+///    keep the one from the highest-priority source (live > intraday > daily).
+/// 6. Slice to the most recent `limit` candles so the AI sees the current price.
 ///
 /// Returns candles in chronological order (oldest first).
 async fn load_candles_from_db(pool: &PgPool, symbol: &str, limit: i64) -> Result<Vec<Candle>, String> {
     use sqlx::Row;
 
-    // Helper: parse rows into Candle vec (reverse to chronological order)
-    let parse_rows = |rows: &[sqlx::postgres::PgRow]| -> Vec<Candle> {
-        let mut candles: Vec<Candle> = rows
-            .iter()
+    // ── Source priority constants (higher = preferred on timestamp collision) ──
+    const PRIO_DAILY: u8 = 1;
+    const PRIO_INTRADAY: u8 = 2;
+    const PRIO_LIVE: u8 = 3;
+
+    struct PrioCandle {
+        ts_millis: i64,
+        priority: u8,
+        candle: Candle,
+    }
+
+    /// Helper: parse rows with timestamps into PrioCandle vec.
+    /// The SQL queries MUST cast timestamps to LONG (epoch micros) so that
+    /// sqlx can deserialize them as i64. Column name is always "ts_epoch".
+    fn parse_rows_with_ts(
+        rows: &[sqlx::postgres::PgRow],
+        priority: u8,
+    ) -> Vec<PrioCandle> {
+        rows.iter()
             .filter_map(|row| {
                 let open: f64 = row.try_get("open").ok()?;
                 let high: f64 = row.try_get("high").ok()?;
@@ -108,22 +230,25 @@ async fn load_candles_from_db(pool: &PgPool, symbol: &str, limit: i64) -> Result
                 let volume: i64 = row.try_get::<i64, _>("volume")
                     .or_else(|_| row.try_get::<i32, _>("volume").map(|v| v as i64))
                     .unwrap_or(0);
-                Some(Candle {
-                    open,
-                    high,
-                    low,
-                    close,
-                    volume: volume as f64,
+                // ts_epoch = CAST(ts AS LONG) in SQL → epoch microseconds as i64
+                let ts_micros: i64 = row.try_get::<i64, _>("ts_epoch")
+                    .unwrap_or(0);
+                let ts_millis = ts_micros / 1000; // micros → millis
+                Some(PrioCandle {
+                    ts_millis,
+                    priority,
+                    candle: Candle { open, high, low, close, volume: volume as f64 },
                 })
             })
-            .collect();
-        candles.reverse();
-        candles
-    };
+            .collect()
+    }
+
+    let mut all_candles: Vec<PrioCandle> = Vec::new();
 
     // ── Source 1: historical_candles (daily archive) ─────────────────────
-    let daily_rows = sqlx::query(
-        "SELECT open, high, low, close, volume \
+    // CAST(ts AS LONG) → epoch microseconds as bigint, parseable by sqlx as i64
+    let daily_result = sqlx::query(
+        "SELECT CAST(ts AS LONG) AS ts_epoch, open, high, low, close, volume \
          FROM historical_candles \
          WHERE symbol = $1 \
          ORDER BY ts DESC \
@@ -134,20 +259,26 @@ async fn load_candles_from_db(pool: &PgPool, symbol: &str, limit: i64) -> Result
     .fetch_all(pool)
     .await;
 
-    if let Ok(rows) = &daily_rows {
-        if !rows.is_empty() {
-            let candles = parse_rows(rows);
+    match &daily_result {
+        Ok(rows) if !rows.is_empty() => {
+            let parsed = parse_rows_with_ts(rows, PRIO_DAILY);
             info!(
-                "[deep_quant] candle_source=historical_candles symbol={} count={}",
-                symbol, candles.len()
+                "[deep_quant] merge_source=historical_candles symbol={} count={}",
+                symbol, parsed.len()
             );
-            return Ok(candles);
+            all_candles.extend(parsed);
+        }
+        Ok(_) => {
+            info!("[deep_quant] merge_source=historical_candles symbol={} count=0 (empty)", symbol);
+        }
+        Err(e) => {
+            warn!("[deep_quant] historical_candles query failed: {}", e);
         }
     }
 
     // ── Source 2: historical_intraday (Kite intraday cached by chart) ────
-    let intraday_rows = sqlx::query(
-        "SELECT open, high, low, close, volume \
+    let intraday_result = sqlx::query(
+        "SELECT CAST(ts AS LONG) AS ts_epoch, open, high, low, close, volume \
          FROM historical_intraday \
          WHERE symbol = $1 \
          ORDER BY ts DESC \
@@ -158,20 +289,27 @@ async fn load_candles_from_db(pool: &PgPool, symbol: &str, limit: i64) -> Result
     .fetch_all(pool)
     .await;
 
-    if let Ok(rows) = &intraday_rows {
-        if !rows.is_empty() {
-            let candles = parse_rows(rows);
+    match &intraday_result {
+        Ok(rows) if !rows.is_empty() => {
+            let parsed = parse_rows_with_ts(rows, PRIO_INTRADAY);
             info!(
-                "[deep_quant] candle_source=historical_intraday symbol={} count={}",
-                symbol, candles.len()
+                "[deep_quant] merge_source=historical_intraday symbol={} count={}",
+                symbol, parsed.len()
             );
-            return Ok(candles);
+            all_candles.extend(parsed);
+        }
+        Ok(_) => {
+            info!("[deep_quant] merge_source=historical_intraday symbol={} count=0 (empty)", symbol);
+        }
+        Err(e) => {
+            warn!("[deep_quant] historical_intraday query failed: {}", e);
         }
     }
 
     // ── Source 3: live_ticks (current session, aggregated to 10m bars) ───
-    let live_rows = sqlx::query(
-        "SELECT first(last_traded_price) AS open, \
+    let live_result = sqlx::query(
+        "SELECT CAST(timestamp AS LONG) AS ts_epoch, \
+                first(last_traded_price) AS open, \
                 max(last_traded_price)   AS high, \
                 min(last_traded_price)   AS low, \
                 last(last_traded_price)  AS close, \
@@ -187,29 +325,74 @@ async fn load_candles_from_db(pool: &PgPool, symbol: &str, limit: i64) -> Result
     .fetch_all(pool)
     .await;
 
-    if let Ok(rows) = &live_rows {
-        if !rows.is_empty() {
-            let candles = parse_rows(rows);
+    match &live_result {
+        Ok(rows) if !rows.is_empty() => {
+            let parsed = parse_rows_with_ts(rows, PRIO_LIVE);
             info!(
-                "[deep_quant] candle_source=live_ticks symbol={} count={}",
-                symbol, candles.len()
+                "[deep_quant] merge_source=live_ticks symbol={} count={}",
+                symbol, parsed.len()
             );
-            return Ok(candles);
+            all_candles.extend(parsed);
+        }
+        Ok(_) => {
+            info!("[deep_quant] merge_source=live_ticks symbol={} count=0 (empty)", symbol);
+        }
+        Err(e) => {
+            warn!("[deep_quant] live_ticks query failed: {}", e);
         }
     }
 
-    // All sources empty — log the failures for diagnostics
-    if let Err(e) = &daily_rows {
-        warn!("[deep_quant] historical_candles query failed: {}", e);
-    }
-    if let Err(e) = &intraday_rows {
-        warn!("[deep_quant] historical_intraday query failed: {}", e);
-    }
-    if let Err(e) = &live_rows {
-        warn!("[deep_quant] live_ticks query failed: {}", e);
+    if all_candles.is_empty() {
+        info!("[deep_quant] merge_result: ALL sources empty for {}", symbol);
+        return Ok(vec![]);
     }
 
-    Ok(vec![])
+    // ── Merge: sort ascending by timestamp ───────────────────────────────
+    all_candles.sort_by(|a, b| {
+        a.ts_millis.cmp(&b.ts_millis)
+            .then(a.priority.cmp(&b.priority)) // on tie: lower priority first (will be overwritten)
+    });
+
+    // ── Deduplicate: on timestamp collision, keep highest priority ───────
+    // Walk sorted array; if consecutive candles share the same ts_millis,
+    // keep the one with the highest priority (live > intraday > daily).
+    let mut deduped: Vec<PrioCandle> = Vec::with_capacity(all_candles.len());
+    for pc in all_candles {
+        if let Some(last) = deduped.last() {
+            if last.ts_millis == pc.ts_millis {
+                // Same timestamp — replace if higher priority
+                if pc.priority > last.priority {
+                    deduped.pop();
+                    deduped.push(pc);
+                }
+                // else: keep existing (already higher or equal priority)
+                continue;
+            }
+        }
+        deduped.push(pc);
+    }
+
+    // ── Slice to the most recent `limit` candles ────────────────────────
+    let total = deduped.len();
+    let start = if total > limit as usize { total - limit as usize } else { 0 };
+    let final_candles: Vec<Candle> = deduped[start..]
+        .iter()
+        .map(|pc| pc.candle.clone())
+        .collect();
+
+    // ── Diagnostic: log merge stats ──────────────────────────────────────
+    let first_close = final_candles.first().map(|c| c.close).unwrap_or(0.0);
+    let last_close = final_candles.last().map(|c| c.close).unwrap_or(0.0);
+    info!(
+        "[deep_quant] merge_result: symbol={} total_before_dedup={} after_dedup={} final_slice={} first_close={:.2} last_close={:.2}",
+        symbol, total, deduped.len(), final_candles.len(), first_close, last_close
+    );
+    println!(
+        "🔗 [MERGE] {} — merged candles: {} | first_close={:.2} → last_close={:.2} (AI will see this close)",
+        symbol, final_candles.len(), first_close, last_close
+    );
+
+    Ok(final_candles)
 }
 
 
@@ -241,6 +424,13 @@ pub async fn run_deep_quant_analysis(
     use std::time::Instant;
     let t_total = Instant::now();
 
+    // ═══════════════════════════════════════════════════════════════════
+    // 🕵️‍♂️ AUDIT 2 - RUST RECEIVE: Verify what Tauri received from the UI
+    // ═══════════════════════════════════════════════════════════════════
+    println!("🕵️‍♂️ [AUDIT 2 - RUST RECEIVE] Triggered for Symbol: {}, Timeframe: {}", symbol, timeframe);
+    println!("🕵️‍♂️ [AUDIT 2 - RUST RECEIVE] Timestamp: {:?}", std::time::SystemTime::now());
+    // ═══════════════════════════════════════════════════════════════════
+
     info!("╔══════════════════════════════════════════════════╗");
     info!("║  Deep Quant Analysis — V3 Pipeline Starting     ║");
     info!("║  Symbol: {:<40} ║", symbol);
@@ -264,13 +454,15 @@ pub async fn run_deep_quant_analysis(
             e
         })?;
 
-    // ── Proactive Kite Fetch (self-healing when DB is empty) ────────────
-    // If all QuestDB sources returned empty, try fetching daily candles
-    // from the Kite Historical API directly (like charts.rs does).
-    if candles.is_empty() {
+    // ── Proactive Kite Fetch (self-healing when data is insufficient) ────
+    // If the merged result has fewer than 50 candles, try fetching daily
+    // candles from the Kite Historical API directly (like charts.rs does).
+    // This covers: indices (NIFTY BANK), newly-added symbols, and cases
+    // where only live_ticks have data from the current session.
+    if candles.len() < 50 {
         info!(
-            "[deep_quant] step=1/5 all_sources_empty — triggering proactive Kite fetch for {}",
-            symbol
+            "[deep_quant] step=1/5 insufficient_data ({} candles < 50) — triggering proactive Kite fetch for {}",
+            candles.len(), symbol
         );
 
         let api_key = std::env::var("KITE_API_KEY").ok();
@@ -332,7 +524,7 @@ pub async fn run_deep_quant_analysis(
 
     // ── AI RECEIVER TRACER ──────────────────────────────────────────────
     // Diagnostic: verify exactly what Rust has before calling DeepSeek.
-    println!("🧠 [RUST AI RECEIVER] Symbol: {} | Timeframe: {} | Candles received: {} (after waterfall + proactive fetch)", symbol, timeframe, candles.len());
+    println!("🧠 [RUST AI RECEIVER] Symbol: {} | Timeframe: {} | Candles received: {} (after merge + proactive fetch)", symbol, timeframe, candles.len());
 
     if candles.is_empty() {
         let msg = format!(
@@ -343,14 +535,30 @@ pub async fn run_deep_quant_analysis(
         return Err(msg);
     }
 
-    if candles.len() < 50 {
+    // Hard minimum: 15 candles (enough for RSI-14, the tightest core indicator).
+    // Indicators needing more data (Bollinger=20, MACD=35, SMA-50/200) will
+    // gracefully return NaN, and the NaN guards downstream replace them with
+    // safe defaults (latest_close for VWAP/EMAs, 0.0 for ATR/MACD, 50.0 for RSI).
+    if candles.len() < 15 {
         let msg = format!(
-            "Insufficient data for {}: only {} candles available (DeepSeek requires ≥50 for meaningful analysis).",
+            "Insufficient data for {}: only {} candles available (minimum 15 required for RSI-14 calculation).",
             symbol,
             candles.len()
         );
         warn!("[deep_quant] step=1/5 FAIL {}", msg);
         return Err(msg);
+    }
+
+    // Warn (but don't block) when between 15–49 candles
+    if candles.len() < 50 {
+        warn!(
+            "[deep_quant] step=1/5 LOW_DATA: {} has only {} candles — some indicators (MACD, SMA-50) will use defaults. Analysis accuracy reduced.",
+            symbol, candles.len()
+        );
+        println!(
+            "⚠️ [LOW DATA] {} — {} candles (< 50). MACD/Bollinger may be approximate.",
+            symbol, candles.len()
+        );
     }
 
 
@@ -404,6 +612,24 @@ pub async fn run_deep_quant_analysis(
         "[deep_quant] step=2b rag_context: close={:.2} rsi={:.2} macd={:.4} signal={:.4} ema9={:.2} ema21={:.2} vwap={:.2} atr={:.2} bb=[{:.2},{:.2},{:.2}] vol_mult={:.2}x tf={}",
         latest_close, rsi_val, macd_val, macd_signal, ema9_val, ema21_val, vwap_val, atr_val, bb_upper, bb_mid, bb_lower, vol_multiplier, timeframe
     );
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 🕵️‍♂️ AUDIT 3 - RUST PROMPT: All extracted math variables BEFORE LLM call
+    // ═══════════════════════════════════════════════════════════════════
+    println!("🕵️‍♂️ [AUDIT 3 - RUST PROMPT] Extracted Math Variables:");
+    println!("  - Latest Close: {:.2}", latest_close);
+    println!("  - VWAP: {:.2}, ATR: {:.2}", vwap_val, atr_val);
+    println!("  - RSI: {:.2}, Vol Spike: {:.2}x", rsi_val, vol_multiplier);
+    println!("  - MACD Line: {:.4}, MACD Signal: {:.4}", macd_val, macd_signal);
+    println!("  - EMA-9: {:.2}, EMA-21: {:.2}", ema9_val, ema21_val);
+    println!("  - Bollinger: Upper={:.2}, Mid={:.2}, Lower={:.2}", bb_upper, bb_mid, bb_lower);
+    println!("  - Consensus Trend Score: {}", consensus.trend_score);
+    println!("  - Momentum: {}, Volatility: {}, Volume: {}", consensus.momentum_state, consensus.volatility_state, consensus.volume_flow_state);
+    println!("  - Active Patterns: {:?}", consensus.active_patterns);
+    println!("  - Active Strategies: {:?}", consensus.active_strategies);
+    println!("  - Candles fed to indicators: {}", candles.len());
+    println!("  - Timeframe: {}", timeframe);
+    // ═══════════════════════════════════════════════════════════════════
 
     // Emit consensus to frontend for real-time dashboard display
     let _ = app.emit("quant-consensus", serde_json::json!(&consensus));

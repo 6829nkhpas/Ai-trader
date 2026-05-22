@@ -135,6 +135,17 @@ export default function DeepQuantPanel() {
     console.log(`🧠 [AI HANDOFF] Requesting analysis for Symbol: ${symbol} | Timeframe: ${activeTimeframe}`);
     console.log(`🧠 [AI HANDOFF] Current cached candle count: ${symbolCandleCount}`);
 
+    // ═══════════════════════════════════════════════════════════════════
+    // 🕵️‍♂️ AUDIT 1 - UI SEND: Verify what the React UI fires to Tauri
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Firing AI Request.");
+    console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Symbol:", symbol);
+    console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Timeframe:", activeTimeframe);
+    console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Acceleration Coeff from Store:", useTradeStore.getState().accelerationCoefficient);
+    console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Candles Length (cached proxy):", symbolCandleCount);
+    console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Historical Cache Keys:", Object.keys(useTradeStore.getState().historicalCache));
+    // ═══════════════════════════════════════════════════════════════════
+
     if (symbolCandleCount < 50) {
       console.warn(
         `🧠 [AI HANDOFF WARNING] Insufficient candles for AI analysis. ` +

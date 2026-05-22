@@ -1,12 +1,12 @@
 @import "tailwindcss";
 
 :root {
-  --bg-main: #1e293b;        /* slate-900 */
-  --bg-surface: #1e293b;     /* slate-800 */
-  --bg-card: #1e293b;        /* slate-800 */
-  --bg-elevated: #334155;    /* slate-700 */
-  --border-default: #334155; /* slate-700 */
-  --border-subtle: #1e293b;  /* slate-800 */
+  --bg-main: #06080F;
+  --bg-surface: #0B0F19;
+  --bg-card: #1e293b;
+  --bg-elevated: #334155;
+  --border-default: #334155;
+  --border-subtle: #1e293b;
   --text-primary: #f8fafc;   /* slate-50 */
   --text-secondary: #94a3b8; /* slate-400 */
   --text-muted: #64748b;     /* slate-500 */

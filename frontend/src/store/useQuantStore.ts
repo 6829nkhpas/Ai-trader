@@ -329,6 +329,17 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
         { symbol, timeframe: activeTimeframe }
       );
 
+      // ═══════════════════════════════════════════════════════════════════
+      // 🕵️‍♂️ AUDIT 5 - UI RECEIVE: Log the full parsed response from Rust
+      // ═══════════════════════════════════════════════════════════════════
+      console.log("🕵️‍♂️ [AUDIT 5 - UI RECEIVE] Parsed AI Result:", plan);
+      console.log("🕵️‍♂️ [AUDIT 5 - UI RECEIVE] conviction_score:", plan?.conviction_score);
+      console.log("🕵️‍♂️ [AUDIT 5 - UI RECEIVE] setup_validation:", plan?.setup_validation);
+      console.log("🕵️‍♂️ [AUDIT 5 - UI RECEIVE] execution_plan:", plan?.execution_plan);
+      console.log("🕵️‍♂️ [AUDIT 5 - UI RECEIVE] typeof result:", typeof plan);
+      console.log("🕵️‍♂️ [AUDIT 5 - UI RECEIVE] JSON keys:", plan ? Object.keys(plan) : 'NULL/UNDEFINED');
+      // ═══════════════════════════════════════════════════════════════════
+
       const tDone = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       console.log(
         `[QuantStore] ✔ Deep analysis OK symbol=${symbol} ` +
