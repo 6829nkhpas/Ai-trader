@@ -640,8 +640,8 @@
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\quant\\DeepQuantPanel.tsx": {
-    "mtime": 1779440548.02378,
-    "ast_hash": "d3460962f207848b953f31c912822159",
+    "mtime": 1779444101.4439287,
+    "ast_hash": "6ea32c37501ca44c9ead519c10b3e16c",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\quant\\QuantRadar.tsx": {
@@ -725,8 +725,8 @@
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\utils\\chartTypes.ts": {
-    "mtime": 1779261218.9566429,
-    "ast_hash": "ccbc56a60cf314223c1de157b1197b3b",
+    "mtime": 1779444024.0155437,
+    "ast_hash": "79defe968963658cbdd3b9e53456d47d",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\build.rs": {

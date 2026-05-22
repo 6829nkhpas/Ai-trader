@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useQuantStore } from '../../store/useQuantStore';
 import { useTradeStore } from '../../store/useTradeStore';
+import { useChartUIStore } from '../../store/useChartUIStore';
 import { useMemo } from 'react';
 
 // ── Conviction Helpers ──────────────────────────────────────────────────
@@ -141,7 +142,7 @@ export default function DeepQuantPanel() {
     console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Firing AI Request.");
     console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Symbol:", symbol);
     console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Timeframe:", activeTimeframe);
-    console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Acceleration Coeff from Store:", useTradeStore.getState().accelerationCoefficient);
+    console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Acceleration Coeff from Store:", useChartUIStore.getState().accelerationCoefficient);
     console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Candles Length (cached proxy):", symbolCandleCount);
     console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Historical Cache Keys:", Object.keys(useTradeStore.getState().historicalCache));
     // ═══════════════════════════════════════════════════════════════════
