@@ -600,17 +600,114 @@ pub async fn run_deep_quant_analysis(
     let bb_upper = if indicators.bb_upper.is_finite() { indicators.bb_upper } else { latest_close };
     let bb_mid = if indicators.bb_mid.is_finite() { indicators.bb_mid } else { latest_close };
     let bb_lower = if indicators.bb_lower.is_finite() { indicators.bb_lower } else { latest_close };
-    // Volume spike multiplier: latest candle volume / 20-period average
-    let latest_vol = candles.last().map(|c| c.volume).unwrap_or(0.0);
+    // Volume spike multiplier: latest *non-zero-volume* candle volume / 20-period average.
+    //
+    // Root cause of "0.00x": the most recent merged bar often has volume = 0
+    // because it is a partially-formed live_tick bar that hasn't closed yet.
+    // Walk backwards to find the last candle with meaningful volume so the
+    // multiplier reflects real activity instead of a stale empty bar.
+    let latest_vol = candles.iter().rev()
+        .find(|c| c.volume > 1e-6)
+        .map(|c| c.volume)
+        .unwrap_or(0.0);
     let vol_multiplier = if indicators.average_volume > 1e-6 {
         latest_vol / indicators.average_volume
     } else {
         1.0
     };
 
+    // ── Phase 6 (God Patch) — Microstructure Additions ───────────────────────
+
+    // ── VWEPR Acceleration Coefficient ────────────────────────────────
+    // Convert the quant Candle slice to OhlcCandle (vwepr module's type).
+    // We synthesise a timestamp by spacing each candle `interval_sec` apart
+    // from Unix epoch — the absolute time doesn't affect the polynomial fit.
+    let interval_sec: i64 = match timeframe.as_str() {
+        "1m"  => 60,
+        "3m"  => 180,
+        "5m"  => 300,
+        "10m" => 600,
+        "15m" => 900,
+        "30m" => 1_800,
+        "60m" | "1h" => 3_600,
+        "1d"  => 86_400,
+        _     => 600, // sensible default (10m)
+    };
+
+    let ohlc_candles: Vec<crate::quant::vwepr::OhlcCandle> = candles
+        .iter()
+        .enumerate()
+        .map(|(i, c)| crate::quant::vwepr::OhlcCandle {
+            time:   i as i64 * interval_sec,
+            open:   c.open,
+            high:   c.high,
+            low:    c.low,
+            close:  c.close,
+            volume: c.volume,
+        })
+        .collect();
+
+    let (_, acceleration_coeff) = crate::quant::vwepr::calculate_vwepr_with_accel(
+        &ohlc_candles,
+        1,           // we only need the coefficient, not a long projection
+        interval_sec,
+    );
+    let acceleration_coeff = if acceleration_coeff.is_finite() { acceleration_coeff } else { 0.0 };
+
+    // ── Order Flow Imbalance (OFI) ──────────────────────────────────
+    // Kite WebSocket does not currently expose a real-time L2 depth stream
+    // in this pipeline. Default to 0.0 (neutral) until the depth feed is
+    // plumbed through. The LLM prompt documents this semantic clearly.
+    let ofi_val: f64 = 0.0;
+
+    // ── Detected Candlestick Patterns (rolling window scan) ─────────────
+    //
+    // PatternEngine::analyze() only looks at the last 1-2 candles in the slice,
+    // so a single call on the full candle array only catches patterns on the
+    // very last bar. We solve this by scanning the final N candles with a
+    // rolling window so any pattern formed in the recent session shows up.
+    //
+    // Window size: 10 bars (captures intraday structure without over-reporting).
+    // Deduplication: a pattern is included at most once regardless of how many
+    // bars it fired on.
+    let detected_patterns: String = {
+        use crate::quant::patterns::PatternEngine;
+        use std::collections::HashSet;
+
+        const PATTERN_SCAN_WINDOW: usize = 10;
+        let scan_start = if candles.len() > PATTERN_SCAN_WINDOW {
+            candles.len() - PATTERN_SCAN_WINDOW
+        } else {
+            0
+        };
+
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut found: Vec<String> = Vec::new();
+
+        // Slide a window of [2..=PATTERN_SCAN_WINDOW] candles ending at each bar
+        // so both single-candle and two-candle patterns are detectable.
+        for end in (scan_start + 1)..=candles.len() {
+            let window = &candles[scan_start..end];
+            for p in PatternEngine::analyze(window) {
+                if seen.insert(p.clone()) {
+                    found.push(p);
+                }
+            }
+        }
+
+        // Also include patterns the ConsensusEngine already found (deduped)
+        for p in &consensus.active_patterns {
+            if seen.insert(p.clone()) {
+                found.push(p.clone());
+            }
+        }
+
+        if found.is_empty() { "None".to_string() } else { found.join(", ") }
+    };
+
     info!(
-        "[deep_quant] step=2b rag_context: close={:.2} rsi={:.2} macd={:.4} signal={:.4} ema9={:.2} ema21={:.2} vwap={:.2} atr={:.2} bb=[{:.2},{:.2},{:.2}] vol_mult={:.2}x tf={}",
-        latest_close, rsi_val, macd_val, macd_signal, ema9_val, ema21_val, vwap_val, atr_val, bb_upper, bb_mid, bb_lower, vol_multiplier, timeframe
+        "[deep_quant] step=2b rag_context: close={:.2} rsi={:.2} macd={:.4} signal={:.4} ema9={:.2} ema21={:.2} vwap={:.2} atr={:.2} bb=[{:.2},{:.2},{:.2}] vol_mult={:.2}x accel={:.6} ofi={:.4} patterns={:?} tf={}",
+        latest_close, rsi_val, macd_val, macd_signal, ema9_val, ema21_val, vwap_val, atr_val, bb_upper, bb_mid, bb_lower, vol_multiplier, acceleration_coeff, ofi_val, &detected_patterns, timeframe
     );
 
     // ═══════════════════════════════════════════════════════════════════
@@ -666,6 +763,7 @@ pub async fn run_deep_quant_analysis(
             &timeframe,
             latest_close,
             vwap_val,
+            ofi_val,             // Phase 6: OFI (neutral placeholder)
             atr_val,
             bb_upper,
             bb_mid,
@@ -674,8 +772,8 @@ pub async fn run_deep_quant_analysis(
             rsi_val,
             macd_val,
             macd_signal,
-            ema9_val,
-            ema21_val,
+            acceleration_coeff,  // Phase 6: VWEPR curvature
+            &detected_patterns,  // Phase 6: candlestick patterns string
             Some(&app),
         ).await {
             Ok(p) => {

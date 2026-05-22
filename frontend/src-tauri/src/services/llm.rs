@@ -71,55 +71,68 @@ struct ChatMessageResponse {
     content: String,
 }
 
-// ── System Prompt Builder (V3 Phase 5: Institutional RAG Expansion) ────────
+// ── System Prompt Builder (V3 Phase 6: Microstructure — God Patch) ─────────
 
-/// Build the high-conviction system prompt with full institutional technical state.
-/// The LLM receives hard data computed by Rust — it must NOT guess indicator values.
+/// Build the high-conviction institutional system prompt.
+///
+/// All numeric indicators are computed by the Rust quant engine and injected
+/// verbatim — the LLM is explicitly instructed never to guess them.
+///
+/// New in Phase 6: OFI (Order Flow Imbalance), VWEPR acceleration coefficient,
+/// and the list of active candlestick patterns are now part of the system
+/// message so the model has full microstructure context before it scores.
+#[allow(clippy::too_many_arguments)]
 pub fn build_system_prompt(
     symbol: &str,
     timeframe: &str,
     latest_close: f64,
     vwap_val: f64,
+    ofi_val: f64,          // Order Flow Imbalance  (−1.0 heavy ask → +1.0 heavy bid)
     atr_val: f64,
     bb_upper: f64,
     bb_mid: f64,
     bb_lower: f64,
-    vol_multiplier: f64,
+    vol_multiplier: f64,   // latest_vol / 20-period avg; guarded against div-by-zero
     rsi_val: f64,
     macd_val: f64,
     macd_signal: f64,
-    ema9_val: f64,
-    ema21_val: f64,
+    acceleration_coeff: f64, // VWEPR quadratic 'a': +ve = parabolic, −ve = exhaustion
+    detected_patterns: &str, // comma-joined list of active candlestick patterns, or "None"
 ) -> String {
     format!(
         "You are a ruthless, high-frequency Quantitative Trading AI executing analysis on the NSE. \n\
         Your primary directive is capital preservation and high-probability directional conviction.\n\
         \n\
-        MARKET STATE:\n\
+        MARKET STATE & MICROSTRUCTURE:\n\
         - Symbol: {} | Timeframe: {}\n\
         - Last Close: {:.2} | VWAP: {:.2}\n\
+        - Order Flow Imbalance (OFI): {:.4} (-1.0 is heavy Ask pressure, +1.0 is heavy Bid pressure)\n\
         \n\
         VOLATILITY & ANOMALIES:\n\
         - ATR (14): {:.2} (Volatility baseline)\n\
         - Bollinger Bands: [U: {:.2}, M: {:.2}, L: {:.2}]\n\
         - Volume Spike: {:.2}x above 20-period average\n\
         \n\
-        MOMENTUM & TREND:\n\
-        - RSI (14): {:.2} | MACD Line: {:.2} / Signal: {:.2}\n\
-        - EMA-9: {:.2} | EMA-21: {:.2}\n\
+        MOMENTUM & TRAJECTORY:\n\
+        - RSI (14): {:.2} | MACD Line: {:.4} / Signal: {:.4}\n\
+        - VWEPR Acceleration: {:.6} (Negative = Exhaustion/Rounding Top, Positive = Parabolic)\n\
+        - Active Candlestick Patterns: {}\n\
         \n\
         STRICT DIRECTIVES:\n\
-        1. FORCED CONVICTION: Synthesize these parameters to find confluence. \n\
+        1. FORCED CONVICTION: Synthesize ALL parameters above to find confluence. \n\
         2. NO NEUTRALITY: Do NOT return a score between 40 and 60 unless Volume is dead and ATR is microscopic. \n\
         3. SCORING: 0-39 = Bearish/Sell. 61-100 = Bullish/Buy. The closer to 0 or 100, the higher the confluence.\n\
         \n\
-        Return a JSON object EXACTLY matching this structure:\n\
+        Return a JSON object EXACTLY matching this structure (no markdown fences, raw JSON only):\n\
         {{\n\
             \"conviction_score\": <int 0-100>,\n\
             \"setup_validation\": \"<2-sentence aggressive quant breakdown of the technical state>\",\n\
             \"execution_plan\": \"<Actionable trade plan with predicted Support/Resistance levels>\"\n\
         }}",
-        symbol, timeframe, latest_close, vwap_val, atr_val, bb_upper, bb_mid, bb_lower, vol_multiplier, rsi_val, macd_val, macd_signal, ema9_val, ema21_val
+        symbol, timeframe, latest_close, vwap_val, ofi_val,
+        atr_val, bb_upper, bb_mid, bb_lower, vol_multiplier,
+        rsi_val, macd_val, macd_signal,
+        acceleration_coeff, detected_patterns
     )
 }
 
@@ -168,6 +181,7 @@ fn mask_key(k: &str) -> String {
 
 // ── Request Builder (pure, side-effect free) ────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_request_body(
     symbol: &str,
     consensus: &ConsensusReport,
@@ -176,6 +190,7 @@ pub fn build_request_body(
     timeframe: &str,
     latest_close: f64,
     vwap_val: f64,
+    ofi_val: f64,            // NEW: Order Flow Imbalance
     atr_val: f64,
     bb_upper: f64,
     bb_mid: f64,
@@ -184,13 +199,14 @@ pub fn build_request_body(
     rsi_val: f64,
     macd_val: f64,
     macd_signal: f64,
-    ema9_val: f64,
-    ema21_val: f64,
+    acceleration_coeff: f64, // NEW: VWEPR quadratic acceleration
+    detected_patterns: &str, // NEW: comma-joined active patterns
 ) -> ChatRequest {
     let system_prompt = build_system_prompt(
-        symbol, timeframe, latest_close, vwap_val, atr_val,
-        bb_upper, bb_mid, bb_lower, vol_multiplier,
-        rsi_val, macd_val, macd_signal, ema9_val, ema21_val,
+        symbol, timeframe, latest_close, vwap_val, ofi_val,
+        atr_val, bb_upper, bb_mid, bb_lower, vol_multiplier,
+        rsi_val, macd_val, macd_signal,
+        acceleration_coeff, detected_patterns,
     );
 
     let user_prompt = format!(
@@ -235,6 +251,7 @@ pub fn build_request_body(
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 pub async fn generate_deep_quant_plan(
     symbol: &str,
     consensus: &ConsensusReport,
@@ -242,6 +259,7 @@ pub async fn generate_deep_quant_plan(
     timeframe: &str,
     latest_close: f64,
     vwap_val: f64,
+    ofi_val: f64,
     atr_val: f64,
     bb_upper: f64,
     bb_mid: f64,
@@ -250,21 +268,26 @@ pub async fn generate_deep_quant_plan(
     rsi_val: f64,
     macd_val: f64,
     macd_signal: f64,
-    ema9_val: f64,
-    ema21_val: f64,
+    acceleration_coeff: f64,
+    detected_patterns: &str,
     app: Option<&tauri::AppHandle>,
 ) -> Result<AiExecutionPlan, String> {
     let api_url = resolve_endpoint();
     generate_deep_quant_plan_with_url(
         symbol, consensus, news, &api_url,
-        timeframe, latest_close, vwap_val, atr_val, bb_upper, bb_mid, bb_lower, vol_multiplier,
-        rsi_val, macd_val, macd_signal, ema9_val, ema21_val,
+        timeframe, latest_close, vwap_val, ofi_val, atr_val,
+        bb_upper, bb_mid, bb_lower, vol_multiplier,
+        rsi_val, macd_val, macd_signal,
+        acceleration_coeff, detected_patterns,
         app,
     ).await
 }
 
 /// Same as `generate_deep_quant_plan` but accepts an explicit endpoint URL.
 /// Used by the test suite to redirect traffic to a mock HTTP server.
+/// Same as `generate_deep_quant_plan` but accepts an explicit endpoint URL.
+/// Used by the test suite to redirect traffic to a mock HTTP server.
+#[allow(clippy::too_many_arguments)]
 pub async fn generate_deep_quant_plan_with_url(
     symbol: &str,
     consensus: &ConsensusReport,
@@ -273,6 +296,7 @@ pub async fn generate_deep_quant_plan_with_url(
     timeframe: &str,
     latest_close: f64,
     vwap_val: f64,
+    ofi_val: f64,
     atr_val: f64,
     bb_upper: f64,
     bb_mid: f64,
@@ -281,8 +305,8 @@ pub async fn generate_deep_quant_plan_with_url(
     rsi_val: f64,
     macd_val: f64,
     macd_signal: f64,
-    ema9_val: f64,
-    ema21_val: f64,
+    acceleration_coeff: f64,
+    detected_patterns: &str,
     app: Option<&tauri::AppHandle>,
 ) -> Result<AiExecutionPlan, String> {
     let t0 = Instant::now();
@@ -325,8 +349,10 @@ pub async fn generate_deep_quant_plan_with_url(
     // ── Construct the request body ──────────────────────────────────────
     let request_body = build_request_body(
         symbol, consensus, news, &model,
-        timeframe, latest_close, vwap_val, atr_val, bb_upper, bb_mid, bb_lower, vol_multiplier,
-        rsi_val, macd_val, macd_signal, ema9_val, ema21_val,
+        timeframe, latest_close, vwap_val, ofi_val,
+        atr_val, bb_upper, bb_mid, bb_lower, vol_multiplier,
+        rsi_val, macd_val, macd_signal,
+        acceleration_coeff, detected_patterns,
     );
 
     info!(
@@ -338,6 +364,27 @@ pub async fn generate_deep_quant_plan_with_url(
         consensus.active_strategies.len(),
         news.len(),
     );
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 🧠 PROMPT DUMP — exact text that will be sent to DeepSeek
+    // Both messages are printed verbatim so you can inspect/copy them.
+    // ═══════════════════════════════════════════════════════════════════
+    {
+        let sep = "═".repeat(70);
+        let sys_msg = request_body.messages.iter().find(|m| m.role == "system").map(|m| m.content.as_str()).unwrap_or("<none>");
+        let usr_msg = request_body.messages.iter().find(|m| m.role == "user").map(|m| m.content.as_str()).unwrap_or("<none>");
+        println!("\n\n{sep}");
+        println!("🧠 DEEP QUANT PROMPT DUMP");
+        println!("   Model   : {}", model);
+        println!("   Endpoint: {}", api_url);
+        println!("{sep}");
+        println!("── [SYSTEM MESSAGE] ──────────────────────────────────────────────────");
+        println!("{}", sys_msg);
+        println!("── [USER MESSAGE] ────────────────────────────────────────────────────");
+        println!("{}", usr_msg);
+        println!("{sep}\n");
+    }
+    // ═══════════════════════════════════════════════════════════════════
 
     // ── HTTP client ─────────────────────────────────────────────────────
     let client = reqwest::Client::builder()
@@ -439,12 +486,42 @@ pub async fn generate_deep_quant_plan_with_url(
     // ═══════════════════════════════════════════════════════════════════
 
     // ── Parse the LLM's JSON output into AiExecutionPlan ────────────────
-    let cleaned = content
-        .trim()
-        .trim_start_matches("```json")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
+    //
+    // Task 1 (God Patch): Robust JSON sanitizer.
+    //
+    // DeepSeek occasionally wraps the payload in markdown fences with an
+    // optional language tag and/or a leading newline:
+    //   ```json\n{...}\n```
+    //   ```\n{...}\n```
+    //   {"conviction_score": ...}   ← already clean
+    //
+    // Strategy:
+    //   1. Strip leading fence (```json or ```) via strip_prefix.
+    //   2. Strip trailing ``` via strip_suffix.
+    //   3. Trim surrounding whitespace.
+    //   4. As a final fallback, slice to the outermost { … } boundaries
+    //      so stray prose before/after the JSON object is harmless.
+    let mut cleaned = content.trim().to_string();
+
+    // Step 1 — strip leading fence
+    if let Some(rest) = cleaned.strip_prefix("```json") {
+        cleaned = rest.to_string();
+    } else if let Some(rest) = cleaned.strip_prefix("```") {
+        cleaned = rest.to_string();
+    }
+    // Step 2 — strip trailing fence
+    if let Some(rest) = cleaned.strip_suffix("```") {
+        cleaned = rest.to_string();
+    }
+    // Step 3 — outer whitespace trim
+    let cleaned = cleaned.trim();
+
+    // Step 4 — JSON-boundary extractor: find first '{' and last '}'
+    // This silently discards any prose the model added before or after.
+    let cleaned = match (cleaned.find('{'), cleaned.rfind('}')) {
+        (Some(start), Some(end)) if start <= end => &cleaned[start..=end],
+        _ => cleaned, // no braces found — let serde produce a meaningful error
+    };
 
     let plan: AiExecutionPlan = serde_json::from_str(cleaned).map_err(|e| {
         error!("[llm] step=plan_parse_fail err={} raw={}", e, truncate(cleaned, 300));
