@@ -1,12 +1,12 @@
-# 🌌 Alpha Suite V3: Institutional Quantitative Trading Terminal & AI platform
+# 🌌 Strat: Institutional Quantitative Trading Terminal & AI platform
 
-Alpha Suite V3 is an institutional-grade, high-frequency AI-powered trading platform executing advanced quantitative strategies on the NSE (National Stock Exchange of India). Combining high-speed Rust-based ingestion engines, mathematical consensus, predictive price curves, real-time sentiment analysis, and a unified reasoning layer powered by the **"Seasoned Historian" V3 prompt core**, Alpha Suite delivers high-probability directional conviction with zero compromise on capital preservation.
+Strat is an institutional-grade, high-frequency AI-powered trading platform executing advanced quantitative strategies on the NSE (National Stock Exchange of India). Combining high-speed Rust-based ingestion engines, mathematical consensus, predictive price curves, real-time sentiment analysis, and a unified reasoning layer powered by the **"Seasoned Historian" V3 prompt core**, Strat delivers high-probability directional conviction with zero compromise on capital preservation.
 
 ---
 
 ## 🏗️ System Architecture & Data Flow
 
-Alpha Suite is built on a distributed, low-latency asynchronous architecture utilizing Rust, Fastify, Kafka, Redis, and QuestDB.
+Strat is built on a distributed, low-latency asynchronous architecture utilizing Rust, Fastify, Kafka, Redis, and QuestDB.
 
 ```mermaid
 graph TD
@@ -63,7 +63,7 @@ graph TD
 
 ## 🧠 Deep Quant Analytical Foundation
 
-Alpha Suite V3's reasoning core is driven by a sophisticated multi-variable RAG (Retrieval-Augmented Generation) pipeline that feeds into the **Seasoned Historian V3 System Prompt**. Instead of leaving numeric parameters to LLM hallucination, they are mathematically calculated in the native Rust engine and injected verbatim.
+Strat's reasoning core is driven by a sophisticated multi-variable RAG (Retrieval-Augmented Generation) pipeline that feeds into the **Seasoned Historian V3 System Prompt**. Instead of leaving numeric parameters to LLM hallucination, they are mathematically calculated in the native Rust engine and injected verbatim.
 
 ### 1. VWEPR (Volume-Weighted Exponential Price Regression) Curvature
 The terminal utilizes the **VWEPR** regression system to predict support/resistance and trend exhaustion using polynomial fitting. By mapping a sliding window of historical bars, we fit a quadratic curve:
