@@ -85,55 +85,61 @@ struct ChatMessageResponse {
 pub fn build_system_prompt(
     symbol: &str,
     timeframe: &str,
+    macro_context: &str,
     latest_close: f64,
     vwap_val: f64,
-    ofi_val: f64,          // Order Flow Imbalance  (−1.0 heavy ask → +1.0 heavy bid)
+    ofi_val: f64,
+    vol_multiplier: f64,
     atr_val: f64,
     bb_upper: f64,
     bb_mid: f64,
     bb_lower: f64,
-    vol_multiplier: f64,   // latest_vol / 20-period avg; guarded against div-by-zero
     rsi_val: f64,
     macd_val: f64,
     macd_signal: f64,
-    acceleration_coeff: f64, // VWEPR quadratic 'a': +ve = parabolic, −ve = exhaustion
-    detected_patterns: &str, // comma-joined list of active candlestick patterns, or "None"
+    ema9_val: f64,
+    ema21_val: f64,
+    acceleration_coeff: f64,
+    detected_patterns: &str,
 ) -> String {
-    format!(
-        "You are a ruthless, high-frequency Quantitative Trading AI executing analysis on the NSE. \n\
-        Your primary directive is capital preservation and high-probability directional conviction.\n\
+    let system_prompt = format!(
+        "You are a seasoned, ruthless Quantitative Trading AI with deep historical market intuition. \n\
+        Your primary directive is capital preservation and high-probability directional conviction. \n\
+        Be bold, be thorough, and let history guide your execution.\n\
         \n\
-        MARKET STATE & MICROSTRUCTURE:\n\
+        MARKET STATE & MACRO CONTEXT:\n\
         - Symbol: {} | Timeframe: {}\n\
+        - Macro Context: {} (Evaluate broader market direction)\n\
         - Last Close: {:.2} | VWAP: {:.2}\n\
-        - Order Flow Imbalance (OFI): {:.4} (-1.0 is heavy Ask pressure, +1.0 is heavy Bid pressure)\n\
+        \n\
+        MICROSTRUCTURE & VOLUME (Compare against historical breakout thresholds):\n\
+        - Order Flow Imbalance (OFI): {:.2} (-1.0 heavy Ask pressure, +1.0 heavy Bid pressure)\n\
+        - Volume Spike: {:.2}x above 20-period average\n\
         \n\
         VOLATILITY & ANOMALIES:\n\
         - ATR (14): {:.2} (Volatility baseline)\n\
         - Bollinger Bands: [U: {:.2}, M: {:.2}, L: {:.2}]\n\
-        - Volume Spike: {:.2}x above 20-period average\n\
         \n\
-        MOMENTUM & TRAJECTORY:\n\
-        - RSI (14): {:.2} | MACD Line: {:.4} / Signal: {:.4}\n\
-        - VWEPR Acceleration: {:.6} (Negative = Exhaustion/Rounding Top, Positive = Parabolic)\n\
+        MOMENTUM, TREND & PATTERNS (Evaluate against historical indicator alignments):\n\
+        - RSI (14): {:.2} | MACD Line: {:.2} / Signal: {:.2}\n\
+        - EMA-9: {:.2} | EMA-21: {:.2}\n\
+        - VWEPR Acceleration: {:.4} (Negative = Exhaustion/Rounding Top, Positive = Parabolic)\n\
         - Active Candlestick Patterns: {}\n\
         \n\
         STRICT DIRECTIVES:\n\
-        1. FORCED CONVICTION: Synthesize ALL parameters above to find confluence. \n\
-        2. NO NEUTRALITY: Do NOT return a score between 40 and 60 unless Volume is dead and ATR is microscopic. \n\
-        3. SCORING: 0-39 = Bearish/Sell. 61-100 = Bullish/Buy. The closer to 0 or 100, the higher the confluence.\n\
+        1. HISTORICAL SYNTHESIS: Weigh current parameters, patterns, and user-provided news against past similar setups in your quantitative memory. How did similar alignments play out in the past?\n\
+        2. FORCED CONVICTION: Make a definitive trade call (Buy, Sell, or Hold). Do NOT return a score between 40 and 60 unless Volume is completely dead and ATR is microscopic.\n\
+        3. SCORING: 0-39 = Bearish/Sell. 61-100 = Bullish/Buy. Base this conviction score on how closely today’s scenario matches past winning quantitative trades.\n\
         \n\
-        Return a JSON object EXACTLY matching this structure (no markdown fences, raw JSON only):\n\
+        Return a JSON object EXACTLY matching this structure:\n\
         {{\n\
             \"conviction_score\": <int 0-100>,\n\
-            \"setup_validation\": \"<2-sentence aggressive quant breakdown of the technical state>\",\n\
-            \"execution_plan\": \"<Actionable trade plan with predicted Support/Resistance levels>\"\n\
+            \"setup_validation\": \"<2-sentence aggressive synthesis of historical similarities, current signals, and order flow>\",\n\
+            \"execution_plan\": \"<Actionable Buy/Sell/Hold plan with precise entry/SL/TP levels based on the data>\"\n\
         }}",
-        symbol, timeframe, latest_close, vwap_val, ofi_val,
-        atr_val, bb_upper, bb_mid, bb_lower, vol_multiplier,
-        rsi_val, macd_val, macd_signal,
-        acceleration_coeff, detected_patterns
-    )
+        symbol, timeframe, macro_context, latest_close, vwap_val, ofi_val, vol_multiplier, atr_val, bb_upper, bb_mid, bb_lower, rsi_val, macd_val, macd_signal, ema9_val, ema21_val, acceleration_coeff, detected_patterns
+    );
+    system_prompt
 }
 
 // ── Defaults ────────────────────────────────────────────────────────────────
@@ -188,25 +194,27 @@ pub fn build_request_body(
     news: &str,
     model: &str,
     timeframe: &str,
+    macro_context: &str,
     latest_close: f64,
     vwap_val: f64,
-    ofi_val: f64,            // NEW: Order Flow Imbalance
+    ofi_val: f64,
+    vol_multiplier: f64,
     atr_val: f64,
     bb_upper: f64,
     bb_mid: f64,
     bb_lower: f64,
-    vol_multiplier: f64,
     rsi_val: f64,
     macd_val: f64,
     macd_signal: f64,
-    acceleration_coeff: f64, // NEW: VWEPR quadratic acceleration
-    detected_patterns: &str, // NEW: comma-joined active patterns
+    ema9_val: f64,
+    ema21_val: f64,
+    acceleration_coeff: f64,
+    detected_patterns: &str,
 ) -> ChatRequest {
     let system_prompt = build_system_prompt(
-        symbol, timeframe, latest_close, vwap_val, ofi_val,
-        atr_val, bb_upper, bb_mid, bb_lower, vol_multiplier,
-        rsi_val, macd_val, macd_signal,
-        acceleration_coeff, detected_patterns,
+        symbol, timeframe, macro_context, latest_close, vwap_val, ofi_val, vol_multiplier,
+        atr_val, bb_upper, bb_mid, bb_lower, rsi_val, macd_val, macd_signal,
+        ema9_val, ema21_val, acceleration_coeff, detected_patterns,
     );
 
     let user_prompt = format!(
@@ -257,17 +265,20 @@ pub async fn generate_deep_quant_plan(
     consensus: &ConsensusReport,
     news: &str,
     timeframe: &str,
+    macro_context: &str,
     latest_close: f64,
     vwap_val: f64,
     ofi_val: f64,
+    vol_multiplier: f64,
     atr_val: f64,
     bb_upper: f64,
     bb_mid: f64,
     bb_lower: f64,
-    vol_multiplier: f64,
     rsi_val: f64,
     macd_val: f64,
     macd_signal: f64,
+    ema9_val: f64,
+    ema21_val: f64,
     acceleration_coeff: f64,
     detected_patterns: &str,
     app: Option<&tauri::AppHandle>,
@@ -275,16 +286,13 @@ pub async fn generate_deep_quant_plan(
     let api_url = resolve_endpoint();
     generate_deep_quant_plan_with_url(
         symbol, consensus, news, &api_url,
-        timeframe, latest_close, vwap_val, ofi_val, atr_val,
-        bb_upper, bb_mid, bb_lower, vol_multiplier,
-        rsi_val, macd_val, macd_signal,
-        acceleration_coeff, detected_patterns,
+        timeframe, macro_context, latest_close, vwap_val, ofi_val, vol_multiplier, atr_val,
+        bb_upper, bb_mid, bb_lower, rsi_val, macd_val, macd_signal,
+        ema9_val, ema21_val, acceleration_coeff, detected_patterns,
         app,
     ).await
 }
 
-/// Same as `generate_deep_quant_plan` but accepts an explicit endpoint URL.
-/// Used by the test suite to redirect traffic to a mock HTTP server.
 /// Same as `generate_deep_quant_plan` but accepts an explicit endpoint URL.
 /// Used by the test suite to redirect traffic to a mock HTTP server.
 #[allow(clippy::too_many_arguments)]
@@ -294,17 +302,20 @@ pub async fn generate_deep_quant_plan_with_url(
     news: &str,
     api_url: &str,
     timeframe: &str,
+    macro_context: &str,
     latest_close: f64,
     vwap_val: f64,
     ofi_val: f64,
+    vol_multiplier: f64,
     atr_val: f64,
     bb_upper: f64,
     bb_mid: f64,
     bb_lower: f64,
-    vol_multiplier: f64,
     rsi_val: f64,
     macd_val: f64,
     macd_signal: f64,
+    ema9_val: f64,
+    ema21_val: f64,
     acceleration_coeff: f64,
     detected_patterns: &str,
     app: Option<&tauri::AppHandle>,
@@ -349,10 +360,9 @@ pub async fn generate_deep_quant_plan_with_url(
     // ── Construct the request body ──────────────────────────────────────
     let request_body = build_request_body(
         symbol, consensus, news, &model,
-        timeframe, latest_close, vwap_val, ofi_val,
-        atr_val, bb_upper, bb_mid, bb_lower, vol_multiplier,
-        rsi_val, macd_val, macd_signal,
-        acceleration_coeff, detected_patterns,
+        timeframe, macro_context, latest_close, vwap_val, ofi_val, vol_multiplier,
+        atr_val, bb_upper, bb_mid, bb_lower, rsi_val, macd_val, macd_signal,
+        ema9_val, ema21_val, acceleration_coeff, detected_patterns,
     );
 
     info!(

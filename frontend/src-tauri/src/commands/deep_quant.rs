@@ -396,6 +396,38 @@ async fn load_candles_from_db(pool: &PgPool, symbol: &str, limit: i64) -> Result
 }
 
 
+/// Fetch latest daily close and percentage change of a core index (e.g. NIFTY 50)
+/// from QuestDB's `historical_candles` to evaluate broader market direction.
+async fn fetch_macro_context(pool: &sqlx::PgPool) -> String {
+    let query_str = "SELECT close FROM historical_candles WHERE symbol = $1 ORDER BY ts DESC LIMIT 2";
+    for sym in &["NIFTY 50", "NIFTY_50", "NIFTY"] {
+        match sqlx::query(query_str)
+            .bind(sym)
+            .fetch_all(pool)
+            .await
+        {
+            Ok(rows) if rows.len() >= 2 => {
+                use sqlx::Row;
+                let close_today: f64 = rows[0].try_get("close").unwrap_or(0.0);
+                let close_prev: f64 = rows[1].try_get("close").unwrap_or(0.0);
+                if close_prev > 1e-6 {
+                    let pct_change = ((close_today - close_prev) / close_prev) * 100.0;
+                    let trend = if pct_change >= 0.0 { "up" } else { "down" };
+                    return format!("{} is trending {} {:+.1}% today", sym, trend, pct_change);
+                }
+            }
+            Ok(rows) if rows.len() == 1 => {
+                use sqlx::Row;
+                let close_today: f64 = rows[0].try_get("close").unwrap_or(0.0);
+                return format!("{} is trading at {:.2}", sym, close_today);
+            }
+            _ => {}
+        }
+    }
+    "Broader market index unavailable".to_string()
+}
+
+
 // ── Tauri IPC Command ───────────────────────────────────────────────────────
 
 /// Run the full V3 Deep Quant Analysis pipeline for a given symbol.
@@ -743,6 +775,10 @@ pub async fn run_deep_quant_analysis(
         news.len()
     );
 
+    // ── Step 3b: Fetch macro index context ──────────────────────────────
+    let macro_context = fetch_macro_context(pool.inner()).await;
+    info!("[deep_quant] step=3b macro_context_fetched: {}", macro_context);
+
     // ── Step 4: Call LLM via bridge (or mock in test mode) ──────────────
     let t_step = Instant::now();
     let plan = if crate::is_test_mode() {
@@ -761,19 +797,22 @@ pub async fn run_deep_quant_analysis(
             &consensus,
             &news,
             &timeframe,
+            &macro_context,
             latest_close,
             vwap_val,
-            ofi_val,             // Phase 6: OFI (neutral placeholder)
+            ofi_val,
+            vol_multiplier,
             atr_val,
             bb_upper,
             bb_mid,
             bb_lower,
-            vol_multiplier,
             rsi_val,
             macd_val,
             macd_signal,
-            acceleration_coeff,  // Phase 6: VWEPR curvature
-            &detected_patterns,  // Phase 6: candlestick patterns string
+            ema9_val,
+            ema21_val,
+            acceleration_coeff,
+            &detected_patterns,
             Some(&app),
         ).await {
             Ok(p) => {
