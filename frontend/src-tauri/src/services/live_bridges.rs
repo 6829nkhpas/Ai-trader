@@ -1,6 +1,6 @@
 // services/live_bridges.rs — Lazy WebSocket → IPC bridges
 //
-// ── Purpose (Alpha Suite V3 Lazy-Loading Directive) ─────────────────────
+// ── Purpose (Strat Ai Lazy-Loading Directive) ─────────────────────
 // The Tauri backend used to open three internal WebSocket clients on
 // boot — to the aggregator's OHLC server (:8081), the Predictive engine
 // (:8082) and the Quant-RAG insights stream (:8083) — regardless of

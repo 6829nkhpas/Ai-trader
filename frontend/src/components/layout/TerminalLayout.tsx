@@ -284,9 +284,9 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
       {/* Header */}
       <header className="z-10 flex shrink-0 items-center gap-3 border-b border-border-default bg-surface px-3 py-1.5 panel-shadow-sm">
         <div className="flex flex-1 items-center gap-3">
-          <Activity className="text-primary" size={22} />
+          <img src="/strat.svg" alt="Strat Ai Logo" className="h-[22px] w-[22px] object-contain" />
           <div>
-            <h1 className="text-lg font-semibold tracking-tight text-text-primary">AI-TRADE TERMINAL</h1>
+            <h1 className="text-lg font-semibold tracking-tight text-text-primary">STRAT AI TERMINAL</h1>
             <p className="text-xs text-text-secondary">Live market decisions, signal flow, and execution review</p>
           </div>
         </div>

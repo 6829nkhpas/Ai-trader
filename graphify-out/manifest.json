@@ -755,8 +755,8 @@
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\commands\\deep_quant.rs": {
-    "mtime": 1779447623.4237561,
-    "ast_hash": "62b247592a7b72814c59abdee2b65a74",
+    "mtime": 1779528098.0548038,
+    "ast_hash": "9d4930485b12055697bab6e659f60be6",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\commands\\instruments.rs": {
@@ -825,8 +825,8 @@
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\services\\llm.rs": {
-    "mtime": 1779446858.5056038,
-    "ast_hash": "438d98c53021d776871ceca35cf7c6b6",
+    "mtime": 1779568553.1788392,
+    "ast_hash": "076694f024c2a0d3a96b9ad7c6b5f529",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\services\\mod.rs": {
@@ -835,8 +835,8 @@
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\tests\\api_tests.rs": {
-    "mtime": 1779447365.9892886,
-    "ast_hash": "5146f7b74a9fb1c2ff6bb0ad9bca333d",
+    "mtime": 1779528128.833609,
+    "ast_hash": "2f8e0cf0ad99e29a39e908f915a91dbc",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\tests\\quant_tests.rs": {
@@ -975,8 +975,8 @@
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\README.md": {
-    "mtime": 1779385326.1247528,
-    "ast_hash": "974d4faff97ecad27bd29dcc8a0a6bae",
+    "mtime": 1779559194.9544995,
+    "ast_hash": "f912ab81432f6ba993f2bc70133267e0",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\SESSION_MEMORY.md": {
@@ -1237,6 +1237,26 @@
   "D:\\projects\\Ai-trader\\.agent\\workflows\\graphify.md": {
     "mtime": 1778048393.5569563,
     "ast_hash": "713ac584c14a6920dc0602b637713bc4",
+    "semantic_hash": ""
+  },
+  "D:\\projects\\Ai-trader\\CODE_OF_CONDUCT.md": {
+    "mtime": 1779550564.3478901,
+    "ast_hash": "69aa6887ea5ae24ac36d9f69d762b677",
+    "semantic_hash": ""
+  },
+  "D:\\projects\\Ai-trader\\CONTRIBUTING.md": {
+    "mtime": 1779550645.9803748,
+    "ast_hash": "fb6e3dd66fb856655e60dabd01995766",
+    "semantic_hash": ""
+  },
+  "D:\\projects\\Ai-trader\\LICENSE.txt": {
+    "mtime": 1779550542.2896042,
+    "ast_hash": "9dde36c6e301b1e6564c5de46b961132",
+    "semantic_hash": ""
+  },
+  "D:\\projects\\Ai-trader\\SECURITY.md": {
+    "mtime": 1779550556.8421047,
+    "ast_hash": "c2b63636726c5f96e6504ba4e6721467",
     "semantic_hash": ""
   }
 }

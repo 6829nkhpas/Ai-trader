@@ -16,6 +16,7 @@ import { useQuantStore } from '../../store/useQuantStore';
 import { useTradeStore } from '../../store/useTradeStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
 import { useMemo } from 'react';
+import { listen } from '@tauri-apps/api/event';
 
 // ── Conviction Helpers ──────────────────────────────────────────────────
 
@@ -50,7 +51,7 @@ const LOADING_PHASES = [
   'Awaiting DeepSeek Analysis...',
 ];
 
-function LoadingState() {
+function LoadingState({ agentStatus }: { agentStatus: string }) {
   const [phaseIdx, setPhaseIdx] = React.useState(0);
 
   React.useEffect(() => {
@@ -78,6 +79,12 @@ function LoadingState() {
         <p className="text-[9px] text-text-muted/50 mt-1.5">
           This may take 10–30 seconds
         </p>
+      </div>
+
+      {/* Real-time status display */}
+      <div className="w-full max-w-[240px] p-2.5 bg-black/40 border border-emerald-500/20 rounded font-mono text-[10px] flex items-center space-x-2 animate-pulse text-emerald-400">
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping shrink-0" />
+        <span className="truncate">{agentStatus}</span>
       </div>
 
       {/* Phase dots */}
@@ -125,6 +132,23 @@ export default function DeepQuantPanel() {
   // Check if there's already an active position for this symbol from this plan
   const hasActivePosition = activePositions.some((p) => p.symbol === symbol);
   const [deployed, setDeployed] = React.useState(false);
+  const [agentStatus, setAgentStatus] = React.useState<string>("Awaiting trigger...");
+
+  React.useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    const setupListener = async () => {
+      unlisten = await listen<string>('agent_status', (event) => {
+        console.log(`🧠 [AGENT STATE UPDATE]: ${event.payload}`);
+        setAgentStatus(event.payload);
+      });
+    };
+
+    setupListener();
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
 
   // Reset deployed state when plan changes
   React.useEffect(() => {
@@ -211,7 +235,7 @@ export default function DeepQuantPanel() {
       {/* ── Content Area ──────────────────────────────────── */}
       <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin">
         {isAnalyzing ? (
-          <LoadingState />
+          <LoadingState agentStatus={agentStatus} />
         ) : analysisError ? (
           /* ── Error State ─────────────────────────────────── */
           <div className="flex flex-col items-center justify-center gap-3 p-4 py-8">

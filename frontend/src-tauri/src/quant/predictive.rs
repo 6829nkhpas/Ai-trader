@@ -1,6 +1,6 @@
 // quant/predictive.rs — Dual Predictive Math Engine
 //
-// Alpha Suite V3 — Phase 1: Dual-Engine Predictive System
+// Strat Ai — Phase 1: Dual-Engine Predictive System
 //
 // Bundles two complementary regression models:
 //

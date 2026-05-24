@@ -1,4 +1,4 @@
-// ── Alpha Suite V3 — External API Contract Tests ───────────────────────────
+// ── Strat Ai — External API Contract Tests ───────────────────────────
 //
 // Strict data-contract testing for every outbound API the Tauri backend
 // touches (DeepSeek LLM today; News API & Market Data follow the same

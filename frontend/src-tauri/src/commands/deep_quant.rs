@@ -29,7 +29,7 @@ use crate::services::llm;
 ///
 /// Returns a human-readable news block for the LLM prompt. Never returns
 /// an empty "No news" string if Google News is reachable.
-async fn fetch_news_context(symbol: &str) -> String {
+pub(crate) async fn fetch_news_context(symbol: &str) -> String {
     use crate::services::audit_logger;
 
     let client = match reqwest::Client::builder()

@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * SecurityVault.tsx — Alpha Suite V3 Encrypted Credential Vault UI
+ * SecurityVault.tsx — Strat Ai Encrypted Credential Vault UI
  *
  * Provides a settings panel for securely storing API keys using
  * tauri-plugin-stronghold (ChaCha20-Poly1305 AES-256 encryption).
@@ -39,7 +39,7 @@ import {
 
 // ── Vault Master Password ───────────────────────────────────────────────────
 // In a deployed app, prompt the user for a master password on first launch.
-// For Alpha Suite, we derive this deterministically from the app identifier
+// For Strat Ai, we derive this deterministically from the app identifier
 // so the vault opens silently on startup (UX wins, still encrypted at rest).
 const VAULT_MASTER_PASSWORD = 'alpha-suite-v3-vault-master-pw-2025';
 const VAULT_CLIENT_NAME = 'alpha_suite_credentials';

@@ -1,4 +1,4 @@
-// ── Alpha Suite V3 — Playwright E2E Configuration ───────────────────────────
+// ── Strat Ai — Playwright E2E Configuration ───────────────────────────
 //
 // Configures Playwright to test the frontend UI via the Next.js dev server.
 // In ALPHA_TEST_MODE, the Tauri IPC calls are mocked at the frontend layer,
@@ -31,7 +31,7 @@ export default defineConfig({
   },
   projects: [
     {
-      name: 'alpha-suite-e2e',
+      name: 'strat-ai-e2e',
       use: {
         ...devices['Desktop Chrome'],
       },

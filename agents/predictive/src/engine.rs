@@ -1,6 +1,6 @@
 // engine.rs — Kafka Consumer & Producer loop for the Predictive Agent.
 //
-// Phase 6.3 — Alpha Suite Event Loop + WebSocket Broadcast.
+// Phase 6.3 — Strat Ai Event Loop + WebSocket Broadcast.
 //
 // Pipeline:
 //   1. Consume Protobuf-encoded OHLCCandle messages from `market.ohlc.10m`.

@@ -1,4 +1,4 @@
-System Directive: Alpha Suite V3 - Final Mile Data Shape Diagnostic
+System Directive: Strat Ai - Final Mile Data Shape Diagnostic
 
 Context: You are operating in the Ai-trader monorepo. Previous architectural fixes successfully wired the backend and frontend, but the UI chart is still completely failing to render candles or update timeframes. We are abandoning all refactoring. We are moving to strict data-shape tracing to find the silent failure.
 

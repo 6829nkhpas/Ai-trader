@@ -1,12 +1,12 @@
-# Alpha Suite — System Architecture & Feature-Wise Data Flows
+# Strat Ai — System Architecture & Feature-Wise Data Flows
 
-This document provides a highly detailed, comprehensive, feature-by-feature architectural breakdown and data flow mapping for the **Alpha Suite (Ai-Trader)** system. It maps the movement of data from real-time binary market feeds down to zero-latency canvas rendering loops, detailing the exact files, protocols, mathematical formulas, and UI states involved.
+This document provides a highly detailed, comprehensive, feature-by-feature architectural breakdown and data flow mapping for the **Strat Ai (Ai-Trader)** system. It maps the movement of data from real-time binary market feeds down to zero-latency canvas rendering loops, detailing the exact files, protocols, mathematical formulas, and UI states involved.
 
 ---
 
 ## 1. High-Level Architecture Overview
 
-Alpha Suite is structured as a **multi-agent, monorepo trading platform** written primarily in **Rust** (for low-latency ingestion, calculations, and local desk runtime) and **Next.js/TypeScript** (for the user terminal). 
+Strat Ai is structured as a **multi-agent, monorepo trading platform** written primarily in **Rust** (for low-latency ingestion, calculations, and local desk runtime) and **Next.js/TypeScript** (for the user terminal). 
 
 ```mermaid
 graph TB

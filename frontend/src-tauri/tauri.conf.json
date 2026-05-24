@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Alpha Suite V2 — AI Trade Terminal",
+        "title": "Strat Ai — AI Trade Terminal",
         "width": 1440,
         "height": 900,
         "minWidth": 1024,
@@ -44,6 +44,6 @@
     },
     "category": "Finance",
     "shortDescription": "AI-Powered Institutional Trading Terminal",
-    "longDescription": "Alpha Suite V2 — A real-time AI trading terminal powered by DeepSeek v4 Pro, Zerodha Kite integration, and Kafka-driven market data pipelines. Features institutional-grade charting with EMA ribbons, volume histograms, predictive ghost lines, and modular workspace management."
+    "longDescription": "Strat Ai — A real-time AI trading terminal powered by DeepSeek v4 Pro, Zerodha Kite integration, and Kafka-driven market data pipelines. Features institutional-grade charting with EMA ribbons, volume histograms, predictive ghost lines, and modular workspace management."
   }
 }

@@ -1,6 +1,6 @@
-// ── Alpha Suite V3 — End-to-End User Journey Test ───────────────────────────
+// ── Strat Ai — End-to-End User Journey Test ───────────────────────────
 //
-// Validates the E2E test infrastructure and mock API layer for the Alpha Suite.
+// Validates the E2E test infrastructure and mock API layer for Strat Ai.
 // Uses Playwright route interception to mock API responses at the browser level.
 //
 // V3 additions (Alpha Crucible — IPC Contract Testing):
@@ -76,7 +76,7 @@ function attachIpcMonitors(page: Page) {
   });
 }
 
-test.describe('Alpha Suite V3 — E2E Test Infrastructure', () => {
+test.describe('Strat Ai — E2E Test Infrastructure', () => {
 
   test.beforeEach(async ({ page }) => {
     attachIpcMonitors(page);
@@ -147,7 +147,7 @@ test.describe('Alpha Suite V3 — E2E Test Infrastructure', () => {
 // `useTradeStore` and the Deep Quant panel.
 // ═══════════════════════════════════════════════════════════════════════════
 
-test.describe('Alpha Suite V3 — Tauri IPC Contract', () => {
+test.describe('Strat Ai — Tauri IPC Contract', () => {
 
   test.beforeEach(async ({ page }) => {
     attachIpcMonitors(page);

@@ -34,10 +34,27 @@ use crate::services::audit_logger;
 
 // ── Wire types (OpenAI-compatible) ──────────────────────────────────────────
 
-#[derive(Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
+pub struct ToolCall {
+    pub id: String,
+    pub r#type: String,
+    pub function: ToolFunction,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug)]
+pub struct ToolFunction {
+    pub name: String,
+    pub arguments: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -48,6 +65,8 @@ pub struct ChatRequest {
     pub max_tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_format: Option<ResponseFormat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Clone)]
@@ -56,19 +75,33 @@ pub struct ResponseFormat {
     pub kind: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct ChatResponse {
     choices: Vec<ChatChoice>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct ChatChoice {
     message: ChatMessageResponse,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 struct ChatMessageResponse {
-    content: String,
+    pub role: String,
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+}
+
+pub trait AppHandleExt {
+    fn emit_all<S: serde::Serialize + Clone>(&self, event: &str, payload: S) -> Result<(), tauri::Error>;
+}
+
+impl AppHandleExt for tauri::AppHandle {
+    fn emit_all<S: serde::Serialize + Clone>(&self, event: &str, payload: S) -> Result<(), tauri::Error> {
+        use tauri::Emitter;
+        self.emit(event, payload)
+    }
 }
 
 // ── System Prompt Builder (V3 Phase 6: Microstructure — God Patch) ─────────
@@ -127,11 +160,11 @@ pub fn build_system_prompt(
         - Active Candlestick Patterns: {}\n\
         \n\
         STRICT DIRECTIVES:\n\
-        1. HISTORICAL SYNTHESIS: Weigh current parameters, patterns, and user-provided news against past similar setups in your quantitative memory. How did similar alignments play out in the past?\n\
-        2. FORCED CONVICTION: Make a definitive trade call (Buy, Sell, or Hold). Do NOT return a score between 40 and 60 unless Volume is completely dead and ATR is microscopic.\n\
-        3. SCORING: 0-39 = Bearish/Sell. 61-100 = Bullish/Buy. Base this conviction score on how closely today’s scenario matches past winning quantitative trades.\n\
+        1. THE FAST-TRACK RULE (GRAB OPPORTUNITIES): If the provided data presents a clear, high-probability execution setup, DO NOT use tools. Bypass all tool calls and return the final JSON execution plan immediately to minimize latency.\n\
+        2. AMBIGUITY RESOLUTION (TOOL USAGE): If the initial data is conflicting or lacks macro context, use your available tools to fetch higher timeframes or news. Do not guess.\n\
+        3. FORCED CONVICTION: Ultimately, you must make a definitive trade call (Buy, Sell, or Hold). Do NOT return a score between 40 and 60 unless Volume is completely dead.\n\
         \n\
-        Return a JSON object EXACTLY matching this structure:\n\
+        Return a JSON object EXACTLY matching this structure when finalizing a trade:\n\
         {{\n\
             \"conviction_score\": <int 0-100>,\n\
             \"setup_validation\": \"<2-sentence aggressive synthesis of historical similarities, current signals, and order flow>\",\n\
@@ -245,15 +278,20 @@ pub fn build_request_body(
             ChatMessage {
                 role: "system".to_string(),
                 content: system_prompt,
+                tool_calls: None,
+                tool_call_id: None,
             },
             ChatMessage {
                 role: "user".to_string(),
                 content: user_prompt,
+                tool_calls: None,
+                tool_call_id: None,
             },
         ],
         temperature: 0.3,
         max_tokens: 1024,
         response_format: None,
+        tools: None,
     }
 }
 
@@ -396,154 +434,241 @@ pub async fn generate_deep_quant_plan_with_url(
     }
     // ═══════════════════════════════════════════════════════════════════
 
+    // Task 1: Define the Tool Schemas
+    let tools = serde_json::json!([
+        {
+            "type": "function",
+            "function": {
+                "name": "fetch_higher_timeframe",
+                "description": "Get the macro trend context from a higher timeframe.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "timeframe": { "type": "string", "description": "e.g., '1H', '1D'" }
+                    },
+                    "required": ["timeframe"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "fetch_news_context",
+                "description": "Fetch latest news headlines for the symbol to check for catalysts."
+            }
+        }
+    ]);
+
     // ── HTTP client ─────────────────────────────────────────────────────
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
         .map_err(|e| format!("HTTP client build failed: {}", e))?;
 
-    let req_json = serde_json::to_value(&request_body).unwrap_or(serde_json::Value::Null);
-    let req_bytes = serde_json::to_vec(&request_body).map(|v| v.len()).unwrap_or(0);
+    let mut messages = request_body.messages.clone();
+    let mut turn = 0;
+    let max_turns = 4;
+    let mut final_plan: Option<AiExecutionPlan> = None;
 
-    info!(
-        "[llm] step=http_send POST {} timeout={}s payload_bytes={}",
-        api_url, timeout_secs, req_bytes
-    );
+    while turn < max_turns {
+        turn += 1;
 
-    let send_started = Instant::now();
-    let response = match client
-        .post(api_url)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .json(&request_body)
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            let detail = format_reqwest_error(&e);
-            let elapsed = send_started.elapsed().as_millis();
+        if let Some(handle) = app {
+            handle.emit_all("agent_status", "🧠 Analyzing structural data...").unwrap();
+        }
+
+        let current_request = ChatRequest {
+            model: model.clone(),
+            messages: messages.clone(),
+            temperature: 0.3,
+            max_tokens: 1024,
+            response_format: None,
+            tools: Some(tools.clone()),
+        };
+
+        let req_json = serde_json::to_value(&current_request).unwrap_or(serde_json::Value::Null);
+        let req_bytes = serde_json::to_vec(&current_request).map(|v| v.len()).unwrap_or(0);
+
+        info!(
+            "[llm] step=http_send POST {} turn={} message_count={} timeout={}s payload_bytes={}",
+            api_url, turn, messages.len(), timeout_secs, req_bytes
+        );
+
+        let send_started = Instant::now();
+        let response = match client
+            .post(api_url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&current_request)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                let detail = format_reqwest_error(&e);
+                let elapsed = send_started.elapsed().as_millis();
+                error!(
+                    "[llm] step=http_send_FAIL elapsed_ms={} url={} detail={}",
+                    elapsed, api_url, detail
+                );
+                audit_logger::log_api_error(
+                    &format!("POST {}", api_url),
+                    &req_json,
+                    &format!("transport error after {}ms: {}", elapsed, detail),
+                );
+                return Err(format!(
+                    "LLM API Failure: request to {} failed after {}ms: {}",
+                    api_url, elapsed, detail
+                ));
+            }
+        };
+
+        let status = response.status();
+        let read_started = Instant::now();
+        let response_body = response.text().await.unwrap_or_default();
+        let send_elapsed = send_started.elapsed().as_millis();
+
+        info!(
+            "[llm] step=http_recv status={} body_bytes={} send_elapsed_ms={} read_elapsed_ms={}",
+            status, response_body.len(), send_elapsed, read_started.elapsed().as_millis()
+        );
+
+        let res_json: serde_json::Value = serde_json::from_str(&response_body)
+            .unwrap_or_else(|_| serde_json::Value::String(response_body.clone()));
+
+        audit_logger::log_api_transaction(
+            &format!("POST {}", api_url),
+            &req_json,
+            &res_json,
+            status.as_u16(),
+        );
+
+        if !status.is_success() {
             error!(
-                "[llm] step=http_send_FAIL elapsed_ms={} url={} detail={}",
-                elapsed, api_url, detail
-            );
-            audit_logger::log_api_error(
-                &format!("POST {}", api_url),
-                &req_json,
-                &format!("transport error after {}ms: {}", elapsed, detail),
+                "[llm] step=http_status_error status={} body={}",
+                status, truncate(&response_body, 400)
             );
             return Err(format!(
-                "LLM API Failure: request to {} failed after {}ms: {}",
-                api_url, elapsed, detail
+                "LLM API Failure: provider returned HTTP {} — {}",
+                status, truncate(&response_body, 400)
             ));
         }
-    };
 
-    let status = response.status();
-    let read_started = Instant::now();
-    let response_body = response.text().await.unwrap_or_default();
-    let send_elapsed = send_started.elapsed().as_millis();
-
-    info!(
-        "[llm] step=http_recv status={} body_bytes={} send_elapsed_ms={} read_elapsed_ms={}",
-        status, response_body.len(), send_elapsed, read_started.elapsed().as_millis()
-    );
-
-    let res_json: serde_json::Value = serde_json::from_str(&response_body)
-        .unwrap_or_else(|_| serde_json::Value::String(response_body.clone()));
-
-    audit_logger::log_api_transaction(
-        &format!("POST {}", api_url),
-        &req_json,
-        &res_json,
-        status.as_u16(),
-    );
-
-    if !status.is_success() {
-        error!(
-            "[llm] step=http_status_error status={} body={}",
-            status, truncate(&response_body, 400)
-        );
-        return Err(format!(
-            "LLM API Failure: provider returned HTTP {} — {}",
-            status, truncate(&response_body, 400)
-        ));
-    }
-
-    // ── Parse the API envelope ──────────────────────────────────────────
-    let chat_response: ChatResponse = serde_json::from_str(&response_body).map_err(|e| {
-        error!("[llm] step=envelope_parse_fail err={} body={}", e, truncate(&response_body, 200));
-        format!("LLM API Failure: malformed envelope — {} | body: {}", e, truncate(&response_body, 200))
-    })?;
-
-    let content = chat_response
-        .choices
-        .first()
-        .map(|c| c.message.content.clone())
-        .ok_or_else(|| {
-            error!("[llm] step=envelope_empty_choices");
-            "LLM API Failure: provider returned empty choices array".to_string()
+        // ── Parse the API envelope ──────────────────────────────────────────
+        let chat_response: ChatResponse = serde_json::from_str(&response_body).map_err(|e| {
+            error!("[llm] step=envelope_parse_fail err={} body={}", e, truncate(&response_body, 200));
+            format!("LLM API Failure: malformed envelope — {} | body: {}", e, truncate(&response_body, 200))
         })?;
 
-    info!("[llm] step=content_extracted chars={}", content.len());
+        let choice = chat_response
+            .choices
+            .first()
+            .ok_or_else(|| {
+                error!("[llm] step=envelope_empty_choices");
+                "LLM API Failure: provider returned empty choices array".to_string()
+            })?;
 
-    // ═══════════════════════════════════════════════════════════════════
-    // 🕵️‍♂️ AUDIT 4 - LLM RAW RESPONSE: Full unparsed string from the LLM
-    // This catches hallucinated JSON keys BEFORE serde tries to parse it.
-    // ═══════════════════════════════════════════════════════════════════
-    println!("🕵️‍♂️ [AUDIT 4 - LLM RAW RESPONSE] Content length: {} chars", content.len());
-    println!("🕵️‍♂️ [AUDIT 4 - LLM RAW RESPONSE]:\n{}", content);
-    // ═══════════════════════════════════════════════════════════════════
+        let msg_response = &choice.message;
 
-    // ── Parse the LLM's JSON output into AiExecutionPlan ────────────────
-    //
-    // Task 1 (God Patch): Robust JSON sanitizer.
-    //
-    // DeepSeek occasionally wraps the payload in markdown fences with an
-    // optional language tag and/or a leading newline:
-    //   ```json\n{...}\n```
-    //   ```\n{...}\n```
-    //   {"conviction_score": ...}   ← already clean
-    //
-    // Strategy:
-    //   1. Strip leading fence (```json or ```) via strip_prefix.
-    //   2. Strip trailing ``` via strip_suffix.
-    //   3. Trim surrounding whitespace.
-    //   4. As a final fallback, slice to the outermost { … } boundaries
-    //      so stray prose before/after the JSON object is harmless.
-    let mut cleaned = content.trim().to_string();
+        // Check if the LLM response contains tool_calls
+        if let Some(ref tool_calls) = msg_response.tool_calls {
+            if !tool_calls.is_empty() {
+                // Append assistant's response that includes the tool calls
+                messages.push(ChatMessage {
+                    role: "assistant".to_string(),
+                    content: msg_response.content.clone().unwrap_or_default(),
+                    tool_calls: Some(tool_calls.clone()),
+                    tool_call_id: None,
+                });
 
-    // Step 1 — strip leading fence
-    if let Some(rest) = cleaned.strip_prefix("```json") {
-        cleaned = rest.to_string();
-    } else if let Some(rest) = cleaned.strip_prefix("```") {
-        cleaned = rest.to_string();
+                for tc in tool_calls {
+                    let tool_name = &tc.function.name;
+                    if let Some(handle) = app {
+                        handle.emit_all("agent_status", format!("🛠️ Executing tool: {}", tool_name)).unwrap();
+                    }
+
+                    let args: serde_json::Value = serde_json::from_str(&tc.function.arguments).unwrap_or_default();
+
+                    let tool_result = match tool_name.as_str() {
+                        "fetch_higher_timeframe" => {
+                            let tf = args.get("timeframe")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("1D");
+                            execute_higher_timeframe_tool(symbol, tf, app).await
+                        }
+                        "fetch_news_context" => {
+                            execute_news_tool(symbol).await
+                        }
+                        _ => {
+                            format!("Error: Unknown tool name: {}", tool_name)
+                        }
+                    };
+
+                    messages.push(ChatMessage {
+                        role: "tool".to_string(),
+                        content: tool_result,
+                        tool_calls: None,
+                        tool_call_id: Some(tc.id.clone()),
+                    });
+                }
+
+                // Continue the loop
+                continue;
+            }
+        }
+
+        // Standard text response (no tools) -> finalizing trade
+        let content = msg_response.content.clone().unwrap_or_default();
+
+        // ═══════════════════════════════════════════════════════════════════
+        // 🕵️‍♂️ AUDIT 4 - LLM RAW RESPONSE: Full unparsed string from the LLM
+        // This catches hallucinated JSON keys BEFORE serde tries to parse it.
+        // ═══════════════════════════════════════════════════════════════════
+        println!("🕵️‍♂️ [AUDIT 4 - LLM RAW RESPONSE] Content length: {} chars", content.len());
+        println!("🕵️‍♂️ [AUDIT 4 - LLM RAW RESPONSE]:\n{}", content);
+        // ═══════════════════════════════════════════════════════════════════
+
+        let mut cleaned = content.trim().to_string();
+
+        // Step 1 — strip leading fence
+        if let Some(rest) = cleaned.strip_prefix("```json") {
+            cleaned = rest.to_string();
+        } else if let Some(rest) = cleaned.strip_prefix("```") {
+            cleaned = rest.to_string();
+        }
+        // Step 2 — strip trailing fence
+        if let Some(rest) = cleaned.strip_suffix("```") {
+            cleaned = rest.to_string();
+        }
+        // Step 3 — outer whitespace trim
+        let cleaned = cleaned.trim();
+
+        // Step 4 — JSON-boundary extractor: find first '{' and last '}'
+        let cleaned = match (cleaned.find('{'), cleaned.rfind('}')) {
+            (Some(start), Some(end)) if start <= end => &cleaned[start..=end],
+            _ => cleaned,
+        };
+
+        let plan: AiExecutionPlan = serde_json::from_str(cleaned).map_err(|e| {
+            error!("[llm] step=plan_parse_fail err={} raw={}", e, truncate(cleaned, 300));
+            format!("LLM API Failure: output is not valid AiExecutionPlan JSON — {} | raw: {}", e, truncate(cleaned, 300))
+        })?;
+
+        let plan = if plan.conviction_score < 1 || plan.conviction_score > 100 {
+            warn!("[llm] step=plan_clamp original_score={} clamped", plan.conviction_score);
+            AiExecutionPlan { conviction_score: plan.conviction_score.clamp(1, 100), ..plan }
+        } else {
+            plan
+        };
+
+        final_plan = Some(plan);
+        break; // break the loop
     }
-    // Step 2 — strip trailing fence
-    if let Some(rest) = cleaned.strip_suffix("```") {
-        cleaned = rest.to_string();
-    }
-    // Step 3 — outer whitespace trim
-    let cleaned = cleaned.trim();
 
-    // Step 4 — JSON-boundary extractor: find first '{' and last '}'
-    // This silently discards any prose the model added before or after.
-    let cleaned = match (cleaned.find('{'), cleaned.rfind('}')) {
-        (Some(start), Some(end)) if start <= end => &cleaned[start..=end],
-        _ => cleaned, // no braces found — let serde produce a meaningful error
-    };
-
-    let plan: AiExecutionPlan = serde_json::from_str(cleaned).map_err(|e| {
-        error!("[llm] step=plan_parse_fail err={} raw={}", e, truncate(cleaned, 300));
-        format!("LLM API Failure: output is not valid AiExecutionPlan JSON — {} | raw: {}", e, truncate(cleaned, 300))
+    let plan = final_plan.ok_or_else(|| {
+        error!("[llm] step=max_turns_exceeded max_turns={}", max_turns);
+        format!("LLM API Failure: agentic execution loop exceeded max_turns of {} without resolving", max_turns)
     })?;
-
-    let plan = if plan.conviction_score < 1 || plan.conviction_score > 100 {
-        warn!("[llm] step=plan_clamp original_score={} clamped", plan.conviction_score);
-        AiExecutionPlan { conviction_score: plan.conviction_score.clamp(1, 100), ..plan }
-    } else {
-        plan
-    };
 
     info!(
         "[llm] step=done total_elapsed_ms={} conviction={} plan_preview={}",
@@ -586,4 +711,159 @@ fn format_reqwest_error(err: &reqwest::Error) -> String {
     if err.is_status()  { tags.push("status"); }
     if !tags.is_empty() { parts.push(format!("kind: [{}]", tags.join(", "))); }
     parts.join(" | ")
+}
+
+// ── Real Tool Actions ───────────────────────────────────────────────────────
+
+async fn execute_higher_timeframe_tool(
+    symbol: &str,
+    timeframe: &str,
+    app: Option<&tauri::AppHandle>,
+) -> String {
+    use tauri::Manager;
+    let pool = match app.and_then(|handle| handle.try_state::<sqlx::PgPool>()) {
+        Some(p) => p,
+        None => return "Error: QuestDB connection pool not available".to_string(),
+    };
+
+    let tf_normalized = timeframe.trim().to_uppercase();
+
+    // Fetch candles from QuestDB based on timeframe
+    let query_result: Result<Vec<sqlx::postgres::PgRow>, sqlx::Error> = if tf_normalized.contains('D') || tf_normalized.contains('W') {
+        // Daily / Weekly
+        sqlx::query(
+            "SELECT CAST(ts AS LONG) AS ts_epoch, open, high, low, close, volume \
+             FROM historical_candles \
+             WHERE symbol = $1 \
+             ORDER BY ts DESC \
+             LIMIT 50"
+        )
+        .bind(symbol)
+        .fetch_all(pool.inner())
+        .await
+    } else {
+        // Intraday (e.g., 1H)
+        let db_tf = if tf_normalized.contains('H') { "1h" } else { "15m" };
+        sqlx::query(
+            "SELECT CAST(ts AS LONG) AS ts_epoch, open, high, low, close, volume \
+             FROM historical_intraday \
+             WHERE symbol = $1 AND timeframe = $2 \
+             ORDER BY ts DESC \
+             LIMIT 50"
+        )
+        .bind(symbol)
+        .bind(db_tf)
+        .fetch_all(pool.inner())
+        .await
+    };
+
+    let rows = match query_result {
+        Ok(r) if !r.is_empty() => r,
+        _ => {
+            // Fallback: try loading general historical daily candles
+            match sqlx::query(
+                "SELECT CAST(ts AS LONG) AS ts_epoch, open, high, low, close, volume \
+                 FROM historical_candles \
+                 WHERE symbol = $1 \
+                 ORDER BY ts DESC \
+                 LIMIT 50"
+            )
+            .bind(symbol)
+            .fetch_all(pool.inner())
+            .await {
+                Ok(r) => r,
+                Err(e) => return format!("Error fetching candles for {}: {}", symbol, e),
+            }
+        }
+    };
+
+    if rows.is_empty() {
+        return format!("No higher timeframe data available for symbol: {}", symbol);
+    }
+
+    use crate::quant::patterns::Candle;
+    use sqlx::Row;
+    let mut candles: Vec<Candle> = rows
+        .iter()
+        .map(|row: &sqlx::postgres::PgRow| {
+            let open: f64 = row.try_get("open").unwrap_or(0.0);
+            let high: f64 = row.try_get("high").unwrap_or(0.0);
+            let low: f64 = row.try_get("low").unwrap_or(0.0);
+            let close: f64 = row.try_get("close").unwrap_or(0.0);
+            let volume: i64 = row.try_get::<i64, _>("volume")
+                .or_else(|_| row.try_get::<i32, _>("volume").map(|v| v as i64))
+                .unwrap_or(0);
+            Candle { open, high, low, close, volume: volume as f64 }
+        })
+        .collect();
+
+    // Reverse to chronological order (oldest first)
+    candles.reverse();
+
+    if candles.len() < 15 {
+        return format!("Higher Timeframe Context ({}) - Pricing data insufficient (minimum 15 candles required).", timeframe);
+    }
+
+    let current_close = candles.last().map(|c| c.close).unwrap_or(0.0);
+    
+    // Compute EMA-9, EMA-21, RSI-14
+    let ema_9 = compute_ema_helper(&candles, 9);
+    let ema_21 = compute_ema_helper(&candles, 21);
+    let rsi_val = compute_rsi_helper(&candles, 14);
+
+    let ema_trend_string = if ema_9.is_finite() && ema_21.is_finite() {
+        if ema_9 > ema_21 { "Bullish crossover (EMA-9 > EMA-21)" } else { "Bearish crossover (EMA-9 < EMA-21)" }
+    } else {
+        "Neutral/unaligned"
+    };
+
+    let rsi_string = if rsi_val.is_finite() {
+        format!("{:.2}", rsi_val)
+    } else {
+        "50.0".to_string()
+    };
+
+    format!(
+        "Higher Timeframe Context ({}) - Price: {:.2}, RSI: {}, EMAs show: {}",
+        timeframe, current_close, rsi_string, ema_trend_string
+    )
+}
+
+async fn execute_news_tool(symbol: &str) -> String {
+    let result = crate::commands::deep_quant::fetch_news_context(symbol).await;
+    if result.trim().is_empty() || result.contains("No recent news available") {
+        return "No recent news context available for catalysts check.".to_string();
+    }
+    result
+}
+
+fn compute_ema_helper(candles: &[crate::quant::patterns::Candle], period: usize) -> f64 {
+    if candles.len() < period {
+        return f64::NAN;
+    }
+    let multiplier = 2.0 / (period as f64 + 1.0);
+    let sma: f64 = candles[..period].iter().map(|c| c.close).sum::<f64>() / period as f64;
+    let mut ema = sma;
+    for candle in &candles[period..] {
+        ema = (candle.close - ema) * multiplier + ema;
+    }
+    ema
+}
+
+fn compute_rsi_helper(candles: &[crate::quant::patterns::Candle], period: usize) -> f64 {
+    if candles.len() < period + 1 {
+        return f64::NAN;
+    }
+    let slice = &candles[candles.len() - period - 1..];
+    let mut gains = 0.0;
+    let mut losses = 0.0;
+    for i in 1..slice.len() {
+        let delta = slice[i].close - slice[i - 1].close;
+        if delta > 0.0 { gains += delta; } else { losses -= delta; }
+    }
+    let avg_gain = gains / period as f64;
+    let avg_loss = losses / period as f64;
+    if avg_loss < 1e-12 { return 100.0; }
+    let rs = avg_gain / avg_loss;
+    100.0 - (100.0 / (1.0 + rs))
 }

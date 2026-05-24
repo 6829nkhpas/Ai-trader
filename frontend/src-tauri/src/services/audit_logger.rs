@@ -1,4 +1,4 @@
-// services/audit_logger.rs — Alpha Suite V3 API Audit Logger.
+// services/audit_logger.rs — Strat Ai API Audit Logger.
 //
 // When `ALPHA_TEST_MODE=1` is set, every external API transaction
 // (DeepSeek LLM, News API, Market Data, etc.) is captured verbatim and

@@ -1,6 +1,6 @@
 // math.rs — Predictive Math Engine (Linear Regression).
 //
-// Phase 6.1 — Alpha Suite Quantitative Core.
+// Phase 6.1 — Strat Ai Quantitative Core.
 //
 // Maintains a rolling window of the last 14 closing prices from 10-minute
 // OHLC candles and uses Ordinary Least-Squares (OLS) linear regression to

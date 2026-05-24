@@ -1,4 +1,4 @@
-// ── Alpha Suite V3 — Rust Integration Test Suite ────────────────────────────
+// ── Strat Ai — Rust Integration Test Suite ────────────────────────────
 //
 // Validates the quant consensus engine and local SQLite trade journaling
 // using hardcoded static data — zero network dependencies.
@@ -112,6 +112,12 @@ fn test_consensus_math_accuracy() {
         average_volume: 1200.0,
         orb_high: 107.0,
         orb_low: 98.0,
+        ema_9: 104.0,
+        ema_21: 102.0,
+        macd_line: 3.0,
+        macd_signal: 0.5,
+        atr_14: 4.5,
+        bb_mid: 102.5,
     };
 
     // ── Execute consensus compilation ───────────────────────────────────

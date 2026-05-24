@@ -191,15 +191,20 @@ async fn analyze_sentiment_via_llm(symbol: &str, news: &str, headlines: Vec<Stri
             ChatMessage {
                 role: "system".to_string(),
                 content: SENTIMENT_SYSTEM_PROMPT.to_string(),
+                tool_calls: None,
+                tool_call_id: None,
             },
             ChatMessage {
                 role: "user".to_string(),
                 content: user_prompt,
+                tool_calls: None,
+                tool_call_id: None,
             },
         ],
         temperature: 0.2,
         max_tokens: 512,
         response_format: None,
+        tools: None,
     };
 
     let timeout_secs: u64 = std::env::var("LLM_TIMEOUT_SECS")

@@ -87,14 +87,14 @@ try {
     Write-Host "Pre-creating Kafka topics via rpk..." -ForegroundColor Cyan
     $topics = @("market.ticks", "market.ohlc.10m", "technical_signals", "sentiment_signals", "trade_decisions", "signals.predictive", "signals.insights")
     foreach ($topic in $topics) {
-        docker exec alphasuite-redpanda rpk topic create $topic --partitions 3 2>$null
+        docker exec stratai-redpanda rpk topic create $topic --partitions 3 2>$null
         if ($LASTEXITCODE -eq 0) {
             Write-Host "  [+] Topic created: $topic" -ForegroundColor Green
         } else {
             Write-Host "  [=] Topic already exists: $topic" -ForegroundColor DarkGray
         }
     }
-    docker exec alphasuite-redpanda rpk topic list
+    docker exec stratai-redpanda rpk topic list
     Write-Host "All infrastructure is ready!" -ForegroundColor Green
 
     # ── Start PRODUCERS first, then CONSUMERS ───────────────────────────────

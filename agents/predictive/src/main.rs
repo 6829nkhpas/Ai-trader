@@ -1,6 +1,6 @@
 // main.rs — Predictive Agent entry point.
 //
-// Phase 6.3 — Alpha Suite Linear Regression + Ghost Candle Broadcast.
+// Phase 6.3 — Strat Ai Linear Regression + Ghost Candle Broadcast.
 //
 // Pipeline:
 //   1. Consume Protobuf-encoded OHLCCandle messages from `market.ohlc.10m`

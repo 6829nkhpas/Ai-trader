@@ -1,6 +1,6 @@
 // src/commands/quant.rs — Dual-Engine Ghost Curve IPC Bridge
 //
-// Alpha Suite V3 — Phase 2: Stateless Tauri command that accepts a lightweight
+// Strat Ai — Phase 2: Stateless Tauri command that accepts a lightweight
 // candle payload from React and returns the combined ProjectionPayload
 // containing both OLS linear and VWEPR curved projections.
 //

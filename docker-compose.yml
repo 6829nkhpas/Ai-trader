@@ -1,5 +1,5 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# Alpha Suite V2 — Production Docker Compose
+# Strat Ai — Production Docker Compose
 # ──────────────────────────────────────────────────────────────────────────────
 # Usage:
 #   docker-compose up -d --build          # Build and start all services
@@ -16,7 +16,7 @@ services:
   # ── Infrastructure: Kafka (via Redpanda) ──────────────────────────────────
   redpanda:
     image: redpandadata/redpanda:latest
-    container_name: alphasuite-redpanda
+    container_name: stratai-redpanda
     command:
       - redpanda start
       - --smp 1
@@ -39,7 +39,7 @@ services:
   # ── Infrastructure: QuestDB (Time-Series Archive) ─────────────────────────
   questdb:
     image: questdb/questdb:latest
-    container_name: alphasuite-questdb
+    container_name: stratai-questdb
     ports:
       - "9000:9000"     # Web Console
       - "8812:8812"     # PostgreSQL wire protocol
@@ -55,7 +55,7 @@ services:
   # ── Infrastructure: PostgreSQL (Auth DB) ──────────────────────────────────
   postgres:
     image: postgres:16-alpine
-    container_name: alphasuite-postgres
+    container_name: stratai-postgres
     environment:
       POSTGRES_DB: ai_trade_auth
       POSTGRES_USER: auth_admin
@@ -74,7 +74,7 @@ services:
   # ── Infrastructure: Redis (Session Cache) ─────────────────────────────────
   redis:
     image: redis:7-alpine
-    container_name: alphasuite-redis
+    container_name: stratai-redis
     ports:
       - "6379:6379"
     healthcheck:
@@ -88,7 +88,7 @@ services:
     build:
       context: .
       dockerfile: ingestion/Dockerfile
-    container_name: alphasuite-ingestion
+    container_name: stratai-ingestion
     env_file: .env
     environment:
       KAFKA_BROKERS: redpanda:29092
@@ -106,7 +106,7 @@ services:
     build:
       context: .
       dockerfile: alpha-terminal/Dockerfile
-    container_name: alphasuite-alpha-terminal
+    container_name: stratai-alpha-terminal
     env_file: .env
     environment:
       KAFKA_BROKERS: redpanda:29092
@@ -123,7 +123,7 @@ services:
     build:
       context: .
       dockerfile: aggregator/Dockerfile
-    container_name: alphasuite-aggregator
+    container_name: stratai-aggregator
     env_file: .env
     environment:
       KAFKA_BROKERS: redpanda:29092
@@ -140,7 +140,7 @@ services:
     build:
       context: .
       dockerfile: agents/predictive/Dockerfile
-    container_name: alphasuite-predictive
+    container_name: stratai-predictive
     env_file: .env
     environment:
       KAFKA_BROKERS: redpanda:29092
@@ -157,7 +157,7 @@ services:
     build:
       context: .
       dockerfile: agents/quant-rag/Dockerfile
-    container_name: alphasuite-quant-rag
+    container_name: stratai-quant-rag
     env_file: .env
     environment:
       KAFKA_BROKERS: redpanda:29092

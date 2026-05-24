@@ -71,7 +71,7 @@ pub struct RadarAlert {
 /// and emits `radar-alert` events via the Tauri AppHandle.
 ///
 /// ── Lazy-loading guard ────────────────────────────────────────────────
-/// The radar is **disabled by default** (Alpha Suite V3 lazy-loading
+/// The radar is **disabled by default** (Strat Ai lazy-loading
 /// directive). It iterates 50+ F&O symbols every 60s, hitting the Kite
 /// REST proxy and the consensus engine for each — exactly the kind of
 /// pre-emptive global analysis we no longer want to run on cold start.

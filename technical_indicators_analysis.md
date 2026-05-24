@@ -1,4 +1,4 @@
-# Alpha Suite — Technical Indicators, Patterns, Strategies & AI Pipeline
+# Strat Ai — Technical Indicators, Patterns, Strategies & AI Pipeline
 
 > Complete breakdown of every indicator, candlestick pattern, and strategy — where it's computed, how it flows, and which UI feature consumes it.
 

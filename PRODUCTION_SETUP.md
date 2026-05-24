@@ -1,4 +1,4 @@
-# Alpha Suite V2 — Production Setup Guide
+# Strat Ai — Production Setup Guide
 
 > **Version:** 2.0.0  
 > **Last Updated:** May 2026  
@@ -71,15 +71,15 @@ This launches the following services:
 
 | Service | Container | Port | Description |
 |---|---|---|---|
-| **Redpanda** | `alphasuite-redpanda` | `19092` | Kafka-compatible message broker |
-| **QuestDB** | `alphasuite-questdb` | `9000`, `8812` | Time-series archive + Web console |
-| **PostgreSQL** | `alphasuite-postgres` | `5432` | Authentication database |
-| **Redis** | `alphasuite-redis` | `6379` | Session cache |
-| **Ingestion** | `alphasuite-ingestion` | — | Kite WS → Protobuf → Kafka + QuestDB |
-| **Alpha Terminal** | `alphasuite-alpha-terminal` | `8081` | OHLC engine → WebSocket |
-| **Aggregator** | `alphasuite-aggregator` | `8080` | Decision fusion → WebSocket |
-| **Predictive Agent** | `alphasuite-predictive` | `8082` | Ghost line projections → WebSocket |
-| **Quant-RAG Agent** | `alphasuite-quant-rag` | `8083` | DeepSeek AI insights → WebSocket |
+| **Redpanda** | `stratai-redpanda` | `19092` | Kafka-compatible message broker |
+| **QuestDB** | `stratai-questdb` | `9000`, `8812` | Time-series archive + Web console |
+| **PostgreSQL** | `stratai-postgres` | `5432` | Authentication database |
+| **Redis** | `stratai-redis` | `6379` | Session cache |
+| **Ingestion** | `stratai-ingestion` | — | Kite WS → Protobuf → Kafka + QuestDB |
+| **Alpha Terminal** | `stratai-alpha-terminal` | `8081` | OHLC engine → WebSocket |
+| **Aggregator** | `stratai-aggregator` | `8080` | Decision fusion → WebSocket |
+| **Predictive Agent** | `stratai-predictive` | `8082` | Ghost line projections → WebSocket |
+| **Quant-RAG Agent** | `stratai-quant-rag` | `8083` | DeepSeek AI insights → WebSocket |
 
 ### Verify All Services Are Healthy
 
@@ -97,7 +97,7 @@ docker-compose logs -f quant-rag-agent
 ### Verify Kafka Topics
 
 ```bash
-docker exec -it alphasuite-redpanda rpk topic list
+docker exec -it stratai-redpanda rpk topic list
 ```
 
 Expected topics (auto-created on first message):

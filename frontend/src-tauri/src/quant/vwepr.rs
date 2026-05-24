@@ -1,6 +1,6 @@
 // quant/vwepr.rs — Volume-Weighted Exponential Polynomial Regression (VWEPR)
 //
-// Alpha Suite V3 — Phase 1: Rust Math Engine
+// Strat Ai — Phase 1: Rust Math Engine
 //
 // Fits a second-degree polynomial (y = ax² + bx + c) to recent OHLCV candles,
 // where each data point is weighted by:
