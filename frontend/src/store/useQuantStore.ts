@@ -324,31 +324,16 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       console.log(`[QuantStore] → invoking 'run_deep_quant_analysis' (Tauri IPC)…`);
       const tInvoke = (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
-      const plan = await tauriInvoke<AiExecutionPlan>(
+      await tauriInvoke<void>(
         'run_deep_quant_analysis',
         { symbol, timeframe: activeTimeframe }
       );
 
-      // ═══════════════════════════════════════════════════════════════════
-      // 🕵️‍♂️ AUDIT 5 - UI RECEIVE: Log the full parsed response from Rust
-      // ═══════════════════════════════════════════════════════════════════
-      console.log("🕵️‍♂️ [AUDIT 5 - UI RECEIVE] Parsed AI Result:", plan);
-      console.log("🕵️‍♂️ [AUDIT 5 - UI RECEIVE] conviction_score:", plan?.conviction_score);
-      console.log("🕵️‍♂️ [AUDIT 5 - UI RECEIVE] setup_validation:", plan?.setup_validation);
-      console.log("🕵️‍♂️ [AUDIT 5 - UI RECEIVE] execution_plan:", plan?.execution_plan);
-      console.log("🕵️‍♂️ [AUDIT 5 - UI RECEIVE] typeof result:", typeof plan);
-      console.log("🕵️‍♂️ [AUDIT 5 - UI RECEIVE] JSON keys:", plan ? Object.keys(plan) : 'NULL/UNDEFINED');
-      // ═══════════════════════════════════════════════════════════════════
-
       const tDone = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       console.log(
-        `[QuantStore] ✔ Deep analysis OK symbol=${symbol} ` +
-        `ipc_ms=${Math.round(tDone - tInvoke)} total_ms=${Math.round(tDone - t0)} ` +
-        `conviction=${plan.conviction_score}`
+        `[QuantStore] ✔ Deep analysis triggered symbol=${symbol} ` +
+        `ipc_ms=${Math.round(tDone - tInvoke)} total_ms=${Math.round(tDone - t0)}`
       );
-      console.debug('[QuantStore] plan payload:', plan);
-
-      set({ aiPlan: plan, isAnalyzing: false });
     } catch (err) {
       const tDone = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       const message = err instanceof Error ? err.message : String(err);

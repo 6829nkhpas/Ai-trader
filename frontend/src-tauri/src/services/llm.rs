@@ -34,6 +34,12 @@ use crate::services::audit_logger;
 
 // ── Wire types (OpenAI-compatible) ──────────────────────────────────────────
 
+#[derive(serde::Serialize, Clone)]
+pub struct AgentMessagePayload {
+    pub role: String,
+    pub content: String,
+}
+
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct ToolCall {
     pub id: String,
@@ -86,7 +92,7 @@ struct ChatChoice {
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
-struct ChatMessageResponse {
+pub struct ChatMessageResponse {
     pub role: String,
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -158,11 +164,10 @@ pub fn build_system_prompt(
         - EMA-9: {:.2} | EMA-21: {:.2}\n\
         - VWEPR Acceleration: {:.4} (Negative = Exhaustion/Rounding Top, Positive = Parabolic)\n\
         - Active Candlestick Patterns: {}\n\
-        \n\
         STRICT DIRECTIVES:\n\
-        1. THE FAST-TRACK RULE (GRAB OPPORTUNITIES): If the provided data presents a clear, high-probability execution setup, DO NOT use tools. Bypass all tool calls and return the final JSON execution plan immediately to minimize latency.\n\
-        2. AMBIGUITY RESOLUTION (TOOL USAGE): If the initial data is conflicting or lacks macro context, use your available tools to fetch higher timeframes or news. Do not guess.\n\
-        3. FORCED CONVICTION: Ultimately, you must make a definitive trade call (Buy, Sell, or Hold). Do NOT return a score between 40 and 60 unless Volume is completely dead.\n\
+        1. MANDATORY TOOL USAGE: Unless you see an incredibly obvious, 99%-probability 'Grab Opportunity', you are FORBIDDEN from generating the final JSON execution plan on your first turn. \n\
+        2. YOU MUST call the `wait_for_next_candle` tool first to observe the market flow and confirm the momentum.\n\
+        3. If you output JSON without using a tool to confirm the setup, you will be penalized.\n\
         \n\
         Return a JSON object EXACTLY matching this structure when finalizing a trade:\n\
         {{\n\
@@ -390,6 +395,11 @@ pub async fn generate_deep_quant_plan_with_url(
     let model = resolve_model();
     let timeout_secs = resolve_timeout();
 
+    // Emit technical consensus back to the React UI so the sidebar populates
+    if let Some(handle) = app {
+        let _ = handle.emit_all("quant-consensus", consensus.clone());
+    }
+
     info!(
         "[llm] step=resolve_config endpoint={} model={} key={}",
         api_url, model, mask_key(&api_key)
@@ -455,6 +465,14 @@ pub async fn generate_deep_quant_plan_with_url(
             "function": {
                 "name": "fetch_news_context",
                 "description": "Fetch latest news headlines for the symbol to check for catalysts."
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "wait_for_next_candle",
+                "description": "Wait for the next candle to close to confirm a breakout or rejection.",
+                "parameters": { "type": "object", "properties": { "timeframe": { "type": "string" } }, "required": ["timeframe"] }
             }
         }
     ]);
@@ -644,15 +662,36 @@ pub async fn generate_deep_quant_plan_with_url(
         let cleaned = cleaned.trim();
 
         // Step 4 — JSON-boundary extractor: find first '{' and last '}'
-        let cleaned = match (cleaned.find('{'), cleaned.rfind('}')) {
-            (Some(start), Some(end)) if start <= end => &cleaned[start..=end],
-            _ => cleaned,
-        };
+        let start = cleaned.find('{');
+        let end = cleaned.rfind('}');
 
-        let plan: AiExecutionPlan = serde_json::from_str(cleaned).map_err(|e| {
-            error!("[llm] step=plan_parse_fail err={} raw={}", e, truncate(cleaned, 300));
-            format!("LLM API Failure: output is not valid AiExecutionPlan JSON — {} | raw: {}", e, truncate(cleaned, 300))
-        })?;
+        let plan: AiExecutionPlan = match (start, end) {
+            (Some(s), Some(e)) if e >= s => {
+                let extracted = &cleaned[s..=e];
+                match serde_json::from_str(extracted) {
+                    Ok(p) => p,
+                    Err(err) => {
+                        error!("[llm] step=plan_parse_fail err={} raw={}", err, truncate(extracted, 300));
+                        return Err(format!(
+                            "LLM API Failure: output is not valid AiExecutionPlan JSON — {} | raw: {}",
+                            err,
+                            content
+                        ));
+                    }
+                }
+            }
+            _ => {
+                error!(
+                    "[llm] LLM returned prose (no JSON) for {} — raw: {:?}",
+                    symbol,
+                    content
+                );
+                return Err(format!(
+                    "LLM API Failure: output is not valid AiExecutionPlan JSON — no JSON object found | raw: {}",
+                    content
+                ));
+            }
+        };
 
         let plan = if plan.conviction_score < 1 || plan.conviction_score > 100 {
             warn!("[llm] step=plan_clamp original_score={} clamped", plan.conviction_score);
@@ -715,7 +754,7 @@ fn format_reqwest_error(err: &reqwest::Error) -> String {
 
 // ── Real Tool Actions ───────────────────────────────────────────────────────
 
-async fn execute_higher_timeframe_tool(
+pub async fn execute_higher_timeframe_tool(
     symbol: &str,
     timeframe: &str,
     app: Option<&tauri::AppHandle>,
@@ -867,3 +906,232 @@ fn compute_rsi_helper(candles: &[crate::quant::patterns::Candle], period: usize)
     let rs = avg_gain / avg_loss;
     100.0 - (100.0 / (1.0 + rs))
 }
+
+#[allow(clippy::too_many_arguments)]
+pub async fn generate_sentinel_plan(
+    symbol: &str,
+    consensus: &ConsensusReport,
+    timeframe: &str,
+    latest_close: f64,
+    vwap_val: f64,
+    vol_multiplier: f64,
+    atr_val: f64,
+    bb_upper: f64,
+    bb_mid: f64,
+    bb_lower: f64,
+    rsi_val: f64,
+    macd_val: f64,
+    macd_signal: f64,
+    ema9_val: f64,
+    ema21_val: f64,
+    app: Option<&tauri::AppHandle>,
+) -> Result<AiExecutionPlan, String> {
+    let t0 = Instant::now();
+    let api_url = resolve_endpoint();
+    let api_key = if let Some(handle) = app {
+        use crate::commands::security::get_api_key_from_vault;
+        get_api_key_from_vault(handle, "llm_key")
+            .or_else(|| get_api_key_from_vault(handle, "hf_key"))
+            .or_else(|| get_api_key_from_vault(handle, "deepseek"))
+            .or_else(|| resolve_api_key())
+    } else {
+        resolve_api_key()
+    }.ok_or_else(|| "LLM API Key not found. Set LLM_API_KEY in .env or Settings.".to_string())?;
+
+    let model = resolve_model();
+    let timeout_secs = resolve_timeout();
+
+    let system_prompt = format!(
+        "You are a Quantitative sentinel AI monitoring {symbol} on the {timeframe} timeframe.\n\
+        Your primary directive is to watch for high-probability trade entry triggers (like an MACD crossover, volume spike, or Bollinger Band breakout) and execute immediately when they occur.\n\
+        \n\
+        LATEST LIVE TECHNICAL DATA:\n\
+        - Last Close: {latest_close:.2} | VWAP: {vwap_val:.2}\n\
+        - Volume Spike: {vol_multiplier:.2}x above 20-period average\n\
+        - ATR (14): {atr_val:.2}\n\
+        - Bollinger Bands: [U: {bb_upper:.2}, M: {bb_mid:.2}, L: {bb_lower:.2}]\n\
+        - RSI (14): {rsi_val:.2} | MACD Line: {macd_val:.4} / Signal: {macd_signal:.4}\n\
+        - EMA-9: {ema9_val:.2} | EMA-21: {ema21_val:.2}\n\
+        - Trend Score: {trend_score} (-100 to +100)\n\
+        - Momentum State: {momentum}\n\
+        \n\
+        STRICT MONITORING DIRECTIVE:\n\
+        Evaluate if a high-probability entry trigger has occurred right now.\n\
+        - If YES (Bullish/Bearish trigger occurred): You must return a conviction_score > 60, and detail the entry plan.\n\
+        - If NO (Market is choppy, flat, or no trigger has occurred): You must return a conviction_score < 40, and state what trigger you are waiting for.\n\
+        \n\
+        Return a JSON object EXACTLY matching this structure:\n\
+        {{\n\
+            \"conviction_score\": <int 0-100>,\n\
+            \"setup_validation\": \"<1-sentence explanation of what trigger was met or what we are waiting for>\",\n\
+            \"execution_plan\": \"<Actionable trade plan if conviction > 60, otherwise specify the exact crossover or trigger we are waiting for>\"\n\
+        }}",
+        symbol = symbol,
+        timeframe = timeframe,
+        latest_close = latest_close,
+        vwap_val = vwap_val,
+        vol_multiplier = vol_multiplier,
+        atr_val = atr_val,
+        bb_upper = bb_upper,
+        bb_mid = bb_mid,
+        bb_lower = bb_lower,
+        rsi_val = rsi_val,
+        macd_val = macd_val,
+        macd_signal = macd_signal,
+        ema9_val = ema9_val,
+        ema21_val = ema21_val,
+        trend_score = consensus.trend_score,
+        momentum = consensus.momentum_state,
+    );
+
+    let request = ChatRequest {
+        model: model.clone(),
+        messages: vec![
+            ChatMessage {
+                role: "system".to_string(),
+                content: system_prompt,
+                tool_calls: None,
+                tool_call_id: None,
+            },
+            ChatMessage {
+                role: "user".to_string(),
+                content: format!("Evaluate the latest technical indicators for {symbol} and decide whether to EXECUTE or HOLD."),
+                tool_calls: None,
+                tool_call_id: None,
+            }
+        ],
+        temperature: 0.2,
+        max_tokens: 512,
+        response_format: None,
+        tools: None,
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|e| format!("HTTP client build failed: {}", e))?;
+
+    let response = client.post(&api_url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| format!("Sentinel LLM request failed: {}", e))?;
+
+    let status = response.status();
+    let response_body = response.text().await.unwrap_or_default();
+
+    if !status.is_success() {
+        return Err(format!("Sentinel LLM returned HTTP error status: {}", status));
+    }
+
+    let chat_response: ChatResponse = serde_json::from_str(&response_body).map_err(|e| {
+        format!("Sentinel LLM malformed envelope: {}", e)
+    })?;
+
+    let choice = chat_response.choices.first().ok_or_else(|| {
+        "Sentinel LLM empty choices".to_string()
+    })?;
+
+    let content = choice.message.content.clone().unwrap_or_default();
+    let mut cleaned = content.trim().to_string();
+
+    if let Some(rest) = cleaned.strip_prefix("```json") {
+        cleaned = rest.to_string();
+    } else if let Some(rest) = cleaned.strip_prefix("```") {
+        cleaned = rest.to_string();
+    }
+    if let Some(rest) = cleaned.strip_suffix("```") {
+        cleaned = rest.to_string();
+    }
+    let cleaned = cleaned.trim();
+
+    let start = cleaned.find('{');
+    let end = cleaned.rfind('}');
+
+    let plan: AiExecutionPlan = match (start, end) {
+        (Some(s), Some(e)) if e >= s => {
+            let extracted = &cleaned[s..=e];
+            serde_json::from_str(extracted).map_err(|err| {
+                format!("Sentinel LLM JSON parse failed: {} | raw: {}", err, truncate(extracted, 200))
+            })?
+        }
+        _ => {
+            return Err("Sentinel LLM output does not contain a JSON block".to_string());
+        }
+    };
+
+    info!(
+        "[sentinel] step=done total_elapsed_ms={} conviction={} plan_preview={}",
+        t0.elapsed().as_millis(), plan.conviction_score, truncate(&plan.execution_plan, 80)
+    );
+
+    Ok(plan)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn generate_autonomous_step(
+    app: &tauri::AppHandle,
+    messages: Vec<ChatMessage>,
+    tools: serde_json::Value,
+) -> Result<ChatMessageResponse, String> {
+    let api_url = resolve_endpoint();
+    let api_key = if let Some(k) = {
+        use crate::commands::security::get_api_key_from_vault;
+        get_api_key_from_vault(app, "llm_key")
+            .or_else(|| get_api_key_from_vault(app, "hf_key"))
+            .or_else(|| get_api_key_from_vault(app, "deepseek"))
+    } {
+        k
+    } else {
+        match resolve_api_key() {
+            Some(k) => k,
+            None => {
+                return Err("LLM API Failure: no API key found.".to_string());
+            }
+        }
+    };
+
+    let model = resolve_model();
+    let timeout_secs = resolve_timeout();
+
+    let current_request = ChatRequest {
+        model: model.clone(),
+        messages,
+        temperature: 0.3,
+        max_tokens: 1024,
+        response_format: None,
+        tools: Some(tools),
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|e| format!("HTTP client build failed: {}", e))?;
+
+    let response = client
+        .post(&api_url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&current_request)
+        .send()
+        .await
+        .map_err(|e| format!("Autonomous request failed: {}", e))?;
+
+    let status = response.status();
+    let response_body = response.text().await.unwrap_or_default();
+
+    if !status.is_success() {
+        return Err(format!("LLM API returned HTTP {} — {}", status, response_body));
+    }
+
+    let chat_response: ChatResponse = serde_json::from_str(&response_body)
+        .map_err(|e| format!("Malformed envelope: {}", e))?;
+
+    let choice = chat_response.choices.first()
+        .ok_or_else(|| "Empty choices array".to_string())?;
+
+    Ok(choice.message.clone())
+}
+

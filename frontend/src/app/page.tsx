@@ -15,7 +15,8 @@ import SystemConsole from '../components/SystemConsole';
 
 import DeepQuantPanel from '../components/quant/DeepQuantPanel';
 import ActivePositions from '../components/quant/ActivePositions';
-import { useTradeStore, TradeProfile, ChartTimeframe } from '../store/useTradeStore';
+import PortfolioDashboard from '../components/quant/PortfolioDashboard';
+import { useTradeStore, TradeProfile, ChartTimeframe, hydratePaperPortfolio } from '../store/useTradeStore';
 import { useQuantStore } from '../store/useQuantStore';
 import type { ConsensusReport } from '../store/useQuantStore';
 import type { DataRange } from '../utils/chartTypes';
@@ -92,6 +93,7 @@ export default function Home() {
 
   useEffect(() => {
     connectWebSocket();
+    hydratePaperPortfolio();
   }, [connectWebSocket]);
 
   useEffect(() => {
@@ -301,6 +303,11 @@ export default function Home() {
 
               {/* Live PNL Positions Drawer */}
               <ActivePositions />
+
+              {/* Simulated Paper Trading Dashboard */}
+              <div className="p-3 border-t border-border-default bg-surface/30">
+                <PortfolioDashboard />
+              </div>
 
               {/* Buy/Sell Panel */}
               <div className="shrink-0 border-t border-border-default bg-surface rounded-b-lg">

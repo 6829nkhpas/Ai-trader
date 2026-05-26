@@ -11,12 +11,14 @@ import {
   XCircle,
   RotateCcw,
   Rocket,
+  Radar,
 } from 'lucide-react';
 import { useQuantStore } from '../../store/useQuantStore';
 import { useTradeStore } from '../../store/useTradeStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
 import { useMemo } from 'react';
 import { listen } from '@tauri-apps/api/event';
+import AgentTerminal from './AgentTerminal';
 
 // ── Conviction Helpers ──────────────────────────────────────────────────
 
@@ -105,10 +107,13 @@ function LoadingState({ agentStatus }: { agentStatus: string }) {
 // ── Main Component ──────────────────────────────────────────────────────
 
 export default function DeepQuantPanel() {
-  const { aiPlan, isAnalyzing, analysisError, fetchDeepAnalysis, clearAiPlan, openPosition, activePositions } = useQuantStore();
+  const { aiPlan, isAnalyzing, analysisError, fetchDeepAnalysis, clearAiPlan } = useQuantStore();
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
   const historicalCache = useTradeStore((s) => s.historicalCache);
   const activeTimeframe = useTradeStore((s) => s.activeTimeframe);
+  const paperPortfolio = useTradeStore((s) => s.paperPortfolio);
+  const agentChatLog = useTradeStore((s) => s.agentChatLog);
+  const clearAgentChatLog = useTradeStore((s) => s.clearAgentChatLog);
   const symbol = selectedSymbol || 'RELIANCE';
 
   // ── AI Handoff State Guard ────────────────────────────────────────────
@@ -130,7 +135,9 @@ export default function DeepQuantPanel() {
   const insufficientData = symbolCandleCount > 0 && symbolCandleCount < 50;
 
   // Check if there's already an active position for this symbol from this plan
-  const hasActivePosition = activePositions.some((p) => p.symbol === symbol);
+  const hasActivePosition = paperPortfolio?.active_positions.some(
+    (p) => p.symbol.toUpperCase() === symbol.toUpperCase()
+  ) || false;
   const [deployed, setDeployed] = React.useState(false);
   const [agentStatus, setAgentStatus] = React.useState<string>("Awaiting trigger...");
 
@@ -178,6 +185,7 @@ export default function DeepQuantPanel() {
       );
     }
 
+    clearAgentChatLog();
     fetchDeepAnalysis(symbol);
   };
 
@@ -192,7 +200,7 @@ export default function DeepQuantPanel() {
           onClick={handleAIAnalysis}
           className={`
             group relative w-full flex items-center justify-center gap-2
-            rounded-xl px-4 py-3 text-[13px] font-bold uppercase tracking-wider
+            rounded-xl px-3 py-2.5 text-xs font-bold uppercase tracking-wider
             transition-all duration-300 ease-out
             ${!dataReady
               ? 'bg-slate-500/10 text-slate-400 border border-slate-500/20 opacity-50 cursor-not-allowed'
@@ -207,19 +215,19 @@ export default function DeepQuantPanel() {
             <div className="absolute -inset-px rounded-xl bg-gradient-to-r from-blue-400/20 to-violet-400/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300 blur-sm" />
           )}
 
-          <span className="relative flex items-center gap-2">
+          <span className="relative flex items-center gap-1.5">
             {!dataReady ? (
-              <Loader2 size={16} className="animate-spin text-slate-400" />
+              <Loader2 size={14} className="animate-spin text-slate-400" />
             ) : isAnalyzing ? (
-              <Loader2 size={16} className="animate-spin" />
+              <Loader2 size={14} className="animate-spin" />
             ) : (
-              <Zap size={16} className="group-hover:animate-pulse" />
+              <Zap size={14} className="group-hover:animate-pulse" />
             )}
             {!dataReady
               ? 'AWAITING DATA…'
               : isAnalyzing
                 ? 'ANALYZING...'
-                : 'RUN DEEP QUANT ANALYSIS'}
+                : 'DEEP QUANT'}
           </span>
         </button>
 
@@ -233,9 +241,11 @@ export default function DeepQuantPanel() {
       </div>
 
       {/* ── Content Area ──────────────────────────────────── */}
-      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin">
-        {isAnalyzing ? (
-          <LoadingState agentStatus={agentStatus} />
+      <div className="flex-grow flex-shrink min-h-0 overflow-y-auto scrollbar-thin">
+        {agentChatLog.length > 0 || isAnalyzing ? (
+          <div className="h-full p-2 min-h-[380px]">
+            <AgentTerminal />
+          </div>
         ) : analysisError ? (
           /* ── Error State ─────────────────────────────────── */
           <div className="flex flex-col items-center justify-center gap-3 p-4 py-8">
@@ -331,10 +341,69 @@ export default function DeepQuantPanel() {
                 id="btn-deploy-strategy"
                 type="button"
                 disabled={deployed || hasActivePosition}
-                onClick={() => {
-                  if (aiPlan) {
-                    openPosition(symbol, aiPlan);
+                onClick={async () => {
+                  if (!aiPlan) return;
+                  
+                  const closePrice = useTradeStore.getState().ohlcCandles.find(c => c.symbol === symbol)?.close || 0;
+                  
+                  let entryPrice = closePrice;
+                  let stopLoss = 0;
+                  let takeProfit = 0;
+                  let side = 'BUY';
+
+                  const executionPlan = aiPlan.execution_plan || '';
+
+                  // Extract values with regex
+                  const entryMatch = executionPlan.match(/entry:\s*([\d.]+)/i);
+                  const slMatch = executionPlan.match(/stop-loss:\s*([\d.]+)/i) || executionPlan.match(/sl:\s*([\d.]+)/i);
+                  const tpMatch = executionPlan.match(/target\s*1?:\s*([\d.]+)/i) || executionPlan.match(/target:\s*([\d.]+)/i) || executionPlan.match(/tp:\s*([\d.]+)/i);
+                  const sideMatch = executionPlan.match(/side:\s*(buy|sell)/i) || executionPlan.match(/(buy|sell)/i);
+
+                  if (entryMatch) {
+                    entryPrice = parseFloat(entryMatch[1]);
+                  }
+                  if (slMatch) {
+                    stopLoss = parseFloat(slMatch[1]);
+                  }
+                  if (tpMatch) {
+                    takeProfit = parseFloat(tpMatch[1]);
+                  }
+                  if (sideMatch) {
+                    const matchedSide = sideMatch[1].toUpperCase();
+                    if (matchedSide === 'BUY' || matchedSide === 'SELL') {
+                      side = matchedSide;
+                    }
+                  }
+
+                  // Dynamic fallbacks
+                  if (entryPrice <= 0) entryPrice = closePrice;
+                  if (stopLoss <= 0) {
+                    stopLoss = side === 'BUY' ? entryPrice * 0.98 : entryPrice * 1.02;
+                  }
+                  if (takeProfit <= 0) {
+                    takeProfit = side === 'BUY' ? entryPrice * 1.05 : entryPrice * 0.95;
+                  }
+
+                  try {
+                    const { invoke } = await import('@tauri-apps/api/core');
+                    const resMsg = await invoke<string>('execute_paper_trade', {
+                      symbol,
+                      side,
+                      entryPrice,
+                      stopLoss,
+                      takeProfit,
+                    });
+                    useTradeStore.getState().addSystemLog('INFO', `🚀 [Paper Engine] ${resMsg}`);
+                    
+                    // Trigger dynamic positions fetch
+                    await useTradeStore.getState().fetchPaperPortfolio();
+                    
+                    // Set local deployed state
                     setDeployed(true);
+                  } catch (err) {
+                    const errMsg = err instanceof Error ? err.message : String(err);
+                    console.error('Failed to deploy strategy:', err);
+                    useTradeStore.getState().addSystemLog('ERROR', `Failed to deploy strategy: ${errMsg}`);
                   }
                 }}
                 className={`

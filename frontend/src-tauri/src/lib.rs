@@ -6,6 +6,7 @@ pub mod commands;
 pub mod db;
 pub mod quant;
 pub mod services;
+pub mod execution;
 
 use commands::security::SecureKeyStore;
 
@@ -143,6 +144,11 @@ pub fn run() {
     })
     .manage(active_symbol_state)
     .manage(SecureKeyStore::new())
+    .manage(std::sync::Mutex::new(execution::paper::VirtualPortfolio {
+        balance: 1000000.0,
+        active_positions: vec![],
+        trade_history: vec![],
+    }))
     .setup(move |app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -205,7 +211,10 @@ pub fn run() {
                       .await
                       .clone();
                   let tick = mock_ohlc_tick(&sym);
-                  let _ = app_handle_mock.emit("ohlc-tick", tick);
+                  let _ = app_handle_mock.emit("ohlc-tick", tick.clone());
+                  if let Some(close) = tick.get("close").and_then(|c| c.as_f64()) {
+                      execution::paper::process_tick_for_positions(&app_handle_mock, &sym, close);
+                  }
                   tokio::time::sleep(std::time::Duration::from_millis(100)).await;
               }
           });
@@ -310,6 +319,9 @@ pub fn run() {
         commands::charts::fetch_questdb,
         commands::charts::get_pool_status,
         commands::deep_quant::run_deep_quant_analysis,
+        commands::deep_quant::deploy_ai_sentinel,
+        execution::paper::execute_paper_trade,
+        execution::paper::get_paper_portfolio,
         commands::sentiment::fetch_symbol_sentiment,
         commands::quant::compute_ghost_curve,
         commands::security::save_api_key,

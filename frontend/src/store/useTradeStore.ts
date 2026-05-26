@@ -50,6 +50,23 @@ export interface OhlcCandle {
   volume: number;
 }
 
+export interface VirtualPosition {
+  id: string;
+  symbol: string;
+  side: string; // "BUY" or "SELL"
+  entry_price: number;
+  quantity: number;
+  take_profit: number;
+  stop_loss: number;
+  status: string; // "OPEN", "CLOSED_WIN", "CLOSED_LOSS"
+}
+
+export interface VirtualPortfolio {
+  balance: number;
+  active_positions: VirtualPosition[];
+  trade_history: VirtualPosition[];
+}
+
 export interface PredictiveSignal {
   symbol: string;
   timestamp_ms: number;
@@ -147,6 +164,11 @@ interface TradeStore {
   executeTrade: (decision: AggregatedDecision, quantity: number) => void;
   rejectTrade: (decision: AggregatedDecision) => void;
   resetSession: () => void;
+  paperPortfolio: VirtualPortfolio | null;
+  fetchPaperPortfolio: () => Promise<void>;
+  agentChatLog: Array<{ role: string; content: string }>;
+  finalTradePlan: any | null;
+  clearAgentChatLog: () => void;
 }
 
 // ── Module-level WS destroy flags (BUG-5) ─────────────────────────────────
@@ -223,6 +245,44 @@ export async function hydrateWatchlist() {
   }
 }
 
+const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
+/** Hydrate and subscribe to paper trading virtual portfolio state. */
+export async function hydratePaperPortfolio() {
+  if (!isTauri()) return;
+  try {
+    const store = useTradeStore.getState();
+    await store.fetchPaperPortfolio();
+
+    const { listen } = await import('@tauri-apps/api/event');
+    await listen<VirtualPortfolio>('paper_portfolio_update', (event) => {
+      console.log('[TradeStore] Paper portfolio update event received:', event.payload);
+      useTradeStore.setState({ paperPortfolio: event.payload });
+    });
+
+    await listen<{ role: string; content: string }>('agent_message', (event) => {
+      console.log('[TradeStore] agent_message event received:', event.payload);
+      const currentLog = useTradeStore.getState().agentChatLog;
+      useTradeStore.setState({
+        agentChatLog: [...currentLog, event.payload]
+      });
+    });
+
+    await listen<any>('final_analysis_ready', async (event) => {
+      console.log('[TradeStore] final_analysis_ready event received:', event.payload);
+      useTradeStore.setState({ finalTradePlan: event.payload });
+      try {
+        const { useQuantStore } = await import('./useQuantStore');
+        useQuantStore.setState({ isAnalyzing: false });
+      } catch (err) {
+        console.warn('[TradeStore] Failed to update isAnalyzing in useQuantStore:', err);
+      }
+    });
+  } catch (e) {
+    console.warn('[TradeStore] Failed to setup paper portfolio subscription:', e);
+  }
+}
+
 export const useTradeStore = create<TradeStore>((set) => {
   let ws: WebSocket | null = null;
 
@@ -289,6 +349,21 @@ export const useTradeStore = create<TradeStore>((set) => {
     selectedSymbol: 'RELIANCE',
     historicalCache: {},
     watchlist: [],
+    paperPortfolio: null,
+    agentChatLog: [],
+    finalTradePlan: null,
+    clearAgentChatLog: () => set({ agentChatLog: [], finalTradePlan: null }),
+
+    fetchPaperPortfolio: async () => {
+      if (!isTauri()) return;
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const portfolio = await invoke<VirtualPortfolio>('get_paper_portfolio');
+        set({ paperPortfolio: portfolio });
+      } catch (e) {
+        console.warn('[TradeStore] Failed to fetch paper portfolio:', e);
+      }
+    },
 
     setActiveProfile: (profile: TradeProfile) => {
       set({ activeProfile: profile });

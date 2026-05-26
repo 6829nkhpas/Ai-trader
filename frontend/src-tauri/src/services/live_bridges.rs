@@ -76,7 +76,16 @@ fn spawn_bridge(app: AppHandle, port: u16, event_name: &'static str) {
                     let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
                         continue;
                     };
-                    let _ = app.emit(event_name, json);
+                    let _ = app.emit(event_name, json.clone());
+
+                    if event_name == "ohlc-tick" {
+                        if let (Some(symbol), Some(close)) = (
+                            json.get("symbol").and_then(|s| s.as_str()),
+                            json.get("close").and_then(|c| c.as_f64()),
+                        ) {
+                            crate::execution::paper::process_tick_for_positions(&app, symbol, close);
+                        }
+                    }
                 }
                 warn!(
                     "[live_bridges] Stream closed for {} — '{}' events will stop \

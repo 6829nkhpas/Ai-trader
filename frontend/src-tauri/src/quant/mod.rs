@@ -62,6 +62,11 @@ impl IndicatorState {
     /// Used when we only have candle data and basic SMAs.
     pub fn from_candles_basic(candles: &[Candle]) -> Self {
         let (sma_50, sma_200) = Self::compute_smas(candles);
+        let (prev_sma_50, prev_sma_200) = if candles.len() > 1 {
+            Self::compute_smas(&candles[..candles.len() - 1])
+        } else {
+            (f64::NAN, f64::NAN)
+        };
         let avg_vol = Self::compute_avg_volume(candles, 20);
 
         let ema_9 = Self::compute_ema(candles, 9);
@@ -70,36 +75,166 @@ impl IndicatorState {
         let atr_14 = Self::compute_atr(candles, 14);
         let (bb_upper, bb_mid, bb_lower) = Self::compute_bollinger_bands(candles, 20, 2.0);
         let vwap = Self::compute_vwap(candles);
+        let (orb_high, orb_low) = Self::compute_orb(candles, 15);
+        let parabolic_sar = Self::compute_parabolic_sar(candles);
+        let stoch_k = Self::compute_stoch_k(candles, 14);
+        let (obv_current, obv_previous) = Self::compute_obv(candles);
+        let cmf = Self::compute_cmf(candles, 20);
 
         IndicatorState {
             sma_50,
             sma_200,
-            prev_sma_50: f64::NAN,
-            prev_sma_200: f64::NAN,
+            prev_sma_50,
+            prev_sma_200,
             macd_histogram: if macd_line.is_finite() && macd_signal.is_finite() {
                 macd_line - macd_signal
             } else {
                 f64::NAN
             },
-            parabolic_sar: f64::NAN,
+            parabolic_sar,
             rsi_14: Self::compute_rsi(candles, 14),
-            stoch_k: f64::NAN,
+            stoch_k,
             bb_upper,
             bb_lower,
             atr_20_ma: atr_14,  // reuse for volatility scoring
-            obv_current: f64::NAN,
-            obv_previous: f64::NAN,
-            cmf: f64::NAN,
+            obv_current,
+            obv_previous,
+            cmf,
             vwap,
             average_volume: avg_vol,
-            orb_high: f64::NAN,
-            orb_low: f64::NAN,
+            orb_high,
+            orb_low,
             ema_9,
             ema_21,
             macd_line,
             macd_signal,
             atr_14,
             bb_mid,
+        }
+    }
+
+    fn compute_orb(candles: &[Candle], period: usize) -> (f64, f64) {
+        if candles.is_empty() { return (f64::NAN, f64::NAN); }
+        let limit = period.min(candles.len());
+        let slice = &candles[..limit];
+        let mut high = f64::MIN;
+        let mut low = f64::MAX;
+        for c in slice {
+            if c.high > high { high = c.high; }
+            if c.low < low { low = c.low; }
+        }
+        (high, low)
+    }
+
+    fn compute_parabolic_sar(candles: &[Candle]) -> f64 {
+        if candles.len() < 3 {
+            return f64::NAN;
+        }
+        let mut uptrend = candles[1].close > candles[0].close;
+        let mut sar = if uptrend { candles[0].low } else { candles[0].high };
+        let mut ep = if uptrend { candles[1].high } else { candles[1].low };
+        let mut af = 0.02;
+        for i in 2..candles.len() {
+            let next_sar = sar + af * (ep - sar);
+            if uptrend {
+                let cap = candles[i - 1].low.min(candles[i - 2].low);
+                sar = next_sar.min(cap);
+                if candles[i].low < sar {
+                    uptrend = false;
+                    sar = ep;
+                    ep = candles[i].low;
+                    af = 0.02;
+                } else {
+                    if candles[i].high > ep {
+                        ep = candles[i].high;
+                        af = (af + 0.02).min(0.20);
+                    }
+                }
+            } else {
+                let cap = candles[i - 1].high.max(candles[i - 2].high);
+                sar = next_sar.max(cap);
+                if candles[i].high > sar {
+                    uptrend = true;
+                    sar = ep;
+                    ep = candles[i].high;
+                    af = 0.02;
+                } else {
+                    if candles[i].low < ep {
+                        ep = candles[i].low;
+                        af = (af + 0.02).min(0.20);
+                    }
+                }
+            }
+        }
+        sar
+    }
+
+    fn compute_stoch_k(candles: &[Candle], period: usize) -> f64 {
+        if candles.len() < period {
+            return f64::NAN;
+        }
+        let slice = &candles[candles.len() - period..];
+        let mut highest = f64::MIN;
+        let mut lowest = f64::MAX;
+        for c in slice {
+            if c.high > highest { highest = c.high; }
+            if c.low < lowest { lowest = c.low; }
+        }
+        let range = highest - lowest;
+        let current_close = candles.last().map(|c| c.close).unwrap_or(0.0);
+        if range > 1e-9 {
+            ((current_close - lowest) / range) * 100.0
+        } else {
+            50.0
+        }
+    }
+
+    fn compute_obv(candles: &[Candle]) -> (f64, f64) {
+        if candles.is_empty() {
+            return (0.0, 0.0);
+        }
+        let mut obv = 0.0;
+        let mut obv_history = Vec::with_capacity(candles.len());
+        obv_history.push(0.0);
+        for i in 1..candles.len() {
+            let change = candles[i].close - candles[i - 1].close;
+            if change > 0.0 {
+                obv += candles[i].volume;
+            } else if change < 0.0 {
+                obv -= candles[i].volume;
+            }
+            obv_history.push(obv);
+        }
+        let obv_current = *obv_history.last().unwrap_or(&0.0);
+        let obv_previous = if obv_history.len() > 1 {
+            obv_history[obv_history.len() - 2]
+        } else {
+            0.0
+        };
+        (obv_current, obv_previous)
+    }
+
+    fn compute_cmf(candles: &[Candle], period: usize) -> f64 {
+        if candles.len() < period {
+            return f64::NAN;
+        }
+        let slice = &candles[candles.len() - period..];
+        let mut sum_mfv = 0.0;
+        let mut sum_vol = 0.0;
+        for c in slice {
+            let range = c.high - c.low;
+            let mfm = if range > 1e-9 {
+                ((c.close - c.low) - (c.high - c.close)) / range
+            } else {
+                0.0
+            };
+            sum_mfv += mfm * c.volume;
+            sum_vol += c.volume;
+        }
+        if sum_vol > 1e-9 {
+            sum_mfv / sum_vol
+        } else {
+            0.0
         }
     }
 
@@ -298,9 +433,55 @@ impl ConsensusEngine {
         candles: &[Candle],
         indicators: &IndicatorState,
     ) -> ConsensusReport {
-        let active_patterns = PatternEngine::analyze(candles);
-        let snapshot = indicators.to_snapshot();
-        let active_strategies = StrategyEngine::evaluate(candles, &snapshot);
+        // Scan the final 15 candles for patterns, deduplicated
+        let active_patterns: Vec<String> = {
+            use std::collections::HashSet;
+            let mut seen = HashSet::new();
+            let mut found = Vec::new();
+            const PATTERN_SCAN_WINDOW: usize = 15;
+            let scan_start = if candles.len() > PATTERN_SCAN_WINDOW {
+                candles.len() - PATTERN_SCAN_WINDOW
+            } else {
+                0
+            };
+            for end in (scan_start + 1)..=candles.len() {
+                let window = &candles[..end];
+                for p in PatternEngine::analyze(window) {
+                    if seen.insert(p.clone()) {
+                        found.push(p);
+                    }
+                }
+            }
+            found
+        };
+
+        // Scan the final 15 candles for strategies, deduplicated
+        let active_strategies: Vec<String> = {
+            use std::collections::HashSet;
+            let mut seen = HashSet::new();
+            let mut found = Vec::new();
+            const STRATEGY_SCAN_WINDOW: usize = 15;
+            let scan_start = if candles.len() > STRATEGY_SCAN_WINDOW {
+                candles.len() - STRATEGY_SCAN_WINDOW
+            } else {
+                0
+            };
+            for i in scan_start..candles.len() {
+                let window = &candles[..=i];
+                let snapshot = if i == candles.len() - 1 {
+                    indicators.to_snapshot()
+                } else {
+                    IndicatorState::from_candles_basic(window).to_snapshot()
+                };
+                for s in StrategyEngine::evaluate(window, &snapshot) {
+                    if seen.insert(s.clone()) {
+                        found.push(s);
+                    }
+                }
+            }
+            found
+        };
+
         let close = candles.last().map(|c| c.close).unwrap_or(0.0);
 
         ConsensusReport {
