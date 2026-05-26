@@ -37,7 +37,7 @@ export default function Home() {
   const [aiEnabled, setAiEnabled] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('profile');
-  const [paperPortfolioOpen, setPaperPortfolioOpen] = useState(true);
+  const [paperPortfolioOpen, setPaperPortfolioOpen] = useState(false);
   const [tfDropdownOpen, setTfDropdownOpen] = useState(false);
   const tfDropdownRef = useRef<HTMLDivElement>(null);
   const consensusData = useQuantStore((s) => s.consensusData);
