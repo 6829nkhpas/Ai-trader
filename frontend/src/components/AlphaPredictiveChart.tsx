@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useEffect, useRef, useCallback } from 'react';
+import React, { useMemo, useEffect, useRef, useCallback, useState } from 'react';
 import { useTradeStore, type OhlcCandle } from '../store/useTradeStore';
 import { useChartUIStore } from '../store/useChartUIStore';
 import { useHistoricalData } from '../hooks/useHistoricalData';
@@ -220,6 +220,57 @@ export default function AlphaPredictiveChart({
   useDrawingRenderer(refs, chartData);
   useFibZoneOverlay(refs, chartData);
 
+  // ── Hovered Candle OHLC State ─────────────────────────────────────────
+  const [hoveredCandle, setHoveredCandle] = useState<{ open: number; high: number; low: number; close: number } | null>(null);
+
+  useEffect(() => {
+    let activeChart: any = null;
+    let activeHandler: any = null;
+
+    const interval = setInterval(() => {
+      const chart = refs.chartRef.current;
+      if (chart) {
+        clearInterval(interval);
+        
+        activeChart = chart;
+        activeHandler = (param: any) => {
+          if (!param || !param.time) {
+            setHoveredCandle(null);
+            return;
+          }
+          
+          const hoveredTime = param.time;
+          // Find the exact candle in chartData matching the hovered crosshair timestamp
+          const matchedCandle = chartData.find((c) => c.time === hoveredTime);
+          
+          if (matchedCandle) {
+            setHoveredCandle({
+              open: matchedCandle.open,
+              high: matchedCandle.high,
+              low: matchedCandle.low,
+              close: matchedCandle.close,
+            });
+          } else {
+            setHoveredCandle(null);
+          }
+        };
+
+        chart.subscribeCrosshairMove(activeHandler);
+      }
+    }, 100);
+
+    return () => {
+      clearInterval(interval);
+      if (activeChart && activeHandler) {
+        try {
+          activeChart.unsubscribeCrosshairMove(activeHandler);
+        } catch (e) {
+          // Ignore potential unmount race condition errors
+        }
+      }
+    };
+  }, [activeSymbol, chartData]);
+
   // ── Workspace Persistence: Auto-Load on Symbol Change ─────────────
   useEffect(() => {
     if (!activeSymbol) return;
@@ -271,8 +322,11 @@ export default function AlphaPredictiveChart({
     }
   }, [activeCursor, activeDrawingTool]);
 
-  const ohlcLabel = latestCandle
-    ? `O ${latestCandle.open.toFixed(2)}  H ${latestCandle.high.toFixed(2)}  L ${latestCandle.low.toFixed(2)}  C ${latestCandle.close.toFixed(2)}`
+  // Show hovered candle data if available, otherwise fall back to latestCandle data.
+  const activeOhlcCandle = hoveredCandle || latestCandle;
+
+  const ohlcLabel = activeOhlcCandle
+    ? `O ${activeOhlcCandle.open.toFixed(2)}  H ${activeOhlcCandle.high.toFixed(2)}  L ${activeOhlcCandle.low.toFixed(2)}  C ${activeOhlcCandle.close.toFixed(2)}`
     : '';
 
   return (
