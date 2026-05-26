@@ -7,9 +7,13 @@
 
 import React from 'react';
 import { useTradeStore } from '../../store/useTradeStore';
-import { Shield, TrendingUp, TrendingDown, Clock, BookOpen, AlertCircle } from 'lucide-react';
+import { Shield, TrendingUp, TrendingDown, Clock, BookOpen, AlertCircle, ChevronDown } from 'lucide-react';
 
-export default function PortfolioDashboard() {
+interface PortfolioDashboardProps {
+  onCollapse?: () => void;
+}
+
+export default function PortfolioDashboard({ onCollapse }: PortfolioDashboardProps) {
   const paperPortfolio = useTradeStore((s) => s.paperPortfolio);
   const fetchPaperPortfolio = useTradeStore((s) => s.fetchPaperPortfolio);
 
@@ -53,6 +57,16 @@ export default function PortfolioDashboard() {
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
             </span>
             <h2 className="text-xs font-black uppercase tracking-wider text-text-primary">Simulated Paper Portfolio</h2>
+            {onCollapse && (
+              <button
+                type="button"
+                onClick={onCollapse}
+                className="ml-1 rounded p-1 text-text-muted hover:bg-white/5 hover:text-text-primary transition-colors"
+                title="Collapse simulated paper portfolio"
+              >
+                <ChevronDown size={14} />
+              </button>
+            )}
           </div>
           <p className="text-[10px] text-text-muted mt-0.5">Real-time local match loop verification</p>
         </div>

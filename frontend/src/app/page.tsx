@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight, ChevronDown } from 'lucide-react';
+import { PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight, ChevronDown, ChevronUp, TrendingUp, TrendingDown } from 'lucide-react';
 import TradingChart from '../components/TradingChart';
 import TerminalLayout from '../components/layout/TerminalLayout';
 import LeftPanel from '../components/panels/LeftPanel';
@@ -32,11 +32,12 @@ const SIDEBAR_CONFIG: Record<TradeProfile, { label: string; badge: string; badge
 };
 
 export default function Home() {
-  const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, setActiveTimeframe, activeRange, setActiveRange, selectedSymbol } = useTradeStore();
+  const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, setActiveTimeframe, activeRange, setActiveRange, selectedSymbol, paperPortfolio } = useTradeStore();
   const [indicatorsEnabled, setIndicatorsEnabled] = useState(true);
   const [aiEnabled, setAiEnabled] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('profile');
+  const [paperPortfolioOpen, setPaperPortfolioOpen] = useState(true);
   const [tfDropdownOpen, setTfDropdownOpen] = useState(false);
   const tfDropdownRef = useRef<HTMLDivElement>(null);
   const consensusData = useQuantStore((s) => s.consensusData);
@@ -165,6 +166,16 @@ export default function Home() {
   };
   const badge = profileBadgeConfig[activeProfile];
   const sidebarCfg = SIDEBAR_CONFIG[activeProfile];
+
+  // ── Paper Portfolio Calculations ────────────────────────────────────
+  const calculateRealizedPnL = (pos: any) => {
+    const isWin = pos.status === 'CLOSED_WIN';
+    const exitPrice = isWin ? pos.take_profit : pos.stop_loss;
+    const diff = exitPrice - pos.entry_price;
+    return pos.side === 'BUY' ? diff * pos.quantity : -diff * pos.quantity;
+  };
+
+  const totalPnL = paperPortfolio?.trade_history.reduce((sum, pos) => sum + calculateRealizedPnL(pos), 0) ?? 0;
 
   // ── Profile-Driven Content Renderer ────────────────────────────────
   const renderProfileContent = () => {
@@ -305,9 +316,58 @@ export default function Home() {
               <ActivePositions />
 
               {/* Simulated Paper Trading Dashboard */}
-              <div className="p-3 border-t border-border-default bg-surface/30">
-                <PortfolioDashboard />
-              </div>
+              {paperPortfolioOpen ? (
+                <div className="p-3 border-t border-border-default bg-surface/30">
+                  <PortfolioDashboard onCollapse={() => setPaperPortfolioOpen(false)} />
+                </div>
+              ) : (
+                <div className="px-4 py-2 border-t border-border-default bg-surface/40 backdrop-blur-sm flex items-center justify-between transition-all duration-300">
+                  <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
+                    {/* Live indicator and Title */}
+                    <div className="flex items-center gap-2">
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                      </span>
+                      <span className="text-[10px] font-black uppercase tracking-wider text-text-primary">
+                        Simulated Portfolio
+                      </span>
+                    </div>
+
+                    {/* Stats summary */}
+                    {paperPortfolio && (
+                      <div className="flex items-center gap-4 text-xs font-mono">
+                        <div className="flex items-center gap-1.5 border-r border-border-default/50 pr-4">
+                          <span className="text-[9px] uppercase font-bold text-text-muted font-sans">Equity:</span>
+                          <span className="font-bold text-white">
+                            ₹{paperPortfolio.balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 border-r border-border-default/50 pr-4">
+                          <span className="text-[9px] uppercase font-bold text-text-muted font-sans">PnL:</span>
+                          <span className={`font-black flex items-center gap-0.5 ${totalPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {totalPnL >= 0 ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
+                            {totalPnL >= 0 ? '+' : ''}₹{totalPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[9px] uppercase font-bold text-text-muted font-sans">Positions:</span>
+                          <span className="font-bold text-white">{paperPortfolio.active_positions.length} Active</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setPaperPortfolioOpen(true)}
+                    className="flex items-center gap-1 rounded bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 text-[9px] font-bold text-emerald-400 uppercase tracking-wider hover:bg-emerald-500/20 transition-all duration-150"
+                  >
+                    <ChevronUp size={10} />
+                    Expand Portfolio
+                  </button>
+                </div>
+              )}
 
               {/* Buy/Sell Panel */}
               <div className="shrink-0 border-t border-border-default bg-surface rounded-b-lg">
