@@ -339,8 +339,12 @@ export function useChartDataSync(
   // ── Resize on expand/collapse ────────────────────────────────────────
   useEffect(() => {
     if (chartRef.current && chartContainerRef.current) {
-      const { width, height } = chartContainerRef.current.getBoundingClientRect();
-      chartRef.current.resize(Math.floor(width), Math.floor(height));
+      try {
+        const { width, height } = chartContainerRef.current.getBoundingClientRect();
+        chartRef.current.resize(Math.floor(width), Math.floor(height));
+      } catch (e) {
+        console.warn('[useChartDataSync] Resize failed:', e);
+      }
     }
   }, [isExpanded, chartRef, chartContainerRef]);
 }

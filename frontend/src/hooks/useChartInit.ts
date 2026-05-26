@@ -114,9 +114,13 @@ export function useChartInit(
 
     // ── Responsive resize ──────────────────────────────────────────────
     const resizeObserver = new ResizeObserver(() => {
-      if (containerRef.current) {
-        const { width, height } = containerRef.current.getBoundingClientRect();
-        chart.resize(Math.floor(width), Math.floor(height));
+      if (containerRef.current && chartRef.current) {
+        try {
+          const { width, height } = containerRef.current.getBoundingClientRect();
+          chartRef.current.resize(Math.floor(width), Math.floor(height));
+        } catch (e) {
+          console.warn('[useChartInit] Resize failed:', e);
+        }
       }
     });
     resizeObserver.observe(containerRef.current);

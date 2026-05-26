@@ -331,40 +331,13 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
           </div>
         </div>
         <div className="flex flex-1 items-center justify-end gap-4 relative">
-          <button
-            onClick={resetSession}
-            className="flex items-center gap-2 rounded-full border border-border-default bg-card px-3 py-1.5 text-xs font-semibold text-text-secondary transition-colors hover:bg-elevated mr-2"
-            title="Reset Session and Clear Orders"
-          >
-            <RefreshCcw size={14} />
-            Reset Session
-          </button>
-
           <button className="relative text-text-secondary hover:text-text-primary transition-colors">
             <Bell size={18} />
             <span className="absolute top-0 right-0 h-2 w-2 rounded-full bg-red-500 border border-surface"></span>
           </button>
 
-          {/* Settings — Security Vault */}
-          <button
-            type="button"
-            id="settings-security-vault-btn"
-            onClick={() => setSettingsOpen(true)}
-            className="flex items-center gap-1.5 rounded-full border border-violet-500/30 bg-violet-500/8 px-3 py-1 text-xs font-medium text-violet-400 transition-all hover:bg-violet-500/15 hover:border-violet-500/50"
-            title="Security Vault — API Key Management"
-          >
-            <Shield size={13} />
-            <span className="hidden sm:inline">Vault</span>
-          </button>
-
-          <button
-            type="button"
-            className="flex items-center gap-2 rounded-full border border-border-default bg-surface px-3 py-1 text-xs font-medium text-text-secondary transition-colors hover:bg-elevated"
-            title="Help"
-          >
-            <HelpCircle size={14} />
-            <span className="hidden sm:inline">Help</span>
-          </button>
+          {/* Quant Radar Dropdown */}
+          <QuantRadar />
         </div>
       </header>
 
@@ -516,58 +489,6 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
         </main>
 
       </div>
-
-      {/* ── Quant Radar Overlay ──────────────────────────────────── */}
-      <QuantRadar />
-
-      {/* ── Security Vault Settings Modal ────────────────────────── */}
-      {settingsOpen && (
-        <div
-          className="fixed inset-0 z-[9999] flex items-start justify-end"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Security Vault Settings"
-        >
-          {/* Backdrop */}
-          <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            onClick={() => setSettingsOpen(false)}
-          />
-
-          {/* Slide-in Panel */}
-          <div
-            className="relative z-10 flex h-full w-[380px] max-w-[95vw] flex-col border-l border-border-default shadow-2xl overflow-hidden"
-            style={{
-              background: 'var(--color-surface)',
-              animation: 'slideInRight 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
-            }}
-          >
-            {/* Panel Header */}
-            <div className="flex shrink-0 items-center gap-2 border-b border-border-default px-4 py-3" style={{ background: 'var(--color-surface)' }}>
-              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-500/15 border border-violet-500/30">
-                <Shield size={14} className="text-violet-400" />
-              </div>
-              <div>
-                <h2 className="text-sm font-bold text-text-primary tracking-tight">Security Vault</h2>
-                <p className="text-[9px] text-text-muted">Encrypted credential management · AES-256</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSettingsOpen(false)}
-                className="ml-auto flex h-7 w-7 items-center justify-center rounded-lg border border-border-default text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
-                aria-label="Close settings"
-              >
-                <XIcon size={14} />
-              </button>
-            </div>
-
-            {/* Panel Body */}
-            <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin">
-              <SecurityVault />
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

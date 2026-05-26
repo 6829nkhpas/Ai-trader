@@ -158,10 +158,14 @@ export default function TradingChart({ showHeader = true }: TradingChartProps) {
     markersRef.current = markers;
 
     const resizeObserver = new ResizeObserver(() => {
-      if (!chartContainerRef.current) return;
+      if (!chartContainerRef.current || !chartRef.current) return;
 
-      const rect = chartContainerRef.current.getBoundingClientRect();
-      chart.resize(Math.floor(rect.width), Math.floor(rect.height));
+      try {
+        const rect = chartContainerRef.current.getBoundingClientRect();
+        chartRef.current.resize(Math.floor(rect.width), Math.floor(rect.height));
+      } catch (e) {
+        console.warn('[TradingChart] Resize failed:', e);
+      }
     });
 
     resizeObserver.observe(chartContainerRef.current);

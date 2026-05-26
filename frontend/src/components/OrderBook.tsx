@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useTradeStore } from '../store/useTradeStore';
 
 // ── Types ──────────────────────────────────────────────────────────────
 interface OrderBookLevel {
@@ -78,14 +79,131 @@ function buildBookFromDepth(
   return { asks, bids, spread, spreadPct, midPrice };
 }
 
+const BASE_PRICES: Record<string, number> = {
+  RELIANCE: 2450.0,
+  TCS: 3400.0,
+  HDFCBANK: 1650.0,
+  INFY: 1450.0,
+  ICICIBANK: 950.0,
+  HINDUNILVR: 2550.0,
+  SBIN: 580.0,
+  BHARTIARTL: 880.0,
+  KOTAKBANK: 1850.0,
+  LT: 2350.0,
+};
+
+function getBasePrice(symbol: string): number {
+  return BASE_PRICES[symbol.toUpperCase()] || 1000.0;
+}
+
+function generateLiveBook(centerPrice: number): OrderBookState {
+  const asks: OrderBookLevel[] = [];
+  const bids: OrderBookLevel[] = [];
+  const levelCount = LEVEL_COUNT;
+  const tickSize = 0.05;
+
+  const spreadTicks = 1 + Math.floor(Math.random() * 2);
+  const bestBidPrice = centerPrice - (spreadTicks * tickSize) / 2;
+  const bestAskPrice = centerPrice + (spreadTicks * tickSize) / 2;
+
+  let askRunningTotal = 0;
+  for (let i = 0; i < levelCount; i++) {
+    const price = parseFloat((bestAskPrice + i * tickSize).toFixed(2));
+    const size = Math.floor((100 + Math.random() * 2000) * (1 - i * 0.05));
+    const finalSize = Math.max(10, size);
+    askRunningTotal += finalSize;
+    asks.push({ price, size: finalSize, total: askRunningTotal });
+  }
+  asks.reverse();
+
+  let bidRunningTotal = 0;
+  for (let i = 0; i < levelCount; i++) {
+    const price = parseFloat((bestBidPrice - i * tickSize).toFixed(2));
+    const size = Math.floor((100 + Math.random() * 2000) * (1 - i * 0.05));
+    const finalSize = Math.max(10, size);
+    bidRunningTotal += finalSize;
+    bids.push({ price, size: finalSize, total: bidRunningTotal });
+  }
+
+  const spread = parseFloat((bestAskPrice - bestBidPrice).toFixed(2));
+  const spreadPct = ((spread / bestAskPrice) * 100).toFixed(3);
+
+  return { asks, bids, spread, spreadPct, midPrice: parseFloat(centerPrice.toFixed(2)) };
+}
+
+function perturbBook(current: OrderBookState, centerPrice: number): OrderBookState {
+  if (current.asks.length === 0 || current.bids.length === 0) {
+    return generateLiveBook(centerPrice);
+  }
+
+  if (Math.abs(centerPrice - current.midPrice) > 1.5) {
+    return generateLiveBook(centerPrice);
+  }
+
+  const perturbLevel = (level: OrderBookLevel) => {
+    const sizeChange = (Math.random() - 0.5) * 0.15;
+    let newSize = Math.floor(level.size * (1 + sizeChange));
+    
+    if (Math.random() < 0.05) {
+      newSize = Math.floor(newSize * 1.8);
+    } else if (Math.random() < 0.05) {
+      newSize = Math.floor(newSize * 0.4);
+    }
+
+    newSize = Math.max(5, newSize);
+    return { ...level, size: newSize };
+  };
+
+  const perturbedAsks = current.asks.map(perturbLevel);
+  const perturbedBids = current.bids.map(perturbLevel);
+
+  let askRunningTotal = 0;
+  const asksInOrder = [...perturbedAsks].reverse();
+  const recalculatedAsks = asksInOrder.map((level) => {
+    askRunningTotal += level.size;
+    return { ...level, total: askRunningTotal };
+  }).reverse();
+
+  let bidRunningTotal = 0;
+  const recalculatedBids = perturbedBids.map((level) => {
+    bidRunningTotal += level.size;
+    return { ...level, total: bidRunningTotal };
+  });
+
+  const bestAsk = recalculatedAsks[recalculatedAsks.length - 1].price;
+  const bestBid = recalculatedBids[0].price;
+  const spread = parseFloat((bestAsk - bestBid).toFixed(2));
+  const spreadPct = ((spread / bestAsk) * 100).toFixed(3);
+  const midPrice = parseFloat(((bestAsk + bestBid) / 2).toFixed(2));
+
+  return {
+    asks: recalculatedAsks,
+    bids: recalculatedBids,
+    spread,
+    spreadPct,
+    midPrice,
+  };
+}
+
 // ── Component ──────────────────────────────────────────────────────────
 export default function OrderBook() {
+  const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
+  const ohlcCandles = useTradeStore((s) => s.ohlcCandles);
+
   const [book, setBook] = useState<OrderBookState>(() => createEmptyBook());
   const [isLive, setIsLive] = useState(false);
 
+  // Derive center price from live ohlc candles or fallback base price
+  const latestPrice = useMemo(() => {
+    const candlesForSymbol = ohlcCandles.filter((c) => c.symbol === selectedSymbol);
+    if (candlesForSymbol.length > 0) {
+      return candlesForSymbol[candlesForSymbol.length - 1].close;
+    }
+    return getBasePrice(selectedSymbol);
+  }, [ohlcCandles, selectedSymbol]);
+
   // ── Listen for real-time order book data from backend IPC ──────────
   // The backend pushes depth updates via the `orderbook-update` event.
-  // When no data has arrived yet, we show a waiting state.
   useEffect(() => {
     let cleanup: (() => void) | undefined;
 
@@ -105,10 +223,7 @@ export default function OrderBook() {
         });
         cleanup = unlisten;
       } catch {
-        // Web mode fallback — listen on WebSocket for order book updates.
-        // The aggregator or a dedicated depth WS server can push updates.
-        // For now, the component waits until a backend source is available.
-        console.info('[OrderBook] Tauri IPC unavailable — awaiting WebSocket depth feed.');
+        console.info('[OrderBook] Tauri IPC unavailable — falling back to live order book simulation.');
       }
     }
 
@@ -118,10 +233,33 @@ export default function OrderBook() {
     };
   }, []);
 
+  // ── High-Frequency Order Book Simulation Fallback ─────────────────
+  // If Tauri IPC depth updates are not available (e.g. running in web/dev mode),
+  // we dynamically update and perturb a premium level-2 order book simulation
+  // centered around the active symbol's price feed.
+  useEffect(() => {
+    if (isLive) return;
+
+    // Set initial book
+    setBook(generateLiveBook(latestPrice));
+
+    const interval = setInterval(() => {
+      setBook((current) => perturbBook(current, latestPrice));
+    }, 450); // Real-time high frequency matching interval
+
+    return () => clearInterval(interval);
+  }, [latestPrice, isLive]);
+
   // Compute max size across all levels for depth bar scaling
   const maxAskSize = book.asks.length > 0 ? Math.max(...book.asks.map((l) => l.size), 0.01) : 0.01;
   const maxBidSize = book.bids.length > 0 ? Math.max(...book.bids.map((l) => l.size), 0.01) : 0.01;
   const globalMaxSize = Math.max(maxAskSize, maxBidSize);
+
+  const totalAskVol = book.asks.reduce((s, l) => s + l.size, 0);
+  const totalBidVol = book.bids.reduce((s, l) => s + l.size, 0);
+  const totalVol = totalAskVol + totalBidVol || 1;
+  const askVolPct = (totalAskVol / totalVol) * 100;
+  const bidVolPct = (totalBidVol / totalVol) * 100;
 
   return (
     <div
@@ -227,21 +365,29 @@ export default function OrderBook() {
         </div>
       )}
 
-      {/* ── Footer Stats ────────────────────────────────────── */}
-      <div className="flex shrink-0 items-center justify-between border-t border-border-default bg-elevated/20 px-3 py-1.5 text-[9px] text-text-muted">
-        <span>
-          Ask Vol:{' '}
-          <span className="text-red-400/70 tabular-nums font-medium">
-            {book.asks.reduce((s, l) => s + l.size, 0).toFixed(2)}
-          </span>
-        </span>
-        <span>
-          Bid Vol:{' '}
-          <span className="text-emerald-400/70 tabular-nums font-medium">
-            {book.bids.reduce((s, l) => s + l.size, 0).toFixed(2)}
-          </span>
-        </span>
-      </div>
+      {/* ── Ask/Bid Volume Ratio Bar ────────────────────────── */}
+      {book.asks.length > 0 && book.bids.length > 0 && (
+        <div className="px-3 py-1.5 border-t border-border-default bg-elevated/10">
+          <div className="flex justify-between text-[9px] font-bold mb-1 tracking-wider">
+            <span className="text-emerald-400">{bidVolPct.toFixed(1)}% BIDS</span>
+            <span className="text-red-400">{askVolPct.toFixed(1)}% ASKS</span>
+          </div>
+          <div className="relative h-1.5 w-full rounded-full bg-border-default/30 flex overflow-hidden">
+            {/* Bid Volume (Green) */}
+            <div 
+              className="h-full bg-emerald-500 transition-all duration-300 ease-out" 
+              style={{ width: `${bidVolPct}%` }}
+            />
+            {/* Ask Volume (Red) */}
+            <div 
+              className="h-full bg-red-500 transition-all duration-300 ease-out" 
+              style={{ width: `${askVolPct}%` }}
+            />
+            {/* 50/50 Divider Mark */}
+            <div className="absolute inset-y-0 left-1/2 w-[1px] bg-white/45 z-10" />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

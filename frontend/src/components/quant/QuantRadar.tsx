@@ -84,15 +84,27 @@ const MAX_ALERTS = 50;
 
 export default function QuantRadar() {
   const [alerts, setAlerts] = useState<RadarAlert[]>([]);
+  const [isOpen, setIsOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
-  const [isMinimized, setIsMinimized] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
   // Filter: true = only show current symbol's alerts; false = show all
   const [filterToSymbol, setFilterToSymbol] = useState(true);
   const alertListRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   const activeSymbol = useTradeStore((s) => s.selectedSymbol);
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
 
   // ── Tauri Event Subscription ─────────────────────────────────────
   useEffect(() => {
@@ -192,213 +204,218 @@ export default function QuantRadar() {
     setUnreadCount(0);
   }, []);
 
-  // Reset unread when expanded
+  // Reset unread when opened
   useEffect(() => {
-    if (isExpanded && !isMinimized) {
+    if (isOpen) {
       setUnreadCount(0);
     }
-  }, [isExpanded, isMinimized]);
+  }, [isOpen]);
 
-  // ── Minimized State (just the floating icon) ─────────────────────
-  if (isMinimized) {
-    return (
+  return (
+    <div className="relative" ref={dropdownRef}>
+      {/* ── Trigger Button ── */}
       <button
         type="button"
-        onClick={() => setIsMinimized(false)}
-        className="fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-full border border-border-default bg-surface px-4 py-2.5 text-xs font-semibold text-text-primary shadow-lg transition-all duration-300 hover:bg-elevated hover:scale-105 active:scale-95 group"
-        title="Open Quant Radar"
+        id="quant-radar-navbar-btn"
+        onClick={() => setIsOpen((prev) => !prev)}
+        className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold shadow-sm transition-all duration-200 select-none ${
+          isOpen
+            ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+            : 'bg-card border-border-default text-text-secondary hover:bg-elevated hover:text-text-primary'
+        }`}
+        title="Open Quant Radar Alerts"
       >
-        <div className="relative">
-          <Radar size={16} className="text-emerald-400 group-hover:text-emerald-300 transition-colors" />
-          {unreadCount > 0 && (
-            <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white animate-pulse">
+        <div className="relative flex items-center">
+          <Radar size={13} className={`${alerts.length > 0 ? 'text-emerald-400 animate-pulse' : 'text-text-secondary'}`} />
+          {!isOpen && unreadCount > 0 && (
+            <span className="absolute -top-1.5 -right-1.5 flex h-3 w-3 items-center justify-center rounded-full bg-red-500 text-[8px] font-bold text-white leading-none">
               {unreadCount > 9 ? '9+' : unreadCount}
             </span>
           )}
         </div>
-        <span className="hidden sm:inline">Radar</span>
+        <span>Radar</span>
         {alerts.length > 0 && (
-          <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400">
+          <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.2 text-[9px] font-bold text-emerald-400">
             {alerts.length}
           </span>
         )}
       </button>
-    );
-  }
 
-  // ── Full Panel ───────────────────────────────────────────────────
-  return (
-    <div className="fixed bottom-4 right-4 z-50 flex flex-col w-[360px] max-h-[480px] rounded-xl border border-border-default bg-surface/95 backdrop-blur-xl shadow-2xl overflow-hidden transition-all duration-300">
-      {/* ── Header ─────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border-default bg-surface/80">
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <Radar size={15} className="text-emerald-400" />
-            {alerts.length > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
-            )}
+      {/* ── Dropdown Panel ── */}
+      {isOpen && (
+        <div className="absolute right-0 top-full mt-2 z-[999] flex flex-col w-[360px] max-h-[480px] rounded-xl border border-border-default bg-surface/95 backdrop-blur-xl shadow-2xl overflow-hidden transition-all duration-300">
+          {/* ── Header ─────────────────────────────────────────────── */}
+          <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border-default bg-surface/80">
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Radar size={15} className="text-emerald-400" />
+                {alerts.length > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
+                )}
+              </div>
+              <span className="text-xs font-bold tracking-wide text-text-primary uppercase">Quant Radar</span>
+              {/* Symbol filter badge */}
+              <button
+                type="button"
+                onClick={() => setFilterToSymbol((v) => !v)}
+                className={`rounded px-1.5 py-0.5 text-[9px] font-bold border transition-colors ${
+                  filterToSymbol
+                    ? 'bg-blue-500/15 text-blue-400 border-blue-500/30 hover:bg-blue-500/25'
+                    : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20'
+                }`}
+                title={filterToSymbol ? 'Showing current symbol only — click to show all' : 'Showing all symbols — click to filter to current symbol'}
+              >
+                {filterToSymbol ? activeSymbol || 'SYMBOL' : 'ALL'}
+              </button>
+              {displayedAlerts.length > 0 && (
+                <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400 tabular-nums">
+                  {displayedAlerts.length} alert{displayedAlerts.length !== 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1">
+              {/* Sound toggle */}
+              <button
+                type="button"
+                onClick={() => setSoundEnabled(!soundEnabled)}
+                className={`rounded p-1 transition-colors ${soundEnabled ? 'text-emerald-400 hover:bg-emerald-500/10' : 'text-text-muted hover:bg-elevated'}`}
+                title={soundEnabled ? 'Mute alerts' : 'Unmute alerts'}
+              >
+                {soundEnabled ? <Volume2 size={12} /> : <VolumeX size={12} />}
+              </button>
+
+              {/* Clear all */}
+              {alerts.length > 0 && (
+                <button
+                  type="button"
+                  onClick={clearAll}
+                  className="rounded p-1 text-text-muted transition-colors hover:bg-elevated hover:text-red-400"
+                  title="Clear all alerts"
+                >
+                  <AlertTriangle size={12} />
+                </button>
+              )}
+
+              {/* Collapse/Expand */}
+              <button
+                type="button"
+                onClick={() => setIsExpanded(!isExpanded)}
+                className="rounded p-1 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
+                title={isExpanded ? 'Collapse list' : 'Expand list'}
+              >
+                {isExpanded ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+              </button>
+
+              {/* Close dropdown */}
+              <button
+                type="button"
+                onClick={() => setIsOpen(false)}
+                className="rounded p-1 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
+                title="Close"
+              >
+                <X size={12} />
+              </button>
+            </div>
           </div>
-          <span className="text-xs font-bold tracking-wide text-text-primary uppercase">Quant Radar</span>
-          {/* Symbol filter badge */}
-          <button
-            type="button"
-            onClick={() => setFilterToSymbol((v) => !v)}
-            className={`rounded px-1.5 py-0.5 text-[9px] font-bold border transition-colors ${
-              filterToSymbol
-                ? 'bg-blue-500/15 text-blue-400 border-blue-500/30 hover:bg-blue-500/25'
-                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20'
-            }`}
-            title={filterToSymbol ? 'Showing current symbol only — click to show all' : 'Showing all symbols — click to filter to current symbol'}
-          >
-            {filterToSymbol ? activeSymbol || 'SYMBOL' : 'ALL'}
-          </button>
-          {displayedAlerts.length > 0 && (
-            <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400 tabular-nums">
-              {displayedAlerts.length} alert{displayedAlerts.length !== 1 ? 's' : ''}
-            </span>
-          )}
-        </div>
 
-        <div className="flex items-center gap-1">
-          {/* Sound toggle */}
-          <button
-            type="button"
-            onClick={() => setSoundEnabled(!soundEnabled)}
-            className={`rounded p-1 transition-colors ${soundEnabled ? 'text-emerald-400 hover:bg-emerald-500/10' : 'text-text-muted hover:bg-elevated'}`}
-            title={soundEnabled ? 'Mute alerts' : 'Unmute alerts'}
-          >
-            {soundEnabled ? <Volume2 size={12} /> : <VolumeX size={12} />}
-          </button>
-
-          {/* Clear all */}
-          {alerts.length > 0 && (
-            <button
-              type="button"
-              onClick={clearAll}
-              className="rounded p-1 text-text-muted transition-colors hover:bg-elevated hover:text-red-400"
-              title="Clear all alerts"
+          {/* ── Alert List ─────────────────────────────────────────── */}
+          {isExpanded && (
+            <div
+              ref={alertListRef}
+              className="flex-1 overflow-y-auto scrollbar-thin text-xs"
+              style={{ maxHeight: '400px' }}
             >
-              <AlertTriangle size={12} />
-            </button>
-          )}
+              {displayedAlerts.length === 0 ? (
+                <div className="flex flex-col items-center justify-center gap-2 py-8 text-text-muted bg-surface/50">
+                  <Radar size={28} className="opacity-30 animate-pulse" />
+                  <p className="text-xs">
+                    {filterToSymbol
+                      ? `No alerts yet for ${activeSymbol || 'selected symbol'}`
+                      : 'Scanning all F&O instruments…'}
+                  </p>
+                  <p className="text-[10px] opacity-50">Alerts will appear when setups are detected</p>
+                </div>
+              ) : (
+                <div className="flex flex-col bg-surface/30">
+                  {displayedAlerts.map((alert, idx) => {
+                    const config = severityConfig(alert.severity);
+                    const isBullish = alert.trend_score > 0;
 
-          {/* Collapse/Expand */}
-          <button
-            type="button"
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="rounded p-1 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
-            title={isExpanded ? 'Collapse' : 'Expand'}
-          >
-            {isExpanded ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
-          </button>
+                    return (
+                      <div
+                        key={`${alert.symbol}-${alert.timestamp_ms}-${idx}`}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => handleAlertClick(alert)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleAlertClick(alert); }}
+                        className={`group flex flex-col gap-1 px-3 py-2.5 text-left transition-all duration-200 border-b border-border-default/50 hover:bg-elevated/50 cursor-pointer ${config.bg} ${config.glow}`}
+                      >
+                        {/* Row 1: Symbol + severity + time */}
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm">{config.icon}</span>
+                            <span className="text-xs font-bold text-text-primary group-hover:text-emerald-400 transition-colors">
+                              {alert.symbol}
+                            </span>
+                            <span className={`rounded-md border px-1.5 py-0.5 text-[9px] font-bold uppercase ${config.badge}`}>
+                              {alert.severity}
+                            </span>
+                            {config.pulse && (
+                              <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[9px] text-text-muted tabular-nums">{timeAgo(alert.timestamp_ms)}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => dismissAlert(idx, e)}
+                              className="opacity-0 group-hover:opacity-100 rounded p-0.5 text-text-muted hover:text-red-400 transition-all"
+                              title="Dismiss"
+                            >
+                              <X size={10} />
+                            </button>
+                          </div>
+                        </div>
 
-          {/* Minimize */}
-          <button
-            type="button"
-            onClick={() => setIsMinimized(true)}
-            className="rounded p-1 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
-            title="Minimize"
-          >
-            <X size={12} />
-          </button>
-        </div>
-      </div>
+                        {/* Row 2: Trigger reason */}
+                        <p className="text-[11px] font-medium text-text-secondary leading-snug">
+                          {alert.trigger_reason}
+                        </p>
 
-      {/* ── Alert List ─────────────────────────────────────────── */}
-      {isExpanded && (
-        <div
-          ref={alertListRef}
-          className="flex-1 overflow-y-auto scrollbar-thin"
-          style={{ maxHeight: '400px' }}
-        >
-          {displayedAlerts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 py-8 text-text-muted">
-              <Radar size={28} className="opacity-30" />
-              <p className="text-xs">
-                {filterToSymbol
-                  ? `No alerts yet for ${activeSymbol || 'selected symbol'}`
-                  : 'Scanning all F&O instruments…'}
-              </p>
-              <p className="text-[10px] opacity-50">Alerts will appear when setups are detected</p>
-            </div>
-          ) : (
-            <div className="flex flex-col">
-              {displayedAlerts.map((alert, idx) => {
-                const config = severityConfig(alert.severity);
-                const isBullish = alert.trend_score > 0;
-
-                return (
-                  <div
-                    key={`${alert.symbol}-${alert.timestamp_ms}-${idx}`}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => handleAlertClick(alert)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleAlertClick(alert); }}
-                    className={`group flex flex-col gap-1 px-3 py-2.5 text-left transition-all duration-200 border-b border-border-default/50 hover:bg-elevated/50 cursor-pointer ${config.bg} ${config.glow}`}
-                  >
-                    {/* Row 1: Symbol + severity + time */}
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm">{config.icon}</span>
-                        <span className="text-xs font-bold text-text-primary group-hover:text-emerald-400 transition-colors">
-                          {alert.symbol}
-                        </span>
-                        <span className={`rounded-md border px-1.5 py-0.5 text-[9px] font-bold uppercase ${config.badge}`}>
-                          {alert.severity}
-                        </span>
-                        {config.pulse && (
-                          <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
-                        )}
+                        {/* Row 3: Micro stats */}
+                        <div className="flex items-center gap-3 text-[9px] text-text-muted">
+                          <span className={`flex items-center gap-0.5 font-semibold ${isBullish ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {isBullish ? <TrendingUp size={9} /> : <TrendingDown size={9} />}
+                            {alert.trend_score > 0 ? '+' : ''}{alert.trend_score}
+                          </span>
+                          <span>{alert.momentum}</span>
+                          <span>{alert.volatility}</span>
+                          {alert.active_patterns.length > 0 && (
+                            <span className="flex items-center gap-0.5">
+                              <Zap size={8} />
+                              {alert.active_patterns.length} pattern{alert.active_patterns.length !== 1 ? 's' : ''}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[9px] text-text-muted tabular-nums">{timeAgo(alert.timestamp_ms)}</span>
-                        <button
-                          type="button"
-                          onClick={(e) => dismissAlert(idx, e)}
-                          className="opacity-0 group-hover:opacity-100 rounded p-0.5 text-text-muted hover:text-red-400 transition-all"
-                          title="Dismiss"
-                        >
-                          <X size={10} />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Row 2: Trigger reason */}
-                    <p className="text-[11px] font-medium text-text-secondary leading-snug">
-                      {alert.trigger_reason}
-                    </p>
-
-                    {/* Row 3: Micro stats */}
-                    <div className="flex items-center gap-3 text-[9px] text-text-muted">
-                      <span className={`flex items-center gap-0.5 font-semibold ${isBullish ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {isBullish ? <TrendingUp size={9} /> : <TrendingDown size={9} />}
-                        {alert.trend_score > 0 ? '+' : ''}{alert.trend_score}
-                      </span>
-                      <span>{alert.momentum}</span>
-                      <span>{alert.volatility}</span>
-                      {alert.active_patterns.length > 0 && (
-                        <span className="flex items-center gap-0.5">
-                          <Zap size={8} />
-                          {alert.active_patterns.length} pattern{alert.active_patterns.length !== 1 ? 's' : ''}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
+
+          {/* ── Footer Status Bar ──────────────────────────────────── */}
+          <div className="flex items-center justify-between px-3 py-1.5 border-t border-border-default bg-surface/60 text-[9px] text-text-muted">
+            <span className="flex items-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              Live scanning
+            </span>
+            <span className="tabular-nums">{DEFAULT_SYMBOL_COUNT} instruments</span>
+          </div>
         </div>
       )}
-
-      {/* ── Footer Status Bar ──────────────────────────────────── */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-t border-border-default bg-surface/60 text-[9px] text-text-muted">
-        <span className="flex items-center gap-1">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          Live scanning
-        </span>
-        <span className="tabular-nums">{DEFAULT_SYMBOL_COUNT} instruments</span>
-      </div>
     </div>
   );
 }
