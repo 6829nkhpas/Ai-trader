@@ -87,7 +87,17 @@ interface QuantStore {
   setConsensusData: (data: ConsensusReport) => void;
   clearConsensusData: () => void;
   loadConsensusForSymbol: (symbol: string) => void;
-  fetchDeepAnalysis: (symbol: string) => Promise<void>;
+  fetchDeepAnalysis: (
+    symbol: string,
+    mode?: 'FIND' | 'VERIFY',
+    manualTrade?: {
+      side: string;
+      entry: number;
+      stopLoss: number;
+      takeProfit: number;
+      userAnalysis: string;
+    }
+  ) => Promise<void>;
   loadSentimentForSymbol: (symbol: string) => Promise<void>;
   refreshSentimentForSymbol: (symbol: string) => Promise<void>;
   clearAiPlan: () => void;
@@ -100,8 +110,8 @@ interface QuantStore {
 // only the first call makes a network request. Others wait or skip.
 const sentimentInFlight = new Set<string>();
 
-const SENTIMENT_TTL_MS   = 10 * 60 * 1000;  // 10 minutes
-const SENTIMENT_429_COOL = 5  * 60 * 1000;  // 5 minutes cooldown after 429
+const SENTIMENT_TTL_MS = 10 * 60 * 1000;  // 10 minutes
+const SENTIMENT_429_COOL = 5 * 60 * 1000;  // 5 minutes cooldown after 429
 
 // ── Tauri invoke helper ─────────────────────────────────────────────────
 
@@ -303,9 +313,20 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     }
   },
 
-  fetchDeepAnalysis: async (symbol: string) => {
+  fetchDeepAnalysis: async (
+    symbol: string,
+    mode?: 'FIND' | 'VERIFY',
+    manualTrade?: {
+      side: string;
+      entry: number;
+      stopLoss: number;
+      takeProfit: number;
+      userAnalysis: string;
+    }
+  ) => {
     const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-    console.log(`[QuantStore] ▶ Deep analysis START symbol=${symbol} ts=${new Date().toISOString()}`);
+    const activeMode = mode || 'FIND';
+    console.log(`[QuantStore] ▶ Deep analysis START symbol=${symbol} mode=${activeMode} ts=${new Date().toISOString()}`);
     set({ isAnalyzing: true, analysisError: null, aiPlan: null });
 
     // Force-refresh sentiment with latest news before LLM analysis
@@ -321,12 +342,24 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     console.log(`[QuantStore] → Timeframe for AI context: ${activeTimeframe}`);
 
     try {
-      console.log(`[QuantStore] → invoking 'run_deep_quant_analysis' (Tauri IPC)…`);
+      console.log(`[QuantStore] → invoking 'run_ai_analysis' (Tauri IPC)…`);
       const tInvoke = (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
+      const manualTradePayload = manualTrade ? {
+        side: manualTrade.side,
+        entry: manualTrade.entry,
+        stop_loss: manualTrade.stopLoss,
+        take_profit: manualTrade.takeProfit,
+        user_analysis: manualTrade.userAnalysis,
+      } : null;
+
       await tauriInvoke<void>(
-        'run_deep_quant_analysis',
-        { symbol, timeframe: activeTimeframe }
+        'run_ai_analysis',
+        {
+          symbol,
+          mode: activeMode,
+          manualTrade: manualTradePayload,
+        }
       );
 
       const tDone = (typeof performance !== 'undefined' ? performance.now() : Date.now());

@@ -437,34 +437,28 @@ pub(crate) async fn fetch_macro_context(pool: &sqlx::PgPool) -> String {
 
 // ── Tauri IPC Command ───────────────────────────────────────────────────────
 
-/// Run the full V3 Deep Quant Analysis pipeline for a given symbol.
-///
-/// # Frontend Usage
-/// ```typescript
-/// const plan = await invoke<AiExecutionPlan>("run_deep_quant_analysis", {
-///   symbol: "RELIANCE",
-///   timeframe: "10m"
-/// });
-/// ```
-///
-/// # Pipeline
-/// 1. Load 200 most recent candles from QuestDB
-/// 2. Compute IndicatorState + ConsensusReport
-/// 3. Extract RAG context: RSI, MACD line/signal, EMA-9/21, latest close
-/// 4. Fetch recent news (with fallback)
-/// 5. Call LLM (Hugging Face router → DeepSeek) with data-aware Master Prompt
-/// 6. Return structured AiExecutionPlan
+#[derive(serde::Deserialize, Clone)]
+pub struct ManualTradeInfo {
+    pub side: String,
+    pub entry: f64,
+    pub stop_loss: f64,
+    pub take_profit: f64,
+    pub user_analysis: String,
+}
+
+/// Run the V3 Deep Quant Analysis or Trade Verification pipeline.
 #[tauri::command]
-pub async fn run_deep_quant_analysis(
+pub async fn run_ai_analysis(
     app: AppHandle,
     symbol: String,
-    timeframe: String,
+    mode: String,
+    manual_trade: Option<ManualTradeInfo>,
 ) -> Result<(), String> {
-    info!("[deep_quant] Deploying stateful Glass-Box Agent for {} ({})", symbol, timeframe);
+    info!("[deep_quant] Deploying stateful Glass-Box Agent for {} in mode={}", symbol, mode);
     
     let app_clone = app.clone();
     tokio::spawn(async move {
-        if let Err(e) = run_glass_box_loop(app_clone, symbol, timeframe).await {
+        if let Err(e) = run_glass_box_loop(app_clone, symbol, "10m".to_string(), mode, manual_trade).await {
             error!("[deep_quant] Glass-Box loop failed: {}", e);
         }
     });
@@ -472,19 +466,47 @@ pub async fn run_deep_quant_analysis(
     Ok(())
 }
 
+/// Legacy command supporting the old signature — forwards to run_ai_analysis in FIND mode.
+#[tauri::command]
+pub async fn run_deep_quant_analysis(
+    app: AppHandle,
+    symbol: String,
+    timeframe: String,
+) -> Result<(), String> {
+    info!("[deep_quant] Redirecting legacy run_deep_quant_analysis for {} ({}) to run_ai_analysis FIND", symbol, timeframe);
+    run_ai_analysis(app, symbol, "FIND".to_string(), None).await
+}
+
 async fn run_glass_box_loop(
     app: AppHandle,
     symbol: String,
     timeframe: String,
+    mode: String,
+    manual_trade: Option<ManualTradeInfo>,
 ) -> Result<(), String> {
     use std::time::Instant;
     let t_total = Instant::now();
 
     // ── Emit the starting message ──
-    let _ = app.emit("agent_message", llm::AgentMessagePayload {
-        role: "user".to_string(),
-        content: "Run Deep Quant Analysis".to_string(),
-    });
+    if mode == "VERIFY" {
+        let (side, entry, sl, tp, notes) = match &manual_trade {
+            Some(t) => (t.side.as_str(), t.entry, t.stop_loss, t.take_profit, t.user_analysis.as_str()),
+            None => ("BUY", 0.0, 0.0, 0.0, ""),
+        };
+        let content = format!(
+            "Please verify my {} trade on {}. Entry: {}, SL: {}, TP: {}. Notes: {}",
+            side, symbol, entry, sl, tp, notes
+        );
+        let _ = app.emit("agent_message", llm::AgentMessagePayload {
+            role: "user".to_string(),
+            content,
+        });
+    } else {
+        let _ = app.emit("agent_message", llm::AgentMessagePayload {
+            role: "user".to_string(),
+            content: "Run Deep Quant Analysis".to_string(),
+        });
+    }
 
     // ── Step 1: Fetch candles from QuestDB (multi-source waterfall) ──
     let pool = app.try_state::<PgPool>().ok_or_else(|| {
@@ -661,11 +683,65 @@ async fn run_glass_box_loop(
     let macro_context = fetch_macro_context(pool.inner()).await;
 
     // ── Setup Glass-Box System & User Prompts ──
-    let system_prompt = llm::build_system_prompt(
-        &symbol, &timeframe, &macro_context, latest_close, vwap_val, ofi_val, vol_multiplier,
-        atr_val, bb_upper, bb_mid, bb_lower, rsi_val, macd_val, macd_signal,
-        ema9_val, ema21_val, acceleration_coeff, &detected_patterns,
-    );
+    let system_prompt = if mode == "VERIFY" {
+        let trade_info = match &manual_trade {
+            Some(t) => format!(
+                "PROPOSED TRADE DETAILS:\n\
+                 - Direction: {}\n\
+                 - Planned Entry: {:.2}\n\
+                 - Planned Stop Loss (SL): {:.2}\n\
+                 - Planned Take Profit (TP): {:.2}\n\
+                 - User Analysis/Notes: {}\n",
+                t.side, t.entry, t.stop_loss, t.take_profit, t.user_analysis
+            ),
+            None => "No manual trade details provided.".to_string(),
+        };
+
+        format!(
+            "You are an elite, highly critical quantitative risk manager. \n\
+            The user is proposing a trade. Your job is to verify it against the current technical data. Look for RED FLAGS. \n\
+            Is they trading against the MACD trend? Is their Stop Loss too tight for current volatility? Is the Risk:Reward ratio terrible? \n\
+            \n\
+            MARKET STATE & MACRO CONTEXT:\n\
+            - Symbol: {} | Timeframe: {}\n\
+            - Macro Context: {} (Evaluate broader market direction)\n\
+            - Last Close: {:.2} | VWAP: {:.2}\n\
+            \n\
+            MICROSTRUCTURE & VOLUME:\n\
+            - Order Flow Imbalance (OFI): {:.2} (-1.0 heavy Ask pressure, +1.0 heavy Bid pressure)\n\
+            - Volume Spike: {:.2}x above 20-period average\n\
+            \n\
+            VOLATILITY & ANOMALIES:\n\
+            - ATR (14): {:.2} (Volatility baseline)\n\
+            - Bollinger Bands: [U: {:.2}, M: {:.2}, L: {:.2}]\n\
+            \n\
+            MOMENTUM, TREND & PATTERNS:\n\
+            - RSI (14): {:.2} | MACD Line: {:.2} / Signal: {:.2}\n\
+            - EMA-9: {:.2} | EMA-21: {:.2}\n\
+            - VWEPR Acceleration: {:.4}\n\
+            - Active Candlestick Patterns: {}\n\
+            \n\
+            {}\n\
+            DIRECTIVES:\n\
+            1. Output your analysis directly. Point out any red flags clearly.\n\
+            2. You may still use the wait_for_next_candle tool if you need to see the next close before giving your final verdict on their trade.\n\
+            3. Return a JSON object EXACTLY matching this structure when finalizing your critique:\n\
+            {{\n\
+                \"conviction_score\": <int 0-100 representing your risk confidence or trade score after critique>,\n\
+                \"setup_validation\": \"<2-sentence aggressive critique of entry, stop loss, take profit, and any RED FLAGS found>\",\n\
+                \"execution_plan\": \"<Your final recommendation: entry adjustment, recommended SL/TP placement, or position sizing warning>\"\n\
+            }}",
+            symbol, timeframe, macro_context, latest_close, vwap_val, ofi_val, vol_multiplier, atr_val,
+            bb_upper, bb_mid, bb_lower, rsi_val, macd_val, macd_signal, ema9_val, ema21_val,
+            acceleration_coeff, detected_patterns, trade_info
+        )
+    } else {
+        llm::build_system_prompt(
+            &symbol, &timeframe, &macro_context, latest_close, vwap_val, ofi_val, vol_multiplier,
+            atr_val, bb_upper, bb_mid, bb_lower, rsi_val, macd_val, macd_signal,
+            ema9_val, ema21_val, acceleration_coeff, &detected_patterns,
+        )
+    };
 
     let user_prompt = format!(
         "Asset: {symbol}\n\
