@@ -3,58 +3,12 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { useTradeStore } from '../../store/useTradeStore';
 import type { OhlcCandle } from '../../store/useTradeStore';
-import { Briefcase, ArrowUpRight, ArrowDownRight } from 'lucide-react';
-
-function generateMockReasoning(
-  symbol: string,
-  action: string,
-  conviction: number,
-  price: number | null,
-  change: number | null,
-  volume: number | null
-): string {
-  const sym = symbol.toUpperCase();
-  const isBuy = action.toUpperCase() === 'BUY';
-  const isSell = action.toUpperCase() === 'SELL';
-  
-  const priceStr = price ? '₹' + price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
-  const changeStr = change !== null ? `${change >= 0 ? '+' : ''}${change.toFixed(2)}%` : '';
-  const volStr = volume ? volume.toLocaleString('en-IN') : '';
-
-  const buyReasons = [
-    `Strong institutional accumulation detected near the weekly support level for ${sym}. Order flow imbalance indicates dynamic absorption ${priceStr ? `at ${priceStr}` : ''} ${changeStr ? `(${changeStr})` : ''} with low downside risk.`,
-    `${sym} exhibits positive VWEPR price regression acceleration ${priceStr ? `near ${priceStr}` : ''}. Confluence of RSI oversold recovery and volume expansion ${volStr ? `(${volStr} shares)` : ''} indicates markup initiation.`,
-    `Dark pool scanner detected massive whale blocks crossing at the VWAP support floor for ${sym}. Price hovering ${priceStr ? `at ${priceStr}` : ''} ${changeStr ? `(${changeStr})` : ''}. Strong bullish continuation expected.`,
-    `${sym} completed local consolidation, breaking out above the 21-day EMA ${priceStr ? `at ${priceStr}` : ''}. Technical divergence points heavily skewed to the upside.`
-  ];
-
-  const sellReasons = [
-    `${sym} registers prominent overbought RSI signatures on the 4H timeframe, combined with negative VWEPR acceleration curvature signaling structural exhaustion ${priceStr ? `at ${priceStr}` : ''} ${changeStr ? `(${changeStr})` : ''}.`,
-    `Institutional distribution patterns detected near major local resistance boundaries for ${sym} ${priceStr ? `at ${priceStr}` : ''}. Sell pressure accelerating as liquid supply increases.`,
-    `Dynamic volume-weighted average price (VWAP) breakdown registered in ${sym} ${priceStr ? `near ${priceStr}` : ''}. Momentum indicators point to rapid liquidation towards lower liquidity pools.`,
-    `A series of bearish block sweeps suggests institutional distribution for ${sym}. Rebound attempts absorbed ${priceStr ? `at ${priceStr}` : ''} ${changeStr ? `(${changeStr})` : ''}, validating a high-conviction short entry.`
-  ];
-
-  const holdReasons = [
-    `${sym} is currently consolidating within a tight, low-volatility statistical range ${priceStr ? `around ${priceStr}` : ''} ${changeStr ? `(${changeStr})` : ''}. Recommending holding existing exposure until volume breakout triggers.`,
-    `Market tape shows balanced buy/sell depth for ${sym} ${priceStr ? `at ${priceStr}` : ''}. Multi-timeframe EMA indicators are clustered and neutral. Standing by for directional trend confirmation.`
-  ];
-
-  // Pick deterministically based on symbol and conviction
-  let hash = 0;
-  for (let i = 0; i < sym.length; i++) {
-    hash = (hash * 31 + sym.charCodeAt(i)) & 0xffffffff;
-  }
-  const idx = Math.abs(hash + conviction) % 4;
-
-  if (isBuy) return buyReasons[idx];
-  if (isSell) return sellReasons[idx];
-  return holdReasons[idx % 2];
-}
+import { ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import ReasoningBlock from './order-execution/ReasoningBlock';
+import MetricsHUD from './order-execution/MetricsHUD';
 
 // ── ATR Calculation (Average True Range — 14 period) ─────────────────────────
 // Used to compute dynamic Target and Stop levels based on recent volatility.
-
 function computeATR(candles: OhlcCandle[], period: number = 14): number | null {
   if (candles.length < 2) return null;
 
@@ -79,7 +33,6 @@ function computeATR(candles: OhlcCandle[], period: number = 14): number | null {
 }
 
 // ── Real-time quote type (same as page.tsx) ──────────────────────────────────
-
 interface SymbolQuote {
   symbol: string;
   last_price: number;
@@ -93,16 +46,8 @@ interface SymbolQuote {
 }
 
 // ── Format helpers ───────────────────────────────────────────────────────────
-
 function formatINR(value: number): string {
   return '₹' + value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function formatVolume(vol: number): string {
-  if (vol >= 10_000_000) return (vol / 10_000_000).toFixed(2) + ' Cr';
-  if (vol >= 100_000) return (vol / 100_000).toFixed(2) + ' L';
-  if (vol >= 1_000) return (vol / 1_000).toFixed(1) + ' K';
-  return vol.toString();
 }
 
 function symToBasePrice(symbol: string): number {
@@ -281,35 +226,11 @@ export default function OrderExecutionPanel() {
     return { entryPrice: entry, targetPrice: target, stopPrice: stop, atrValue: atr };
   }, [liveQuote, matchedDecision, ohlcCandles, symbol]);
 
-  // ── Compute real-time quantitative reasoning fallback ──────────────
-  const reasoning = useMemo(() => {
-    if (!matchedDecision) return '';
-    const raw = matchedDecision.reasoning || '';
-    const priceStr = liveQuote ? ` [LTP: ₹${liveQuote.last_price.toFixed(2)} (${liveQuote.change >= 0 ? '+' : ''}${liveQuote.change.toFixed(2)}%)]` : '';
-    if (raw && raw !== 'Live backend decision' && !raw.includes('without a reasoning string') && raw.length > 5) {
-      return raw + priceStr;
-    }
-    return generateMockReasoning(
-      symbol,
-      matchedDecision.action_type,
-      matchedDecision.final_conviction_score,
-      liveQuote?.last_price ?? null,
-      liveQuote?.change ?? null,
-      liveQuote?.volume ?? null
-    );
-  }, [matchedDecision, symbol, liveQuote]);
-
   // ── Always show the strip with real-time data for the selected symbol ──
   const isBuy = matchedDecision?.action_type === 'BUY';
   const isSell = matchedDecision?.action_type === 'SELL';
   const isHold = matchedDecision?.action_type === 'HOLD';
   const hasDecision = !!matchedDecision;
-
-  const actionColor = isBuy ? 'text-bull' : isHold ? 'text-neutral' : isSell ? 'text-bear' : 'text-text-secondary';
-
-  const entryDisplay = entryPrice ? formatINR(entryPrice) : '--';
-  const targetDisplay = targetPrice ? formatINR(targetPrice) : '--';
-  const stopDisplay = stopPrice ? formatINR(stopPrice) : '--';
 
   // Risk:Reward ratio
   const rrRatio = (entryPrice && targetPrice && stopPrice)
@@ -362,93 +283,23 @@ export default function OrderExecutionPanel() {
         </div>
 
         {/* ── Center: Price Levels (Entry / Target / Stop / OHLC) ── */}
-        <div className="flex items-center gap-4 text-xs">
-          <div>
-            <div className="text-[10px] uppercase tracking-wider text-text-secondary">
-              {hasDecision ? 'Entry' : 'LTP'}
-            </div>
-            <div className="text-sm font-semibold text-text-primary tabular-nums">{entryDisplay}</div>
-            {liveQuote && (
-              <div className={`text-[9px] tabular-nums ${liveQuote.change >= 0 ? 'text-bull' : 'text-bear'}`}>
-                {liveQuote.net_change >= 0 ? '+' : ''}{liveQuote.net_change.toFixed(2)}
-              </div>
-            )}
-          </div>
-
-          {/* OHLC Data — always visible for the selected symbol */}
-          {liveQuote && (
-            <>
-              <div>
-                <div className="text-[10px] uppercase tracking-wider text-text-secondary">Open</div>
-                <div className="text-sm font-semibold text-text-primary tabular-nums">{formatINR(liveQuote.open)}</div>
-              </div>
-              <div>
-                <div className="text-[10px] uppercase tracking-wider text-text-secondary">High</div>
-                <div className="text-sm font-semibold text-bull tabular-nums">{formatINR(liveQuote.high)}</div>
-              </div>
-              <div>
-                <div className="text-[10px] uppercase tracking-wider text-text-secondary">Low</div>
-                <div className="text-sm font-semibold text-bear tabular-nums">{formatINR(liveQuote.low)}</div>
-              </div>
-              <div>
-                <div className="text-[10px] uppercase tracking-wider text-text-secondary">Vol</div>
-                <div className="text-sm font-semibold text-text-secondary tabular-nums">{formatVolume(liveQuote.volume)}</div>
-              </div>
-            </>
-          )}
-
-          {/* ATR Target/Stop — only when AI decision is active */}
-          {hasDecision && (
-            <>
-              <div className="border-l border-border-default pl-4">
-                <div className="text-[10px] uppercase tracking-wider text-text-secondary">Target</div>
-                <div className={`text-sm font-semibold tabular-nums ${targetPrice ? 'text-bull' : 'text-text-muted'}`}>{targetDisplay}</div>
-                {targetPrice && entryPrice && (
-                  <div className="text-[9px] text-bull tabular-nums">
-                    +{(((targetPrice - entryPrice) / entryPrice) * 100).toFixed(1)}%
-                  </div>
-                )}
-              </div>
-              <div>
-                <div className="text-[10px] uppercase tracking-wider text-text-secondary">Stop</div>
-                <div className={`text-sm font-semibold tabular-nums ${stopPrice ? 'text-bear' : 'text-text-muted'}`}>{stopDisplay}</div>
-                {stopPrice && entryPrice && (
-                  <div className="text-[9px] text-bear tabular-nums">
-                    {(((stopPrice - entryPrice) / entryPrice) * 100).toFixed(1)}%
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
+        <MetricsHUD
+          hasDecision={hasDecision}
+          liveQuote={liveQuote}
+          entryPrice={entryPrice}
+          targetPrice={targetPrice}
+          stopPrice={stopPrice}
+        />
 
         {/* ── Right: Reasoning + Portfolio State ──────────────── */}
-        {hasDecision ? (
-          <div className="flex min-w-48 flex-1 items-start gap-2 text-xs text-text-secondary">
-            <span className="font-semibold text-text-secondary">Reasoning:</span>
-            <span>{reasoning}</span>
-          </div>
-        ) : (
-          <div className="flex items-center gap-3 text-xs text-text-secondary">
-            <div className="flex items-center gap-2">
-              <Briefcase size={12} className="text-text-muted" />
-              <span>Balance:</span>
-              <span className="flex items-center font-bold text-text-primary">
-                <span className="mr-0.5 text-bull font-semibold">₹</span>
-                {portfolioBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
-            </div>
-            {Object.keys(positions).length > 0 && (
-              <div className="flex flex-wrap items-center gap-1">
-                {Object.entries(positions).map(([sym, qty]) => (
-                  <span key={sym} className="rounded-full border border-border-default bg-surface px-2 py-0.5 text-[10px] text-text-secondary">
-                    <span className="font-bold text-text-primary">{sym}</span>: {qty}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+        <ReasoningBlock
+          hasDecision={hasDecision}
+          matchedDecision={matchedDecision}
+          symbol={symbol}
+          liveQuote={liveQuote}
+          portfolioBalance={portfolioBalance}
+          positions={positions}
+        />
       </div>
 
       {/* ── Bottom Row: Trade Controls (only when an AI decision matches selected symbol) ── */}

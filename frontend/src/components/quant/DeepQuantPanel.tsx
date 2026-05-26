@@ -5,13 +5,8 @@ import {
   Zap,
   Loader2,
   Shield,
-  Target,
   AlertTriangle,
-  CheckCircle2,
-  XCircle,
   RotateCcw,
-  Rocket,
-  Radar,
   ChevronDown,
 } from 'lucide-react';
 import { useQuantStore } from '../../store/useQuantStore';
@@ -21,91 +16,10 @@ import { useMemo } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import AgentTerminal from './AgentTerminal';
 
-// ── Conviction Helpers ──────────────────────────────────────────────────
-
-function convictionColor(score: number) {
-  if (score >= 80) return { text: 'text-emerald-400', bg: 'bg-emerald-500', ring: 'ring-emerald-500/30', glow: 'shadow-emerald-500/20' };
-  if (score >= 60) return { text: 'text-emerald-400/80', bg: 'bg-emerald-500/70', ring: 'ring-emerald-500/20', glow: '' };
-  if (score >= 40) return { text: 'text-amber-400', bg: 'bg-amber-500', ring: 'ring-amber-500/20', glow: '' };
-  return { text: 'text-rose-400', bg: 'bg-rose-500', ring: 'ring-rose-500/20', glow: 'shadow-rose-500/20' };
-}
-
-function convictionLabel(score: number) {
-  if (score >= 80) return 'HIGH CONVICTION';
-  if (score >= 60) return 'MODERATE';
-  if (score >= 40) return 'LOW CONVICTION';
-  return 'VERY WEAK';
-}
-
-function convictionIcon(score: number) {
-  if (score >= 60) return <CheckCircle2 size={14} />;
-  if (score >= 40) return <AlertTriangle size={14} />;
-  return <XCircle size={14} />;
-}
-
-// ── Loading Phrases ─────────────────────────────────────────────────────
-
-const LOADING_PHASES = [
-  'Aggregating 50+ Technical Indicators...',
-  'Scanning Candlestick Patterns...',
-  'Evaluating Institutional Strategies...',
-  'Fetching Live News Context...',
-  'Constructing Master Prompt...',
-  'Awaiting DeepSeek Analysis...',
-];
-
-function LoadingState({ agentStatus }: { agentStatus: string }) {
-  const [phaseIdx, setPhaseIdx] = React.useState(0);
-
-  React.useEffect(() => {
-    const timer = setInterval(() => {
-      setPhaseIdx((prev) => (prev + 1) % LOADING_PHASES.length);
-    }, 2500);
-    return () => clearInterval(timer);
-  }, []);
-
-  return (
-    <div className="flex flex-col items-center justify-center gap-4 py-8 px-4">
-      {/* Pulsing orb */}
-      <div className="relative">
-        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/30">
-          <Loader2 size={28} className="text-emerald-400 animate-spin" />
-        </div>
-        <div className="absolute -inset-2 rounded-3xl bg-emerald-500/5 animate-pulse" />
-        <div className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-emerald-500 animate-ping" />
-      </div>
-
-      <div className="text-center">
-        <p className="text-[11px] font-semibold text-emerald-300 animate-pulse transition-all duration-500">
-          {LOADING_PHASES[phaseIdx]}
-        </p>
-        <p className="text-[9px] text-text-muted/50 mt-1.5">
-          This may take 10–30 seconds
-        </p>
-      </div>
-
-      {/* Real-time status display */}
-      <div className="w-full max-w-[240px] p-2.5 bg-black/40 border border-emerald-500/20 rounded font-mono text-[10px] flex items-center space-x-2 animate-pulse text-emerald-400">
-        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping shrink-0" />
-        <span className="truncate">{agentStatus}</span>
-      </div>
-
-      {/* Phase dots */}
-      <div className="flex gap-1">
-        {LOADING_PHASES.map((_, i) => (
-          <div
-            key={i}
-            className={`h-1 w-1 rounded-full transition-all duration-300 ${
-              i <= phaseIdx ? 'bg-emerald-400' : 'bg-slate-700'
-            }`}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ── Main Component ──────────────────────────────────────────────────────
+// ── Subcomponents ──────────────────────────────────────────────────────
+import LoadingState from './deep-quant/LoadingState';
+import VerificationForm from './deep-quant/VerificationForm';
+import AiExecutionPlanView from './deep-quant/AiExecutionPlanView';
 
 export default function DeepQuantPanel() {
   const { aiPlan, isAnalyzing, analysisError, fetchDeepAnalysis, clearAiPlan } = useQuantStore();
@@ -118,9 +32,6 @@ export default function DeepQuantPanel() {
   const symbol = selectedSymbol || 'RELIANCE';
 
   // ── AI Handoff State Guard ────────────────────────────────────────────
-  // Check if the historicalCache has ANY entry for this symbol with > 0 candles.
-  // This is the cross-component proxy for "mergedCandles" since DeepQuantPanel
-  // doesn't have direct access to the chart's merged candle array.
   const symbolCandleCount = useMemo(() => {
     const symUpper = symbol.toUpperCase();
     let maxCount = 0;
@@ -135,7 +46,6 @@ export default function DeepQuantPanel() {
   const dataReady = symbolCandleCount > 0;
   const insufficientData = symbolCandleCount > 0 && symbolCandleCount < 50;
 
-  // Check if there's already an active position for this symbol from this plan
   const hasActivePosition = paperPortfolio?.active_positions.some(
     (p) => p.symbol.toUpperCase() === symbol.toUpperCase()
   ) || false;
@@ -240,21 +150,16 @@ export default function DeepQuantPanel() {
     setDeployed(false);
   }, [aiPlan]);
 
-  // ── AI Handoff Handler (with diagnostic tracers) ──────────────────────
   const handleAIAnalysis = () => {
     console.log(`🧠 [AI HANDOFF] Requesting analysis for Symbol: ${symbol} | Timeframe: ${activeTimeframe}`);
     console.log(`🧠 [AI HANDOFF] Current cached candle count: ${symbolCandleCount}`);
 
-    // ═══════════════════════════════════════════════════════════════════
-    // 🕵️‍♂️ AUDIT 1 - UI SEND: Verify what the React UI fires to Tauri
-    // ═══════════════════════════════════════════════════════════════════
     console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Firing AI Request.");
     console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Symbol:", symbol);
     console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Timeframe:", activeTimeframe);
     console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Acceleration Coeff from Store:", useChartUIStore.getState().accelerationCoefficient);
     console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Candles Length (cached proxy):", symbolCandleCount);
     console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Historical Cache Keys:", Object.keys(useTradeStore.getState().historicalCache));
-    // ═══════════════════════════════════════════════════════════════════
 
     if (symbolCandleCount < 50) {
       console.warn(
@@ -288,6 +193,66 @@ export default function DeepQuantPanel() {
       takeProfit: isNaN(tpNum) ? 0 : tpNum,
       userAnalysis: userAnalysis.trim() || "No user notes provided."
     });
+  };
+
+  const handleDeployStrategy = async () => {
+    if (!aiPlan) return;
+    
+    const closePrice = useTradeStore.getState().ohlcCandles.find(c => c.symbol === symbol)?.close || 0;
+    
+    let entryPrice = closePrice;
+    let stopLoss = 0;
+    let takeProfit = 0;
+    let tradeSide = 'BUY';
+
+    const executionPlan = aiPlan.execution_plan || '';
+
+    // Extract values with regex
+    const entryMatch = executionPlan.match(/entry:\s*([\d.]+)/i);
+    const slMatch = executionPlan.match(/stop-loss:\s*([\d.]+)/i) || executionPlan.match(/sl:\s*([\d.]+)/i);
+    const tpMatch = executionPlan.match(/target\s*1?:\s*([\d.]+)/i) || executionPlan.match(/target:\s*([\d.]+)/i) || executionPlan.match(/tp:\s*([\d.]+)/i);
+    const sideMatch = executionPlan.match(/side:\s*(buy|sell)/i) || executionPlan.match(/(buy|sell)/i);
+
+    if (entryMatch) entryPrice = parseFloat(entryMatch[1]);
+    if (slMatch) stopLoss = parseFloat(slMatch[1]);
+    if (tpMatch) takeProfit = parseFloat(tpMatch[1]);
+    if (sideMatch) {
+      const matchedSide = sideMatch[1].toUpperCase();
+      if (matchedSide === 'BUY' || matchedSide === 'SELL') {
+        tradeSide = matchedSide;
+      }
+    }
+
+    // Dynamic fallbacks
+    if (entryPrice <= 0) entryPrice = closePrice;
+    if (stopLoss <= 0) {
+      stopLoss = tradeSide === 'BUY' ? entryPrice * 0.98 : entryPrice * 1.02;
+    }
+    if (takeProfit <= 0) {
+      takeProfit = tradeSide === 'BUY' ? entryPrice * 1.05 : entryPrice * 0.95;
+    }
+
+    try {
+      const { invoke: tauriInvoke } = await import('@tauri-apps/api/core');
+      const resMsg = await tauriInvoke<string>('execute_paper_trade', {
+        symbol,
+        side: tradeSide,
+        entryPrice,
+        stopLoss,
+        takeProfit,
+      });
+      useTradeStore.getState().addSystemLog('INFO', `🚀 [Paper Engine] ${resMsg}`);
+      
+      // Trigger dynamic positions fetch
+      await useTradeStore.getState().fetchPaperPortfolio();
+      
+      // Set local deployed state
+      setDeployed(true);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error('Failed to deploy strategy:', err);
+      useTradeStore.getState().addSystemLog('ERROR', `Failed to deploy strategy: ${errMsg}`);
+    }
   };
 
   return (
@@ -364,10 +329,9 @@ export default function DeepQuantPanel() {
           </button>
         </div>
 
-        {/* Dropdown Menu (Glassmorphic) */}
+        {/* Dropdown Menu */}
         {isDropdownOpen && (
           <>
-            {/* Overlay to close */}
             <div className="fixed inset-0 z-40" onClick={() => setIsDropdownOpen(false)} />
             <div className="absolute right-3 left-3 mt-1.5 z-50 rounded-xl bg-slate-950/95 backdrop-blur-xl border border-slate-800/80 shadow-2xl p-1.5 flex flex-col gap-1">
               <button
@@ -414,106 +378,24 @@ export default function DeepQuantPanel() {
 
       {/* ── Verification Input Form ── */}
       {activeMode === 'VERIFY' && !isAnalyzing && !aiPlan && !analysisError && (
-        <div className="mx-3 mt-3 p-3 rounded-xl border border-slate-800 bg-slate-900/30 backdrop-blur-md flex flex-col gap-3">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Configure Setup</span>
-            <span className="text-[9px] text-slate-500">Auto-filled via NSE LTP</span>
-          </div>
-
-          {/* Side selector */}
-          <div className="flex rounded-lg bg-slate-950 p-0.5 border border-slate-800/50">
-            <button
-              type="button"
-              onClick={() => setSide('BUY')}
-              className={`flex-grow py-1 rounded-md text-[10px] font-bold transition-all ${side === 'BUY' ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' : 'text-slate-400 hover:text-slate-200'}`}
-            >
-              BUY / LONG
-            </button>
-            <button
-              type="button"
-              onClick={() => setSide('SELL')}
-              className={`flex-grow py-1 rounded-md text-[10px] font-bold transition-all ${side === 'SELL' ? 'bg-rose-500/15 text-rose-400 border border-rose-500/20' : 'text-slate-400 hover:text-slate-200'}`}
-            >
-              SELL / SHORT
-            </button>
-          </div>
-
-          {/* Input fields */}
-          <div className="grid grid-cols-3 gap-2">
-            <div className="flex flex-col gap-1">
-              <label className="text-[8px] font-semibold text-slate-400 uppercase">Entry Price</label>
-              <input
-                type="number"
-                step="any"
-                value={entry}
-                onChange={(e) => {
-                  setEntry(e.target.value);
-                  setHasManuallySetEntry(true);
-                }}
-                className="w-full bg-slate-950/80 border border-slate-800 rounded px-2 py-1 text-xs text-white font-mono focus:border-emerald-500 focus:outline-none"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <label className="text-[8px] font-semibold text-slate-400 uppercase">Stop Loss</label>
-              <input
-                type="number"
-                step="any"
-                value={stopLoss}
-                onChange={(e) => {
-                  setStopLoss(e.target.value);
-                  setHasManuallySetSL(true);
-                }}
-                className={`w-full bg-slate-950/80 border rounded px-2 py-1 text-xs text-white font-mono focus:outline-none ${side === 'BUY' ? 'border-rose-950/50 focus:border-rose-500' : 'border-emerald-950/50 focus:border-emerald-500'}`}
-              />
-              {slPercent && (
-                <span className={`text-[8px] self-end font-mono ${parseFloat(slPercent) < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                  {slPercent}%
-                </span>
-              )}
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <label className="text-[8px] font-semibold text-slate-400 uppercase">Take Profit</label>
-              <input
-                type="number"
-                step="any"
-                value={takeProfit}
-                onChange={(e) => {
-                  setTakeProfit(e.target.value);
-                  setHasManuallySetTP(true);
-                }}
-                className={`w-full bg-slate-950/80 border rounded px-2 py-1 text-xs text-white font-mono focus:outline-none ${side === 'BUY' ? 'border-emerald-950/50 focus:border-emerald-500' : 'border-rose-950/50 focus:border-rose-500'}`}
-              />
-              {tpPercent && (
-                <span className={`text-[8px] self-end font-mono ${parseFloat(tpPercent) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {parseFloat(tpPercent) >= 0 ? '+' : ''}{tpPercent}%
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Risk-to-Reward Badge */}
-          {riskToReward && (
-            <div className="flex justify-between items-center rounded-lg bg-slate-950 p-2 border border-slate-800/40 text-[10px]">
-              <span className="text-slate-400 font-semibold">Risk:Reward Ratio</span>
-              <span className={`font-black font-mono px-2 py-0.5 rounded ${parseFloat(riskToReward) >= 2.0 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : parseFloat(riskToReward) >= 1.5 ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
-                1 : {riskToReward}
-              </span>
-            </div>
-          )}
-
-          {/* User analysis note */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[8px] font-semibold text-slate-400 uppercase">My Trade Logic / Notes</label>
-            <textarea
-              value={userAnalysis}
-              onChange={(e) => setUserAnalysis(e.target.value)}
-              placeholder="Describe your reasoning (e.g. buying the bounce on ema-21, MACD divergence)"
-              className="w-full bg-slate-950/80 border border-slate-800 rounded px-2 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:border-emerald-500 focus:outline-none min-h-[60px] max-h-[120px] resize-y leading-relaxed"
-            />
-          </div>
-        </div>
+        <VerificationForm
+          side={side}
+          setSide={setSide}
+          entry={entry}
+          setEntry={setEntry}
+          setHasManuallySetEntry={setHasManuallySetEntry}
+          stopLoss={stopLoss}
+          setStopLoss={setStopLoss}
+          setHasManuallySetSL={setHasManuallySetSL}
+          takeProfit={takeProfit}
+          setTakeProfit={setTakeProfit}
+          setHasManuallySetTP={setHasManuallySetTP}
+          userAnalysis={userAnalysis}
+          setUserAnalysis={setUserAnalysis}
+          slPercent={slPercent}
+          tpPercent={tpPercent}
+          riskToReward={riskToReward}
+        />
       )}
 
       {/* ── Content Area ──────────────────────────────────── */}
@@ -550,181 +432,14 @@ export default function DeepQuantPanel() {
             </button>
           </div>
         ) : aiPlan ? (
-          /* ── AI Execution Plan ───────────────────────────── */
-          <div className="flex flex-col gap-0">
-            {/* Conviction Score */}
-            <div className="px-3 py-3 border-b border-border-default">
-              <div className="flex items-center gap-1.5 mb-2">
-                <Shield size={11} className="text-text-muted" />
-                <h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">
-                  AI Conviction
-                </h3>
-              </div>
-
-              <div className="flex items-center gap-3">
-                {/* Big score */}
-                <div className={`relative flex items-baseline gap-0.5 ${convictionColor(aiPlan.conviction_score).text}`}>
-                  <span className="text-4xl font-black tabular-nums tracking-tighter">
-                    {aiPlan.conviction_score}
-                  </span>
-                  <span className="text-base font-semibold text-text-muted/50">/100</span>
-                </div>
-
-                <div className="flex-1 flex flex-col gap-1.5">
-                  {/* Label badge */}
-                  <div className={`inline-flex items-center gap-1 self-start rounded-md px-2 py-0.5 text-[9px] font-bold ${convictionColor(aiPlan.conviction_score).text} ${convictionColor(aiPlan.conviction_score).bg}/15 ring-1 ${convictionColor(aiPlan.conviction_score).ring}`}>
-                    {convictionIcon(aiPlan.conviction_score)}
-                    {convictionLabel(aiPlan.conviction_score)}
-                  </div>
-
-                  {/* Progress bar */}
-                  <div className="h-1.5 w-full rounded-full bg-elevated overflow-hidden">
-                    <div
-                      className={`h-1.5 rounded-full transition-all duration-1000 ease-out ${convictionColor(aiPlan.conviction_score).bg}`}
-                      style={{ width: `${aiPlan.conviction_score}%` }}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Setup Validation */}
-            <div className="px-3 py-2.5 border-b border-border-default">
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <Target size={11} className="text-text-muted" />
-                <h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">
-                  Setup Validation
-                </h3>
-              </div>
-              <p className="text-[11px] leading-relaxed text-text-secondary whitespace-pre-line">
-                {aiPlan.setup_validation}
-              </p>
-            </div>
-
-            {/* Execution Plan */}
-            <div className="px-3 py-2.5">
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <Zap size={11} className="text-amber-400" />
-                <h3 className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider">
-                  Execution Plan
-                </h3>
-              </div>
-              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2.5">
-                <p className="text-[11px] leading-relaxed text-amber-200/90 font-medium whitespace-pre-line">
-                  {aiPlan.execution_plan}
-                </p>
-              </div>
-            </div>
-
-            {/* Clear button */}
-            <div className="px-3 py-2 flex flex-col gap-1.5">
-              {/* Deploy Strategy Button */}
-              <button
-                id="btn-deploy-strategy"
-                type="button"
-                disabled={deployed || hasActivePosition}
-                onClick={async () => {
-                  if (!aiPlan) return;
-                  
-                  const closePrice = useTradeStore.getState().ohlcCandles.find(c => c.symbol === symbol)?.close || 0;
-                  
-                  let entryPrice = closePrice;
-                  let stopLoss = 0;
-                  let takeProfit = 0;
-                  let side = 'BUY';
-
-                  const executionPlan = aiPlan.execution_plan || '';
-
-                  // Extract values with regex
-                  const entryMatch = executionPlan.match(/entry:\s*([\d.]+)/i);
-                  const slMatch = executionPlan.match(/stop-loss:\s*([\d.]+)/i) || executionPlan.match(/sl:\s*([\d.]+)/i);
-                  const tpMatch = executionPlan.match(/target\s*1?:\s*([\d.]+)/i) || executionPlan.match(/target:\s*([\d.]+)/i) || executionPlan.match(/tp:\s*([\d.]+)/i);
-                  const sideMatch = executionPlan.match(/side:\s*(buy|sell)/i) || executionPlan.match(/(buy|sell)/i);
-
-                  if (entryMatch) {
-                    entryPrice = parseFloat(entryMatch[1]);
-                  }
-                  if (slMatch) {
-                    stopLoss = parseFloat(slMatch[1]);
-                  }
-                  if (tpMatch) {
-                    takeProfit = parseFloat(tpMatch[1]);
-                  }
-                  if (sideMatch) {
-                    const matchedSide = sideMatch[1].toUpperCase();
-                    if (matchedSide === 'BUY' || matchedSide === 'SELL') {
-                      side = matchedSide;
-                    }
-                  }
-
-                  // Dynamic fallbacks
-                  if (entryPrice <= 0) entryPrice = closePrice;
-                  if (stopLoss <= 0) {
-                    stopLoss = side === 'BUY' ? entryPrice * 0.98 : entryPrice * 1.02;
-                  }
-                  if (takeProfit <= 0) {
-                    takeProfit = side === 'BUY' ? entryPrice * 1.05 : entryPrice * 0.95;
-                  }
-
-                  try {
-                    const { invoke } = await import('@tauri-apps/api/core');
-                    const resMsg = await invoke<string>('execute_paper_trade', {
-                      symbol,
-                      side,
-                      entryPrice,
-                      stopLoss,
-                      takeProfit,
-                    });
-                    useTradeStore.getState().addSystemLog('INFO', `🚀 [Paper Engine] ${resMsg}`);
-                    
-                    // Trigger dynamic positions fetch
-                    await useTradeStore.getState().fetchPaperPortfolio();
-                    
-                    // Set local deployed state
-                    setDeployed(true);
-                  } catch (err) {
-                    const errMsg = err instanceof Error ? err.message : String(err);
-                    console.error('Failed to deploy strategy:', err);
-                    useTradeStore.getState().addSystemLog('ERROR', `Failed to deploy strategy: ${errMsg}`);
-                  }
-                }}
-                className={`
-                  group relative w-full flex items-center justify-center gap-2
-                  rounded-xl px-4 py-2.5 text-[11px] font-bold uppercase tracking-wider
-                  transition-all duration-300 ease-out
-                  ${deployed || hasActivePosition
-                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 cursor-default'
-                    : 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white border border-emerald-500/40 hover:from-emerald-500 hover:to-teal-500 hover:shadow-lg hover:shadow-emerald-500/20 active:scale-[0.98]'
-                  }
-                `}
-              >
-                {!deployed && !hasActivePosition && (
-                  <div className="absolute -inset-px rounded-xl bg-gradient-to-r from-emerald-400/20 to-teal-400/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300 blur-sm" />
-                )}
-                <span className="relative flex items-center gap-2">
-                  {deployed || hasActivePosition ? (
-                    <>
-                      <CheckCircle2 size={14} />
-                      STRATEGY DEPLOYED
-                    </>
-                  ) : (
-                    <>
-                      <Rocket size={14} className="group-hover:animate-bounce" />
-                      DEPLOY SIMULATED STRATEGY
-                    </>
-                  )}
-                </span>
-              </button>
-
-              <button
-                onClick={clearAiPlan}
-                className="w-full flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-semibold text-text-muted bg-elevated border border-border-default hover:bg-surface hover:text-text-secondary transition-colors"
-              >
-                <RotateCcw size={10} />
-                Clear & Reset
-              </button>
-            </div>
-          </div>
+          /* ── AI Execution Plan ── */
+          <AiExecutionPlanView
+            aiPlan={aiPlan}
+            deployed={deployed}
+            hasActivePosition={hasActivePosition}
+            onDeploy={handleDeployStrategy}
+            onClear={clearAiPlan}
+          />
         ) : (
           /* ── Empty State ─────────────────────────────────── */
           <div className="flex flex-col items-center justify-center gap-4 p-4 py-10">
