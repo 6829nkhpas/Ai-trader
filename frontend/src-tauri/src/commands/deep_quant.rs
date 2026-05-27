@@ -437,7 +437,7 @@ pub(crate) async fn fetch_macro_context(pool: &sqlx::PgPool) -> String {
 
 // ── Tauri IPC Command ───────────────────────────────────────────────────────
 
-#[derive(serde::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct ManualTradeInfo {
     pub side: String,
     pub entry: f64,
@@ -1408,7 +1408,10 @@ pub async fn run_deep_quant_agent(
     // Prepare the payload for Python FastAPI
     let payload = serde_json::json!({
         "thread_id": thread_id,
-        "message": message
+        "message": message,
+        "mode": mode_str,
+        "symbol": symbol,
+        "manual_trade": manual_trade
     });
     
     // Spawn the streaming reqwest client in the background

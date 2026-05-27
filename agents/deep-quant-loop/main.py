@@ -12,9 +12,14 @@ app = FastAPI(title="LangGraph Deep Quant Loop Service")
 
 # ── Pydantic Request Models ──────────────────────────────────────────────────
 
+from typing import Optional
+
 class RunRequest(BaseModel):
     thread_id: str
     message: str
+    mode: Optional[str] = "FIND"
+    symbol: Optional[str] = "N/A"
+    manual_trade: Optional[dict] = None
 
 class ResumeRequest(BaseModel):
     thread_id: str
@@ -66,7 +71,12 @@ async def run_agent(payload: RunRequest):
     """
     Start or continue the Deep Quant LLM ReAct loop, returning an SSE stream.
     """
-    initial_state = {"messages": [("user", payload.message)]}
+    initial_state = {
+        "messages": [("user", payload.message)],
+        "mode": payload.mode,
+        "symbol": payload.symbol,
+        "manual_trade": payload.manual_trade
+    }
     return StreamingResponse(
         event_generator(payload.thread_id, graph_input=initial_state),
         media_type="text/event-stream"

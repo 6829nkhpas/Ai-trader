@@ -755,8 +755,8 @@
     "semantic_hash": "ee66edf56ccd137eb04a7503e60205b2"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\commands\\deep_quant.rs": {
-    "mtime": 1779876136.2586231,
-    "ast_hash": "6aa6e7c4d4f84ac5515ba726b81116f4",
+    "mtime": 1779876031.7997417,
+    "ast_hash": "816fd0f0f8a226542ae71926c676c995",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\commands\\instruments.rs": {

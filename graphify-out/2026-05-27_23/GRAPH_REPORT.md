@@ -1,11 +1,11 @@
 # Graph Report - Ai-trader  (2026-05-27)
 
 ## Corpus Check
-- 244 files · ~232,094 words
+- 244 files · ~231,594 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2422 nodes · 4272 edges · 197 communities (179 shown, 18 thin omitted)
+- 2419 nodes · 4268 edges · 218 communities (198 shown, 20 thin omitted)
 - Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 115 edges (avg confidence: 0.83)
 - Token cost: 0 input · 0 output
 
@@ -84,10 +84,12 @@
 - [[_COMMUNITY_Community 66|Community 66]]
 - [[_COMMUNITY_Community 67|Community 67]]
 - [[_COMMUNITY_Community 68|Community 68]]
+- [[_COMMUNITY_Community 69|Community 69]]
 - [[_COMMUNITY_Community 70|Community 70]]
 - [[_COMMUNITY_Community 71|Community 71]]
 - [[_COMMUNITY_Community 72|Community 72]]
 - [[_COMMUNITY_Community 73|Community 73]]
+- [[_COMMUNITY_Community 74|Community 74]]
 - [[_COMMUNITY_Community 75|Community 75]]
 - [[_COMMUNITY_Community 76|Community 76]]
 - [[_COMMUNITY_Community 77|Community 77]]
@@ -99,6 +101,7 @@
 - [[_COMMUNITY_Community 83|Community 83]]
 - [[_COMMUNITY_Community 84|Community 84]]
 - [[_COMMUNITY_Community 85|Community 85]]
+- [[_COMMUNITY_Community 86|Community 86]]
 - [[_COMMUNITY_Community 87|Community 87]]
 - [[_COMMUNITY_Community 88|Community 88]]
 - [[_COMMUNITY_Community 89|Community 89]]
@@ -123,10 +126,15 @@
 - [[_COMMUNITY_Community 131|Community 131]]
 - [[_COMMUNITY_Community 151|Community 151]]
 - [[_COMMUNITY_Community 152|Community 152]]
+- [[_COMMUNITY_Community 153|Community 153]]
 - [[_COMMUNITY_Community 154|Community 154]]
 - [[_COMMUNITY_Community 155|Community 155]]
+- [[_COMMUNITY_Community 156|Community 156]]
 - [[_COMMUNITY_Community 157|Community 157]]
+- [[_COMMUNITY_Community 158|Community 158]]
 - [[_COMMUNITY_Community 159|Community 159]]
+- [[_COMMUNITY_Community 160|Community 160]]
+- [[_COMMUNITY_Community 161|Community 161]]
 - [[_COMMUNITY_Community 162|Community 162]]
 - [[_COMMUNITY_Community 163|Community 163]]
 - [[_COMMUNITY_Community 164|Community 164]]
@@ -138,6 +146,8 @@
 - [[_COMMUNITY_Community 170|Community 170]]
 - [[_COMMUNITY_Community 171|Community 171]]
 - [[_COMMUNITY_Community 172|Community 172]]
+- [[_COMMUNITY_Community 173|Community 173]]
+- [[_COMMUNITY_Community 174|Community 174]]
 - [[_COMMUNITY_Community 175|Community 175]]
 - [[_COMMUNITY_Community 176|Community 176]]
 - [[_COMMUNITY_Community 177|Community 177]]
@@ -145,7 +155,10 @@
 - [[_COMMUNITY_Community 179|Community 179]]
 - [[_COMMUNITY_Community 180|Community 180]]
 - [[_COMMUNITY_Community 181|Community 181]]
+- [[_COMMUNITY_Community 182|Community 182]]
 - [[_COMMUNITY_Community 183|Community 183]]
+- [[_COMMUNITY_Community 184|Community 184]]
+- [[_COMMUNITY_Community 185|Community 185]]
 - [[_COMMUNITY_Community 186|Community 186]]
 - [[_COMMUNITY_Community 187|Community 187]]
 - [[_COMMUNITY_Community 188|Community 188]]
@@ -169,7 +182,14 @@
 - [[_COMMUNITY_Community 206|Community 206]]
 - [[_COMMUNITY_Community 207|Community 207]]
 - [[_COMMUNITY_Community 208|Community 208]]
+- [[_COMMUNITY_Community 209|Community 209]]
+- [[_COMMUNITY_Community 210|Community 210]]
+- [[_COMMUNITY_Community 211|Community 211]]
 - [[_COMMUNITY_Community 212|Community 212]]
+- [[_COMMUNITY_Community 213|Community 213]]
+- [[_COMMUNITY_Community 214|Community 214]]
+- [[_COMMUNITY_Community 215|Community 215]]
+- [[_COMMUNITY_Community 217|Community 217]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `permissions` - 79 edges
@@ -184,18 +204,18 @@
 10. `AlphaPredictiveChartProps` - 30 edges
 
 ## Surprising Connections (you probably didn't know these)
+- `main()` --calls--> `generate_access_token()`  [INFERRED]
+  tools/load_tester/src/main.rs → ingestion/src/kite_auth.rs
+- `main()` --calls--> `connect_ticker()`  [INFERRED]
+  tools/load_tester/src/main.rs → ingestion/src/kite_client.rs
 - `main()` --calls--> `publish_tick()`  [INFERRED]
   tools/load_tester/src/main.rs → ingestion/src/kafka_producer.rs
+- `SwingConfluencePanel()` --calls--> `useMultiTimeframeTrend Hook`  [EXTRACTED]
+  frontend/src/components/layouts/SwingLayout.tsx → technical_indicators_analysis.md
 - `DeepQuantPanel.tsx` --calls--> `useQuantStore`  [EXTRACTED]
   COMPLETE_ANALYSIS.md → frontend/src/store/useQuantStore.ts
-- `SystemConsole.tsx` --calls--> `useTradeStore`  [EXTRACTED]
-  ARCHITECTURE.md → frontend/src/store/useTradeStore.ts
-- `DeepQuantPanel.tsx` --calls--> `useTradeStore`  [EXTRACTED]
-  COMPLETE_ANALYSIS.md → frontend/src/store/useTradeStore.ts
-- `useMultiTimeframeTrend Hook` --calls--> `useTradeStore`  [EXTRACTED]
-  technical_indicators_analysis.md → frontend/src/store/useTradeStore.ts
 
-## Communities (197 total, 18 thin omitted)
+## Communities (218 total, 20 thin omitted)
 
 ### Community 0 - "Community 0"
 Cohesion: 0.05
@@ -203,39 +223,39 @@ Nodes (53): description, identifier, commands, description, identifier, commands
 
 ### Community 1 - "Community 1"
 Cohesion: 0.17
-Nodes (12): fetch_candles_for_symbol(), RadarAlert, spawn_radar_worker(), current_count(), download_csv(), ensure_schema(), is_stale(), parse_and_persist() (+4 more)
+Nodes (10): current_count(), download_csv(), ensure_schema(), is_stale(), parse_and_persist(), parse_csv_line(), spawn(), run_consumer() (+2 more)
 
 ### Community 2 - "Community 2"
-Cohesion: 0.05
-Nodes (46): ConsensusEngine (Tauri Quant), Quant Radar Background Scanner, AiExecutionPlanView(), AiExecutionPlanViewProps, AiPlanShape, convictionColor(), convictionIcon(), convictionLabel() (+38 more)
+Cohesion: 0.06
+Nodes (39): ConsensusEngine (Tauri Quant), Quant Radar Background Scanner, base_state(), candle(), compile_consensus_full_bullish(), compile_consensus_serializes_to_json(), ConsensusEngine, ConsensusReport (+31 more)
 
 ### Community 3 - "Community 3"
-Cohesion: 0.06
-Nodes (32): rsi_warm_up_gating(), update_rsi(), update_vwap(), vwap_basic_calculation(), vwap_no_volume_returns_none(), generate_access_token(), KiteSessionData, KiteSessionResponse (+24 more)
+Cohesion: 0.13
+Nodes (9): Args, init_producer(), main(), now_ms(), PriceEngine, SubscribeCmd, create_table_if_not_exists(), init_pool() (+1 more)
 
 ### Community 4 - "Community 4"
-Cohesion: 0.07
-Nodes (44): AlphaPredictiveChart.tsx, Technical Analysis Agent, TechSignal Protobuf Contract, aggregateToTimeframe(), calculateEMA(), calculateRSI(), computeTrend(), generateSyntheticOhlc() (+36 more)
+Cohesion: 0.18
+Nodes (17): useMultiTimeframeTrend(), biasBarColor(), biasColor(), generateMockAnomaliesForSymbol(), getFallbackSentiment(), InsightCard(), InsightCardProps, MOCK_NEWS_DATA (+9 more)
 
 ### Community 5 - "Community 5"
 Cohesion: 0.10
 Nodes (26): 19-21 — The Billing Schema & Product Mapping, 22-24 — The Upgrade/Downgrade Orchestrator, 25-27 — Billing Ignition (Webhooks & Trade Enforcement), 49-51 — `frontend/src/components/TradingChart.tsx` & `frontend/src/app/page.tsx`, 4 — JWT Engine (RS256), 52-54 — Dashboard Components & Integration, 5 — Stateful Refresh Rotation & Breach Detection, 61 � `frontend/src/store/useTradeStore.ts` � Portfolio State (+18 more)
 
 ### Community 6 - "Community 6"
-Cohesion: 0.14
-Nodes (16): BILLING_CATALOG, handlePolarWebhook(), verifySignature(), handleKycVendorWebhook(), BillingRepository, registerWebhookRoutes(), config, __dirname (+8 more)
+Cohesion: 0.11
+Nodes (17): BILLING_CATALOG, handlePolarWebhook(), verifySignature(), requireActiveSubscription(), BillingRepository, config, __dirname, required (+9 more)
 
 ### Community 7 - "Community 7"
-Cohesion: 0.14
-Nodes (18): getClient(), isArticleProcessed(), markArticleProcessed(), getClient(), scoreArticle(), DEFAULT_PAGE_SIZE, fetchLatestNews(), POLL_INTERVAL_MS (+10 more)
+Cohesion: 0.10
+Nodes (25): registerErrorHandler(), registerStocksRoutes(), analyzeSentiment(), getClient(), getClient(), isArticleProcessed(), markArticleProcessed(), getClient() (+17 more)
 
 ### Community 8 - "Community 8"
-Cohesion: 0.15
-Nodes (12): 10. Data Flow Summary (End-to-End), 11. Test Infrastructure, 12. Key Design Decisions, 13. Port Map (Quick Reference), 1. What Is This Project?, 4. Infrastructure (Docker Compose), 5. Kafka Topic Map, 6. Protobuf Data Contracts (`/shared_protos`) (+4 more)
+Cohesion: 0.06
+Nodes (35): 10. Data Flow Summary (End-to-End), 11. Test Infrastructure, 12. Key Design Decisions, 13. Port Map (Quick Reference), 1. What Is This Project?, 3.1 — Data Ingestion (`/ingestion` · Rust), 3.2 — Alpha Terminal (`/alpha-terminal` · Rust · WS:8081), 3.3 — Technical Agent (`/agents/technical` · Rust) (+27 more)
 
 ### Community 9 - "Community 9"
-Cohesion: 0.18
-Nodes (19): useChartDataSync.ts Hook, aggregateCandles(), calculateEMA(), MinimalCandle, ProjectedPoint, ProjectionPayload, useChartInit(), aggregateCandles() (+11 more)
+Cohesion: 0.21
+Nodes (3): AggregatorState, MarketState, SymbolState
 
 ### Community 10 - "Community 10"
 Cohesion: 0.06
@@ -254,28 +274,28 @@ Cohesion: 0.06
 Nodes (31): dependencies, argon2, @aws-sdk/client-s3, @aws-sdk/s3-request-presigner, dotenv, fastify, @fastify/cookie, @fastify/helmet (+23 more)
 
 ### Community 14 - "Community 14"
-Cohesion: 0.21
-Nodes (6): isSection(), ToolMenuEntry, ToolMenuProps, ToolOption, ToolSection, ToolMenu()
+Cohesion: 0.24
+Nodes (10): AgentTerminal(), DeepQuantPanel(), AiExecutionPlan, CompletedTrade, parseExecutionPlan(), QuantStore, sentimentInFlight, SentimentPayload (+2 more)
 
 ### Community 15 - "Community 15"
 Cohesion: 0.06
 Nodes (31): 19 — `agents/technical/` — Rust binary project initialized, 19a — `ingestion/Cargo.toml` — sqlx 0.7 → 0.8 upgrade, 19b — `.env.example` — KAFKA_BROKER_URL alias added, 20 — `agents/technical/Cargo.toml` — Dependencies configured, 20a — `ingestion/Dockerfile` — NEW multi-stage Rust build, 20b — `docker-compose.yml` — 2 new services added, 21a — `agents/technical/build.rs` — Protobuf compilation pipeline, 21b — `agents/technical/src/proto.rs` — Protobuf module bridge (+23 more)
 
 ### Community 16 - "Community 16"
-Cohesion: 0.11
-Nodes (15): AuthenticationError, DuplicateEmailError, NotFoundError, PasswordComplexityError, TokenReuseError, registerErrorHandler(), registerStocksRoutes(), BillingSyncEngine (+7 more)
+Cohesion: 0.15
+Nodes (7): AuthenticationError, DuplicateEmailError, NotFoundError, PasswordComplexityError, TokenReuseError, BillingSyncEngine, start()
 
 ### Community 17 - "Community 17"
-Cohesion: 0.08
-Nodes (31): TradingChart(), TradingChartProps, AgentStatusPanel(), AIPanel(), clampScore(), LiveFeedPanel(), getLatencyColor(), NetworkMetrics() (+23 more)
+Cohesion: 0.10
+Nodes (26): TradingChart(), TradingChartProps, AgentStatusPanel(), AIPanel(), clampScore(), LiveFeedPanel(), AggregatedDecision, BackendAction (+18 more)
 
 ### Community 18 - "Community 18"
-Cohesion: 0.26
-Nodes (14): analyze_sentiment_via_llm(), fetch_google_news_rss(), fetch_news_headlines(), fetch_symbol_sentiment(), first_non_empty(), LlmSentimentResponse, mock_sentiment(), resolve_llm_endpoint() (+6 more)
+Cohesion: 0.32
+Nodes (11): analyze_sentiment_via_llm(), fetch_google_news_rss(), fetch_news_headlines(), fetch_symbol_sentiment(), first_non_empty(), LlmSentimentResponse, mock_sentiment(), resolve_llm_endpoint() (+3 more)
 
 ### Community 19 - "Community 19"
-Cohesion: 0.22
-Nodes (9): 3.1 — Data Ingestion (`/ingestion` · Rust), 3.2 — Alpha Terminal (`/alpha-terminal` · Rust · WS:8081), 3.3 — Technical Agent (`/agents/technical` · Rust), 3.4 — Sentiment Agent (`/agents/sentiment` · Node.js), 3.5 — Predictive Agent (`/agents/predictive` · Rust · WS:8082), 3.6 — Quant-RAG Agent (`/agents/quant-rag` · Rust · WS:8083), 3.7 — Aggregator / Decision Engine (`/aggregator` · Rust · WS:8080), 3. Layer-by-Layer Breakdown (+1 more)
+Cohesion: 0.38
+Nodes (9): aggregateToTimeframe(), calculateEMA(), calculateRSI(), computeTrend(), generateSyntheticOhlc(), TIMEFRAME_CONFIGS, TimeframeTrend, TrendBias (+1 more)
 
 ### Community 20 - "Community 20"
 Cohesion: 0.15
@@ -286,16 +306,16 @@ Cohesion: 0.15
 Nodes (12): anyOf, Number, PermissionEntry, Value, anyOf, description, anyOf, description (+4 more)
 
 ### Community 22 - "Community 22"
-Cohesion: 0.14
-Nodes (21): DrawingOverlays(), DrawingOverlaysProps, AlphaPredictiveChart(), GhostLineToggle(), useChartDataSync(), FREEHAND_TOOLS, TWO_POINT_TOOLS, UNSUPPORTED_TOOLS (+13 more)
+Cohesion: 0.06
+Nodes (51): DrawingOverlays(), DrawingOverlaysProps, isSection(), ToolMenu(), ToolMenuEntry, ToolMenuProps, ToolOption, ToolSection (+43 more)
 
 ### Community 23 - "Community 23"
-Cohesion: 0.10
-Nodes (29): ACCESS_COOKIE_OPTS, COOKIE_OPTS, handleGenerateMfa(), handleGoogleLogin(), handleHealth(), handleLogin(), handleLogout(), handleRefresh() (+21 more)
+Cohesion: 0.17
+Nodes (12): authRoot, __dirname, loadPrivateKey(), loadPublicKey(), privateKeyPath, publicKeyPath, verifyAccessToken(), authGuard() (+4 more)
 
 ### Community 24 - "Community 24"
-Cohesion: 0.13
-Nodes (21): handleGetProfile(), handleGetUploadUrl(), handleLivenessCheck(), handleUpsertProfile(), handleVerifyPan(), verifyPan(), requireActiveSubscription(), requireVerified() (+13 more)
+Cohesion: 0.11
+Nodes (23): handleGetProfile(), handleGetUploadUrl(), handleLivenessCheck(), handleUpsertProfile(), handleVerifyPan(), handleKycVendorWebhook(), panBreaker, verifyPan() (+15 more)
 
 ### Community 25 - "Community 25"
 Cohesion: 0.09
@@ -306,8 +326,8 @@ Cohesion: 0.12
 Nodes (19): lookup_instrument_token(), resolve_token_blocking(), fetchInstruments(), GET(), GET(), historical_handler(), HistoricalParams, Instrument (+11 more)
 
 ### Community 27 - "Community 27"
-Cohesion: 0.12
-Nodes (20): BinaryCandle, broadcast_error(), get_historical_view(), HistorySource, load_historical(), run_migrations(), bulk_insert(), bulk_insert_intraday() (+12 more)
+Cohesion: 0.08
+Nodes (38): BinaryCandle, broadcast_error(), get_historical_view(), HistorySource, load_historical(), InstrumentRecord, resolve_instrument_token(), run_migrations() (+30 more)
 
 ### Community 28 - "Community 28"
 Cohesion: 0.07
@@ -374,32 +394,32 @@ Cohesion: 0.14
 Nodes (14): DeepSeek v4 Pro via NVIDIA NIM, DeepQuantPanel.tsx, LOADING_PHASES, LoadingStateProps, VerificationForm(), VerificationFormProps, convictionIcon(), convictionLabel() (+6 more)
 
 ### Community 44 - "Community 44"
-Cohesion: 0.23
-Nodes (8): ReasoningBlockProps, SymbolQuote, computeATR(), formatINR(), OrderExecutionPanel(), SymbolQuote, symToBasePrice(), OhlcCandle
+Cohesion: 0.17
+Nodes (13): formatINR(), formatVolume(), MetricsHUD(), MetricsHUDProps, SymbolQuote, ReasoningBlockProps, SymbolQuote, computeATR() (+5 more)
 
 ### Community 45 - "Community 45"
 Cohesion: 0.18
 Nodes (13): 32 — `agents/sentiment/src/kafkaProducer.js` — NEW, 34 — `agents/sentiment/src/kafkaProducer.js` — REBUILT, 35 — `agents/sentiment/src/index.js` — REPLACED (continuous polling loop), 36 — Graceful Shutdown (SIGINT handler), code:block15 (node --input-type=module --eval "import all 4 modules"), code:js (const payload = {), code:block18 (1. loadNewsSentimentType()   → NewsSentiment (injected into ), code:block19 (fetchLatestNews(symbol)) (+5 more)
 
 ### Community 46 - "Community 46"
-Cohesion: 0.25
-Nodes (8): 8.1 — State Management (Zustand), 8.2 — Data Hooks, 8.3 — Component Architecture, 8.4 — Key Components, 8.5 — Chart Rendering Pipeline, 8. Frontend (`/frontend` · Next.js + React), code:block5 (TerminalLayout (header + toolbar + body)), code:block6 (Historical (QuestDB) ──┐)
+Cohesion: 0.36
+Nodes (8): LiveAssetHUD(), LiveAssetHUDProps, stateColor(), trendBg(), trendColor(), LiveAssetHUD(), trendBg(), trendColor()
 
 ### Community 47 - "Community 47"
-Cohesion: 0.06
-Nodes (51): LiveAssetHUD(), LiveAssetHUDProps, stateColor(), trendBg(), trendColor(), SentimentBlock(), SentimentBlockProps, sentimentImpactColor() (+43 more)
+Cohesion: 0.18
+Nodes (9): SentimentBlock(), SentimentBlockProps, sentimentImpactColor(), LeftPanel(), QuoteData, SearchInstrument, SECTOR_COLORS, SentimentBlock() (+1 more)
 
 ### Community 48 - "Community 48"
-Cohesion: 0.25
-Nodes (4): inter, metadata, AuthLayout(), SessionProvider()
+Cohesion: 0.21
+Nodes (14): QuestDB historical_candles Table, history_loader.rs Service, Ingestion Service, Zerodha Kite Connect WebSocket API, ParsedTick Struct, QuestDB Time-Series Database, Tick Protobuf Contract, Ingestion Docker Service (+6 more)
 
 ### Community 49 - "Community 49"
 Cohesion: 0.15
 Nodes (12): dependencies, axios, devDependencies, concurrently, cross-env, name, private, scripts (+4 more)
 
 ### Community 50 - "Community 50"
-Cohesion: 0.36
-Nodes (4): handleEmailBlur(), handlePassBlur(), validateEmail(), validatePassword()
+Cohesion: 0.17
+Nodes (9): handler(), aiQuantTab, deepQuantBtn, handlers, invoke(), keys, MOCK_AI_EXECUTION_PLAN, MOCK_QUOTE (+1 more)
 
 ### Community 51 - "Community 51"
 Cohesion: 0.17
@@ -410,12 +430,12 @@ Cohesion: 0.18
 Nodes (10): 1. VWEPR (Volume-Weighted Exponential Price Regression) Curvature, 2. Multi-Source Pipeline Fusion & Deduplication, Ai-trader, code:rust (// In quant/vwepr.rs — Fit solver using determinants), code:text (/), 📂 Core Component Directory Map, 🧠 Deep Quant Analytical Foundation, Injected Prompt Variable Map (Exactly 18 Parameters) (+2 more)
 
 ### Community 53 - "Community 53"
-Cohesion: 0.33
-Nodes (6): 2. High-Level Architecture, code:mermaid (graph TB), code:mermaid (graph TD), 🏗️ System Architecture & Data Flow, 6.1 ConsensusBoard (Left Panel), code:mermaid (graph LR)
+Cohesion: 0.18
+Nodes (11): 5.1 Trend Score (-100 to +100), 5.2 Momentum State, 5.3 Volatility State, 5.4 Volume Flow State, 5.5 Active Patterns → `Vec<String>`, 5.6 Active Strategies → `Vec<String>`, 5. The ConsensusEngine — How It Fuses Everything, code:block6 (close > SMA 50    →  +25     close < SMA 50    →  -25) (+3 more)
 
 ### Community 54 - "Community 54"
-Cohesion: 0.33
-Nodes (6): 7.1 — Boot Sequence ([lib.rs](file:///d:/projects/Ai-trader/frontend/src-tauri/src/lib.rs)), 7.2 — IPC Commands, 7.3 — Services, 7.4 — Quant Engine (`/frontend/src-tauri/src/quant/`), 7. Tauri Desktop Shell (`/frontend/src-tauri`), code:block4 (1. Load .env (multi-path fallback))
+Cohesion: 0.29
+Nodes (11): SecurityVault.tsx (Stronghold), defaultProviderState(), getOrLoadVault(), KeyProvider, KeyStatus, PROVIDERS, ProviderState, readFromVault() (+3 more)
 
 ### Community 55 - "Community 55"
 Cohesion: 0.39
@@ -424,6 +444,10 @@ Nodes (11): acceleration_coefficient_is_exposed(), both_anchors_match_last_close
 ### Community 56 - "Community 56"
 Cohesion: 0.21
 Nodes (5): QuoteData, SearchInstrument, SECTOR_COLORS, TOP_WATCHLIST, WatchlistPanel()
+
+### Community 57 - "Community 57"
+Cohesion: 0.21
+Nodes (13): Glass-Box Trading Frontend, MacroSentimentPanel, MarketInsight Protobuf, OrderBook.tsx Level-2 DOM, ProfileSwitcher.tsx, Quant-RAG Agent (DeepSeek), Kafka Topic: signals.insights, SwingConfluencePanel (+5 more)
 
 ### Community 58 - "Community 58"
 Cohesion: 0.18
@@ -434,24 +458,24 @@ Cohesion: 0.17
 Nodes (16): 2. Feature-by-Feature Deep Dives & Data Flows, code:mermaid (sequenceDiagram), code:mermaid (graph TD), code:mermaid (sequenceDiagram), code:mermaid (sequenceDiagram), code:mermaid (graph TD), code:mermaid (sequenceDiagram), code:mermaid (graph TD) (+8 more)
 
 ### Community 60 - "Community 60"
-Cohesion: 0.60
-Nodes (5): formatINR(), formatVolume(), MetricsHUD(), MetricsHUDProps, SymbolQuote
+Cohesion: 0.31
+Nodes (9): 1. The Complete Indicator Inventory, 3. Candlestick Patterns (5 Patterns), 4. Institutional Strategies (5 Strategies), 7. Data Flow Summary, 8. Quick Reference: What Feeds What, Alpha Suite — Technical Indicators, Patterns, Strategies & AI Pipeline, code:mermaid (graph TB), code:rust (body()         → |close - open|) (+1 more)
 
 ### Community 61 - "Community 61"
 Cohesion: 0.38
 Nodes (10): generate_deep_quant_plan_with_url(), tauri::AppHandle, fixture_consensus(), isolate_env(), lock_env(), test_audit_logger_writes_to_disk_in_test_mode(), test_deepseek_handles_429_rate_limit(), test_deepseek_handles_malformed_inner_content() (+2 more)
 
 ### Community 62 - "Community 62"
-Cohesion: 0.05
-Nodes (61): Aggregator Decision Engine, Alpha Terminal (OHLC Engine), ChartTimeframe State Engine, Glass-Box Trading Frontend, Predictive Ghost Line Overlay, QuestDB historical_candles Table, history_loader.rs Service, Ingestion Service (+53 more)
+Cohesion: 0.36
+Nodes (8): Alpha Terminal (OHLC Engine), Kafka Topic: market.ohlc.10m, Kafka Topic: market.ticks, Redpanda (Kafka-compatible Broker), OHLCCandle Protobuf Contract, alpha-terminal/engine.rs OHLC Engine, agents/quant-rag/engine.rs Anomaly Detector, agents/quant-rag/llm.rs DeepSeek Client
 
 ### Community 63 - "Community 63"
 Cohesion: 0.13
 Nodes (15): 46-47 — `frontend/` — Next.js Initialized, 48 — `frontend/src/store/useTradeStore.ts` — Zustand Store & WebSocket Client, All Files (Auth — Phase 1), code:block1 (auth/), Environment Variables Added, Module Map (Auth — Layered Architecture), Phase 1 Auth — Subphases 1-3: Identity Vault (Cryptographic Core) ✅ COMPLETE THIS SESSION, Status: ✅ IDENTITY FOUNDATION COMPLETE. Argon2id + PostgreSQL + Registration Operational. (+7 more)
 
 ### Community 64 - "Community 64"
-Cohesion: 0.31
-Nodes (8): 1. High-Level Architecture Overview, 3. Core System Diagnostics & Error Isolation, 4. Architecture Specifications Reference, Alpha Suite — System Architecture & Feature-Wise Data Flows, code:mermaid (graph TB), Kafka Topic Layout, Port Allocations, Strat Ai — System Architecture & Feature-Wise Data Flows
+Cohesion: 0.17
+Nodes (14): 2. High-Level Architecture, code:mermaid (graph TB), code:mermaid (graph TD), 🏗️ System Architecture & Data Flow, 1. High-Level Architecture Overview, 3. Core System Diagnostics & Error Isolation, 4. Architecture Specifications Reference, Alpha Suite — System Architecture & Feature-Wise Data Flows (+6 more)
 
 ### Community 65 - "Community 65"
 Cohesion: 0.07
@@ -462,12 +486,16 @@ Cohesion: 0.22
 Nodes (9): 37 — `aggregator/` — Rust binary project initialized, 38a — `aggregator/Cargo.toml` — Dependencies configured, 38b — `aggregator/build.rs` — Protobuf compilation pipeline, 38c — `aggregator/src/proto.rs` — Protobuf module bridge, 39a — `aggregator/src/consumer.rs` — Multi-topic StreamConsumer module, 39b — `aggregator/src/main.rs` — Entry point (UPDATED SP42), code:rust (pub mod technical_data { include!(concat!(env!("OUT_DIR"), "), Next Phase (+1 more)
 
 ### Community 67 - "Community 67"
-Cohesion: 0.16
-Nodes (14): BaseModel, event_generator(), Start or continue the Deep Quant LLM ReAct loop for a given thread_id., Rust tool server triggers this endpoint when the watched price and volume     co, Start or continue the Deep Quant LLM ReAct loop, returning an SSE stream., Start or continue the Deep Quant LLM ReAct loop, returning an SSE stream., Start or continue the Deep Quant LLM ReAct loop, returning an SSE stream., Resumes a paused state graph run and returns the subsequent execution as an SSE (+6 more)
+Cohesion: 0.19
+Nodes (12): BaseModel, event_generator(), Start or continue the Deep Quant LLM ReAct loop for a given thread_id., Rust tool server triggers this endpoint when the watched price and volume     co, Start or continue the Deep Quant LLM ReAct loop, returning an SSE stream., Start or continue the Deep Quant LLM ReAct loop, returning an SSE stream., Resumes a paused state graph run and returns the subsequent execution as an SSE, Resumes a paused state graph run and returns the subsequent execution as an SSE (+4 more)
 
 ### Community 68 - "Community 68"
 Cohesion: 0.25
 Nodes (9): Auth System (Argon2 + JWT + OAuth), PostgreSQL Auth Database, Redis Session Cache, PostgreSQL Docker Service, Redis Docker Service, Argon2id Password Hasher, Auth Phase 1 Identity Foundation, Fastify Auth Server (index.js) (+1 more)
+
+### Community 69 - "Community 69"
+Cohesion: 0.44
+Nodes (9): ActivePositions(), calcPnl(), calcPnlPercent(), formatPercent(), formatPnl(), PositionRow(), PositionRowProps, timeAgo() (+1 more)
 
 ### Community 70 - "Community 70"
 Cohesion: 0.28
@@ -478,12 +506,16 @@ Cohesion: 0.29
 Nodes (5): check_api_key_exists(), get_api_key_from_vault(), hydrate_key_cache(), save_api_key(), SecureKeyStore
 
 ### Community 72 - "Community 72"
-Cohesion: 0.29
-Nodes (4): aadhaarBreaker, panBreaker, CB_STATES, CircuitBreaker
+Cohesion: 0.36
+Nodes (3): aadhaarBreaker, CB_STATES, CircuitBreaker
 
 ### Community 73 - "Community 73"
 Cohesion: 0.25
 Nodes (7): 1. Tick (`market_data.proto`), 2. TechSignal (`technical_data.proto`), 3. NewsSentiment (`sentiment_data.proto`), 4. AggregatedDecision (`decision.proto`), 5. OHLCCandle (`market_data.proto`), 6. PredictiveSignal (`predictive_data.proto`), Universal Data Contracts
+
+### Community 74 - "Community 74"
+Cohesion: 0.25
+Nodes (8): 2. Where Each Indicator Lives (3 Compute Layers), code:block1 (RSI < 30  AND  price > VWAP  →  Score 85  (Strong Bullish)), code:rust (pub struct IndicatorState {), code:typescript (// SMA-seeded initialization, then exponential smoothing), code:typescript (// Standard Wilder's smoothing), Layer A: Technical Agent (`/agents/technical` · Rust · Real-time), Layer B: Consensus Engine (`/frontend/src-tauri/src/quant/` · Rust · Tauri-local), Layer C: Frontend (`/frontend/src/hooks/` · TypeScript · Client-side)
 
 ### Community 75 - "Community 75"
 Cohesion: 0.18
@@ -498,12 +530,12 @@ Cohesion: 0.19
 Nodes (22): core, core:app, default_permission, global_scope_schema, permission_sets, default_permission, core:event, default_permission (+14 more)
 
 ### Community 78 - "Community 78"
-Cohesion: 0.06
-Nodes (40): 1. The Complete Indicator Inventory, 2. Where Each Indicator Lives (3 Compute Layers), 3. Candlestick Patterns (5 Patterns), 4. Institutional Strategies (5 Strategies), 5.1 Trend Score (-100 to +100), 5.2 Momentum State, 5.3 Volatility State, 5.4 Volume Flow State (+32 more)
+Cohesion: 0.17
+Nodes (12): 6.2 Deep Quant Analysis (AI Panel), 6.3 Quant Radar (Background Scanner), 6.4 Chart Overlays (AlphaPredictiveChart), 6.5 Multi-Timeframe Trend (Swing Panel), 6.6 Predictive Agent (Ghost Line), 6. Feature Map — Which UI Feature Uses What, code:block11 (Step 1: Load 200 candles from QuestDB), code:block12 (Asset: RELIANCE) (+4 more)
 
 ### Community 79 - "Community 79"
-Cohesion: 0.11
-Nodes (25): InstrumentRecord, resolve_instrument_token(), ActiveSymbolState, notify_ingestion_subscribe(), send_subscribe_to_ingestion(), subscribe_ticker(), fetchFromKiteHistorical(), fetchFromQuestDB() (+17 more)
+Cohesion: 0.33
+Nodes (5): ActiveSymbolState, notify_ingestion_subscribe(), send_subscribe_to_ingestion(), subscribe_ticker(), QuestDbWriter
 
 ### Community 80 - "Community 80"
 Cohesion: 0.29
@@ -529,13 +561,17 @@ Nodes (6): 43 — `aggregator/src/kafka_producer.rs` — NEW, 44 — `aggregator
 Cohesion: 0.18
 Nodes (11): 28 — `agents/sentiment/` — Node.js project initialized, 29 — Dependencies installed (50 packages, 0 vulnerabilities), 30a — `agents/sentiment/src/protoLoader.js` — NEW, 30b — `agents/sentiment/src/fetcher.js` — NEW, 30c — `agents/sentiment/src/index.js` — NEW (scaffolding version), 31 — `agents/sentiment/src/claude.js` — NEW, 33 — `agents/sentiment/src/index.js` — REPLACED (full pipeline), Build Notes (+3 more)
 
+### Community 86 - "Community 86"
+Cohesion: 0.42
+Nodes (8): decryptSymmetric(), encryptSymmetric(), getKey(), activateMfaRecord(), findMfaRecord(), upsertMfaRecord(), generateMfa(), verifyMfa()
+
 ### Community 87 - "Community 87"
 Cohesion: 0.33
 Nodes (5): description, identifier, permissions, $schema, windows
 
 ### Community 89 - "Community 89"
-Cohesion: 0.28
-Nodes (11): ARGON2_OPTIONS, hashPassword(), start, verifyPassword(), findUserByEmail(), getPasswordHash(), insertCredential(), insertUser() (+3 more)
+Cohesion: 0.24
+Nodes (13): ARGON2_OPTIONS, hashPassword(), start, verifyPassword(), findUserByEmail(), getPasswordHash(), insertCredential(), insertUser() (+5 more)
 
 ### Community 90 - "Community 90"
 Cohesion: 0.40
@@ -550,8 +586,8 @@ Cohesion: 0.33
 Nodes (6): 40 — `aggregator/src/state.rs` — NEW, 41 — `aggregator/src/engine.rs` — NEW, 42 — Integration: `consumer.rs` + `main.rs` — UPDATED, All Files (Cumulative — SP34-36 additions), All Files (Cumulative — SP37-42 additions), Subphases 40-42: Dynamic Weighting & Conflict Resolution ✅ COMPLETE THIS SESSION
 
 ### Community 93 - "Community 93"
-Cohesion: 0.25
-Nodes (13): init_consumer(), init_producer(), now_ms(), publish_insight(), publish_signal(), run(), now_ms(), parse_frame() (+5 more)
+Cohesion: 0.22
+Nodes (15): run_instrument_sync(), init_consumer(), init_producer(), now_ms(), publish_insight(), publish_signal(), run(), now_ms() (+7 more)
 
 ### Community 94 - "Community 94"
 Cohesion: 0.40
@@ -561,21 +597,45 @@ Nodes (4): code:bash (npm run dev), Deploy on Vercel, Getting Started, Learn Mor
 Cohesion: 0.83
 Nodes (3): generateMockCandles(), GET(), symToBasePrice()
 
+### Community 152 - "Community 152"
+Cohesion: 0.35
+Nodes (3): BillingController, findUserById(), BillingService
+
+### Community 153 - "Community 153"
+Cohesion: 0.25
+Nodes (4): inter, metadata, AuthLayout(), SessionProvider()
+
 ### Community 154 - "Community 154"
-Cohesion: 0.16
-Nodes (8): run_consumer(), run_consumer_loop(), init_producer(), KafkaProducer, publish_candle(), publish_decision(), publish_signal(), publish_tick()
+Cohesion: 0.24
+Nodes (6): init_producer(), KafkaProducer, publish_candle(), publish_decision(), publish_signal(), publish_tick()
 
 ### Community 155 - "Community 155"
 Cohesion: 0.15
 Nodes (13): All Files (Phase 7 — Cumulative), CSS Design System, Environment, Health-Check Matrix, Master Phase 7 (Identity UI) → Subphases 28-30: Stateful Entry & Social Integration ✅ COMPLETE THIS SESSION, Middleware Guard, Route Architecture, Security Invariants (Hard-Enforced) (+5 more)
 
+### Community 156 - "Community 156"
+Cohesion: 0.29
+Nodes (8): AlphaPredictiveChart.tsx, AlphaPredictiveChart.tsx Chart Render, IndicatorState Struct (16 indicators), VWEPR Curvature Regression Model, Bollinger Bands Indicator, EMA 21 Indicator, EMA 9 Indicator, MACD Histogram Indicator
+
 ### Community 157 - "Community 157"
 Cohesion: 0.52
 Nodes (11): base_case_no_sentiment_100pct_tech(), base_weights_70_30_normal(), calculate_decision(), conflict_resolution_penalizes_toward_neutral(), conflict_with_conviction_override_trusts_news(), conviction_override_inverts_weights(), hold_action_on_neutral_blend(), make_sentiment() (+3 more)
 
+### Community 158 - "Community 158"
+Cohesion: 0.32
+Nodes (8): ChartTimeframe State Engine, Predictive Ghost Line Overlay, Predictive Agent (Ghost Line), Kafka Topic: signals.predictive, Load Tester Chaos Engine, PredictiveSignal Protobuf Contract, agents/predictive/math.rs OLS Engine, OLS Linear Regression (Predictive)
+
 ### Community 159 - "Community 159"
 Cohesion: 0.20
 Nodes (10): 58 — `frontend/src/store/useTradeStore.ts` — Telemetry state added, 59 — `frontend/src/components/panels/NetworkMetrics.tsx` — NEW, 60 — `frontend/src/components/layout/TerminalLayout.tsx` — Integrated, Frontend Build Verification, Frontend Build Verification, Layout Integration, Scope Execution (Strict), Subphases 58-60: Telemetry & Latency Metrics ✅ COMPLETE THIS SESSION (+2 more)
+
+### Community 160 - "Community 160"
+Cohesion: 0.29
+Nodes (10): Technical Analysis Agent, TechSignal Protobuf Contract, indicators.rs (RSI + VWAP), kafka_consumer.rs (Technical Agent), kafka_producer.rs (Technical Agent), signal_engine.rs Conviction Scorer, state.rs SymbolState/MarketState, Technical Agent Rust Service (+2 more)
+
+### Community 161 - "Community 161"
+Cohesion: 0.29
+Nodes (7): Aggregator Decision Engine, AggregatedDecision Protobuf Contract, Aggregator Docker Service, Alpha Terminal Docker Service, Predictive Agent Docker Service, Quant-RAG Agent Docker Service, Redpanda Docker Service
 
 ### Community 162 - "Community 162"
 Cohesion: 0.20
@@ -617,9 +677,13 @@ Nodes (5): SystemConsole.tsx, StatusDot(), StatusLabel(), SystemConsole(), Syste
 Cohesion: 0.11
 Nodes (19): calculate_ema(), declare_trade(), get_candles(), get_consensus_report(), get_multi_tf_trend(), get_news_context(), get_support_resistance(), Identifies exact support and resistance liquidity zones for the specified tradin (+11 more)
 
-### Community 172 - "Community 172"
-Cohesion: 0.13
-Nodes (7): ToolMenu(), PROFILES, SecurityVault, TerminalLayout(), TerminalLayoutProps, QuantRadar(), RadarAlert
+### Community 173 - "Community 173"
+Cohesion: 0.83
+Nodes (3): getLatencyColor(), NetworkMetrics(), statusDotClass
+
+### Community 174 - "Community 174"
+Cohesion: 0.46
+Nodes (7): AiExecutionPlanView(), AiExecutionPlanViewProps, AiPlanShape, convictionColor(), convictionIcon(), convictionLabel(), AiExecutionPlan
 
 ### Community 175 - "Community 175"
 Cohesion: 0.21
@@ -645,13 +709,21 @@ Nodes (8): description, required, type, description, required, type, Capability,
 Cohesion: 0.25
 Nodes (8): properties, default, description, type, description, remote, anyOf, description
 
-### Community 181 - "Community 181"
-Cohesion: 0.40
-Nodes (4): AgentState, call_model(), format_system_prompt(), TypedDict
+### Community 182 - "Community 182"
+Cohesion: 0.42
+Nodes (8): ConsensusBoard(), Props, stateColor(), stateIcon(), trendBg(), trendColor(), trendGlow(), ConsensusReport
 
 ### Community 183 - "Community 183"
+Cohesion: 0.28
+Nodes (15): ACCESS_COOKIE_OPTS, COOKIE_OPTS, handleGenerateMfa(), handleGoogleLogin(), handleHealth(), handleLogin(), handleLogout(), handleRefresh() (+7 more)
+
+### Community 184 - "Community 184"
 Cohesion: 0.42
-Nodes (8): decryptSymmetric(), encryptSymmetric(), getKey(), activateMfaRecord(), findMfaRecord(), upsertMfaRecord(), generateMfa(), verifyMfa()
+Nodes (8): evaluate_signal(), fields_propagated_correctly(), neutral_signal(), overbought_above_vwap(), oversold_below_vwap(), strong_bearish_signal(), strong_bullish_signal(), vwap_distance_calculation()
+
+### Community 185 - "Community 185"
+Cohesion: 0.39
+Nodes (4): CandleAccumulator, init_tick_consumer(), run_ohlc_pipeline(), start_ohlc_ws_server()
 
 ### Community 186 - "Community 186"
 Cohesion: 0.50
@@ -742,28 +814,48 @@ Cohesion: 0.50
 Nodes (4): commands, description, identifier, deny-version
 
 ### Community 208 - "Community 208"
-Cohesion: 0.13
-Nodes (13): confidence_is_clamped(), flat_prices_yield_high_confidence(), PredictionEngine, returns_none_when_window_incomplete(), returns_prediction_at_full_window(), window_never_exceeds_capacity(), CandleAccumulator, init_tick_consumer() (+5 more)
+Cohesion: 0.25
+Nodes (8): OhlcEngine, SymbolState, confidence_is_clamped(), flat_prices_yield_high_confidence(), PredictionEngine, returns_none_when_window_incomplete(), returns_prediction_at_full_window(), window_never_exceeds_capacity()
+
+### Community 209 - "Community 209"
+Cohesion: 0.36
+Nodes (4): handleEmailBlur(), handlePassBlur(), validateEmail(), validatePassword()
+
+### Community 210 - "Community 210"
+Cohesion: 0.52
+Nodes (6): make_ltp_packet(), parse_binary_frame(), parse_binary_tick(), test_frame_with_no_packets(), test_ltp_mode_parsing(), test_packet_too_short()
+
+### Community 211 - "Community 211"
+Cohesion: 0.53
+Nodes (5): rsi_warm_up_gating(), update_rsi(), update_vwap(), vwap_basic_calculation(), vwap_no_volume_returns_none()
+
+### Community 213 - "Community 213"
+Cohesion: 0.67
+Nodes (3): fetch_candles_for_symbol(), RadarAlert, spawn_radar_worker()
+
+### Community 214 - "Community 214"
+Cohesion: 0.50
+Nodes (3): generate_access_token(), KiteSessionData, KiteSessionResponse
 
 ## Knowledge Gaps
 - **746 isolated node(s):** `name`, `version`, `private`, `test:rust`, `test:e2e` (+741 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **18 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **20 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `resolve_instrument_token()` connect `Community 79` to `Community 41`, `Community 26`, `Community 27`?**
-  _High betweenness centrality (0.103) - this node is a cross-community bridge._
-- **Why does `useHistoricalData.ts Hook` connect `Community 79` to `Community 62`, `Community 17`, `Community 44`, `Community 9`?**
-  _High betweenness centrality (0.096) - this node is a cross-community bridge._
-- **Why does `run()` connect `Community 93` to `Community 1`, `Community 70`, `Community 7`, `Community 16`, `Community 18`, `Community 23`, `Community 27`, `Community 157`?**
-  _High betweenness centrality (0.093) - this node is a cross-community bridge._
+- **Why does `resolve_instrument_token()` connect `Community 27` to `Community 41`, `Community 26`, `Community 79`?**
+  _High betweenness centrality (0.100) - this node is a cross-community bridge._
+- **Why does `useHistoricalData.ts Hook` connect `Community 27` to `Community 48`, `Community 17`, `Community 44`, `Community 22`?**
+  _High betweenness centrality (0.094) - this node is a cross-community bridge._
+- **Why does `run()` connect `Community 93` to `Community 1`, `Community 6`, `Community 7`, `Community 70`, `Community 213`, `Community 89`, `Community 27`, `Community 157`?**
+  _High betweenness centrality (0.092) - this node is a cross-community bridge._
 - **What connects `name`, `version`, `private` to the rest of the system?**
-  _765 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _763 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
   _Cohesion score 0.04644412191582003 - nodes in this community are weakly interconnected._
 - **Should `Community 2` be split into smaller, more focused modules?**
-  _Cohesion score 0.05228070175438596 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.05926251097453907 - nodes in this community are weakly interconnected._
 - **Should `Community 3` be split into smaller, more focused modules?**
-  _Cohesion score 0.05731523378582202 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.12987012987012986 - nodes in this community are weakly interconnected._

@@ -755,8 +755,8 @@
     "semantic_hash": "ee66edf56ccd137eb04a7503e60205b2"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\commands\\deep_quant.rs": {
-    "mtime": 1779876136.2586231,
-    "ast_hash": "6aa6e7c4d4f84ac5515ba726b81116f4",
+    "mtime": 1779876031.7997417,
+    "ast_hash": "816fd0f0f8a226542ae71926c676c995",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\commands\\instruments.rs": {
@@ -1495,8 +1495,8 @@
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\agents\\deep-quant-loop\\tools.py": {
-    "mtime": 1779876040.9546046,
-    "ast_hash": "2be7a4cba84c5dfe2d433dda32dd24a4",
+    "mtime": 1779870136.217693,
+    "ast_hash": "a2473402cc583cd9b2dab4c85cf3391b",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\agents\\deep-quant-loop\\requirements.txt": {
@@ -1505,13 +1505,13 @@
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\agents\\deep-quant-loop\\graph.py": {
-    "mtime": 1779876050.326737,
-    "ast_hash": "a388cdf2a9856f3e1c951d7b593ddb42",
+    "mtime": 1779872718.9509668,
+    "ast_hash": "75b62b193a7c9a98f8944b03ed1e7b1f",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\agents\\deep-quant-loop\\main.py": {
-    "mtime": 1779876056.8460612,
-    "ast_hash": "3b4304829c43643a637ffa226a961df3",
+    "mtime": 1779873031.2963154,
+    "ast_hash": "4964cd89520cb04dc88e1aa12afa2a8e",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\build_err.txt": {
