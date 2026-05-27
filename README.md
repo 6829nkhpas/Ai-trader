@@ -1,12 +1,18 @@
 # 🌌 Strat: Institutional Quantitative Trading Terminal & AI platform
 
-Strat is an institutional-grade, high-frequency AI-powered trading platform executing advanced quantitative strategies on the NSE (National Stock Exchange of India). Combining high-speed Rust-based ingestion engines, mathematical consensus, predictive price curves, real-time sentiment analysis, and a unified reasoning layer powered by the **"Seasoned Historian" V3 prompt core**, Strat delivers high-probability directional conviction with zero compromise on capital preservation.
+Strat is an institutional-grade, high-frequency AI-powered trading platform executing advanced quantitative strategies on the NSE (National Stock Exchange of India). Combining high-speed Rust-based ingestion engines, mathematical consensus, predictive price curves, real-time sentiment analysis, and a unified reasoning layer powered by the **"Self-Defending Hunter" V3 prompt core (Alpha-Quant)**, Strat delivers high-probability directional conviction with zero compromise on capital preservation.
 
 ---
 
 ## 🏗️ System Architecture & Data Flow
 
-Strat is built on a distributed, low-latency asynchronous architecture utilizing Rust, Fastify, Kafka, Redis, and QuestDB.
+Strat is built on a distributed, low-latency asynchronous architecture utilizing Rust, Python (LangGraph & FastAPI), Fastify, Apache Kafka, Redis, and QuestDB.
+
+### Core Data Flow & Orchestration
+1. **Binary Tick Ingestion**: High-speed tick data is ingested from Zerodha's Kite WS API by the Rust ingestion service and streamed to Apache Kafka.
+2. **QuestDB & Technical Calculations**: Apache Kafka feeds tick data to QuestDB. The Technical Agent recalculates metrics (RSI, Bollinger Bands, MACD, etc.) in real-time.
+3. **Stateful ReAct Loop (LangGraph)**: The Tauri terminal links to a local Rust Tool Server. This server is queried by the Python-based LangGraph ReAct reasoning service, which executes secure local tools to retrieve microstructures, macro trends, and support/resistance zones.
+4. **Self-Verification & UI Event Streaming**: The AI agent self-audits trade setups and streams structured reasoning updates back to the Tauri frontend via Server-Sent Events (SSE).
 
 ```mermaid
 graph TD
@@ -38,18 +44,12 @@ graph TD
     end
 
     %% Unified Reasoning Core
-    subgraph Reasoning ["Deep Quant Reasoning Engine"]
-        TauriCore -->|1. Data Fusion: Daily ∪ Intraday ∪ Live| Fusion[Deduplicated Candle Array]
-        Fusion -->|2. Microstructures| IndicatorState[technical compilation]
-        IndicatorState -->|3. Curvature| VWEPR[VWEPR Curved Acceleration]
-        IndicatorState -->|4. Rolling Scans| Patterns[Candlestick rolling scan]
-        SentimentService -->|5. Sentiment Context| SentimentContext[RAG sentiment Context]
-        
-        ReasoningCore[llm.rs: Seasoned Historian V3]
-        
-        VWEPR & Patterns & SentimentContext & IndicatorState -->|Verify 18 RAG Variables| ReasoningCore
-        ReasoningCore -->|DeepSeek / Hugging Face Router| ExecutionPlan[Structured JSON: AiExecutionPlan]
-        ExecutionPlan -->|Emit Events| UI
+    subgraph Reasoning ["Deep Quant ReAct Loop & Reasoning"]
+        TauriCore -->|Data Fusion / Tool API| ToolServer[Rust Tool Server]
+        ToolServer -->|get_candles / get_consensus_report / get_multi_tf_trend| QuantLoop[LangGraph Agent: Alpha-Quant V3]
+        QuantLoop -->|watch_price_condition / declare_trade| ToolServer
+        QuantLoop -->|SSE Streams| TauriCore
+        TauriCore -->|Emit Events| UI
     end
 
     style StreamLayer fill:#1e1e2e,stroke:#313244,stroke-width:2px;
@@ -63,7 +63,7 @@ graph TD
 
 ## 🧠 Deep Quant Analytical Foundation
 
-Strat's reasoning core is driven by a sophisticated multi-variable RAG (Retrieval-Augmented Generation) pipeline that feeds into the **Seasoned Historian V3 System Prompt**. Instead of leaving numeric parameters to LLM hallucination, they are mathematically calculated in the native Rust engine and injected verbatim.
+Strat's reasoning core is driven by a sophisticated multi-variable RAG (Retrieval-Augmented Generation) pipeline that feeds into the **"Self-Defending Hunter" V3 System Prompt (Alpha-Quant)**. Instead of leaving numeric parameters to LLM hallucination, they are mathematically calculated in the native Rust engine and injected verbatim.
 
 ### 1. VWEPR (Volume-Weighted Exponential Price Regression) Curvature
 The terminal utilizes the **VWEPR** regression system to predict support/resistance and trend exhaustion using polynomial fitting. By mapping a sliding window of historical bars, we fit a quadratic curve:
@@ -97,9 +97,22 @@ $$\text{Candles} = \text{Daily Archive} \cup \text{Intraday Cache} \cup \text{Li
 
 ---
 
-## 🏛️ The "Seasoned Historian" Reasoning Persona
+## 🏛️ The "Self-Defending Hunter" Reasoning Persona
 
-The LLM is configured with a ruthless quantitative trader persona that evaluates RAG parameters against historical memories. 
+Alpha Suite V3 introduces the **"Self-Defending Hunter"** prompt architecture (**Alpha-Quant**). Rather than rushing into volatile positions, the agent operates in a high-patience regime that loops through multiple timeframes, schedules async price-watching conditions, and rigorously self-criticizes trade ideas before final declaration.
+
+### The Hunter Mindset
+*   **Capital Preservation First**: If current conditions are messy or lack high-probability entries, the agent is never forced to act.
+*   **Timeframe Looping**: Dynamically crawls from 5m/15m to 1H, 4H, and 1D levels to establish structural smart-money confluence.
+*   **Async Trigger Conditions**: Uses `watch_price_condition` to place price-and-volume tripwires, parking resources until high-probability triggers fire.
+
+### Self-Verification Protocol
+Before calling `declare_trade`, the agent enters an aggressive risk-auditing monologue evaluating:
+1.  **Macro Trend Alignment**: Ensuring micro entries don't trade against the daily trend bias.
+2.  **Volatility Buffer**: Checking that the proposed Stop Loss isn't too tight compared to recent volatility bands (ATR / Bollinger).
+3.  **Strict Risk-Reward**: Confirming a minimum of 1:2 R:R ratio.
+
+If any check fails, the trade is rejected, and the agent continues scanning other scopes. This same protocol is fully mirrored in **Verify Mode (Co-Pilot)** to prevent logical contradictions. 
 
 ### Injected Prompt Variable Map (Exactly 18 Parameters)
 The system prompt resolves and format-injects the exact quantitative metrics of the market, structured as follows:
@@ -132,6 +145,7 @@ The system prompt resolves and format-injects the exact quantitative metrics of 
 ```text
 /
 ├── agents/
+│   ├── deep-quant-loop/  # LangGraph-based stateful ReAct loop (Self-Defending Hunter AI agent)
 │   ├── technical/        # Rust Technical Indicator calculations (RSI, Bollinger Bands, MACD, EMA)
 │   ├── predictive/       # Rust OLS and Regression projection calculator
 │   └── sentiment/        # Claude-powered real-time news evaluation engine with Redis Cache
@@ -184,13 +198,21 @@ KAFKA_BROKER_URL="127.0.0.1:9092"
     ```
     This registers PostgreSQL, Redis, Apache Kafka, and QuestDB.
 
-2.  **Verify Backend API Contract Tests**:
+2.  **Boot Deep Quant ReAct Agent Service**:
+    ```bash
+    cd agents/deep-quant-loop
+    pip install -r requirements.txt
+    python main.py
+    ```
+    This starts the LangGraph-based stateful agent API on `http://127.0.0.1:8086`.
+
+3.  **Verify Backend API Contract Tests**:
     ```bash
     cd frontend/src-tauri
     cargo test --test api_tests
     ```
 
-3.  **Boot Desktop Terminal**:
+4.  **Boot Desktop Terminal**:
     ```bash
     cd frontend
     npm run tauri dev
