@@ -1323,28 +1323,24 @@ async fn run_sentinel_loop(app: tauri::AppHandle, symbol: String, timeframe: Str
         }
 
         // 3. Assemble strict prompt & call DeepSeek via generate_sentinel_plan
-        let plan_result = if crate::is_test_mode() {
-            Ok(crate::mock_ai_execution_plan())
-        } else {
-            llm::generate_sentinel_plan(
-                &symbol,
-                &consensus,
-                &timeframe,
-                latest_close,
-                vwap_val,
-                vol_multiplier,
-                atr_val,
-                bb_upper,
-                bb_mid,
-                bb_lower,
-                rsi_val,
-                macd_val,
-                macd_signal,
-                ema9_val,
-                ema21_val,
-                Some(&app),
-            ).await
-        };
+        let plan_result = llm::generate_sentinel_plan(
+            &symbol,
+            &consensus,
+            &timeframe,
+            latest_close,
+            vwap_val,
+            vol_multiplier,
+            atr_val,
+            bb_upper,
+            bb_mid,
+            bb_lower,
+            rsi_val,
+            macd_val,
+            macd_signal,
+            ema9_val,
+            ema21_val,
+            Some(&app),
+        ).await;
 
         // 4. Decision Fork
         match plan_result {

@@ -341,23 +341,6 @@ fn resolve_llm_key() -> Result<String, String> {
     Err("No LLM_API_KEY configured in .env".to_string())
 }
 
-// ── Mock for test mode ──────────────────────────────────────────────────────
-
-fn mock_sentiment(symbol: &str) -> SentimentPayload {
-    SentimentPayload {
-        symbol: symbol.to_string(),
-        score: 42,
-        label: "Bullish".to_string(),
-        top_headline: format!("{} reports strong quarterly earnings, beating analyst estimates by 12%.", symbol),
-        impact: "positive".to_string(),
-        headlines: vec![
-            format!("{} reports strong quarterly earnings, beating analyst estimates by 12%.", symbol),
-            format!("{} announces expansion into renewable energy sector.", symbol),
-            format!("Analysts upgrade {} to 'Outperform' with revised target price.", symbol),
-        ],
-    }
-}
-
 // ── Tauri IPC Command ───────────────────────────────────────────────────────
 
 /// Fetch sentiment for a symbol — fully independent of WebSocket/Kafka streams.
@@ -372,16 +355,6 @@ fn mock_sentiment(symbol: &str) -> SentimentPayload {
 pub async fn fetch_symbol_sentiment(symbol: String) -> Result<SentimentPayload, String> {
     let t0 = Instant::now();
     info!("[sentiment] ▶ Fetching sentiment for {} (decoupled from ticks)", symbol);
-
-    // Test mode → return mock immediately
-    if crate::is_test_mode() {
-        let mock = mock_sentiment(&symbol);
-        info!(
-            "[sentiment] ✔ TEST_MODE mock returned score={} label={} elapsed_ms={}",
-            mock.score, mock.label, t0.elapsed().as_millis()
-        );
-        return Ok(mock);
-    }
 
     // Step 1: Fetch news headlines (independent HTTP call)
     let t_news = Instant::now();

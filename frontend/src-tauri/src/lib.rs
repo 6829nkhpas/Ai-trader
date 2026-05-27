@@ -1,4 +1,3 @@
-use tauri::Emitter;
 use tauri::Manager;
 use log::{info, error};
 
@@ -18,43 +17,6 @@ pub fn is_test_mode() -> bool {
     std::env::var("ALPHA_TEST_MODE").is_ok()
 }
 
-/// Mock OHLC candle tick emitted every 100ms in test mode.
-/// Reads the currently active symbol from shared state so that symbol-switch
-/// events during test runs are reflected immediately in the emitted ticks.
-/// Previously hardcoded to "RELIANCE" — that prevented symbol switching in test mode.
-fn mock_ohlc_tick(symbol: &str) -> serde_json::Value {
-    // Simulate a price that gently drifts per symbol name for visual variety.
-    let base_price: f64 = symbol.bytes().map(|b| b as f64).sum::<f64>() % 1000.0 + 1500.0;
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    // Bucket to a 1-minute OHLC window (matching real aggregator behaviour)
-    let bucket_ms = (now_ms / 60_000) * 60_000;
-    serde_json::json!({
-        "symbol": symbol,
-        "start_timestamp_ms": bucket_ms,
-        "open": (base_price * 0.998).round() / 1.0,
-        "high": (base_price * 1.005).round() / 1.0,
-        "low":  (base_price * 0.994).round() / 1.0,
-        "close": base_price,
-        "volume": 125000_u64,
-    })
-}
-
-/// Static mocked AiExecutionPlan returned when ALPHA_TEST_MODE is active.
-/// Prevents any network call to DeepSeek during E2E tests.
-pub fn mock_ai_execution_plan() -> quant::AiExecutionPlan {
-    quant::AiExecutionPlan {
-        conviction_score: 78,
-        setup_validation: "Golden Cross confirmed with rising OBV and bullish engulfing pattern. \
-            Volume surge validates breakout above VWAP. RSI at 62 provides room for upside \
-            before overbought territory. News sentiment is neutral-positive.".to_string(),
-        execution_plan: "ENTRY: 2470 (current breakout level above VWAP) | \
-            STOP-LOSS: 2435 (below ORB low and recent swing low) | \
-            TARGET 1: 2510 (1:1.14 R:R at prior resistance) | \
-            TARGET 2: 2550 (measured move from engulfing pattern) | \
-            POSITION SIZE: 2% of capital | \
-            INVALIDATION: Close below SMA50 on daily timeframe.".to_string(),
-    }
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -192,135 +154,53 @@ pub fn run() {
           quant::tool_server::run_tool_server(app_handle_server).await;
       });
 
-      if is_test_env {
-          // ══════════════════════════════════════════════════════════════
-          // TEST MODE: Bypass all live API connections.
-          // Spawn a mock OHLC tick emitter instead of connecting to WS.
-          // ══════════════════════════════════════════════════════════════
-          let app_handle_mock = app.handle().clone();
-          // Get a reference to the shared symbol state from Tauri's manager.
-          // Since the state was registered with .manage(), Tauri holds it behind
-          // an Arc internally — app.state() returns a Guard with a &T reference.
-          // We clone the string each tick by locking the Mutex, keeping lock time minimal.
-          let symbol_state_mock: tauri::State<'_, commands::ticker::ActiveSymbolState> = app.state();
-          // SAFETY: The `app` reference lives for the duration of setup();
-          // we must transfer ownership into the spawned task via a raw pointer trick.
-          // Instead, use app_handle to retrieve state inside the async block.
-          let app_handle_mock2 = app.handle().clone();
-          drop(symbol_state_mock); // release the borrow so we can move app_handle_mock2
-          tauri::async_runtime::spawn(async move {
-              info!("[TEST MODE] Mock OHLC tick emitter started (100ms interval, dynamic symbol)");
-              loop {
-                  // Retrieve state each iteration (cheap Arc clone under the hood).
-                  let sym = app_handle_mock2
-                      .state::<commands::ticker::ActiveSymbolState>()
-                      .symbol
-                      .lock()
-                      .await
-                      .clone();
-                  let tick = mock_ohlc_tick(&sym);
-                  let _ = app_handle_mock.emit("ohlc-tick", tick.clone());
-                  if let Some((symbol, candle)) = quant::tool_server::parse_ohlc_tick(&tick) {
-                      if let Some(tx) = app_handle_mock.try_state::<tokio::sync::broadcast::Sender<(String, quant::vwepr::OhlcCandle)>>() {
-                          let _ = tx.send((symbol, candle));
-                      }
-                  }
-                  if let Some(close) = tick.get("close").and_then(|c| c.as_f64()) {
-                      execution::paper::process_tick_for_positions(&app_handle_mock, &sym, close);
-                  }
-                  tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+      // ── QuestDB Connection Pool (PG wire :8812) ─────────────────────
+      let questdb_url = std::env::var("QUESTDB_POSTGRES_URL")
+          .unwrap_or_else(|_| "postgresql://admin:quest@localhost:8812/qdb".into());
+
+      let app_handle_db = app.handle().clone();
+      tauri::async_runtime::spawn(async move {
+          match sqlx::postgres::PgPoolOptions::new()
+              .max_connections(5)
+              .connect(&questdb_url)
+              .await
+          {
+              Ok(pool) => {
+                  info!("QuestDB PG pool connected → {}", questdb_url);
+
+                  // Run historical_candles migration
+                  services::history_loader::run_migration(&pool).await;
+
+                  // Store pool as managed state for Tauri commands
+                  app_handle_db.manage(pool.clone());
+                  info!("QuestDB pool registered as Tauri managed state.");
+
+                  // ── Historical data is now LAZY-LOADED ────────────────────────
+                  //
+                  // Historical data is now fetched on-demand from the React UI
+                  // via `invoke("load_historical", { symbol, instrumentToken })`
+                  // (see commands::charts::load_historical) and cached in
+                  // QuestDB on first request. Subsequent reads hit the cache
+                  // through `get_historical_view` with dynamic SAMPLE BY.
+                  info!(
+                      "Historical auto-loader disabled — data loads on-demand per UI request."
+                  );
               }
-          });
-
-          // Emit a mock consensus report after a short delay (simulates startup)
-          let app_handle_consensus = app.handle().clone();
-          tauri::async_runtime::spawn(async move {
-              tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-              // Read the active symbol from state so the mock consensus reflects
-              // whatever the user has selected (not hardcoded RELIANCE).
-              let sym = app_handle_consensus
-                  .state::<commands::ticker::ActiveSymbolState>()
-                  .symbol
-                  .lock()
-                  .await
-                  .clone();
-              let mock_consensus = serde_json::json!({
-                  "symbol": sym,
-                  "trend_score": 75,
-                  "momentum_state": "NEUTRAL",
-                  "volatility_state": "NORMAL",
-                  "volume_flow_state": "ACCUMULATION",
-                  "active_patterns": ["Bullish Engulfing", "Hammer"],
-                  "active_strategies": ["Golden Cross", "VWAP Bounce (Bullish)"]
-              });
-              let _ = app_handle_consensus.emit("quant-consensus", mock_consensus);
-              info!("[TEST MODE] Mock consensus report emitted.");
-          });
-
-      } else {
-          // ══════════════════════════════════════════════════════════════
-          // PRODUCTION MODE: Connect to live services.
-          // ══════════════════════════════════════════════════════════════
-
-          // ── QuestDB Connection Pool (PG wire :8812) ─────────────────────
-          let questdb_url = std::env::var("QUESTDB_POSTGRES_URL")
-              .unwrap_or_else(|_| "postgresql://admin:quest@localhost:8812/qdb".into());
-
-          let app_handle_db = app.handle().clone();
-          tauri::async_runtime::spawn(async move {
-              match sqlx::postgres::PgPoolOptions::new()
-                  .max_connections(5)
-                  .connect(&questdb_url)
-                  .await
-              {
-                  Ok(pool) => {
-                      info!("QuestDB PG pool connected → {}", questdb_url);
-
-                      // Run historical_candles migration
-                      services::history_loader::run_migration(&pool).await;
-
-                      // Store pool as managed state for Tauri commands
-                      app_handle_db.manage(pool.clone());
-                      info!("QuestDB pool registered as Tauri managed state.");
-
-                      // ── Historical data is now LAZY-LOADED ────────────────────────
-                      //
-                      // The previous boot-time auto-loader iterated over the full
-                      // KITE_INSTRUMENT_TOKENS map and bulk-fetched 5 years of daily
-                      // candles for every symbol. That blocked the UI on cold start,
-                      // burned Kite API credits, and pre-warmed data the user might
-                      // never look at.
-                      //
-                      // Historical data is now fetched on-demand from the React UI
-                      // via `invoke("load_historical", { symbol, instrumentToken })`
-                      // (see commands::charts::load_historical) and cached in
-                      // QuestDB on first request. Subsequent reads hit the cache
-                      // through `get_historical_view` with dynamic SAMPLE BY.
-                      info!(
-                          "Historical auto-loader disabled — data loads on-demand per UI request."
-                      );
-                  }
-                  Err(e) => {
-                      error!("QuestDB connection failed: {} — historical commands will be unavailable.", e);
-                  }
+              Err(e) => {
+                  error!("QuestDB connection failed: {} — historical commands will be unavailable.", e);
               }
-          });
+          }
+      });
 
-          // ── OHLC / Predictive / Insight WS → IPC Bridges ───────────────
-          //
-          // These three internal WebSocket clients used to be spawned
-          // here at boot, which produced a [WS] New connection log spam
-          // against the aggregator and held sockets open against
-          // services that may not even be running yet.
-          //
-          // Bridges are now bootstrapped lazily on the first
-          // `subscribe_ticker` IPC call from the UI — see
-          // `services::live_bridges::ensure_bootstrapped()`.
-          info!(
-              "Live WS bridges (OHLC/Predictive/Insight) deferred — \
-               will start on first subscribe_ticker."
-          );
-      }
+      // ── OHLC / Predictive / Insight WS → IPC Bridges ───────────────
+      //
+      // Bridges are now bootstrapped lazily on the first
+      // `subscribe_ticker` IPC call from the UI — see
+      // `services::live_bridges::ensure_bootstrapped()`.
+      info!(
+          "Live WS bridges (OHLC/Predictive/Insight) deferred — \
+           will start on first subscribe_ticker."
+      );
 
       Ok(())
     })

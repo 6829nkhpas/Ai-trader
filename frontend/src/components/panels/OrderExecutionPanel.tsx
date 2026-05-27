@@ -50,13 +50,7 @@ function formatINR(value: number): string {
   return '₹' + value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function symToBasePrice(symbol: string): number {
-  let hash = 0;
-  for (let i = 0; i < symbol.length; i++) {
-    hash = (hash * 31 + symbol.charCodeAt(i)) & 0xffffffff;
-  }
-  return 200 + (Math.abs(hash) % 2800); // 200 to 3000
-}
+
 
 export default function OrderExecutionPanel() {
   const { activeDecision, portfolioBalance, positions, executeTrade, rejectTrade } = useTradeStore();
@@ -83,25 +77,9 @@ export default function OrderExecutionPanel() {
     const matched = reversedDecisions.find((d) => d.symbol.toUpperCase() === symbol.toUpperCase());
     if (matched) return matched;
 
-    // 3. Fallback: Create a high-fidelity synthetic decision for the active symbol
-    // So the Trade Strip works instantly for any selected symbol!
-    let hash = 0;
-    for (let i = 0; i < symbol.length; i++) {
-      hash = (hash * 31 + symbol.charCodeAt(i)) & 0xffffffff;
-    }
-    const score = 55 + (Math.abs(hash) % 35); // 55 to 90
-    const action: 'BUY' | 'SELL' | 'HOLD' = score > 75 ? 'BUY' : score < 60 ? 'HOLD' : 'BUY';
-
-    return {
-      timestamp_ms: Date.now(),
-      symbol: symbol.toUpperCase(),
-      action_type: action,
-      final_conviction_score: score,
-      technical_weight_used: 0.7,
-      sentiment_weight_used: 0.3,
-      price: liveQuote?.last_price ?? symToBasePrice(symbol),
-    };
-  }, [activeDecision, liveDecisions, symbol, liveQuote]);
+    // 3. Fallback: No mock synthetic decisions! Returns null.
+    return null;
+  }, [activeDecision, liveDecisions, symbol]);
 
   // ── Fetch live quote for the selected symbol ───────────────────────
   const fetchQuote = useCallback(async () => {
@@ -128,66 +106,7 @@ export default function OrderExecutionPanel() {
     }
   }, [symbol, fetchQuote]);
 
-  // Real-time wiggling quote simulation when REST API is quiet/offline
-  useEffect(() => {
-    if (!symbol) return;
 
-    // Initialize mock quote if it's null
-    if (!liveQuote) {
-      const basePrice = symToBasePrice(symbol);
-      const change = (Math.sin(symbol.charCodeAt(0)) * 2); // deterministic base change
-      const q: SymbolQuote = {
-        symbol: symbol.toUpperCase(),
-        last_price: basePrice,
-        open: basePrice / (1 + change / 100),
-        high: basePrice * 1.01,
-        low: basePrice * 0.99,
-        close: basePrice / (1 + change / 100),
-        change,
-        net_change: basePrice - (basePrice / (1 + change / 100)),
-        volume: 850000,
-      };
-      setLiveQuote(q);
-    }
-
-    // High-frequency tick (every 2 seconds)
-    const interval = setInterval(() => {
-      setLiveQuote((prev) => {
-        if (!prev || prev.symbol.toUpperCase() !== symbol.toUpperCase()) {
-          const basePrice = symToBasePrice(symbol);
-          const change = (Math.sin(symbol.charCodeAt(0)) * 2);
-          return {
-            symbol: symbol.toUpperCase(),
-            last_price: basePrice,
-            open: basePrice / (1 + change / 100),
-            high: basePrice * 1.01,
-            low: basePrice * 0.99,
-            close: basePrice / (1 + change / 100),
-            change,
-            net_change: basePrice - (basePrice / (1 + change / 100)),
-            volume: 850000,
-          };
-        }
-
-        const pct = (Math.random() - 0.59) * 0.0006; // slight downward/random wiggle
-        const lastPrice = +(prev.last_price * (1 + pct)).toFixed(2);
-        const prevClose = prev.close || (prev.last_price / (1 + prev.change / 100));
-        const change = +(((lastPrice - prevClose) / prevClose) * 100).toFixed(2);
-
-        return {
-          ...prev,
-          last_price: lastPrice,
-          change,
-          net_change: +(lastPrice - prevClose).toFixed(2),
-          high: Math.max(prev.high, lastPrice),
-          low: Math.min(prev.low, lastPrice),
-          volume: prev.volume + Math.floor(Math.random() * 120),
-        };
-      });
-    }, 2000);
-
-    return () => clearInterval(interval);
-  }, [symbol, liveQuote]);
 
   // ── Compute ATR-based Target & Stop from live OHLC candles ─────────
   const { entryPrice, targetPrice, stopPrice, atrValue } = useMemo(() => {
