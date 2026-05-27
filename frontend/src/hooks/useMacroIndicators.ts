@@ -30,13 +30,7 @@ export const MACRO_INDICES: MacroIndex[] = [
   { kiteKey: 'NSE:NIFTY FIN SERVICE',  label: 'NIFTY FIN SVC',  category: 'Sectoral' },
 ];
 
-export const MACRO_BASE_QUOTES: Record<string, { last_price: number; change: number; open: number }> = {
-  'NIFTY 50': { last_price: 22453.80, change: 0.65, open: 22310.00 },
-  'NIFTY BANK': { last_price: 47824.15, change: 0.88, open: 47410.00 },
-  'INDIA VIX': { last_price: 13.48, change: -2.30, open: 13.80 },
-  'NIFTY IT': { last_price: 34185.50, change: 0.42, open: 34040.00 },
-  'NIFTY FIN SERVICE': { last_price: 21142.90, change: 0.54, open: 21030.00 },
-};
+
 
 // ── Quote Data (mirrors WatchlistPanel's QuoteData) ──────────────────────────
 
@@ -147,64 +141,7 @@ export function useMacroIndicators(): UseMacroIndicatorsReturn {
     };
   }, [fetchMacroQuotes]);
 
-  // Real-time ticking price simulator
-  useEffect(() => {
-    // If quotes are empty, populate them with initial mock values
-    if (Object.keys(quotes).length === 0) {
-      const initial: Record<string, MacroQuote> = {};
-      Object.entries(MACRO_BASE_QUOTES).forEach(([sym, val]) => {
-        initial[sym] = {
-          symbol: sym,
-          last_price: val.last_price,
-          open: val.open,
-          high: val.last_price * 1.005,
-          low: val.last_price * 0.995,
-          close: val.open / (1 + val.change / 100),
-          volume: 1500000,
-          change: val.change,
-          net_change: val.last_price - val.open,
-        };
-      });
-      setQuotes(initial);
-      setLastUpdated(Date.now());
-      setLoading(false);
-    }
 
-    // High-frequency price ticking interval (every 2 seconds)
-    const tickInterval = setInterval(() => {
-      setQuotes((prev) => {
-        if (Object.keys(prev).length === 0) return prev;
-        const next = { ...prev };
-        
-        Object.keys(next).forEach((sym) => {
-          const q = next[sym];
-          if (!q) return;
-
-          // India VIX behaves differently (higher relative volatility)
-          const multiplier = sym.includes('VIX') ? 0.002 : 0.0002;
-          const pct = (Math.random() - 0.49) * multiplier; // slightly upward bias
-          
-          const lastPrice = +(q.last_price * (1 + pct)).toFixed(2);
-          const prevClose = q.close || (q.last_price / (1 + q.change / 100));
-          const change = +(((lastPrice - prevClose) / prevClose) * 100).toFixed(2);
-          
-          next[sym] = {
-            ...q,
-            last_price: lastPrice,
-            change,
-            net_change: +(lastPrice - prevClose).toFixed(2),
-            high: Math.max(q.high, lastPrice),
-            low: Math.min(q.low, lastPrice),
-          };
-        });
-
-        setLastUpdated(Date.now());
-        return next;
-      });
-    }, 2000);
-
-    return () => clearInterval(tickInterval);
-  }, [quotes]);
 
   // ── Build enriched indicators ──────────────────────────────────────────
   const indicators: MacroIndicator[] = MACRO_INDICES.map((idx) => {

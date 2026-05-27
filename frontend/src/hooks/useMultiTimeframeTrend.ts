@@ -199,68 +199,7 @@ function computeTrend(closes: number[]): { bias: TrendBias; strength: number } {
   return { bias, strength };
 }
 
-// ── Synthetic Historical Candle Generator (deterministic per symbol) ───────
-function generateSyntheticOhlc(symbol: string): OhlcCandle[] {
-  let hash = 0;
-  for (let i = 0; i < symbol.length; i++) {
-    hash = (hash * 31 + symbol.charCodeAt(i)) & 0xffffffff;
-  }
-  
-  // Base price derived deterministically from symbol (range 100 to 5000)
-  let price = 100 + (Math.abs(hash) % 4900);
-  
-  // Seeded pseudo-random generator for deterministic outcomes per symbol
-  let seed = Math.abs(hash);
-  const rand = () => {
-    seed = (seed * 1664525 + 1013904223) & 0xffffffff;
-    return (seed >>> 0) / 0xffffffff;
-  };
 
-  const candles: OhlcCandle[] = [];
-  const now = Date.now();
-  const bucketMs = 60 * 60_000; // 1-hour interval
-  const sixtyDaysAgo = now - 60 * 24 * 60 * 60_000;
-
-  for (let t = sixtyDaysAgo; t < now; t += bucketMs) {
-    // Determine IST time (approximate IST = UTC + 5.5 hours)
-    const d = new Date(t);
-    const hour = d.getUTCHours() + 5;
-    const min = d.getUTCMinutes();
-    const minuteOfDay = hour * 60 + min;
-
-    // Filter trading hours (NSE trading hours approximate 09:15 to 15:30 IST)
-    // 9 * 60 + 15 = 555 to 15 * 60 + 30 = 930
-    if (minuteOfDay < 555 || minuteOfDay > 930) {
-      continue;
-    }
-
-    // Generate price movements: random walk + sine waves for beautiful, organic trends
-    const wave = Math.sin(t / (3 * 24 * 60 * 60_000)) * price * 0.02; // 3-day swing wave
-    const trendShift = Math.cos(t / (10 * 24 * 60 * 60_000)) * price * 0.04; // 10-day macro trend
-    const noise = (rand() - 0.5) * price * 0.006; // 0.6% daily volatility noise
-
-    const move = wave * 0.15 + trendShift * 0.08 + noise;
-    const open = price;
-    const close = Math.max(1, +(price + move).toFixed(2));
-    const spread = price * (0.001 + rand() * 0.003);
-    const high = +(Math.max(open, close) + spread * rand()).toFixed(2);
-    const low = +(Math.min(open, close) - spread * rand()).toFixed(2);
-    const volume = Math.round(50000 + rand() * 250000);
-
-    candles.push({
-      symbol: symbol.toUpperCase(),
-      start_timestamp_ms: t,
-      open,
-      high,
-      low,
-      close,
-      volume,
-    });
-    price = close; // Set next bar's open to this close
-  }
-
-  return candles;
-}
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
@@ -302,19 +241,7 @@ export function useMultiTimeframeTrend(): TimeframeTrend[] {
 
     const merged = Array.from(uniqueMap.values()).sort((a, b) => a.start_timestamp_ms - b.start_timestamp_ms);
 
-    // Merge in synthetic base candles if historical cache is empty/too small
-    let finalCandles = merged;
-    if (merged.length < 100) {
-      const synthetic = generateSyntheticOhlc(activeSymbol);
-      const mergedMap = new Map<number, OhlcCandle>();
-      for (const c of synthetic) {
-        mergedMap.set(c.start_timestamp_ms, c);
-      }
-      for (const c of merged) {
-        mergedMap.set(c.start_timestamp_ms, c);
-      }
-      finalCandles = Array.from(mergedMap.values()).sort((a, b) => a.start_timestamp_ms - b.start_timestamp_ms);
-    }
+    const finalCandles = merged;
 
     return TIMEFRAME_CONFIGS.map((tf) => {
       const { closes } = aggregateToTimeframe(finalCandles, tf.ms, activeSymbol);

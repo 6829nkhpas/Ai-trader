@@ -29,47 +29,7 @@ function timeAgo(ms: number): string {
   return `${mins}m ago`;
 }
 
-// ── Fallback investor RAG outlook generator ────────────────────────────────
-function generateInvestorMockInsight(symbol: string): MarketInsight {
-  const sym = symbol.toUpperCase();
-  let hash = 0;
-  for (let i = 0; i < sym.length; i++) {
-    hash = (hash * 31 + sym.charCodeAt(i)) & 0xffffffff;
-  }
-  
-  const templates = [
-    {
-      headline: "Macro Structural Re-Rating & Earnings Expansion Cycle",
-      analysis: (s: string) => `Quant-RAG Macro Model: ${s} has entered a prominent structural accumulation window supported by broad sector tailwinds.\n\nOur retrieval-augmented consensus networks indicate a 14% year-on-year earnings growth acceleration across key business segments. The institutional ownership ratio has risen by 1.8% over the past two quarters, suggesting strong corporate conviction. Quantitative projections estimate a high-probability bullish expansion over the next 3-6 months.`,
-      score: 78,
-      anomaly: 2.1
-    },
-    {
-      headline: "Alpha Core Divergence & Momentum Breakout",
-      analysis: (s: string) => `Quant-RAG Trend Core: Dynamic regression analysis of ${s} reveals a highly resilient bullish divergence on the weekly timeframes.\n\nInstitutional dark pool sweeps have clustered around key psychological support zones. We note a significant volume spike coinciding with a 2.4% price swing, confirming the termination of the local consolidation phase. Projections remain heavily skewed toward the upper bounds.`,
-      score: 84,
-      anomaly: 2.4
-    },
-    {
-      headline: "Valuation Support & Liquidity Absorption Floor",
-      analysis: (s: string) => `Quant-RAG Valuation: ${s} is currently trading at a highly defensive multi-month support level with high-density order absorption.\n\nHistorical price distribution models show that current pricing levels represent a major value cushion for long-term investors. Volatility compression signatures indicate an imminent expansion phase with extremely low downside risk characteristics.`,
-      score: 72,
-      anomaly: 1.5
-    }
-  ];
 
-  const templateIdx = Math.abs(hash) % templates.length;
-  const t = templates[templateIdx];
-  
-  return {
-    symbol: sym,
-    timestamp_ms: Date.now() - 10 * 60 * 1000, // 10 minutes ago
-    headline: t.headline,
-    analysis_text: t.analysis(sym),
-    sentiment_score: t.score,
-    anomaly_pct: t.anomaly
-  };
-}
 
 // ── Shimmer Skeleton ────────────────────────────────────────────────────────
 
@@ -98,11 +58,9 @@ export function MacroSentimentPanel() {
 
   const [activeInsight, setActiveInsight] = useState<MarketInsight | null>(null);
 
-  // Initialize deterministic base anomaly/insight when selectedSymbol changes
+  // Reset active insight when selectedSymbol changes
   useEffect(() => {
-    if (selectedSymbol) {
-      setActiveInsight(generateInvestorMockInsight(selectedSymbol));
-    }
+    setActiveInsight(null);
   }, [selectedSymbol]);
 
   // Sync live WebSocket insights if they match the active selectedSymbol
@@ -111,43 +69,6 @@ export function MacroSentimentPanel() {
       setActiveInsight(latestInsight);
     }
   }, [latestInsight, selectedSymbol]);
-
-  // Push brand-new dynamic AI Quant-RAG Outlook alerts periodically (every 45 seconds)
-  useEffect(() => {
-    const generatorInterval = setInterval(() => {
-      const sym = selectedSymbol.toUpperCase();
-      const headlines = [
-        "Dynamic Volume Expansion & Re-rating Signatures",
-        "Volatility Squeeze Compression Breakout Confirmation",
-        "Institutional Block Accumulation Cluster Detected",
-        "Macro Alpha Momentum Trajectory Projection",
-        "Algorithmic Reversal Support Floor Tested"
-      ];
-      
-      const analyses = [
-        `Quant-RAG Live Outlook: ${sym} exhibits major structural volume expansion on the 1D timeframe. Heavy block trading signatures indicate institutional momentum absorption.`,
-        `Quant-RAG Live Outlook: Historical statistical bands for ${sym} indicate that the local volatility compression phase has completed. A high conviction breakout is now under way.`,
-        `Quant-RAG Live Outlook: Dark pool trade scanners logged significant whale accumulation in ${sym} near the multi-week support floor. Strong continuation bias expected.`,
-        `Quant-RAG Live Outlook: Advanced dual-anchored price regression engines project a +3.2% upward target trend drift for ${sym} over the current weekly horizon.`,
-        `Quant-RAG Live Outlook: Price action has successfully completed retesting the 200-day simple moving average support floor for ${sym}. High probability long-term expansion buy signals are active.`
-      ];
-
-      const idx = Math.floor(Math.random() * headlines.length);
-      const score = 65 + Math.floor(Math.random() * 25);
-      const anomaly = 1.2 + +(Math.random() * 2.2).toFixed(2);
-
-      setActiveInsight({
-        symbol: sym,
-        timestamp_ms: Date.now(),
-        headline: headlines[idx],
-        analysis_text: analyses[idx],
-        sentiment_score: score,
-        anomaly_pct: anomaly
-      });
-    }, 45000);
-
-    return () => clearInterval(generatorInterval);
-  }, [selectedSymbol]);
 
   return (
     <div id="macro-sentiment-panel" className="flex h-full flex-col rounded-lg border border-border-default bg-surface text-sm select-none overflow-hidden">

@@ -132,160 +132,6 @@ function InsightCard({ insight, isNew, index }: InsightCardProps) {
 
 // ── Exported Confluence Panel (used by page.tsx sidebar) ─────────────────
 
-// ── Fallback news data definitions ──────────────────────────────────────
-const MOCK_NEWS_DATA: Record<string, { headlines: string[], label: string, score: number }> = {
-  RELIANCE: {
-    score: 65,
-    label: "Bullish",
-    headlines: [
-      "Reliance Retail announces strategic expansion into new smart-retail formats",
-      "Jio Platforms registers 12% profit growth driven by strong 5G user additions",
-      "Reliance Industries partners with NVIDIA to build advanced AI supercomputing infrastructure in India"
-    ]
-  },
-  TATA: {
-    score: 72,
-    label: "Strong Bullish",
-    headlines: [
-      "Tata Motors delivers record EV sales in Q4, beating market estimates",
-      "Tata Steel signs green hydrogen agreement to reduce carbon footprint",
-      "Tata Consultancy Services wins massive $750M digital transformation contract with UK retailer"
-    ]
-  },
-  INFY: {
-    score: -45,
-    label: "Bearish",
-    headlines: [
-      "Infosys revised guidance down citing slowdown in global banking IT spend",
-      "Infosys secures $2B AI-centric automation partnership, but margins compressed",
-      "Attrition rates stabilize at Infosys but overall hiring outlook remains cautious"
-    ]
-  },
-  HDFCBANK: {
-    score: 55,
-    label: "Neutral to Bullish",
-    headlines: [
-      "HDFC Bank deposit growth beats expectations post-merger integration",
-      "HDFC Bank secures regulator greenlight for domestic bond issuance",
-      "Global asset managers increase allocation in HDFC Bank citing retail credit health"
-    ]
-  },
-  DEFAULT: {
-    score: 58,
-    label: "Neutral",
-    headlines: [
-      "Board of Directors approves final dividend payout and strategic investment plan",
-      "R&D division showcases groundbreaking AI-driven workflow optimization patents",
-      "Quarterly earnings beat conservative street consensus estimates by 3.2%"
-    ]
-  }
-};
-
-function getFallbackSentiment(symbol: string) {
-  const sym = symbol.toUpperCase();
-  let key = "DEFAULT";
-  if (sym.includes("RELIANCE")) key = "RELIANCE";
-  else if (sym.includes("TATA")) key = "TATA";
-  else if (sym.includes("INFY") || sym.includes("INFOSYS")) key = "INFY";
-  else if (sym.includes("HDFC")) key = "HDFCBANK";
-  
-  const base = MOCK_NEWS_DATA[key];
-  
-  let hash = 0;
-  for (let i = 0; i < symbol.length; i++) {
-    hash = (hash * 31 + symbol.charCodeAt(i)) & 0xffffffff;
-  }
-  const variance = (Math.abs(hash) % 21) - 10; // -10 to +10
-  const score = Math.max(-100, Math.min(100, base.score + variance));
-  const label = score >= 30 ? "Bullish" : score <= -30 ? "Bearish" : "Neutral";
-  
-  const headlines = base.headlines.map(h => h.replace("Board", `${sym} Board`).replace("R&D division", `${sym} R&D`));
-  
-  return {
-    symbol: sym,
-    score,
-    label,
-    top_headline: headlines[0],
-    impact: (score > 15 ? 'positive' : score < -15 ? 'negative' : 'neutral') as 'positive' | 'negative' | 'neutral',
-    headlines
-  };
-}
-
-// ── Fallback anomalies generator ─────────────────────────────────────────
-function generateMockAnomaliesForSymbol(symbol: string): MarketInsight[] {
-  const sym = symbol.toUpperCase();
-  let hash = 0;
-  for (let i = 0; i < symbol.length; i++) {
-    hash = (hash * 31 + symbol.charCodeAt(i)) & 0xffffffff;
-  }
-  
-  let seed = Math.abs(hash);
-  const rand = () => {
-    seed = (seed * 1664525 + 1013904223) & 0xffffffff;
-    return (seed >>> 0) / 0xffffffff;
-  };
-
-  const templates = [
-    {
-      headline: "VWEPR Polynomial Breakout Detected",
-      analysis: (s: string, chg: number) => `Quantitative Scan: ${s} has broken out above its 2nd-degree Volume-Weighted Exponential Price Regression (VWEPR) polynomial curve on the 1H timeframe.\n\nAcceleration Coefficient is highly positive, signaling a major volatility shift. Confluence with volume spike indicates strong institutional buying pressure. Recommended entry at current pullback support levels.`,
-      score: 75,
-      anomaly_base: 2.4
-    },
-    {
-      headline: "VWAP Support Bounce & Accumulation",
-      analysis: (s: string, chg: number) => `VWAP Ingestion: ${s} tested the Volume-Weighted Average Price anchor on high volume and bounced cleanly.\n\nOrder flow data shows significant block purchases at the daily VWAP boundary. The price action forms a classic bullish absorption pattern, indicating that market makers are soaking up liquid supply for a potential markup phase.`,
-      score: 68,
-      anomaly_base: 1.8
-    },
-    {
-      headline: "Institutional Block Purchase (Whale Activity)",
-      analysis: (s: string, chg: number) => `Dark Pool Scanner: Alert! A series of block orders totaling over 450,000 shares of ${s} crossed at the mid-point price within a 2-minute window.\n\nThis is a standard signature of institutional whale accumulation. High-probability continuation expected as price holds above the dark pool prints.`,
-      score: 82,
-      anomaly_base: 3.2
-    },
-    {
-      headline: "RSI Momentum Divergence Inversion",
-      analysis: (s: string, chg: number) => `Technical Confluence: ${s} has triggered a prominent bullish RSI divergence on the 4-Hour timeframe.\n\nWhile price action recorded a lower low, the 14-period Relative Strength Index formed a clear higher low in the oversold territory. This structural mismatch highlights sellers exhaustion and represents an optimal risk/reward swing long entry.`,
-      score: 70,
-      anomaly_base: 2.1
-    },
-    {
-      headline: "Polynomial Acceleration Reversal",
-      analysis: (s: string, chg: number) => `Predictive Core: The dual-anchored projection algorithm has identified a negative-to-positive acceleration flip in the price trajectory of ${s}.\n\nStatistical projections estimate a ${(chg + 1.5).toFixed(1)}% upward drift over the next 48-hour trading window. High conviction reversal confirmation is supported by the 9-period EMA curvature.`,
-      score: 64,
-      anomaly_base: 1.5
-    }
-  ];
-
-  const now = Date.now();
-  const count = 2 + (Math.abs(hash) % 2); // 2 or 3 anomalies
-  const anomalies: MarketInsight[] = [];
-
-  for (let i = 0; i < count; i++) {
-    const templateIdx = (Math.abs(hash) + i) % templates.length;
-    const template = templates[templateIdx];
-    
-    const ageMs = (i * 2 * 60 + 15) * 60 * 1000 + (Math.abs(hash) % 10) * 60 * 1000;
-    const timestamp = now - ageMs;
-
-    const variance = (rand() - 0.5) * 1.5;
-    const anomaly_pct = template.anomaly_base + Math.abs(variance);
-    const score = Math.min(100, Math.max(1, template.score + Math.round(variance * 10)));
-
-    anomalies.push({
-      symbol: sym,
-      timestamp_ms: timestamp,
-      headline: template.headline,
-      analysis_text: template.analysis(sym, anomaly_pct),
-      sentiment_score: score,
-      anomaly_pct: +(anomaly_pct).toFixed(2)
-    });
-  }
-
-  return anomalies;
-}
-
 // ── Exported Confluence Panel (used by page.tsx sidebar) ─────────────────
 
 export function SwingConfluencePanel() {
@@ -307,12 +153,9 @@ export function SwingConfluencePanel() {
     }
   }, [selectedSymbol, loadSentimentForSymbol]);
 
-  // Load deterministic base anomalies when selectedSymbol changes
+  // Reset insight history when selectedSymbol changes
   useEffect(() => {
-    if (selectedSymbol) {
-      const base = generateMockAnomaliesForSymbol(selectedSymbol);
-      setInsightHistory(base);
-    }
+    setInsightHistory([]);
   }, [selectedSymbol]);
 
   // Handle live ticks from WebSocket
@@ -335,55 +178,12 @@ export function SwingConfluencePanel() {
     return () => clearTimeout(timer);
   }, [latestInsight]);
 
-  // Dynamic push of new scanning anomalies every 45 seconds to simulate an active scanner feed
-  useEffect(() => {
-    const pushInterval = setInterval(() => {
-      const liveSym = selectedSymbol.toUpperCase();
-      const headlines = [
-        "VWEPR Acceleration Spike Detected",
-        "Block Trade Momentum Confirmation",
-        "Quant Support Zone Absorption",
-        "Algorithmic Trend Continuation Breakout",
-        "Dark Pool Liquidity Cluster Hit"
-      ];
-      
-      const analyses = [
-        `Live Scan: ${liveSym} registers a sudden momentum burst on the 10m timeframe. Volume matches dark-pool patterns, indicating dynamic institutional activity.`,
-        `Quant Alert: Block trade scanner logged 180,000 shares of ${liveSym} swept across multiple books. Fast price action expected.`,
-        `Technical Alert: ${liveSym} price stabilized at its major 1D polynomial support level. Trend strength registers extreme conviction.`,
-        `Algorithmic Alert: ${liveSym} shows high probability breakout patterns. Projected movement +1.8% over the next 4 hours.`,
-        `Liquidity Alert: Institutional buy orders cluster triggered in ${liveSym} at the support floor. Short squeeze momentum accelerating.`
-      ];
-
-      const idx = Math.floor(Math.random() * headlines.length);
-      const score = 60 + Math.floor(Math.random() * 30);
-      const pct = 1.2 + +(Math.random() * 2.5).toFixed(2);
-
-      const newAnomaly: MarketInsight = {
-        symbol: liveSym,
-        timestamp_ms: Date.now(),
-        headline: headlines[idx],
-        analysis_text: analyses[idx],
-        sentiment_score: score,
-        anomaly_pct: pct
-      };
-
-      setInsightHistory(prev => [newAnomaly, ...prev].slice(0, 20));
-      setNewestId(newAnomaly.timestamp_ms);
-      
-      const timer = setTimeout(() => setNewestId(null), 3000);
-      return () => clearTimeout(timer);
-    }, 45000);
-
-    return () => clearInterval(pushInterval);
-  }, [selectedSymbol]);
-
   // Determine active score & display payload
   const sentimentPayload = useMemo(() => {
     if (activeSentiment && activeSentiment.symbol.toUpperCase() === selectedSymbol.toUpperCase()) {
       return activeSentiment;
     }
-    return getFallbackSentiment(selectedSymbol);
+    return null;
   }, [activeSentiment, selectedSymbol]);
 
   const score = sentimentPayload ? Math.round((sentimentPayload.score + 100) / 2) : null;
@@ -462,7 +262,7 @@ export function SwingConfluencePanel() {
         </div>
 
         {/* Active Sentiment News Card */}
-        {sentimentPayload && (
+        {sentimentPayload ? (
           <div className="mx-3 mb-2.5 rounded-lg border border-border-subtle bg-elevated/20 p-2 text-left">
             <div className="flex items-center gap-1.5 mb-1">
               <span className="relative flex h-1.5 w-1.5">
@@ -484,6 +284,12 @@ export function SwingConfluencePanel() {
                 ))}
               </div>
             )}
+          </div>
+        ) : (
+          <div className="mx-3 mb-2.5 rounded-lg border border-border-subtle bg-elevated/10 p-2.5 text-left">
+            <p className="text-[10.5px] text-text-muted italic leading-snug">
+              Awaiting live news sentiment catalysts from the NLP Sentiment Agent...
+            </p>
           </div>
         )}
 
