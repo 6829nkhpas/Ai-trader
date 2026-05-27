@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures_util::StreamExt;
 use log::{info, warn};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio_tungstenite::connect_async;
 
 /// Boot-once guard.  AtomicBool::compare_exchange ensures exactly one
@@ -84,6 +84,13 @@ fn spawn_bridge(app: AppHandle, port: u16, event_name: &'static str) {
                             json.get("close").and_then(|c| c.as_f64()),
                         ) {
                             crate::execution::paper::process_tick_for_positions(&app, symbol, close);
+                        }
+
+                        // Broadcast to the local tool server watchers
+                        if let Some((symbol, candle)) = crate::quant::tool_server::parse_ohlc_tick(&json) {
+                            if let Some(tx) = app.try_state::<tokio::sync::broadcast::Sender<(String, crate::quant::vwepr::OhlcCandle)>>() {
+                                let _ = tx.send((symbol, candle));
+                            }
                         }
                     }
                 }

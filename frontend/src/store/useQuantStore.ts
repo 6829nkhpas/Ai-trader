@@ -84,6 +84,11 @@ interface QuantStore {
   /** Cache entry: payload + timestamp fetched + optional rate-limit cooldown */
   sentimentCache: Record<string, { payload: SentimentPayload; fetchedAt: number; rateLimitedUntil?: number }>;
 
+  // ── Terminal / Stream States ──────────────────────────────────────────
+  sessionStatus: 'idle' | 'running' | 'watching' | 'complete' | 'error';
+  reasoningSteps: Array<{ id: string; type: string; content: string; timestamp: number }>;
+  finalTrade: AiExecutionPlan | null;
+
   setConsensusData: (data: ConsensusReport) => void;
   clearConsensusData: () => void;
   loadConsensusForSymbol: (symbol: string) => void;
@@ -103,6 +108,8 @@ interface QuantStore {
   clearAiPlan: () => void;
   openPosition: (symbol: string, plan: AiExecutionPlan) => void;
   closePosition: (id: string, exitPrice: number) => void;
+  handleStreamEvent: (payload: any) => void;
+  resetTerminal: () => void;
 }
 
 // ── Module-level in-flight deduplication set ─────────────────────────────
@@ -150,6 +157,71 @@ function parseExecutionPlan(text: string): { entry: number; sl: number; tp: numb
   return { entry, sl, tp };
 }
 
+/** Extract final JSON trade parameters from text messages using brace matching and validation */
+function extractFinalTrade(text: string): AiExecutionPlan | null {
+  // Find all outermost JSON-like blocks using brace matching
+  let braceCount = 0;
+  let startIdx = -1;
+  const candidates: string[] = [];
+
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '{') {
+      if (braceCount === 0) {
+        startIdx = i;
+      }
+      braceCount++;
+    } else if (text[i] === '}') {
+      if (braceCount > 0) {
+        braceCount--;
+        if (braceCount === 0 && startIdx !== -1) {
+          candidates.push(text.substring(startIdx, i + 1));
+        }
+      }
+    }
+  }
+
+  // Iterate backwards through candidates to find the relevant plan JSON block
+  for (let j = candidates.length - 1; j >= 0; j--) {
+    try {
+      const parsed = JSON.parse(candidates[j]);
+      if (
+        parsed &&
+        (parsed.conviction_score !== undefined ||
+         parsed.conviction !== undefined ||
+         parsed.execution_plan !== undefined ||
+         parsed.plan !== undefined)
+      ) {
+        return {
+          conviction_score: typeof parsed.conviction_score === 'number'
+            ? parsed.conviction_score
+            : (typeof parsed.conviction === 'number' ? parsed.conviction : 75),
+          setup_validation: parsed.setup_validation || parsed.validation || parsed.setup || '',
+          execution_plan: parsed.execution_plan || parsed.plan || ''
+        };
+      }
+    } catch {
+      // Ignore invalid JSON blocks
+    }
+  }
+
+  // Fallback to the original regex approach if brace matching didn't yield anything
+  try {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    const parsed = JSON.parse(jsonMatch[0]);
+    return {
+      conviction_score: typeof parsed.conviction_score === 'number'
+        ? parsed.conviction_score
+        : (typeof parsed.conviction === 'number' ? parsed.conviction : 75),
+      setup_validation: parsed.setup_validation || parsed.validation || parsed.setup || '',
+      execution_plan: parsed.execution_plan || parsed.plan || ''
+    };
+  } catch (e) {
+    console.error('[extractFinalTrade] Failed to parse JSON:', e);
+    return null;
+  }
+}
+
 // ── Store ───────────────────────────────────────────────────────────────
 
 export const useQuantStore = create<QuantStore>((set, get) => ({
@@ -160,6 +232,9 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
   analysisError: null,
   activePositions: [],
   completedTrades: [],
+  sessionStatus: 'idle',
+  reasoningSteps: [],
+  finalTrade: null,
 
   // ── Decoupled Sentiment State ────────────────────────────────────
   activeSentiment: null,
@@ -327,7 +402,16 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     const activeMode = mode || 'FIND';
     console.log(`[QuantStore] ▶ Deep analysis START symbol=${symbol} mode=${activeMode} ts=${new Date().toISOString()}`);
-    set({ isAnalyzing: true, analysisError: null, aiPlan: null });
+    
+    // Clear terminal state and set running status
+    set({
+      sessionStatus: 'running',
+      reasoningSteps: [],
+      finalTrade: null,
+      aiPlan: null,
+      isAnalyzing: true,
+      analysisError: null
+    });
 
     // Force-refresh sentiment with latest news before LLM analysis
     try {
@@ -342,23 +426,13 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     console.log(`[QuantStore] → Timeframe for AI context: ${activeTimeframe}`);
 
     try {
-      console.log(`[QuantStore] → invoking 'run_ai_analysis' (Tauri IPC)…`);
+      console.log(`[QuantStore] → invoking 'run_deep_quant_agent' (Tauri IPC)…`);
       const tInvoke = (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
-      const manualTradePayload = manualTrade ? {
-        side: manualTrade.side,
-        entry: manualTrade.entry,
-        stop_loss: manualTrade.stopLoss,
-        take_profit: manualTrade.takeProfit,
-        user_analysis: manualTrade.userAnalysis,
-      } : null;
-
       await tauriInvoke<void>(
-        'run_ai_analysis',
+        'run_deep_quant_agent',
         {
           symbol,
-          mode: activeMode,
-          manualTrade: manualTradePayload,
         }
       );
 
@@ -374,11 +448,123 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
         `[QuantStore] ✘ Deep analysis FAIL symbol=${symbol} ` +
         `total_ms=${Math.round(tDone - t0)} message=${message}`
       );
-      set({ isAnalyzing: false, analysisError: message });
+      set({ isAnalyzing: false, sessionStatus: 'error', analysisError: message });
     }
   },
 
-  clearAiPlan: () => set({ aiPlan: null, analysisError: null }),
+  clearAiPlan: () => set({
+    aiPlan: null,
+    finalTrade: null,
+    analysisError: null,
+    sessionStatus: 'idle',
+    reasoningSteps: []
+  }),
+
+  handleStreamEvent: (payload: any) => {
+    if (!payload || !payload.event) return;
+
+    const event = payload.event;
+    const data = payload.data;
+
+    console.log(`[QuantStore] 📥 Stream event: ${event}`, data);
+
+    switch (event) {
+      case 'RUN_STARTED': {
+        set({
+          sessionStatus: 'running',
+          reasoningSteps: [],
+          finalTrade: null,
+          aiPlan: null,
+          isAnalyzing: true,
+          analysisError: null
+        });
+        break;
+      }
+      case 'TEXT_MESSAGE': {
+        const content = data?.content || '';
+        if (content) {
+          const step = {
+            id: `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            type: 'message',
+            content,
+            timestamp: Date.now()
+          };
+          set((state) => ({
+            reasoningSteps: [...state.reasoningSteps, step]
+          }));
+        }
+        break;
+      }
+      case 'TOOL_CALL_START': {
+        const toolName = data?.tool || '';
+        if (toolName) {
+          const step = {
+            id: `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            type: 'tool',
+            content: `> Executing tool: ${toolName}...`,
+            timestamp: Date.now()
+          };
+          const isWatching = toolName === 'watch_price_condition';
+          set((state) => ({
+            reasoningSteps: [...state.reasoningSteps, step],
+            sessionStatus: isWatching ? 'watching' : state.sessionStatus
+          }));
+        }
+        break;
+      }
+      case 'TOOL_CALL_END': {
+        const toolName = data?.tool || '';
+        if (toolName) {
+          const step = {
+            id: `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            type: 'tool',
+            content: `✔ Tool ${toolName} completed successfully.`,
+            timestamp: Date.now()
+          };
+          set((state) => ({
+            reasoningSteps: [...state.reasoningSteps, step]
+          }));
+        }
+        break;
+      }
+      case 'RUN_FINISHED': {
+        // Concatenate all text messages to parse final plan
+        const accumulatedText = get().reasoningSteps
+          .filter(s => s.type === 'message')
+          .map(s => s.content)
+          .join('');
+
+        const tradePlan = extractFinalTrade(accumulatedText);
+
+        set({
+          sessionStatus: 'complete',
+          finalTrade: tradePlan,
+          aiPlan: tradePlan, // Synchronize with existing UI
+          isAnalyzing: false
+        });
+        break;
+      }
+      case 'ERROR': {
+        const errorMsg = data?.error || 'Unknown streaming error';
+        set({
+          sessionStatus: 'error',
+          isAnalyzing: false,
+          analysisError: errorMsg
+        });
+        break;
+      }
+      default:
+        break;
+    }
+  },
+
+  resetTerminal: () => set({
+    sessionStatus: 'idle',
+    reasoningSteps: [],
+    finalTrade: null,
+    aiPlan: null,
+    analysisError: null
+  }),
 
   openPosition: (symbol: string, plan: AiExecutionPlan) => {
     const { entry, sl, tp } = parseExecutionPlan(plan.execution_plan);

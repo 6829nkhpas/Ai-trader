@@ -111,6 +111,7 @@ pub fn run() {
   // Managed directly (no Arc wrapper) — Tauri wraps managed state in Arc internally.
   // Accessible in commands via `tauri::State<'_, commands::ticker::ActiveSymbolState>`.
   let active_symbol_state = commands::ticker::ActiveSymbolState::new("RELIANCE");
+  let (tx, _rx) = tokio::sync::broadcast::channel::<(String, quant::vwepr::OhlcCandle)>(1024);
 
   let is_test_env = is_test_mode();
 
@@ -132,17 +133,18 @@ pub fn run() {
           let salt = b"alpha_suite_v3_stronghold_salt_01"; // 32 bytes
           let mut output = vec![0u8; 32];
           argon2::Argon2::default()
-              .hash_password_into(password.as_bytes(), salt, &mut output)
-              .unwrap_or_else(|_| {
-                  // Should never fail with valid static inputs, but we
-                  // must not panic in the hash closure.
-                  for (i, b) in output.iter_mut().enumerate() { *b = i as u8; }
-              });
+               .hash_password_into(password.as_bytes(), salt, &mut output)
+               .unwrap_or_else(|_| {
+                   // Should never fail with valid static inputs, but we
+                   // must not panic in the hash closure.
+                   for (i, b) in output.iter_mut().enumerate() { *b = i as u8; }
+               });
           output
       })
       .build()
     })
     .manage(active_symbol_state)
+    .manage(tx.clone())
     .manage(SecureKeyStore::new())
     .manage(std::sync::Mutex::new(execution::paper::VirtualPortfolio {
         balance: 1000000.0,
@@ -184,6 +186,12 @@ pub fn run() {
       // tokio task — never blocks the UI thread.
       quant::radar::spawn_radar_worker(app.handle().clone());
 
+      // ── Local Tool Server (port 8084) ─────────────────────────────
+      let app_handle_server = app.handle().clone();
+      tauri::async_runtime::spawn(async move {
+          quant::tool_server::run_tool_server(app_handle_server).await;
+      });
+
       if is_test_env {
           // ══════════════════════════════════════════════════════════════
           // TEST MODE: Bypass all live API connections.
@@ -212,6 +220,11 @@ pub fn run() {
                       .clone();
                   let tick = mock_ohlc_tick(&sym);
                   let _ = app_handle_mock.emit("ohlc-tick", tick.clone());
+                  if let Some((symbol, candle)) = quant::tool_server::parse_ohlc_tick(&tick) {
+                      if let Some(tx) = app_handle_mock.try_state::<tokio::sync::broadcast::Sender<(String, quant::vwepr::OhlcCandle)>>() {
+                          let _ = tx.send((symbol, candle));
+                      }
+                  }
                   if let Some(close) = tick.get("close").and_then(|c| c.as_f64()) {
                       execution::paper::process_tick_for_positions(&app_handle_mock, &sym, close);
                   }
@@ -320,6 +333,7 @@ pub fn run() {
         commands::charts::get_pool_status,
         commands::deep_quant::run_deep_quant_analysis,
         commands::deep_quant::run_ai_analysis,
+        commands::deep_quant::run_deep_quant_agent,
         commands::deep_quant::deploy_ai_sentinel,
         execution::paper::execute_paper_trade,
         execution::paper::get_paper_portfolio,

@@ -22,7 +22,15 @@ import VerificationForm from './deep-quant/VerificationForm';
 import AiExecutionPlanView from './deep-quant/AiExecutionPlanView';
 
 export default function DeepQuantPanel() {
-  const { aiPlan, isAnalyzing, analysisError, fetchDeepAnalysis, clearAiPlan } = useQuantStore();
+  const {
+    aiPlan,
+    isAnalyzing,
+    analysisError,
+    fetchDeepAnalysis,
+    clearAiPlan,
+    reasoningSteps,
+    sessionStatus,
+  } = useQuantStore();
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
   const historicalCache = useTradeStore((s) => s.historicalCache);
   const activeTimeframe = useTradeStore((s) => s.activeTimeframe);
@@ -30,6 +38,7 @@ export default function DeepQuantPanel() {
   const agentChatLog = useTradeStore((s) => s.agentChatLog);
   const clearAgentChatLog = useTradeStore((s) => s.clearAgentChatLog);
   const symbol = selectedSymbol || 'RELIANCE';
+  const activeSymbol = symbol;
 
   // ── AI Handoff State Guard ────────────────────────────────────────────
   const symbolCandleCount = useMemo(() => {
@@ -151,11 +160,11 @@ export default function DeepQuantPanel() {
   }, [aiPlan]);
 
   const handleAIAnalysis = () => {
-    console.log(`🧠 [AI HANDOFF] Requesting analysis for Symbol: ${symbol} | Timeframe: ${activeTimeframe}`);
+    console.log(`🧠 [AI HANDOFF] Requesting analysis for Symbol: ${activeSymbol} | Timeframe: ${activeTimeframe}`);
     console.log(`🧠 [AI HANDOFF] Current cached candle count: ${symbolCandleCount}`);
 
     console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Firing AI Request.");
-    console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Symbol:", symbol);
+    console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Symbol:", activeSymbol);
     console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Timeframe:", activeTimeframe);
     console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Acceleration Coeff from Store:", useChartUIStore.getState().accelerationCoefficient);
     console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Candles Length (cached proxy):", symbolCandleCount);
@@ -169,7 +178,7 @@ export default function DeepQuantPanel() {
     }
 
     clearAgentChatLog();
-    fetchDeepAnalysis(symbol, 'FIND');
+    fetchDeepAnalysis(activeSymbol);
   };
 
   const handleVerifyAnalysis = () => {
@@ -182,17 +191,11 @@ export default function DeepQuantPanel() {
       return;
     }
 
-    console.log(`🧠 [AI HANDOFF] Requesting VERIFY Mode analysis for Symbol: ${symbol}`);
+    console.log(`🧠 [AI HANDOFF] Requesting VERIFY Mode analysis for Symbol: ${activeSymbol}`);
     console.log(`🧠 [AI HANDOFF] Proposed Trade: ${side} Entry:${entryNum} SL:${slNum} TP:${tpNum}`);
 
     clearAgentChatLog();
-    fetchDeepAnalysis(symbol, 'VERIFY', {
-      side,
-      entry: entryNum,
-      stopLoss: isNaN(slNum) ? 0 : slNum,
-      takeProfit: isNaN(tpNum) ? 0 : tpNum,
-      userAnalysis: userAnalysis.trim() || "No user notes provided."
-    });
+    fetchDeepAnalysis(activeSymbol);
   };
 
   const handleDeployStrategy = async () => {
@@ -400,7 +403,7 @@ export default function DeepQuantPanel() {
 
       {/* ── Content Area ──────────────────────────────────── */}
       <div className="flex-grow flex-shrink min-h-0 overflow-y-auto scrollbar-thin">
-        {agentChatLog.length > 0 || isAnalyzing ? (
+        {reasoningSteps.length > 0 || sessionStatus !== 'idle' ? (
           <div className="h-full p-2 min-h-[380px]">
             <AgentTerminal />
           </div>

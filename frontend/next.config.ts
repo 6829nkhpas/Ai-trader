@@ -35,7 +35,7 @@ const nextConfig: NextConfig = {
       },
       {
         source: '/kite/:path*',
-        destination: 'http://127.0.0.1:8084/api/kite/:path*',
+        destination: 'http://127.0.0.1:8087/api/kite/:path*',
       },
     ];
   },

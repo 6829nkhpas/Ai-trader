@@ -1369,3 +1369,87 @@ async fn run_sentinel_loop(app: tauri::AppHandle, symbol: String, timeframe: Str
 
     info!("[sentinel] Watchdog loop terminated for {}", symbol);
 }
+
+/// Run deep quant agent loop with real-time SSE stream proxy.
+#[tauri::command]
+pub async fn run_deep_quant_agent(app: tauri::AppHandle, symbol: String) -> Result<(), String> {
+    info!("[deep_quant_agent] Starting LangGraph ReAct loop proxy for {}", symbol);
+    
+    // Generate a unique thread ID
+    let thread_id = format!("thread_{}_{}", symbol, chrono::Utc::now().timestamp_millis());
+    
+    // Prepare the payload for Python FastAPI
+    let payload = serde_json::json!({
+        "thread_id": thread_id,
+        "message": format!("Analyze the trading ticker symbol '{}' and recommend a setup.", symbol)
+    });
+    
+    // Spawn the streaming reqwest client in the background
+    tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        let url = "http://localhost:8086/run";
+        
+        match client.post(url).json(&payload).send().await {
+            Ok(response) => {
+                let mut stream = response.bytes_stream();
+                use futures_util::StreamExt;
+                let mut buffer = String::new();
+                
+                while let Some(chunk_result) = stream.next().await {
+                    match chunk_result {
+                        Ok(bytes) => {
+                            let text = String::from_utf8_lossy(&bytes);
+                            buffer.push_str(&text);
+                            
+                            // Process SSE event blocks
+                            while let Some(pos) = buffer.find("\n\n") {
+                                let event_block = buffer.drain(..pos + 2).collect::<String>();
+                                
+                                let mut event_type = None;
+                                let mut event_data = None;
+                                
+                                for line in event_block.lines() {
+                                    if line.starts_with("event: ") {
+                                        event_type = Some(line["event: ".len()..].trim().to_string());
+                                    } else if line.starts_with("data: ") {
+                                        event_data = Some(line["data: ".len()..].trim().to_string());
+                                    }
+                                }
+                                
+                                if let (Some(ev_type), Some(ev_data)) = (event_type, event_data) {
+                                    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&ev_data) {
+                                        let outbound = serde_json::json!({
+                                            "event": ev_type,
+                                            "data": json_val
+                                        });
+                                        let _ = app.emit("deep-quant-stream", outbound);
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("[deep_quant_agent] Stream read error: {}", e);
+                            let _ = app.emit("deep-quant-stream", serde_json::json!({
+                                "event": "ERROR",
+                                "data": { "error": format!("Stream read error: {}", e) }
+                            }));
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                error!("[deep_quant_agent] Failed to connect to Python server: {}", e);
+                let _ = app.emit("deep-quant-stream", serde_json::json!({
+                    "event": "ERROR",
+                    "data": { "error": format!("Failed to connect to Python server: {}", e) }
+                }));
+            }
+        }
+        
+        info!("[deep_quant_agent] Stream proxy finished for thread={}", thread_id);
+    });
+    
+    Ok(())
+}
+

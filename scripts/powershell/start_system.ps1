@@ -41,11 +41,12 @@ function Cleanup {
 
 try {
     # ── Pre-flight: Kill anything occupying our ports ────────────────────────
-    # Ports: 3000=Next.js, 8080-8083=WS agents,
-    #        9000/9009=QuestDB, 5432=PG, 6379=Redis, 19092=Kafka
+    # Ports: 3000=Next.js, 8080-8083=WS agents, 8084=Tauri Tool Server, 8085=Ingestion Control,
+    #        8086=Python Agent, 8087=Kite REST API, 9000/9009=QuestDB, 5432=PG, 6379=Redis, 19092=Kafka
     Write-Host "==> Cleaning up stale processes and ports..." -ForegroundColor Magenta
 
-    $portsToKill = @(3000, 8080, 8081, 8082, 8083, 9000, 9009, 5432, 6379, 19092)
+    $portsToKill = @(3000, 8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 9000, 9009, 5432, 6379, 19092)
+    $netstatOut = netstat -ano
     foreach ($port in $portsToKill) {
         $matched = $netstatOut | Select-String (":$port\s")
         foreach ($line in $matched) {
@@ -137,6 +138,15 @@ try {
     Push-Location agents/quant-rag
     $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --release"
     Pop-Location
+
+    Start-Sleep -Seconds 3
+
+    Write-Host "Starting Python LangGraph Deep Quant Agent (Port 8086)..." -ForegroundColor Cyan
+    Push-Location agents/deep-quant-loop
+    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "python" -ArgumentList "main.py"
+    Pop-Location
+
+    Wait-ForPort -Port 8086 -TimeoutSec 60 -Label "Python Deep Quant Loop (:8086)"
 
     Start-Sleep -Seconds 3
 

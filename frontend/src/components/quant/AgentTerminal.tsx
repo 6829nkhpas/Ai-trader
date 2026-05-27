@@ -5,31 +5,71 @@ import { Terminal, Shield, Target, Zap, Rocket, CheckCircle2, Cpu, Loader2 } fro
 import { useTradeStore } from '../../store/useTradeStore';
 import { useQuantStore } from '../../store/useQuantStore';
 
+// Pulsing indicator when AI is waiting for market conditions
+const WatchingIndicator = () => (
+  <div className="flex items-center gap-3 p-3 bg-teal-500/10 border border-teal-500/20 rounded-xl animate-pulse mt-2 shadow-inner shadow-teal-500/5">
+    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-teal-500/20 text-teal-400 text-xs font-bold animate-ping">
+      ⏸️
+    </div>
+    <div className="flex flex-col">
+      <span className="text-[11px] font-bold text-teal-300">⏸️ AI paused. Waiting for market condition to trigger...</span>
+      <span className="text-[9px] text-teal-400/60 font-mono">Condition watcher registered in background</span>
+    </div>
+  </div>
+);
+
 export default function AgentTerminal() {
-  const agentChatLog = useTradeStore((s) => s.agentChatLog);
-  const finalTradePlan = useTradeStore((s) => s.finalTradePlan);
+  const reasoningSteps = useQuantStore((s) => s.reasoningSteps);
+  const sessionStatus = useQuantStore((s) => s.sessionStatus);
+  const finalTrade = useQuantStore((s) => s.finalTrade);
+  const handleStreamEvent = useQuantStore((s) => s.handleStreamEvent);
+  const resetTerminal = useQuantStore((s) => s.resetTerminal);
+
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
-  const clearAgentChatLog = useTradeStore((s) => s.clearAgentChatLog);
   
   const terminalEndRef = useRef<HTMLDivElement>(null);
   const [executed, setExecuted] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
 
-  // Auto-scroll to bottom of terminal
+  // Dynamic listen/unlisten to "deep-quant-stream"
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    
+    async function setupListener() {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        unlisten = await listen<any>('deep-quant-stream', (event) => {
+          handleStreamEvent(event.payload);
+        });
+      } catch (err) {
+        console.error('Failed to register deep-quant-stream listener:', err);
+      }
+    }
+    
+    setupListener();
+    
+    return () => {
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [handleStreamEvent]);
+
+  // Auto-scroll to bottom of terminal when reasoningSteps changes
   useEffect(() => {
     terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [agentChatLog]);
+  }, [reasoningSteps, sessionStatus]);
 
   // Reset execution status if the final trade plan changes
   useEffect(() => {
     setExecuted(false);
-  }, [finalTradePlan]);
+  }, [finalTrade]);
 
   // Parse entry, target, and stop loss from execution_plan text
   const parsePlanDetails = () => {
-    if (!finalTradePlan) return null;
+    if (!finalTrade) return null;
     
-    const executionPlan = finalTradePlan.execution_plan || '';
+    const executionPlan = finalTrade.execution_plan || '';
     const closePrice = useTradeStore.getState().ohlcCandles.find(c => c.symbol === selectedSymbol)?.close || 0;
     
     let entryPrice = closePrice;
@@ -100,7 +140,7 @@ export default function AgentTerminal() {
           </span>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-red-500/80 hover:bg-red-400 cursor-pointer" onClick={clearAgentChatLog} title="Reset logs" />
+          <span className="w-2 h-2 rounded-full bg-red-500/80 hover:bg-red-400 cursor-pointer" onClick={resetTerminal} title="Reset logs" />
           <span className="w-2 h-2 rounded-full bg-amber-500/80" />
           <span className="w-2 h-2 rounded-full bg-emerald-500/80" />
         </div>
@@ -108,47 +148,37 @@ export default function AgentTerminal() {
 
       {/* Terminal Scrolling Log */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3.5 scrollbar-thin scrollbar-track-slate-950/20 scrollbar-thumb-slate-800">
-        {agentChatLog.map((log, idx) => {
-          if (log.role === 'user') {
+        {reasoningSteps.map((step) => {
+          if (step.type === 'message') {
             return (
-              <div key={idx} className="flex justify-end animate-fade-in">
-                <div className="max-w-[85%] bg-slate-800/60 text-slate-200 border border-slate-700/50 rounded-2xl rounded-tr-sm px-3.5 py-2 text-[11px] leading-relaxed shadow-sm">
-                  <div className="text-[9px] text-slate-400/80 font-bold uppercase tracking-widest mb-1 select-none">
-                    user_trigger
+              <div key={step.id} className="flex justify-start animate-fade-in font-sans">
+                <div className="max-w-[95%] bg-slate-900/40 text-slate-100 border border-slate-800/40 rounded-xl px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap shadow-sm">
+                  <div className="flex items-center gap-1.5 text-[9px] text-emerald-400 font-bold uppercase tracking-wider mb-1 select-none">
+                    <Cpu size={10} className="animate-pulse" />
+                    Agent Reasoning
                   </div>
-                  {log.content}
-                </div>
-              </div>
-            );
-          } else if (log.role === 'system') {
-            return (
-              <div key={idx} className="flex justify-start animate-fade-in font-mono">
-                <div className="max-w-[90%] bg-slate-950/80 text-slate-400 border border-slate-800/40 rounded-xl px-3.5 py-2 text-[10px] leading-relaxed">
-                  <span className="text-blue-400 font-bold mr-1.5">[SYS]</span>
-                  {log.content}
+                  {step.content}
                 </div>
               </div>
             );
           } else {
-            // assistant (AI Thought Log)
+            // step.type === 'tool'
             return (
-              <div key={idx} className="flex justify-start animate-fade-in font-mono">
-                <div className="max-w-[90%] text-emerald-400 rounded-xl py-0.5 text-[11px] leading-relaxed">
-                  <div className="flex items-center gap-1 text-[9px] text-emerald-500/70 font-bold uppercase tracking-widest mb-1 select-none">
-                    <Cpu size={10} className="animate-spin" style={{ animationDuration: '4s' }} />
-                    agent_thought
-                  </div>
-                  <div className="pl-3 border-l border-emerald-500/20 whitespace-pre-wrap">
-                    {log.content}
-                  </div>
+              <div key={step.id} className="flex justify-start animate-fade-in font-mono pl-2">
+                <div className="text-[10px] text-teal-400/80 font-semibold select-none flex items-center gap-1.5 py-0.5">
+                  <span className="text-teal-500/60">&gt;</span>
+                  {step.content}
                 </div>
               </div>
             );
           }
         })}
 
+        {/* Watching Indicator inside scroll log */}
+        {sessionStatus === 'watching' && <WatchingIndicator />}
+
         {/* Streaming spinner inside console */}
-        {!finalTradePlan && agentChatLog.length > 0 && (
+        {sessionStatus === 'running' && (
           <div className="flex items-center gap-2 pl-3 py-2 text-[10px] text-emerald-500/60 animate-pulse">
             <Loader2 size={11} className="animate-spin text-emerald-500" />
             <span>Agent evaluating microstructure signals...</span>
@@ -159,7 +189,7 @@ export default function AgentTerminal() {
       </div>
 
       {/* Execution Plan Card Handoff */}
-      {finalTradePlan && parsedPlan && (
+      {sessionStatus === 'complete' && finalTrade && parsedPlan && (
         <div className="p-4 bg-slate-950 border-t border-slate-800/80 animate-slide-up shadow-xl shrink-0">
           <div className="flex items-center gap-2 mb-3">
             <Shield size={12} className="text-emerald-400" />
@@ -167,12 +197,12 @@ export default function AgentTerminal() {
               Actionable Trade Plan Ready
             </h3>
             <span className="ml-auto rounded-md px-2 py-0.5 text-[9px] font-black tracking-widest bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              {finalTradePlan.conviction_score}% CONVICTION
+              {finalTrade.conviction_score}% CONVICTION
             </span>
           </div>
 
           <div className="text-xs text-gray-300 italic mb-3 border-l-2 border-emerald-500 pl-2">
-            "{finalTradePlan.setup_validation}"
+            "{finalTrade.setup_validation}"
           </div>
 
           {/* Parameters grid */}
