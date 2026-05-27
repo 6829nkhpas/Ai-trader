@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useTradeStore } from '../store/useTradeStore';
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -79,128 +79,31 @@ function buildBookFromDepth(
   return { asks, bids, spread, spreadPct, midPrice };
 }
 
-const BASE_PRICES: Record<string, number> = {
-  RELIANCE: 2450.0,
-  TCS: 3400.0,
-  HDFCBANK: 1650.0,
-  INFY: 1450.0,
-  ICICIBANK: 950.0,
-  HINDUNILVR: 2550.0,
-  SBIN: 580.0,
-  BHARTIARTL: 880.0,
-  KOTAKBANK: 1850.0,
-  LT: 2350.0,
-};
-
-function getBasePrice(symbol: string): number {
-  return BASE_PRICES[symbol.toUpperCase()] || 1000.0;
-}
-
-function generateLiveBook(centerPrice: number): OrderBookState {
-  const asks: OrderBookLevel[] = [];
-  const bids: OrderBookLevel[] = [];
-  const levelCount = LEVEL_COUNT;
-  const tickSize = 0.05;
-
-  const spreadTicks = 1 + Math.floor(Math.random() * 2);
-  const bestBidPrice = centerPrice - (spreadTicks * tickSize) / 2;
-  const bestAskPrice = centerPrice + (spreadTicks * tickSize) / 2;
-
-  let askRunningTotal = 0;
-  for (let i = 0; i < levelCount; i++) {
-    const price = parseFloat((bestAskPrice + i * tickSize).toFixed(2));
-    const size = Math.floor((100 + Math.random() * 2000) * (1 - i * 0.05));
-    const finalSize = Math.max(10, size);
-    askRunningTotal += finalSize;
-    asks.push({ price, size: finalSize, total: askRunningTotal });
-  }
-  asks.reverse();
-
-  let bidRunningTotal = 0;
-  for (let i = 0; i < levelCount; i++) {
-    const price = parseFloat((bestBidPrice - i * tickSize).toFixed(2));
-    const size = Math.floor((100 + Math.random() * 2000) * (1 - i * 0.05));
-    const finalSize = Math.max(10, size);
-    bidRunningTotal += finalSize;
-    bids.push({ price, size: finalSize, total: bidRunningTotal });
-  }
-
-  const spread = parseFloat((bestAskPrice - bestBidPrice).toFixed(2));
-  const spreadPct = ((spread / bestAskPrice) * 100).toFixed(3);
-
-  return { asks, bids, spread, spreadPct, midPrice: parseFloat(centerPrice.toFixed(2)) };
-}
-
-function perturbBook(current: OrderBookState, centerPrice: number): OrderBookState {
-  if (current.asks.length === 0 || current.bids.length === 0) {
-    return generateLiveBook(centerPrice);
-  }
-
-  if (Math.abs(centerPrice - current.midPrice) > 1.5) {
-    return generateLiveBook(centerPrice);
-  }
-
-  const perturbLevel = (level: OrderBookLevel) => {
-    const sizeChange = (Math.random() - 0.5) * 0.15;
-    let newSize = Math.floor(level.size * (1 + sizeChange));
-    
-    if (Math.random() < 0.05) {
-      newSize = Math.floor(newSize * 1.8);
-    } else if (Math.random() < 0.05) {
-      newSize = Math.floor(newSize * 0.4);
-    }
-
-    newSize = Math.max(5, newSize);
-    return { ...level, size: newSize };
-  };
-
-  const perturbedAsks = current.asks.map(perturbLevel);
-  const perturbedBids = current.bids.map(perturbLevel);
-
-  let askRunningTotal = 0;
-  const asksInOrder = [...perturbedAsks].reverse();
-  const recalculatedAsks = asksInOrder.map((level) => {
-    askRunningTotal += level.size;
-    return { ...level, total: askRunningTotal };
-  }).reverse();
-
-  let bidRunningTotal = 0;
-  const recalculatedBids = perturbedBids.map((level) => {
-    bidRunningTotal += level.size;
-    return { ...level, total: bidRunningTotal };
-  });
-
-  const bestAsk = recalculatedAsks[recalculatedAsks.length - 1].price;
-  const bestBid = recalculatedBids[0].price;
-  const spread = parseFloat((bestAsk - bestBid).toFixed(2));
-  const spreadPct = ((spread / bestAsk) * 100).toFixed(3);
-  const midPrice = parseFloat(((bestAsk + bestBid) / 2).toFixed(2));
-
-  return {
-    asks: recalculatedAsks,
-    bids: recalculatedBids,
-    spread,
-    spreadPct,
-    midPrice,
-  };
-}
-
 // ── Component ──────────────────────────────────────────────────────────
 export default function OrderBook() {
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
-  const ohlcCandles = useTradeStore((s) => s.ohlcCandles);
 
   const [book, setBook] = useState<OrderBookState>(() => createEmptyBook());
   const [isLive, setIsLive] = useState(false);
 
-  // Derive center price from live ohlc candles or fallback base price
-  const latestPrice = useMemo(() => {
-    const candlesForSymbol = ohlcCandles.filter((c) => c.symbol === selectedSymbol);
-    if (candlesForSymbol.length > 0) {
-      return candlesForSymbol[candlesForSymbol.length - 1].close;
+  // ── Load cached order book data when symbol changes ──────────────────
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const cached = localStorage.getItem(`ai-trader-orderbook-${selectedSymbol.toUpperCase()}`);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          setBook(parsed);
+          setIsLive(true);
+          return;
+        } catch {
+          // ignore
+        }
+      }
     }
-    return getBasePrice(selectedSymbol);
-  }, [ohlcCandles, selectedSymbol]);
+    setBook(createEmptyBook());
+    setIsLive(false);
+  }, [selectedSymbol]);
 
   // ── Listen for real-time order book data from backend IPC ──────────
   // The backend pushes depth updates via the `orderbook-update` event.
@@ -218,12 +121,19 @@ export default function OrderBook() {
           ask_sizes: number[];
         }>('orderbook-update', (event) => {
           const { bid_prices, bid_sizes, ask_prices, ask_sizes } = event.payload;
-          setBook(buildBookFromDepth(bid_prices, bid_sizes, ask_prices, ask_sizes));
+          const newBook = buildBookFromDepth(bid_prices, bid_sizes, ask_prices, ask_sizes);
+          setBook(newBook);
           setIsLive(true);
+
+          // Cache the latest book details for this symbol
+          const currentSymbol = useTradeStore.getState().selectedSymbol;
+          if (typeof window !== 'undefined') {
+            localStorage.setItem(`ai-trader-orderbook-${currentSymbol.toUpperCase()}`, JSON.stringify(newBook));
+          }
         });
         cleanup = unlisten;
       } catch {
-        console.info('[OrderBook] Tauri IPC unavailable — falling back to live order book simulation.');
+        console.info('[OrderBook] Tauri IPC unavailable — order book is in cold standby.');
       }
     }
 
@@ -232,23 +142,6 @@ export default function OrderBook() {
       cleanup?.();
     };
   }, []);
-
-  // ── High-Frequency Order Book Simulation Fallback ─────────────────
-  // If Tauri IPC depth updates are not available (e.g. running in web/dev mode),
-  // we dynamically update and perturb a premium level-2 order book simulation
-  // centered around the active symbol's price feed.
-  useEffect(() => {
-    if (isLive) return;
-
-    // Set initial book
-    setBook(generateLiveBook(latestPrice));
-
-    const interval = setInterval(() => {
-      setBook((current) => perturbBook(current, latestPrice));
-    }, 450); // Real-time high frequency matching interval
-
-    return () => clearInterval(interval);
-  }, [latestPrice, isLive]);
 
   // Compute max size across all levels for depth bar scaling
   const maxAskSize = book.asks.length > 0 ? Math.max(...book.asks.map((l) => l.size), 0.01) : 0.01;
