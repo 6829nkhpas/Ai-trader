@@ -1951,7 +1951,7 @@
       "label": "IndicatorState",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L20",
+      "source_location": "L19",
       "id": "quant_mod_indicatorstate",
       "community": 2,
       "norm_label": "indicatorstate"
@@ -1960,7 +1960,7 @@
       "label": ".to_snapshot()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L50",
+      "source_location": "L49",
       "id": "quant_mod_indicatorstate_to_snapshot",
       "community": 2,
       "norm_label": ".to_snapshot()"
@@ -1969,7 +1969,7 @@
       "label": "ConsensusReport",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L395",
+      "source_location": "L394",
       "id": "quant_mod_consensusreport",
       "community": 48,
       "norm_label": "consensusreport"
@@ -1978,7 +1978,7 @@
       "label": "ConsensusEngine",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L434",
+      "source_location": "L433",
       "id": "quant_mod_consensusengine",
       "community": 2,
       "norm_label": "consensusengine"
@@ -1987,7 +1987,7 @@
       "label": ".compile_consensus()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L437",
+      "source_location": "L436",
       "id": "quant_mod_consensusengine_compile_consensus",
       "community": 2,
       "norm_label": ".compile_consensus()"
@@ -13345,7 +13345,7 @@
       "label": ".from_candles_basic()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L65",
+      "source_location": "L64",
       "id": "quant_mod_indicatorstate_from_candles_basic",
       "community": 2,
       "norm_label": ".from_candles_basic()"
@@ -13354,7 +13354,7 @@
       "label": ".compute_orb()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L118",
+      "source_location": "L117",
       "id": "quant_mod_indicatorstate_compute_orb",
       "community": 2,
       "norm_label": ".compute_orb()"
@@ -13363,7 +13363,7 @@
       "label": ".compute_parabolic_sar()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L131",
+      "source_location": "L130",
       "id": "quant_mod_indicatorstate_compute_parabolic_sar",
       "community": 2,
       "norm_label": ".compute_parabolic_sar()"
@@ -13372,7 +13372,7 @@
       "label": ".compute_stoch_k()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L174",
+      "source_location": "L173",
       "id": "quant_mod_indicatorstate_compute_stoch_k",
       "community": 2,
       "norm_label": ".compute_stoch_k()"
@@ -13381,7 +13381,7 @@
       "label": ".compute_obv()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L194",
+      "source_location": "L193",
       "id": "quant_mod_indicatorstate_compute_obv",
       "community": 2,
       "norm_label": ".compute_obv()"
@@ -13390,7 +13390,7 @@
       "label": ".compute_cmf()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L219",
+      "source_location": "L218",
       "id": "quant_mod_indicatorstate_compute_cmf",
       "community": 2,
       "norm_label": ".compute_cmf()"
@@ -13399,7 +13399,7 @@
       "label": ".compute_smas()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L243",
+      "source_location": "L242",
       "id": "quant_mod_indicatorstate_compute_smas",
       "community": 2,
       "norm_label": ".compute_smas()"
@@ -13408,7 +13408,7 @@
       "label": ".compute_avg_volume()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L252",
+      "source_location": "L251",
       "id": "quant_mod_indicatorstate_compute_avg_volume",
       "community": 2,
       "norm_label": ".compute_avg_volume()"
@@ -13417,7 +13417,7 @@
       "label": ".compute_rsi()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L258",
+      "source_location": "L257",
       "id": "quant_mod_indicatorstate_compute_rsi",
       "community": 2,
       "norm_label": ".compute_rsi()"
@@ -13426,7 +13426,7 @@
       "label": ".compute_ema()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L276",
+      "source_location": "L275",
       "id": "quant_mod_indicatorstate_compute_ema",
       "community": 2,
       "norm_label": ".compute_ema()"
@@ -13435,7 +13435,7 @@
       "label": ".compute_macd()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L292",
+      "source_location": "L291",
       "id": "quant_mod_indicatorstate_compute_macd",
       "community": 2,
       "norm_label": ".compute_macd()"
@@ -13444,7 +13444,7 @@
       "label": ".compute_atr()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L338",
+      "source_location": "L337",
       "id": "quant_mod_indicatorstate_compute_atr",
       "community": 2,
       "norm_label": ".compute_atr()"
@@ -13453,7 +13453,7 @@
       "label": ".compute_bollinger_bands()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L359",
+      "source_location": "L358",
       "id": "quant_mod_indicatorstate_compute_bollinger_bands",
       "community": 2,
       "norm_label": ".compute_bollinger_bands()"
@@ -13462,7 +13462,7 @@
       "label": ".compute_vwap()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L374",
+      "source_location": "L373",
       "id": "quant_mod_indicatorstate_compute_vwap",
       "community": 2,
       "norm_label": ".compute_vwap()"
@@ -13471,7 +13471,7 @@
       "label": "AiExecutionPlan",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L413",
+      "source_location": "L412",
       "id": "quant_mod_aiexecutionplan",
       "community": 153,
       "norm_label": "aiexecutionplan"
@@ -13480,7 +13480,7 @@
       "label": ".trend_score()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L555",
+      "source_location": "L554",
       "id": "quant_mod_consensusengine_trend_score",
       "community": 2,
       "norm_label": ".trend_score()"
@@ -13489,7 +13489,7 @@
       "label": ".momentum()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L572",
+      "source_location": "L571",
       "id": "quant_mod_consensusengine_momentum",
       "community": 2,
       "norm_label": ".momentum()"
@@ -13498,7 +13498,7 @@
       "label": ".volatility()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L580",
+      "source_location": "L579",
       "id": "quant_mod_consensusengine_volatility",
       "community": 2,
       "norm_label": ".volatility()"
@@ -13507,7 +13507,7 @@
       "label": ".volume_flow()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L592",
+      "source_location": "L591",
       "id": "quant_mod_consensusengine_volume_flow",
       "community": 2,
       "norm_label": ".volume_flow()"
@@ -22833,9 +22833,9 @@
       "source_file": "agents/deep-quant-loop/tools.py",
       "source_location": "L9",
       "weight": 1.0,
-      "confidence_score": 1.0,
       "source": "deep_quant_loop_tools_rationale_9",
-      "target": "deep_quant_loop_tools_calculate_ema"
+      "target": "deep_quant_loop_tools_calculate_ema",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -22864,9 +22864,9 @@
       "source_file": "agents/deep-quant-loop/tools.py",
       "source_location": "L22",
       "weight": 1.0,
-      "confidence_score": 1.0,
       "source": "deep_quant_loop_tools_rationale_22",
-      "target": "deep_quant_loop_tools_get_candles"
+      "target": "deep_quant_loop_tools_get_candles",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
@@ -22914,9 +22914,9 @@
       "source_file": "agents/deep-quant-loop/tools.py",
       "source_location": "L69",
       "weight": 1.0,
-      "confidence_score": 1.0,
       "source": "deep_quant_loop_tools_rationale_69",
-      "target": "deep_quant_loop_tools_get_multi_tf_trend"
+      "target": "deep_quant_loop_tools_get_multi_tf_trend",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
@@ -22934,9 +22934,9 @@
       "source_file": "agents/deep-quant-loop/tools.py",
       "source_location": "L91",
       "weight": 1.0,
-      "confidence_score": 1.0,
       "source": "deep_quant_loop_tools_rationale_91",
-      "target": "deep_quant_loop_tools_get_support_resistance"
+      "target": "deep_quant_loop_tools_get_support_resistance",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
@@ -22954,9 +22954,9 @@
       "source_file": "agents/deep-quant-loop/tools.py",
       "source_location": "L144",
       "weight": 1.0,
-      "confidence_score": 1.0,
       "source": "deep_quant_loop_tools_rationale_144",
-      "target": "deep_quant_loop_tools_get_news_context"
+      "target": "deep_quant_loop_tools_get_news_context",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
@@ -22974,9 +22974,9 @@
       "source_file": "agents/deep-quant-loop/tools.py",
       "source_location": "L207",
       "weight": 1.0,
-      "confidence_score": 1.0,
       "source": "deep_quant_loop_tools_rationale_207",
-      "target": "deep_quant_loop_tools_watch_price_condition"
+      "target": "deep_quant_loop_tools_watch_price_condition",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
@@ -23004,9 +23004,9 @@
       "source_file": "agents/deep-quant-loop/tools.py",
       "source_location": "L260",
       "weight": 1.0,
-      "confidence_score": 1.0,
       "source": "deep_quant_loop_tools_rationale_260",
-      "target": "deep_quant_loop_tools_declare_trade"
+      "target": "deep_quant_loop_tools_declare_trade",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",

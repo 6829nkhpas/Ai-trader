@@ -198,9 +198,12 @@ async fn fetch_google_news_rss_for_context(client: &reqwest::Client, symbol: &st
 /// 5. **Deduplicate**: if multiple candles share the same timestamp,
 ///    keep the one from the highest-priority source (live > intraday > daily).
 /// 6. Slice to the most recent `limit` candles so the AI sees the current price.
-///
-/// Returns candles in chronological order (oldest first).
-pub(crate) async fn load_candles_from_db(pool: &PgPool, symbol: &str, limit: i64) -> Result<Vec<Candle>, String> {
+pub(crate) async fn load_candles_from_db(
+    pool: &PgPool,
+    symbol: &str,
+    timeframe: &str,
+    limit: i64,
+) -> Result<Vec<Candle>, String> {
     use sqlx::Row;
 
     // Hardcode minimum fetch limit to 100 candles
@@ -218,8 +221,6 @@ pub(crate) async fn load_candles_from_db(pool: &PgPool, symbol: &str, limit: i64
     }
 
     /// Helper: parse rows with timestamps into PrioCandle vec.
-    /// The SQL queries MUST cast timestamps to LONG (epoch micros) so that
-    /// sqlx can deserialize them as i64. Column name is always "ts_epoch".
     fn parse_rows_with_ts(
         rows: &[sqlx::postgres::PgRow],
         priority: u8,
@@ -233,10 +234,9 @@ pub(crate) async fn load_candles_from_db(pool: &PgPool, symbol: &str, limit: i64
                 let volume: i64 = row.try_get::<i64, _>("volume")
                     .or_else(|_| row.try_get::<i32, _>("volume").map(|v| v as i64))
                     .unwrap_or(0);
-                // ts_epoch = CAST(ts AS LONG) in SQL → epoch microseconds as i64
                 let ts_micros: i64 = row.try_get::<i64, _>("ts_epoch")
                     .unwrap_or(0);
-                let ts_millis = ts_micros / 1000; // micros → millis
+                let ts_millis = ts_micros / 1000;
                 Some(PrioCandle {
                     ts_millis,
                     priority,
@@ -248,69 +248,85 @@ pub(crate) async fn load_candles_from_db(pool: &PgPool, symbol: &str, limit: i64
 
     let mut all_candles: Vec<PrioCandle> = Vec::new();
 
-    // ── Source 1: historical_candles (daily archive) ─────────────────────
-    // CAST(ts AS LONG) → epoch microseconds as bigint, parseable by sqlx as i64
-    let daily_result = sqlx::query(
-        "SELECT CAST(ts AS LONG) AS ts_epoch, open, high, low, close, volume \
-         FROM historical_candles \
-         WHERE symbol = $1 \
-         ORDER BY ts DESC \
-         LIMIT $2",
-    )
-    .bind(symbol)
-    .bind(limit)
-    .fetch_all(pool)
-    .await;
+    let is_daily = timeframe.eq_ignore_ascii_case("1d") || timeframe.eq_ignore_ascii_case("day");
 
-    match &daily_result {
-        Ok(rows) if !rows.is_empty() => {
-            let parsed = parse_rows_with_ts(rows, PRIO_DAILY);
-            info!(
-                "[deep_quant] merge_source=historical_candles symbol={} count={}",
-                symbol, parsed.len()
-            );
-            all_candles.extend(parsed);
+    if is_daily {
+        // ── Source 1: historical_candles (daily archive) ─────────────────────
+        let daily_result = sqlx::query(
+            "SELECT CAST(ts AS LONG) AS ts_epoch, open, high, low, close, volume \
+             FROM historical_candles \
+             WHERE symbol = $1 \
+             ORDER BY ts DESC \
+             LIMIT $2",
+        )
+        .bind(symbol)
+        .bind(limit)
+        .fetch_all(pool)
+        .await;
+
+        match &daily_result {
+            Ok(rows) if !rows.is_empty() => {
+                let parsed = parse_rows_with_ts(rows, PRIO_DAILY);
+                info!(
+                    "[deep_quant] merge_source=historical_candles symbol={} count={}",
+                    symbol, parsed.len()
+                );
+                all_candles.extend(parsed);
+            }
+            Ok(_)=> {
+                info!("[deep_quant] merge_source=historical_candles symbol={} count=0 (empty)", symbol);
+            }
+            Err(e) => {
+                warn!("[deep_quant] historical_candles query failed: {}", e);
+            }
         }
-        Ok(_) => {
-            info!("[deep_quant] merge_source=historical_candles symbol={} count=0 (empty)", symbol);
-        }
-        Err(e) => {
-            warn!("[deep_quant] historical_candles query failed: {}", e);
+    } else {
+        // ── Source 2: historical_intraday (filtered by timeframe) ────────────
+        let intraday_result = sqlx::query(
+            "SELECT CAST(ts AS LONG) AS ts_epoch, open, high, low, close, volume \
+             FROM historical_intraday \
+             WHERE symbol = $1 AND timeframe = $2 \
+             ORDER BY ts DESC \
+             LIMIT $3",
+        )
+        .bind(symbol)
+        .bind(timeframe)
+        .bind(limit)
+        .fetch_all(pool)
+        .await;
+
+        match &intraday_result {
+            Ok(rows) if !rows.is_empty() => {
+                let parsed = parse_rows_with_ts(rows, PRIO_INTRADAY);
+                info!(
+                    "[deep_quant] merge_source=historical_intraday symbol={} timeframe={} count={}",
+                    symbol, timeframe, parsed.len()
+                );
+                all_candles.extend(parsed);
+            }
+            Ok(_) => {
+                info!("[deep_quant] merge_source=historical_intraday symbol={} timeframe={} count=0 (empty)", symbol, timeframe);
+            }
+            Err(e) => {
+                warn!("[deep_quant] historical_intraday query failed: {}", e);
+            }
         }
     }
 
-    // ── Source 2: historical_intraday (Kite intraday cached by chart) ────
-    let intraday_result = sqlx::query(
-        "SELECT CAST(ts AS LONG) AS ts_epoch, open, high, low, close, volume \
-         FROM historical_intraday \
-         WHERE symbol = $1 \
-         ORDER BY ts DESC \
-         LIMIT $2",
-    )
-    .bind(symbol)
-    .bind(limit)
-    .fetch_all(pool)
-    .await;
+    // ── Source 3: live_ticks (dynamically sampled by timeframe) ──────────
+    let sample_interval = match timeframe.to_lowercase().as_str() {
+        "1m" | "1min" => "1m",
+        "3m" | "3min" => "3m",
+        "5m" | "5min" => "5m",
+        "15m" | "15min" => "15m",
+        "30m" | "30min" => "30m",
+        "1h" | "60m" | "1hour" => "1h",
+        "4h" | "240m" | "4hour" => "4h",
+        "1d" | "day" => "1d",
+        _ => "10m",
+    };
 
-    match &intraday_result {
-        Ok(rows) if !rows.is_empty() => {
-            let parsed = parse_rows_with_ts(rows, PRIO_INTRADAY);
-            info!(
-                "[deep_quant] merge_source=historical_intraday symbol={} count={}",
-                symbol, parsed.len()
-            );
-            all_candles.extend(parsed);
-        }
-        Ok(_) => {
-            info!("[deep_quant] merge_source=historical_intraday symbol={} count=0 (empty)", symbol);
-        }
-        Err(e) => {
-            warn!("[deep_quant] historical_intraday query failed: {}", e);
-        }
-    }
-
-    // ── Source 3: live_ticks (current session, aggregated to 10m bars) ───
-    let live_result = sqlx::query(
+    let live_query = format!(
         "SELECT CAST(timestamp AS LONG) AS ts_epoch, \
                 first(last_traded_price) AS open, \
                 max(last_traded_price)   AS high, \
@@ -319,29 +335,32 @@ pub(crate) async fn load_candles_from_db(pool: &PgPool, symbol: &str, limit: i64
                 (last(volume) - first(volume)) AS volume \
          FROM live_ticks \
          WHERE symbol = $1 \
-         SAMPLE BY 10m ALIGN TO CALENDAR \
+         SAMPLE BY {} ALIGN TO CALENDAR \
          ORDER BY timestamp DESC \
          LIMIT $2",
-    )
-    .bind(symbol)
-    .bind(limit)
-    .fetch_all(pool)
-    .await;
+        sample_interval
+    );
+
+    let live_result = sqlx::query(&live_query)
+        .bind(symbol)
+        .bind(limit)
+        .fetch_all(pool)
+        .await;
 
     match &live_result {
         Ok(rows) if !rows.is_empty() => {
             let parsed = parse_rows_with_ts(rows, PRIO_LIVE);
             info!(
-                "[deep_quant] merge_source=live_ticks symbol={} count={}",
-                symbol, parsed.len()
+                "[deep_quant] merge_source=live_ticks symbol={} sample={} count={}",
+                symbol, sample_interval, parsed.len()
             );
             all_candles.extend(parsed);
         }
         Ok(_) => {
-            info!("[deep_quant] merge_source=live_ticks symbol={} count=0 (empty)", symbol);
+            info!("[deep_quant] merge_source=live_ticks symbol={} sample={} count=0 (empty)", symbol, sample_interval);
         }
         Err(e) => {
-            warn!("[deep_quant] live_ticks query failed: {}", e);
+            warn!("[deep_quant] live_ticks query failed for sample={}: {}", sample_interval, e);
         }
     }
 
@@ -353,22 +372,18 @@ pub(crate) async fn load_candles_from_db(pool: &PgPool, symbol: &str, limit: i64
     // ── Merge: sort ascending by timestamp ───────────────────────────────
     all_candles.sort_by(|a, b| {
         a.ts_millis.cmp(&b.ts_millis)
-            .then(a.priority.cmp(&b.priority)) // on tie: lower priority first (will be overwritten)
+            .then(a.priority.cmp(&b.priority))
     });
 
     // ── Deduplicate: on timestamp collision, keep highest priority ───────
-    // Walk sorted array; if consecutive candles share the same ts_millis,
-    // keep the one with the highest priority (live > intraday > daily).
     let mut deduped: Vec<PrioCandle> = Vec::with_capacity(all_candles.len());
     for pc in all_candles {
         if let Some(last) = deduped.last() {
             if last.ts_millis == pc.ts_millis {
-                // Same timestamp — replace if higher priority
                 if pc.priority > last.priority {
                     deduped.pop();
                     deduped.push(pc);
                 }
-                // else: keep existing (already higher or equal priority)
                 continue;
             }
         }
@@ -387,16 +402,15 @@ pub(crate) async fn load_candles_from_db(pool: &PgPool, symbol: &str, limit: i64
         return Err("Insufficient historical data to compute technical indicators.".to_string());
     }
 
-    // ── Diagnostic: log merge stats ──────────────────────────────────────
     let first_close = final_candles.first().map(|c| c.close).unwrap_or(0.0);
     let last_close = final_candles.last().map(|c| c.close).unwrap_or(0.0);
     info!(
-        "[deep_quant] merge_result: symbol={} total_before_dedup={} after_dedup={} final_slice={} first_close={:.2} last_close={:.2}",
-        symbol, total, deduped.len(), final_candles.len(), first_close, last_close
+        "[deep_quant] merge_result: symbol={} timeframe={} total_before_dedup={} after_dedup={} final_slice={} first_close={:.2} last_close={:.2}",
+        symbol, timeframe, total, deduped.len(), final_candles.len(), first_close, last_close
     );
     println!(
-        "🔗 [MERGE] {} — merged candles: {} | first_close={:.2} → last_close={:.2} (AI will see this close)",
-        symbol, final_candles.len(), first_close, last_close
+        "🔗 [MERGE] {} [{}] — merged candles: {} | first_close={:.2} → last_close={:.2} (AI will see this close)",
+        symbol, timeframe, final_candles.len(), first_close, last_close
     );
 
     Ok(final_candles)
@@ -552,7 +566,7 @@ async fn run_glass_box_loop(
         msg
     })?;
 
-    let mut candles = match load_candles_from_db(pool.inner(), &symbol, 200).await {
+    let mut candles = match load_candles_from_db(pool.inner(), &symbol, &timeframe, 200).await {
         Ok(c) => c,
         Err(e) => {
             let _ = app.emit("agent_message", llm::AgentMessagePayload {
@@ -595,7 +609,7 @@ async fn run_glass_box_loop(
                             role: "system".to_string(),
                             content: format!("Ingested {} candles from Kite.", count),
                         });
-                        if let Ok(new_candles) = load_candles_from_db(pool.inner(), &symbol, 200).await {
+                        if let Ok(new_candles) = load_candles_from_db(pool.inner(), &symbol, &timeframe, 200).await {
                             candles = new_candles;
                         }
                     }
@@ -621,7 +635,7 @@ async fn run_glass_box_loop(
 
     // Calculate initial indicator variables
     let indicators = IndicatorState::from_candles_basic(&candles);
-    let consensus = ConsensusEngine::compile_consensus(&symbol, &candles, &indicators);
+    let consensus = ConsensusEngine::compile_consensus(&symbol, &candles, &indicators, &timeframe);
 
     // Emit technical consensus so the React UI sidebar populates immediately
     let _ = app.emit("quant-consensus", &consensus);
@@ -985,13 +999,13 @@ async fn run_glass_box_loop(
                         }
 
                         // Always reload full candles at the end of the sync loop to recalculate
-                        if let Ok(c) = load_candles_from_db(pool.inner(), &symbol, 200).await {
+                        if let Ok(c) = load_candles_from_db(pool.inner(), &symbol, &timeframe, 200).await {
                             fresh_candles = c;
                         }
 
                         // Calculate updated indicators and consensus
                         let fresh_indicators = IndicatorState::from_candles_basic(&fresh_candles);
-                        let fresh_consensus = ConsensusEngine::compile_consensus(&symbol, &fresh_candles, &fresh_indicators);
+                        let fresh_consensus = ConsensusEngine::compile_consensus(&symbol, &fresh_candles, &fresh_indicators, &timeframe);
 
                         // Broadcast new consensus to React UI immediately so charts refresh
                         let _ = app.emit("quant-consensus", &fresh_consensus);
@@ -1245,7 +1259,7 @@ async fn run_sentinel_loop(app: tauri::AppHandle, symbol: String, timeframe: Str
         };
 
         // 1. Fetch the absolute latest data from the database/live ticks.
-        let candles = match load_candles_from_db(pool.inner(), &symbol, 200).await {
+        let candles = match load_candles_from_db(pool.inner(), &symbol, "10m", 200).await {
             Ok(c) => c,
             Err(e) => {
                 let msg = format!("Failed to fetch candles: {}. Retrying...", e);
@@ -1272,7 +1286,7 @@ async fn run_sentinel_loop(app: tauri::AppHandle, symbol: String, timeframe: Str
 
         // 2. Calculate current indicators (MACD, RSI, etc.).
         let indicators = IndicatorState::from_candles_basic(&candles);
-        let consensus = ConsensusEngine::compile_consensus(&symbol, &candles, &indicators);
+        let consensus = ConsensusEngine::compile_consensus(&symbol, &candles, &indicators, "10m");
 
         let latest_close = candles.last().map(|c| c.close).unwrap_or(0.0);
         let rsi_val = if indicators.rsi_14.is_finite() { indicators.rsi_14 } else { 50.0 };

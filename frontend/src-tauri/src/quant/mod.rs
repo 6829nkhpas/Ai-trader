@@ -12,6 +12,7 @@ pub mod tool_server;
 
 use patterns::{Candle, PatternEngine};
 use strategies::{IndicatorSnapshot, StrategyEngine};
+use vwepr::OhlcCandle;
 
 // ── Indicator State ─────────────────────────────────────────────────────────
 
@@ -272,7 +273,7 @@ impl IndicatorState {
 
     /// Compute Exponential Moving Average for the given period.
     /// Returns f64::NAN if there aren't enough candles.
-    fn compute_ema(candles: &[Candle], period: usize) -> f64 {
+    pub fn compute_ema(candles: &[Candle], period: usize) -> f64 {
         if candles.len() < period {
             return f64::NAN;
         }
@@ -399,6 +400,10 @@ pub struct ConsensusReport {
     pub volume_flow_state: String,
     pub active_patterns: Vec<String>,
     pub active_strategies: Vec<String>,
+    pub vwepr_value: Option<f64>,
+    pub vwepr_slope: Option<f64>,
+    pub ols_value: Option<f64>,
+    pub ols_slope: Option<f64>,
 }
 
 // ── AI Execution Plan ───────────────────────────────────────────────────────
@@ -433,6 +438,7 @@ impl ConsensusEngine {
         symbol: &str,
         candles: &[Candle],
         indicators: &IndicatorState,
+        timeframe: &str,
     ) -> ConsensusReport {
         // Scan the final 15 candles for patterns, deduplicated
         let active_patterns: Vec<String> = {
@@ -485,6 +491,52 @@ impl ConsensusEngine {
 
         let close = candles.last().map(|c| c.close).unwrap_or(0.0);
 
+        // VWEPR & OLS Calculations
+        let interval_sec: i64 = match timeframe {
+            "1m"  => 60,
+            "3m"  => 180,
+            "5m"  => 300,
+            "10m" => 600,
+            "15m" => 900,
+            "30m" => 1_800,
+            "60m" | "1h" => 3_600,
+            "4h"  => 14_400,
+            "1d"  => 86_400,
+            _     => 600,
+        };
+
+        let ohlc_candles: Vec<OhlcCandle> = candles
+            .iter()
+            .enumerate()
+            .map(|(i, c)| OhlcCandle {
+                time:   i as i64 * interval_sec,
+                open:   c.open,
+                high:   c.high,
+                low:    c.low,
+                close:  c.close,
+                volume: c.volume,
+            })
+            .collect();
+
+        let (ols_value, ols_slope, vwepr_value, vwepr_slope) = if !ohlc_candles.is_empty() {
+            let proj = predictive::calculate_dual_projection(&ohlc_candles, 1, interval_sec);
+            let o_val = proj.linear_points.get(1).map(|p| p.value);
+            let o_slope = if proj.linear_points.len() >= 2 {
+                Some(proj.linear_points[1].value - proj.linear_points[0].value)
+            } else {
+                None
+            };
+            let v_val = proj.curved_points.get(1).map(|p| p.value);
+            let v_slope = if proj.curved_points.len() >= 2 {
+                Some(proj.curved_points[1].value - proj.curved_points[0].value)
+            } else {
+                None
+            };
+            (o_val, o_slope, v_val, v_slope)
+        } else {
+            (None, None, None, None)
+        };
+
         ConsensusReport {
             symbol: symbol.to_string(),
             trend_score: Self::trend_score(close, indicators),
@@ -493,6 +545,10 @@ impl ConsensusEngine {
             volume_flow_state: Self::volume_flow(indicators),
             active_patterns,
             active_strategies,
+            vwepr_value,
+            vwepr_slope,
+            ols_value,
+            ols_slope,
         }
     }
 

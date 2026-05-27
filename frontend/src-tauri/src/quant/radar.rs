@@ -146,7 +146,7 @@ pub fn spawn_radar_worker(app_handle: tauri::AppHandle) {
                 match fetch_candles_for_symbol(&client, symbol, &kite_api_key, &kite_access_token).await {
                     Ok(candles) if candles.len() >= MIN_CANDLES => {
                         let indicators = IndicatorState::from_candles_basic(&candles);
-                        let report = ConsensusEngine::compile_consensus(symbol, &candles, &indicators);
+                        let report = ConsensusEngine::compile_consensus(symbol, &candles, &indicators, "10m");
 
                         let has_strategies = !report.active_strategies.is_empty();
                         let strong_trend = report.trend_score.abs() >= trend_threshold;

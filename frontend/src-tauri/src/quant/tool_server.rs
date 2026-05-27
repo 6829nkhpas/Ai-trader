@@ -28,12 +28,14 @@ use crate::quant::vwepr::OhlcCandle;
 #[derive(serde::Deserialize)]
 pub struct GetCandlesRequest {
     pub symbol: String,
+    pub timeframe: Option<String>,
     pub limit: Option<i64>,
 }
 
 #[derive(serde::Deserialize)]
 pub struct GetConsensusRequest {
     pub symbol: String,
+    pub timeframe: Option<String>,
     pub limit: Option<i64>,
 }
 
@@ -41,6 +43,7 @@ pub struct GetConsensusRequest {
 pub struct WatchConditionRequest {
     pub thread_id: String,
     pub symbol: Option<String>,
+    pub timeframe: Option<String>,
     pub price_level: f64,
     pub direction: String, // "above" / "up" or "below" / "down"
     pub volume_multiplier: f64,
@@ -50,6 +53,7 @@ pub struct WatchConditionRequest {
 pub struct Watcher {
     pub thread_id: String,
     pub symbol: String,
+    pub timeframe: String,
     pub price_level: f64,
     pub direction: String,
     pub volume_multiplier: f64,
@@ -100,9 +104,11 @@ async fn get_candles(
     })?;
 
     let limit = payload.limit.unwrap_or(200);
+    let tf = payload.timeframe.unwrap_or_else(|| "10m".to_string());
     let candles = crate::commands::deep_quant::load_candles_from_db(
         pool.inner(),
         &payload.symbol,
+        &tf,
         limit,
     )
     .await
@@ -130,9 +136,11 @@ async fn get_consensus(
     })?;
 
     let limit = payload.limit.unwrap_or(200);
+    let tf = payload.timeframe.unwrap_or_else(|| "10m".to_string());
     let candles = crate::commands::deep_quant::load_candles_from_db(
         pool.inner(),
         &payload.symbol,
+        &tf,
         limit,
     )
     .await
@@ -148,6 +156,7 @@ async fn get_consensus(
         &payload.symbol,
         &candles,
         &indicators,
+        &tf,
     );
 
     let _ = state.app.emit("quant-consensus", consensus.clone());
@@ -184,9 +193,12 @@ async fn watch_condition(
         ));
     }
 
+    let timeframe = payload.timeframe.unwrap_or_else(|| "10m".to_string());
+
     let watcher = Watcher {
         thread_id: payload.thread_id.clone(),
         symbol: watch_symbol.clone(),
+        timeframe,
         price_level: payload.price_level,
         direction: payload.direction.trim().to_lowercase(),
         volume_multiplier: payload.volume_multiplier,
@@ -223,7 +235,7 @@ async fn watch_condition(
         // Compute 20-period baseline average volume from QuestDB
         let mut avg_volume = 1.0;
         if let Some(pool) = app_clone.try_state::<sqlx::PgPool>() {
-            if let Ok(c) = crate::commands::deep_quant::load_candles_from_db(pool.inner(), &watcher.symbol, 20).await {
+            if let Ok(c) = crate::commands::deep_quant::load_candles_from_db(pool.inner(), &watcher.symbol, &watcher.timeframe, 20).await {
                 if !c.is_empty() {
                     let total_vol: f64 = c.iter().map(|item| item.volume).sum();
                     avg_volume = total_vol / c.len() as f64;
@@ -356,6 +368,91 @@ async fn watch_condition(
     Ok(Json(serde_json::json!({ "status": "watching_registered" })))
 }
 
+#[derive(serde::Deserialize)]
+pub struct MultiTfRequest {
+    pub symbol: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct MultiTfResponse {
+    pub symbol: String,
+    pub trend_1h: String,
+    pub trend_4h: String,
+    pub trend_1d: String,
+    pub indicators: serde_json::Value,
+}
+
+/// POST /tools/get_multi_tf_trend
+/// Returns multi-timeframe trend analysis.
+async fn get_multi_tf_trend_handler(
+    State(state): State<ServerState>,
+    Json(payload): Json<MultiTfRequest>,
+) -> Result<Json<MultiTfResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let pool = state.app.try_state::<sqlx::PgPool>().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "QuestDB PG pool not available" })),
+        )
+    })?;
+
+    let symbol = &payload.symbol;
+
+    // Run three queries in series
+    let candles_1h = crate::commands::deep_quant::load_candles_from_db(pool.inner(), symbol, "1h", 200)
+        .await
+        .unwrap_or_default();
+    let candles_4h = crate::commands::deep_quant::load_candles_from_db(pool.inner(), symbol, "4h", 200)
+        .await
+        .unwrap_or_default();
+    let candles_1d = crate::commands::deep_quant::load_candles_from_db(pool.inner(), symbol, "1d", 200)
+        .await
+        .unwrap_or_default();
+
+    // 1H EMAs & Trend
+    let ema_9_1h = IndicatorState::compute_ema(&candles_1h, 9);
+    let ema_21_1h = IndicatorState::compute_ema(&candles_1h, 21);
+    let trend_1h = if ema_9_1h.is_finite() && ema_21_1h.is_finite() {
+        if ema_9_1h > ema_21_1h { "Bullish" } else { "Bearish" }
+    } else {
+        "Neutral"
+    };
+
+    // 4H EMAs & Trend
+    let ema_21_4h = IndicatorState::compute_ema(&candles_4h, 21);
+    let ema_50_4h = IndicatorState::compute_ema(&candles_4h, 50);
+    let trend_4h = if ema_21_4h.is_finite() && ema_50_4h.is_finite() {
+        if ema_21_4h > ema_50_4h { "Bullish" } else { "Bearish" }
+    } else {
+        "Neutral"
+    };
+
+    // 1D EMAs & Trend
+    let ema_50_1d = IndicatorState::compute_ema(&candles_1d, 50);
+    let ema_100_1d = IndicatorState::compute_ema(&candles_1d, 100);
+    let trend_1d = if ema_50_1d.is_finite() && ema_100_1d.is_finite() {
+        if ema_50_1d > ema_100_1d { "Bullish" } else { "Bearish" }
+    } else {
+        "Neutral"
+    };
+
+    let indicators = serde_json::json!({
+        "ema_9_1h": if ema_9_1h.is_finite() { (ema_9_1h * 100.0).round() / 100.0 } else { 0.0 },
+        "ema_21_1h": if ema_21_1h.is_finite() { (ema_21_1h * 100.0).round() / 100.0 } else { 0.0 },
+        "ema_21_4h": if ema_21_4h.is_finite() { (ema_21_4h * 100.0).round() / 100.0 } else { 0.0 },
+        "ema_50_4h": if ema_50_4h.is_finite() { (ema_50_4h * 100.0).round() / 100.0 } else { 0.0 },
+        "ema_50_1d": if ema_50_1d.is_finite() { (ema_50_1d * 100.0).round() / 100.0 } else { 0.0 },
+        "ema_100_1d": if ema_100_1d.is_finite() { (ema_100_1d * 100.0).round() / 100.0 } else { 0.0 },
+    });
+
+    Ok(Json(MultiTfResponse {
+        symbol: symbol.to_string(),
+        trend_1h: trend_1h.to_string(),
+        trend_4h: trend_4h.to_string(),
+        trend_1d: trend_1d.to_string(),
+        indicators,
+    }))
+}
+
 // ── Server Run Function ──────────────────────────────────────────────────────
 
 pub async fn run_tool_server(app: AppHandle) {
@@ -366,6 +463,7 @@ pub async fn run_tool_server(app: AppHandle) {
         .route("/tools/get_candles", post(get_candles))
         .route("/tools/get_consensus", post(get_consensus))
         .route("/tools/watch_condition", post(watch_condition))
+        .route("/tools/get_multi_tf_trend", post(get_multi_tf_trend_handler))
         .with_state(state);
 
     let addr = "127.0.0.1:8084";

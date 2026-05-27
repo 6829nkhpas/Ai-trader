@@ -121,7 +121,7 @@ fn test_consensus_math_accuracy() {
     };
 
     // ── Execute consensus compilation ───────────────────────────────────
-    let report = ConsensusEngine::compile_consensus("TESTSTOCK", &candles, &indicators);
+    let report = ConsensusEngine::compile_consensus("TESTSTOCK", &candles, &indicators, "10m");
 
     println!("═══ Consensus Report ═══");
     println!("Symbol:          {}", report.symbol);

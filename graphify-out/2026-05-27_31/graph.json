@@ -277,7 +277,7 @@
       "label": "calculate_ema()",
       "file_type": "code",
       "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L8",
+      "source_location": "L7",
       "id": "deep_quant_loop_tools_calculate_ema",
       "community": 171,
       "norm_label": "calculate_ema()"
@@ -286,7 +286,7 @@
       "label": "get_candles()",
       "file_type": "code",
       "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L21",
+      "source_location": "L20",
       "id": "deep_quant_loop_tools_get_candles",
       "community": 171,
       "norm_label": "get_candles()"
@@ -304,7 +304,7 @@
       "label": "get_multi_tf_trend()",
       "file_type": "code",
       "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L68",
+      "source_location": "L70",
       "id": "deep_quant_loop_tools_get_multi_tf_trend",
       "community": 171,
       "norm_label": "get_multi_tf_trend()"
@@ -313,7 +313,7 @@
       "label": "get_support_resistance()",
       "file_type": "code",
       "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L90",
+      "source_location": "L121",
       "id": "deep_quant_loop_tools_get_support_resistance",
       "community": 171,
       "norm_label": "get_support_resistance()"
@@ -322,7 +322,7 @@
       "label": "get_news_context()",
       "file_type": "code",
       "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L143",
+      "source_location": "L174",
       "id": "deep_quant_loop_tools_get_news_context",
       "community": 171,
       "norm_label": "get_news_context()"
@@ -331,7 +331,7 @@
       "label": "watch_price_condition()",
       "file_type": "code",
       "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L199",
+      "source_location": "L230",
       "id": "deep_quant_loop_tools_watch_price_condition",
       "community": 171,
       "norm_label": "watch_price_condition()"
@@ -340,7 +340,7 @@
       "label": "declare_trade()",
       "file_type": "code",
       "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L254",
+      "source_location": "L283",
       "id": "deep_quant_loop_tools_declare_trade",
       "community": 171,
       "norm_label": "declare_trade()"
@@ -349,44 +349,44 @@
       "label": "Helper function to calculate Exponential Moving Average (EMA).",
       "file_type": "rationale",
       "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L9",
-      "id": "deep_quant_loop_tools_rationale_9",
+      "source_location": "L8",
+      "id": "deep_quant_loop_tools_rationale_8",
       "community": 171,
       "norm_label": "helper function to calculate exponential moving average (ema)."
     },
     {
-      "label": "Fetches raw OHLCV data. Valid timeframes: '1m', '5m', '15m', '1h', '4h', '1d'.",
+      "label": "Fetches the latest N (up to 200) OHLCV historical candles from the QuestDB datab",
       "file_type": "rationale",
       "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L22",
-      "id": "deep_quant_loop_tools_rationale_22",
+      "source_location": "L21",
+      "id": "deep_quant_loop_tools_rationale_21",
       "community": 171,
-      "norm_label": "fetches raw ohlcv data. valid timeframes: '1m', '5m', '15m', '1h', '4h', '1d'."
+      "norm_label": "fetches the latest n (up to 200) ohlcv historical candles from the questdb datab"
     },
     {
-      "label": "Calculates live technical consensus (Trend, Momentum, Volatility, VWEPR/OLS curv",
+      "label": "Retrieves the compiled multi-signal technical consensus report from the Rust qua",
       "file_type": "rationale",
       "source_file": "agents/deep-quant-loop/tools.py",
       "source_location": "L46",
       "id": "deep_quant_loop_tools_rationale_46",
       "community": 171,
-      "norm_label": "calculates live technical consensus (trend, momentum, volatility, vwepr/ols curv"
+      "norm_label": "retrieves the compiled multi-signal technical consensus report from the rust qua"
     },
     {
-      "label": "Fetches the macro directional bias across 1H, 4H, and 1D simultaneously.",
+      "label": "Establishes the multi-timeframe directional trend bias for the specified trading",
       "file_type": "rationale",
       "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L69",
-      "id": "deep_quant_loop_tools_rationale_69",
+      "source_location": "L71",
+      "id": "deep_quant_loop_tools_rationale_71",
       "community": 171,
-      "norm_label": "fetches the macro directional bias across 1h, 4h, and 1d simultaneously."
+      "norm_label": "establishes the multi-timeframe directional trend bias for the specified trading"
     },
     {
       "label": "Identifies exact support and resistance liquidity zones for the specified tradin",
       "file_type": "rationale",
       "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L91",
-      "id": "deep_quant_loop_tools_rationale_91",
+      "source_location": "L122",
+      "id": "deep_quant_loop_tools_rationale_122",
       "community": 171,
       "norm_label": "identifies exact support and resistance liquidity zones for the specified tradin"
     },
@@ -394,26 +394,26 @@
       "label": "Retrieves the latest news headlines and sentiment context for the specified trad",
       "file_type": "rationale",
       "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L144",
-      "id": "deep_quant_loop_tools_rationale_144",
+      "source_location": "L175",
+      "id": "deep_quant_loop_tools_rationale_175",
       "community": 171,
       "norm_label": "retrieves the latest news headlines and sentiment context for the specified trad"
     },
     {
-      "label": "Suspends the agent to wait for a specific condition to trigger on the live ticke",
+      "label": "Registers a target condition watcher with the backend watcher service. Graph exe",
       "file_type": "rationale",
       "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L207",
-      "id": "deep_quant_loop_tools_rationale_207",
+      "source_location": "L237",
+      "id": "deep_quant_loop_tools_rationale_237",
       "community": 171,
-      "norm_label": "suspends the agent to wait for a specific condition to trigger on the live ticke"
+      "norm_label": "registers a target condition watcher with the backend watcher service. graph exe"
     },
     {
       "label": "Declares the final trading decision for the current analysis session.     Specif",
       "file_type": "rationale",
       "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L260",
-      "id": "deep_quant_loop_tools_rationale_260",
+      "source_location": "L289",
+      "id": "deep_quant_loop_tools_rationale_289",
       "community": 171,
       "norm_label": "declares the final trading decision for the current analysis session.     specif"
     },
@@ -441,7 +441,7 @@
       "source_file": "agents/predictive/src/engine.rs",
       "source_location": "L1",
       "id": "agents_predictive_src_engine_rs",
-      "community": 93,
+      "community": 48,
       "norm_label": "engine.rs"
     },
     {
@@ -450,7 +450,7 @@
       "source_file": "agents/quant-rag/src/engine.rs",
       "source_location": "L40",
       "id": "src_engine_init_consumer",
-      "community": 93,
+      "community": 48,
       "norm_label": "init_consumer()"
     },
     {
@@ -459,7 +459,7 @@
       "source_file": "agents/quant-rag/src/engine.rs",
       "source_location": "L69",
       "id": "src_engine_init_producer",
-      "community": 93,
+      "community": 48,
       "norm_label": "init_producer()"
     },
     {
@@ -468,7 +468,7 @@
       "source_file": "agents/predictive/src/engine.rs",
       "source_location": "L87",
       "id": "src_engine_publish_signal",
-      "community": 93,
+      "community": 48,
       "norm_label": "publish_signal()"
     },
     {
@@ -477,7 +477,7 @@
       "source_file": "agents/quant-rag/src/engine.rs",
       "source_location": "L119",
       "id": "src_engine_now_ms",
-      "community": 93,
+      "community": 48,
       "norm_label": "now_ms()"
     },
     {
@@ -486,7 +486,7 @@
       "source_file": "agents/quant-rag/src/engine.rs",
       "source_location": "L133",
       "id": "src_engine_run",
-      "community": 93,
+      "community": 48,
       "norm_label": "run()"
     },
     {
@@ -612,7 +612,7 @@
       "source_file": "agents/predictive/src/ws_server.rs",
       "source_location": "L1",
       "id": "agents_predictive_src_ws_server_rs",
-      "community": 1,
+      "community": 212,
       "norm_label": "ws_server.rs"
     },
     {
@@ -621,7 +621,7 @@
       "source_file": "alpha-terminal/src/ws_server.rs",
       "source_location": "L6",
       "id": "src_ws_server_start_server",
-      "community": 1,
+      "community": 212,
       "norm_label": "start_server()"
     },
     {
@@ -648,7 +648,7 @@
       "source_file": "agents/quant-rag/src/engine.rs",
       "source_location": "L1",
       "id": "agents_quant_rag_src_engine_rs",
-      "community": 93,
+      "community": 48,
       "norm_label": "engine.rs"
     },
     {
@@ -657,7 +657,7 @@
       "source_file": "agents/quant-rag/src/engine.rs",
       "source_location": "L86",
       "id": "src_engine_publish_insight",
-      "community": 93,
+      "community": 48,
       "norm_label": "publish_insight()"
     },
     {
@@ -720,7 +720,7 @@
       "source_file": "agents/quant-rag/src/ws_server.rs",
       "source_location": "L1",
       "id": "agents_quant_rag_src_ws_server_rs",
-      "community": 1,
+      "community": 212,
       "norm_label": "ws_server.rs"
     },
     {
@@ -900,7 +900,7 @@
       "source_file": "agents/sentiment/src/analyzer.js",
       "source_location": "L1",
       "id": "agents_sentiment_src_analyzer_js",
-      "community": 18,
+      "community": 7,
       "norm_label": "analyzer.js"
     },
     {
@@ -909,7 +909,7 @@
       "source_file": "agents/sentiment/src/analyzer.js",
       "source_location": "L65",
       "id": "src_analyzer_analyzesentiment",
-      "community": 18,
+      "community": 7,
       "norm_label": "analyzesentiment()"
     },
     {
@@ -1152,7 +1152,7 @@
       "source_file": "agents/technical/src/indicators.rs",
       "source_location": "L1",
       "id": "agents_technical_src_indicators_rs",
-      "community": 158,
+      "community": 3,
       "norm_label": "indicators.rs"
     },
     {
@@ -1161,7 +1161,7 @@
       "source_file": "agents/technical/src/indicators.rs",
       "source_location": "L39",
       "id": "src_indicators_update_rsi",
-      "community": 158,
+      "community": 3,
       "norm_label": "update_rsi()"
     },
     {
@@ -1170,7 +1170,7 @@
       "source_file": "agents/technical/src/indicators.rs",
       "source_location": "L94",
       "id": "src_indicators_update_vwap",
-      "community": 158,
+      "community": 3,
       "norm_label": "update_vwap()"
     },
     {
@@ -1179,7 +1179,7 @@
       "source_file": "agents/technical/src/indicators.rs",
       "source_location": "L129",
       "id": "src_indicators_rsi_warm_up_gating",
-      "community": 158,
+      "community": 3,
       "norm_label": "rsi_warm_up_gating()"
     },
     {
@@ -1188,7 +1188,7 @@
       "source_file": "agents/technical/src/indicators.rs",
       "source_location": "L160",
       "id": "src_indicators_vwap_basic_calculation",
-      "community": 158,
+      "community": 3,
       "norm_label": "vwap_basic_calculation()"
     },
     {
@@ -1197,7 +1197,7 @@
       "source_file": "agents/technical/src/indicators.rs",
       "source_location": "L178",
       "id": "src_indicators_vwap_no_volume_returns_none",
-      "community": 158,
+      "community": 3,
       "norm_label": "vwap_no_volume_returns_none()"
     },
     {
@@ -1206,7 +1206,7 @@
       "source_file": "agents/technical/src/kafka_consumer.rs",
       "source_location": "L1",
       "id": "agents_technical_src_kafka_consumer_rs",
-      "community": 1,
+      "community": 48,
       "norm_label": "kafka_consumer.rs"
     },
     {
@@ -1215,7 +1215,7 @@
       "source_file": "agents/technical/src/kafka_consumer.rs",
       "source_location": "L36",
       "id": "src_kafka_consumer_init_consumer",
-      "community": 1,
+      "community": 48,
       "norm_label": "init_consumer()"
     },
     {
@@ -1224,7 +1224,7 @@
       "source_file": "agents/technical/src/kafka_consumer.rs",
       "source_location": "L69",
       "id": "src_kafka_consumer_run_listener",
-      "community": 1,
+      "community": 48,
       "norm_label": "run_listener()"
     },
     {
@@ -1278,7 +1278,7 @@
       "source_file": "agents/technical/src/signal_engine.rs",
       "source_location": "L1",
       "id": "agents_technical_src_signal_engine_rs",
-      "community": 53,
+      "community": 3,
       "norm_label": "signal_engine.rs"
     },
     {
@@ -1287,7 +1287,7 @@
       "source_file": "agents/technical/src/signal_engine.rs",
       "source_location": "L67",
       "id": "src_signal_engine_evaluate_signal",
-      "community": 53,
+      "community": 3,
       "norm_label": "evaluate_signal()"
     },
     {
@@ -1296,7 +1296,7 @@
       "source_file": "agents/technical/src/signal_engine.rs",
       "source_location": "L141",
       "id": "src_signal_engine_strong_bullish_signal",
-      "community": 53,
+      "community": 3,
       "norm_label": "strong_bullish_signal()"
     },
     {
@@ -1305,7 +1305,7 @@
       "source_file": "agents/technical/src/signal_engine.rs",
       "source_location": "L150",
       "id": "src_signal_engine_strong_bearish_signal",
-      "community": 53,
+      "community": 3,
       "norm_label": "strong_bearish_signal()"
     },
     {
@@ -1314,7 +1314,7 @@
       "source_file": "agents/technical/src/signal_engine.rs",
       "source_location": "L158",
       "id": "src_signal_engine_neutral_signal",
-      "community": 53,
+      "community": 3,
       "norm_label": "neutral_signal()"
     },
     {
@@ -1323,7 +1323,7 @@
       "source_file": "agents/technical/src/signal_engine.rs",
       "source_location": "L165",
       "id": "src_signal_engine_overbought_above_vwap",
-      "community": 53,
+      "community": 3,
       "norm_label": "overbought_above_vwap()"
     },
     {
@@ -1332,7 +1332,7 @@
       "source_file": "agents/technical/src/signal_engine.rs",
       "source_location": "L172",
       "id": "src_signal_engine_oversold_below_vwap",
-      "community": 53,
+      "community": 3,
       "norm_label": "oversold_below_vwap()"
     },
     {
@@ -1341,7 +1341,7 @@
       "source_file": "agents/technical/src/signal_engine.rs",
       "source_location": "L179",
       "id": "src_signal_engine_fields_propagated_correctly",
-      "community": 53,
+      "community": 3,
       "norm_label": "fields_propagated_correctly()"
     },
     {
@@ -1350,7 +1350,7 @@
       "source_file": "agents/technical/src/signal_engine.rs",
       "source_location": "L187",
       "id": "src_signal_engine_vwap_distance_calculation",
-      "community": 53,
+      "community": 3,
       "norm_label": "vwap_distance_calculation()"
     },
     {
@@ -1935,7 +1935,7 @@
       "source_file": "aggregator/src/ws_server.rs",
       "source_location": "L1",
       "id": "aggregator_src_ws_server_rs",
-      "community": 1,
+      "community": 212,
       "norm_label": "ws_server.rs"
     },
     {
@@ -1951,7 +1951,7 @@
       "label": "IndicatorState",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L20",
+      "source_location": "L19",
       "id": "quant_mod_indicatorstate",
       "community": 2,
       "norm_label": "indicatorstate"
@@ -1960,7 +1960,7 @@
       "label": ".to_snapshot()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L50",
+      "source_location": "L49",
       "id": "quant_mod_indicatorstate_to_snapshot",
       "community": 2,
       "norm_label": ".to_snapshot()"
@@ -1969,16 +1969,16 @@
       "label": "ConsensusReport",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L395",
+      "source_location": "L394",
       "id": "quant_mod_consensusreport",
-      "community": 48,
+      "community": 43,
       "norm_label": "consensusreport"
     },
     {
       "label": "ConsensusEngine",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L434",
+      "source_location": "L433",
       "id": "quant_mod_consensusengine",
       "community": 2,
       "norm_label": "consensusengine"
@@ -1987,7 +1987,7 @@
       "label": ".compile_consensus()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L437",
+      "source_location": "L436",
       "id": "quant_mod_consensusengine_compile_consensus",
       "community": 2,
       "norm_label": ".compile_consensus()"
@@ -2601,7 +2601,7 @@
       "source_file": "alpha-terminal/src/engine.rs",
       "source_location": "L1",
       "id": "alpha_terminal_src_engine_rs",
-      "community": 160,
+      "community": 208,
       "norm_label": "engine.rs"
     },
     {
@@ -2610,7 +2610,7 @@
       "source_file": "alpha-terminal/src/engine.rs",
       "source_location": "L4",
       "id": "src_engine_symbolstate",
-      "community": 160,
+      "community": 208,
       "norm_label": "symbolstate"
     },
     {
@@ -2619,7 +2619,7 @@
       "source_file": "alpha-terminal/src/engine.rs",
       "source_location": "L9",
       "id": "src_engine_ohlcengine",
-      "community": 160,
+      "community": 208,
       "norm_label": "ohlcengine"
     },
     {
@@ -2628,7 +2628,7 @@
       "source_file": "alpha-terminal/src/engine.rs",
       "source_location": "L14",
       "id": "src_engine_ohlcengine_new",
-      "community": 160,
+      "community": 208,
       "norm_label": ".new()"
     },
     {
@@ -2637,7 +2637,7 @@
       "source_file": "alpha-terminal/src/engine.rs",
       "source_location": "L20",
       "id": "src_engine_ohlcengine_process_tick",
-      "community": 160,
+      "community": 208,
       "norm_label": ".process_tick()"
     },
     {
@@ -2646,7 +2646,7 @@
       "source_file": "alpha-terminal/src/engine.rs",
       "source_location": "L76",
       "id": "src_engine_ohlcengine_get_active_candle",
-      "community": 160,
+      "community": 208,
       "norm_label": ".get_active_candle()"
     },
     {
@@ -2691,7 +2691,7 @@
       "source_file": "alpha-terminal/src/ws_server.rs",
       "source_location": "L1",
       "id": "alpha_terminal_src_ws_server_rs",
-      "community": 1,
+      "community": 212,
       "norm_label": "ws_server.rs"
     },
     {
@@ -2997,7 +2997,7 @@
       "source_file": "auth/src/config.js",
       "source_location": "L1",
       "id": "auth_src_config_js",
-      "community": 6,
+      "community": 9,
       "norm_label": "config.js"
     },
     {
@@ -3006,7 +3006,7 @@
       "source_file": "auth/src/config.js",
       "source_location": "L12",
       "id": "src_config_dirname",
-      "community": 6,
+      "community": 9,
       "norm_label": "__dirname"
     },
     {
@@ -3015,7 +3015,7 @@
       "source_file": "auth/src/config.js",
       "source_location": "L16",
       "id": "src_config_required",
-      "community": 6,
+      "community": 9,
       "norm_label": "required"
     },
     {
@@ -3024,7 +3024,7 @@
       "source_file": "auth/src/config.js",
       "source_location": "L35",
       "id": "src_config_config",
-      "community": 6,
+      "community": 9,
       "norm_label": "config"
     },
     {
@@ -3033,7 +3033,7 @@
       "source_file": "auth/src/db.js",
       "source_location": "L1",
       "id": "auth_src_db_js",
-      "community": 6,
+      "community": 9,
       "norm_label": "db.js"
     },
     {
@@ -3150,7 +3150,7 @@
       "source_file": "auth/src/adapters/kyc/pan.adapter.js",
       "source_location": "L1",
       "id": "auth_src_adapters_kyc_pan_adapter_js",
-      "community": 24,
+      "community": 72,
       "norm_label": "pan.adapter.js"
     },
     {
@@ -3159,7 +3159,7 @@
       "source_file": "auth/src/adapters/kyc/pan.adapter.js",
       "source_location": "L7",
       "id": "kyc_pan_adapter_panbreaker",
-      "community": 24,
+      "community": 72,
       "norm_label": "panbreaker"
     },
     {
@@ -3447,7 +3447,7 @@
       "source_file": "auth/src/controllers/webhook.controller.js",
       "source_location": "L1",
       "id": "auth_src_controllers_webhook_controller_js",
-      "community": 24,
+      "community": 6,
       "norm_label": "webhook.controller.js"
     },
     {
@@ -3465,7 +3465,7 @@
       "source_file": "auth/src/crypto/encryption.js",
       "source_location": "L1",
       "id": "auth_src_crypto_encryption_js",
-      "community": 183,
+      "community": 16,
       "norm_label": "encryption.js"
     },
     {
@@ -3474,7 +3474,7 @@
       "source_file": "auth/src/crypto/encryption.js",
       "source_location": "L19",
       "id": "crypto_encryption_getkey",
-      "community": 183,
+      "community": 16,
       "norm_label": "getkey()"
     },
     {
@@ -3483,7 +3483,7 @@
       "source_file": "auth/src/crypto/encryption.js",
       "source_location": "L31",
       "id": "crypto_encryption_encryptsymmetric",
-      "community": 183,
+      "community": 16,
       "norm_label": "encryptsymmetric()"
     },
     {
@@ -3492,7 +3492,7 @@
       "source_file": "auth/src/crypto/encryption.js",
       "source_location": "L51",
       "id": "crypto_encryption_decryptsymmetric",
-      "community": 183,
+      "community": 16,
       "norm_label": "decryptsymmetric()"
     },
     {
@@ -3600,7 +3600,7 @@
       "source_file": "auth/src/crypto/jwt.provider.js",
       "source_location": "L27",
       "id": "crypto_jwt_provider_loadprivatekey",
-      "community": 23,
+      "community": 183,
       "norm_label": "loadprivatekey()"
     },
     {
@@ -3645,7 +3645,7 @@
       "source_file": "auth/src/errors/index.js",
       "source_location": "L1",
       "id": "auth_src_errors_index_js",
-      "community": 9,
+      "community": 89,
       "norm_label": "index.js"
     },
     {
@@ -3654,7 +3654,7 @@
       "source_file": "auth/src/errors/index.js",
       "source_location": "L6",
       "id": "errors_index_passwordcomplexityerror",
-      "community": 9,
+      "community": 89,
       "norm_label": "passwordcomplexityerror"
     },
     {
@@ -3663,7 +3663,7 @@
       "source_file": "auth/src/errors/index.js",
       "source_location": "L7",
       "id": "errors_index_passwordcomplexityerror_constructor",
-      "community": 9,
+      "community": 89,
       "norm_label": ".constructor()"
     },
     {
@@ -3672,7 +3672,7 @@
       "source_file": "auth/src/errors/index.js",
       "source_location": "L14",
       "id": "errors_index_duplicateemailerror",
-      "community": 9,
+      "community": 89,
       "norm_label": "duplicateemailerror"
     },
     {
@@ -3681,7 +3681,7 @@
       "source_file": "auth/src/errors/index.js",
       "source_location": "L15",
       "id": "errors_index_duplicateemailerror_constructor",
-      "community": 9,
+      "community": 89,
       "norm_label": ".constructor()"
     },
     {
@@ -3690,7 +3690,7 @@
       "source_file": "auth/src/errors/index.js",
       "source_location": "L22",
       "id": "errors_index_authenticationerror",
-      "community": 9,
+      "community": 89,
       "norm_label": "authenticationerror"
     },
     {
@@ -3699,7 +3699,7 @@
       "source_file": "auth/src/errors/index.js",
       "source_location": "L23",
       "id": "errors_index_authenticationerror_constructor",
-      "community": 9,
+      "community": 89,
       "norm_label": ".constructor()"
     },
     {
@@ -3708,7 +3708,7 @@
       "source_file": "auth/src/errors/index.js",
       "source_location": "L30",
       "id": "errors_index_notfounderror",
-      "community": 9,
+      "community": 89,
       "norm_label": "notfounderror"
     },
     {
@@ -3717,7 +3717,7 @@
       "source_file": "auth/src/errors/index.js",
       "source_location": "L31",
       "id": "errors_index_notfounderror_constructor",
-      "community": 9,
+      "community": 89,
       "norm_label": ".constructor()"
     },
     {
@@ -3726,7 +3726,7 @@
       "source_file": "auth/src/errors/index.js",
       "source_location": "L38",
       "id": "errors_index_tokenreuseerror",
-      "community": 9,
+      "community": 89,
       "norm_label": "tokenreuseerror"
     },
     {
@@ -3735,7 +3735,7 @@
       "source_file": "auth/src/errors/index.js",
       "source_location": "L39",
       "id": "errors_index_tokenreuseerror_constructor",
-      "community": 9,
+      "community": 89,
       "norm_label": ".constructor()"
     },
     {
@@ -3762,7 +3762,7 @@
       "source_file": "auth/src/middleware/billing.guard.js",
       "source_location": "L1",
       "id": "auth_src_middleware_billing_guard_js",
-      "community": 24,
+      "community": 6,
       "norm_label": "billing.guard.js"
     },
     {
@@ -3771,7 +3771,7 @@
       "source_file": "auth/src/middleware/billing.guard.js",
       "source_location": "L11",
       "id": "middleware_billing_guard_requireactivesubscription",
-      "community": 24,
+      "community": 6,
       "norm_label": "requireactivesubscription()"
     },
     {
@@ -3825,7 +3825,7 @@
       "source_file": "auth/src/middleware/kyc.guard.js",
       "source_location": "L1",
       "id": "auth_src_middleware_kyc_guard_js",
-      "community": 24,
+      "community": 6,
       "norm_label": "kyc.guard.js"
     },
     {
@@ -3834,7 +3834,7 @@
       "source_file": "auth/src/middleware/kyc.guard.js",
       "source_location": "L13",
       "id": "middleware_kyc_guard_requireverified",
-      "community": 24,
+      "community": 6,
       "norm_label": "requireverified()"
     },
     {
@@ -3951,7 +3951,7 @@
       "source_file": "auth/src/repository/mfa.repository.js",
       "source_location": "L1",
       "id": "auth_src_repository_mfa_repository_js",
-      "community": 183,
+      "community": 16,
       "norm_label": "mfa.repository.js"
     },
     {
@@ -3960,7 +3960,7 @@
       "source_file": "auth/src/repository/mfa.repository.js",
       "source_location": "L7",
       "id": "repository_mfa_repository_findmfarecord",
-      "community": 183,
+      "community": 16,
       "norm_label": "findmfarecord()"
     },
     {
@@ -3969,7 +3969,7 @@
       "source_file": "auth/src/repository/mfa.repository.js",
       "source_location": "L20",
       "id": "repository_mfa_repository_upsertmfarecord",
-      "community": 183,
+      "community": 16,
       "norm_label": "upsertmfarecord()"
     },
     {
@@ -3978,7 +3978,7 @@
       "source_file": "auth/src/repository/mfa.repository.js",
       "source_location": "L48",
       "id": "repository_mfa_repository_activatemfarecord",
-      "community": 183,
+      "community": 16,
       "norm_label": "activatemfarecord()"
     },
     {
@@ -4041,7 +4041,7 @@
       "source_file": "auth/src/repository/user_profile.repository.js",
       "source_location": "L1",
       "id": "auth_src_repository_user_profile_repository_js",
-      "community": 24,
+      "community": 16,
       "norm_label": "user_profile.repository.js"
     },
     {
@@ -4050,7 +4050,7 @@
       "source_file": "auth/src/repository/user_profile.repository.js",
       "source_location": "L6",
       "id": "repository_user_profile_repository_encryptprofiledata",
-      "community": 24,
+      "community": 16,
       "norm_label": "encryptprofiledata()"
     },
     {
@@ -4059,7 +4059,7 @@
       "source_file": "auth/src/repository/user_profile.repository.js",
       "source_location": "L18",
       "id": "repository_user_profile_repository_decryptprofiledata",
-      "community": 24,
+      "community": 16,
       "norm_label": "decryptprofiledata()"
     },
     {
@@ -4068,7 +4068,7 @@
       "source_file": "auth/src/repository/user_profile.repository.js",
       "source_location": "L33",
       "id": "repository_user_profile_repository_upsertuserprofile",
-      "community": 24,
+      "community": 16,
       "norm_label": "upsertuserprofile()"
     },
     {
@@ -4077,7 +4077,7 @@
       "source_file": "auth/src/repository/user_profile.repository.js",
       "source_location": "L64",
       "id": "repository_user_profile_repository_finduserprofilebyuserid",
-      "community": 24,
+      "community": 16,
       "norm_label": "finduserprofilebyuserid()"
     },
     {
@@ -4086,7 +4086,7 @@
       "source_file": "auth/src/repository/user_profile.repository.js",
       "source_location": "L76",
       "id": "repository_user_profile_repository_getrawuserprofileciphertext",
-      "community": 24,
+      "community": 16,
       "norm_label": "getrawuserprofileciphertext()"
     },
     {
@@ -4095,7 +4095,7 @@
       "source_file": "auth/src/repository/user_profile.repository.js",
       "source_location": "L89",
       "id": "repository_user_profile_repository_updatekycstatus",
-      "community": 24,
+      "community": 6,
       "norm_label": "updatekycstatus()"
     },
     {
@@ -4113,7 +4113,7 @@
       "source_file": "auth/src/routes/auth.routes.js",
       "source_location": "L14",
       "id": "routes_auth_routes_registerauthroutes",
-      "community": 9,
+      "community": 183,
       "norm_label": "registerauthroutes()"
     },
     {
@@ -4122,7 +4122,7 @@
       "source_file": "auth/src/routes/billing.routes.js",
       "source_location": "L1",
       "id": "auth_src_routes_billing_routes_js",
-      "community": 23,
+      "community": 152,
       "norm_label": "billing.routes.js"
     },
     {
@@ -4131,7 +4131,7 @@
       "source_file": "auth/src/routes/billing.routes.js",
       "source_location": "L9",
       "id": "routes_billing_routes_registerbillingroutes",
-      "community": 23,
+      "community": 152,
       "norm_label": "registerbillingroutes()"
     },
     {
@@ -4149,7 +4149,7 @@
       "source_file": "auth/src/routes/kyc.routes.js",
       "source_location": "L9",
       "id": "routes_kyc_routes_registerkycroutes",
-      "community": 9,
+      "community": 24,
       "norm_label": "registerkycroutes()"
     },
     {
@@ -4158,7 +4158,7 @@
       "source_file": "auth/src/routes/trade.routes.js",
       "source_location": "L1",
       "id": "auth_src_routes_trade_routes_js",
-      "community": 24,
+      "community": 6,
       "norm_label": "trade.routes.js"
     },
     {
@@ -4167,7 +4167,7 @@
       "source_file": "auth/src/routes/trade.routes.js",
       "source_location": "L9",
       "id": "routes_trade_routes_registertraderoutes",
-      "community": 24,
+      "community": 6,
       "norm_label": "registertraderoutes()"
     },
     {
@@ -4203,7 +4203,7 @@
       "source_file": "auth/src/services/auth.service.js",
       "source_location": "L6",
       "id": "services_auth_service_validatepasswordcomplexity",
-      "community": 9,
+      "community": 89,
       "norm_label": "validatepasswordcomplexity()"
     },
     {
@@ -4212,7 +4212,7 @@
       "source_file": "auth/src/services/auth.service.js",
       "source_location": "L44",
       "id": "services_auth_service_registeruser",
-      "community": 9,
+      "community": 89,
       "norm_label": "registeruser()"
     },
     {
@@ -4338,7 +4338,7 @@
       "source_file": "auth/src/services/mfa.service.js",
       "source_location": "L1",
       "id": "auth_src_services_mfa_service_js",
-      "community": 183,
+      "community": 16,
       "norm_label": "mfa.service.js"
     },
     {
@@ -4347,7 +4347,7 @@
       "source_file": "auth/src/services/mfa.service.js",
       "source_location": "L19",
       "id": "services_mfa_service_generatemfa",
-      "community": 183,
+      "community": 16,
       "norm_label": "generatemfa()"
     },
     {
@@ -4356,7 +4356,7 @@
       "source_file": "auth/src/services/mfa.service.js",
       "source_location": "L60",
       "id": "services_mfa_service_verifymfa",
-      "community": 183,
+      "community": 16,
       "norm_label": "verifymfa()"
     },
     {
@@ -4491,7 +4491,7 @@
       "source_file": "auth/src/utils/kyc.state.js",
       "source_location": "L1",
       "id": "auth_src_utils_kyc_state_js",
-      "community": 24,
+      "community": 6,
       "norm_label": "kyc.state.js"
     },
     {
@@ -4500,7 +4500,7 @@
       "source_file": "auth/src/utils/kyc.state.js",
       "source_location": "L5",
       "id": "utils_kyc_state_kyc_states",
-      "community": 24,
+      "community": 6,
       "norm_label": "kyc_states"
     },
     {
@@ -4509,7 +4509,7 @@
       "source_file": "auth/src/utils/kyc.state.js",
       "source_location": "L13",
       "id": "utils_kyc_state_valid_transitions",
-      "community": 24,
+      "community": 6,
       "norm_label": "valid_transitions"
     },
     {
@@ -4518,7 +4518,7 @@
       "source_file": "auth/src/utils/kyc.state.js",
       "source_location": "L21",
       "id": "utils_kyc_state_transitionstate",
-      "community": 24,
+      "community": 6,
       "norm_label": "transitionstate()"
     },
     {
@@ -4599,7 +4599,7 @@
       "source_file": "auth/src/__tests__/integration_test.js",
       "source_location": "L1",
       "id": "auth_src_tests_integration_test_js",
-      "community": 9,
+      "community": 89,
       "norm_label": "integration_test.js"
     },
     {
@@ -4608,7 +4608,7 @@
       "source_file": "auth/src/__tests__/integration_test.js",
       "source_location": "L9",
       "id": "tests_integration_test_pool",
-      "community": 9,
+      "community": 89,
       "norm_label": "pool"
     },
     {
@@ -4617,7 +4617,7 @@
       "source_file": "auth/src/__tests__/integration_test.js",
       "source_location": "L13",
       "id": "tests_integration_test_run",
-      "community": 9,
+      "community": 89,
       "norm_label": "run()"
     },
     {
@@ -5211,7 +5211,7 @@
       "source_file": "frontend/src/app/layout.tsx",
       "source_location": "L1",
       "id": "frontend_src_app_layout_tsx",
-      "community": 14,
+      "community": 46,
       "norm_label": "layout.tsx"
     },
     {
@@ -5220,7 +5220,7 @@
       "source_file": "frontend/src/app/layout.tsx",
       "source_location": "L5",
       "id": "app_layout_inter",
-      "community": 14,
+      "community": 46,
       "norm_label": "inter"
     },
     {
@@ -5229,7 +5229,7 @@
       "source_file": "frontend/src/app/layout.tsx",
       "source_location": "L10",
       "id": "app_layout_metadata",
-      "community": 14,
+      "community": 46,
       "norm_label": "metadata"
     },
     {
@@ -5238,7 +5238,7 @@
       "source_file": "frontend/src/app/layout.tsx",
       "source_location": "L15",
       "id": "app_layout_rootlayout",
-      "community": 14,
+      "community": 46,
       "norm_label": "rootlayout()"
     },
     {
@@ -5652,7 +5652,7 @@
       "source_file": "frontend/src/components/layout/TerminalLayout.tsx",
       "source_location": "L1",
       "id": "frontend_src_components_layout_terminallayout_tsx",
-      "community": 14,
+      "community": 19,
       "norm_label": "terminallayout.tsx"
     },
     {
@@ -5661,7 +5661,7 @@
       "source_file": "frontend/src/components/layout/TerminalLayout.tsx",
       "source_location": "L114",
       "id": "layout_terminallayout_securityvault",
-      "community": 14,
+      "community": 19,
       "norm_label": "securityvault"
     },
     {
@@ -5670,7 +5670,7 @@
       "source_file": "frontend/src/components/layout/TerminalLayout.tsx",
       "source_location": "L126",
       "id": "layout_terminallayout_profiles",
-      "community": 14,
+      "community": 19,
       "norm_label": "profiles"
     },
     {
@@ -5679,7 +5679,7 @@
       "source_file": "frontend/src/components/layout/TerminalLayout.tsx",
       "source_location": "L132",
       "id": "layout_terminallayout_terminallayoutprops",
-      "community": 14,
+      "community": 19,
       "norm_label": "terminallayoutprops"
     },
     {
@@ -5688,7 +5688,7 @@
       "source_file": "frontend/src/components/layout/TerminalLayout.tsx",
       "source_location": "L137",
       "id": "layout_terminallayout_terminallayout",
-      "community": 22,
+      "community": 19,
       "norm_label": "terminallayout()"
     },
     {
@@ -6057,7 +6057,7 @@
       "source_file": "frontend/src/components/panels/LeftPanel.tsx",
       "source_location": "L43",
       "id": "panels_leftpanel_searchinstrument",
-      "community": 47,
+      "community": 26,
       "norm_label": "searchinstrument"
     },
     {
@@ -6507,7 +6507,7 @@
       "source_file": "frontend/src/components/quant/AgentTerminal.tsx",
       "source_location": "L1",
       "id": "frontend_src_components_quant_agentterminal_tsx",
-      "community": 16,
+      "community": 47,
       "norm_label": "agentterminal.tsx"
     },
     {
@@ -6516,7 +6516,7 @@
       "source_file": "frontend/src/components/quant/AgentTerminal.tsx",
       "source_location": "L9",
       "id": "quant_agentterminal_watchingindicator",
-      "community": 16,
+      "community": 47,
       "norm_label": "watchingindicator()"
     },
     {
@@ -6525,7 +6525,7 @@
       "source_file": "frontend/src/components/quant/AgentTerminal.tsx",
       "source_location": "L21",
       "id": "quant_agentterminal_agentterminal",
-      "community": 16,
+      "community": 47,
       "norm_label": "agentterminal()"
     },
     {
@@ -6534,7 +6534,7 @@
       "source_file": "frontend/src/components/quant/ConsensusBoard.tsx",
       "source_location": "L1",
       "id": "frontend_src_components_quant_consensusboard_tsx",
-      "community": 16,
+      "community": 47,
       "norm_label": "consensusboard.tsx"
     },
     {
@@ -6543,7 +6543,7 @@
       "source_file": "frontend/src/components/quant/ConsensusBoard.tsx",
       "source_location": "L19",
       "id": "quant_consensusboard_trendcolor",
-      "community": 16,
+      "community": 47,
       "norm_label": "trendcolor()"
     },
     {
@@ -6552,7 +6552,7 @@
       "source_file": "frontend/src/components/quant/ConsensusBoard.tsx",
       "source_location": "L27",
       "id": "quant_consensusboard_trendbg",
-      "community": 16,
+      "community": 47,
       "norm_label": "trendbg()"
     },
     {
@@ -6561,7 +6561,7 @@
       "source_file": "frontend/src/components/quant/ConsensusBoard.tsx",
       "source_location": "L35",
       "id": "quant_consensusboard_trendglow",
-      "community": 16,
+      "community": 47,
       "norm_label": "trendglow()"
     },
     {
@@ -6570,7 +6570,7 @@
       "source_file": "frontend/src/components/quant/ConsensusBoard.tsx",
       "source_location": "L41",
       "id": "quant_consensusboard_statecolor",
-      "community": 16,
+      "community": 47,
       "norm_label": "statecolor()"
     },
     {
@@ -6579,7 +6579,7 @@
       "source_file": "frontend/src/components/quant/ConsensusBoard.tsx",
       "source_location": "L55",
       "id": "quant_consensusboard_stateicon",
-      "community": 16,
+      "community": 47,
       "norm_label": "stateicon()"
     },
     {
@@ -6588,7 +6588,7 @@
       "source_file": "frontend/src/components/quant/ConsensusBoard.tsx",
       "source_location": "L66",
       "id": "quant_consensusboard_props",
-      "community": 16,
+      "community": 47,
       "norm_label": "props"
     },
     {
@@ -6597,7 +6597,7 @@
       "source_file": "frontend/src/components/quant/ConsensusBoard.tsx",
       "source_location": "L70",
       "id": "quant_consensusboard_consensusboard",
-      "community": 16,
+      "community": 47,
       "norm_label": "consensusboard()"
     },
     {
@@ -6606,7 +6606,7 @@
       "source_file": "frontend/src/components/quant/DeepQuantPanel.tsx",
       "source_location": "L1",
       "id": "frontend_src_components_quant_deepquantpanel_tsx",
-      "community": 16,
+      "community": 47,
       "norm_label": "deepquantpanel.tsx"
     },
     {
@@ -6615,7 +6615,7 @@
       "source_file": "frontend/src/components/quant/DeepQuantPanel.tsx",
       "source_location": "L24",
       "id": "quant_deepquantpanel_deepquantpanel",
-      "community": 16,
+      "community": 47,
       "norm_label": "deepquantpanel()"
     },
     {
@@ -6624,7 +6624,7 @@
       "source_file": "frontend/src/components/quant/PortfolioDashboard.tsx",
       "source_location": "L1",
       "id": "frontend_src_components_quant_portfoliodashboard_tsx",
-      "community": 170,
+      "community": 17,
       "norm_label": "portfoliodashboard.tsx"
     },
     {
@@ -6633,7 +6633,7 @@
       "source_file": "frontend/src/components/quant/PortfolioDashboard.tsx",
       "source_location": "L12",
       "id": "quant_portfoliodashboard_portfoliodashboardprops",
-      "community": 170,
+      "community": 17,
       "norm_label": "portfoliodashboardprops"
     },
     {
@@ -6642,7 +6642,7 @@
       "source_file": "frontend/src/components/quant/PortfolioDashboard.tsx",
       "source_location": "L16",
       "id": "quant_portfoliodashboard_portfoliodashboard",
-      "community": 170,
+      "community": 17,
       "norm_label": "portfoliodashboard()"
     },
     {
@@ -6651,7 +6651,7 @@
       "source_file": "frontend/src/components/quant/QuantRadar.tsx",
       "source_location": "L1",
       "id": "frontend_src_components_quant_quantradar_tsx",
-      "community": 17,
+      "community": 19,
       "norm_label": "quantradar.tsx"
     },
     {
@@ -6660,7 +6660,7 @@
       "source_file": "frontend/src/components/quant/QuantRadar.tsx",
       "source_location": "L26",
       "id": "quant_quantradar_radaralert",
-      "community": 17,
+      "community": 19,
       "norm_label": "radaralert"
     },
     {
@@ -6669,7 +6669,7 @@
       "source_file": "frontend/src/components/quant/QuantRadar.tsx",
       "source_location": "L40",
       "id": "quant_quantradar_istauri",
-      "community": 17,
+      "community": 19,
       "norm_label": "istauri()"
     },
     {
@@ -6678,7 +6678,7 @@
       "source_file": "frontend/src/components/quant/QuantRadar.tsx",
       "source_location": "L42",
       "id": "quant_quantradar_timeago",
-      "community": 17,
+      "community": 19,
       "norm_label": "timeago()"
     },
     {
@@ -6687,7 +6687,7 @@
       "source_file": "frontend/src/components/quant/QuantRadar.tsx",
       "source_location": "L49",
       "id": "quant_quantradar_severityconfig",
-      "community": 17,
+      "community": 19,
       "norm_label": "severityconfig()"
     },
     {
@@ -6696,7 +6696,7 @@
       "source_file": "frontend/src/components/quant/QuantRadar.tsx",
       "source_location": "L85",
       "id": "quant_quantradar_quantradar",
-      "community": 17,
+      "community": 19,
       "norm_label": "quantradar()"
     },
     {
@@ -6705,7 +6705,7 @@
       "source_file": "frontend/src/components/quant/deep-quant/AiExecutionPlanView.tsx",
       "source_location": "L1",
       "id": "frontend_src_components_quant_deep_quant_aiexecutionplanview_tsx",
-      "community": 153,
+      "community": 43,
       "norm_label": "aiexecutionplanview.tsx"
     },
     {
@@ -6714,7 +6714,7 @@
       "source_file": "frontend/src/components/quant/deep-quant/AiExecutionPlanView.tsx",
       "source_location": "L6",
       "id": "deep_quant_aiexecutionplanview_aiplanshape",
-      "community": 153,
+      "community": 43,
       "norm_label": "aiplanshape"
     },
     {
@@ -6723,7 +6723,7 @@
       "source_file": "frontend/src/components/quant/deep-quant/AiExecutionPlanView.tsx",
       "source_location": "L12",
       "id": "deep_quant_aiexecutionplanview_aiexecutionplanviewprops",
-      "community": 153,
+      "community": 43,
       "norm_label": "aiexecutionplanviewprops"
     },
     {
@@ -6732,7 +6732,7 @@
       "source_file": "frontend/src/components/quant/deep-quant/AiExecutionPlanView.tsx",
       "source_location": "L20",
       "id": "deep_quant_aiexecutionplanview_convictioncolor",
-      "community": 153,
+      "community": 43,
       "norm_label": "convictioncolor()"
     },
     {
@@ -6741,7 +6741,7 @@
       "source_file": "frontend/src/components/quant/deep-quant/AiExecutionPlanView.tsx",
       "source_location": "L27",
       "id": "deep_quant_aiexecutionplanview_convictionlabel",
-      "community": 153,
+      "community": 43,
       "norm_label": "convictionlabel()"
     },
     {
@@ -6750,7 +6750,7 @@
       "source_file": "frontend/src/components/quant/deep-quant/AiExecutionPlanView.tsx",
       "source_location": "L34",
       "id": "deep_quant_aiexecutionplanview_convictionicon",
-      "community": 153,
+      "community": 43,
       "norm_label": "convictionicon()"
     },
     {
@@ -6759,7 +6759,7 @@
       "source_file": "frontend/src/components/quant/deep-quant/AiExecutionPlanView.tsx",
       "source_location": "L40",
       "id": "deep_quant_aiexecutionplanview_aiexecutionplanview",
-      "community": 153,
+      "community": 43,
       "norm_label": "aiexecutionplanview()"
     },
     {
@@ -6831,7 +6831,7 @@
       "source_file": "frontend/src/components/settings/SecurityVault.tsx",
       "source_location": "L1",
       "id": "frontend_src_components_settings_securityvault_tsx",
-      "community": 28,
+      "community": 62,
       "norm_label": "securityvault.tsx"
     },
     {
@@ -6840,7 +6840,7 @@
       "source_file": "frontend/src/components/settings/SecurityVault.tsx",
       "source_location": "L48",
       "id": "settings_securityvault_keyprovider",
-      "community": 28,
+      "community": 62,
       "norm_label": "keyprovider"
     },
     {
@@ -6849,7 +6849,7 @@
       "source_file": "frontend/src/components/settings/SecurityVault.tsx",
       "source_location": "L56",
       "id": "settings_securityvault_providers",
-      "community": 28,
+      "community": 62,
       "norm_label": "providers"
     },
     {
@@ -6858,7 +6858,7 @@
       "source_file": "frontend/src/components/settings/SecurityVault.tsx",
       "source_location": "L81",
       "id": "settings_securityvault_vaultstatus",
-      "community": 28,
+      "community": 62,
       "norm_label": "vaultstatus"
     },
     {
@@ -6867,7 +6867,7 @@
       "source_file": "frontend/src/components/settings/SecurityVault.tsx",
       "source_location": "L82",
       "id": "settings_securityvault_keystatus",
-      "community": 28,
+      "community": 62,
       "norm_label": "keystatus"
     },
     {
@@ -6876,7 +6876,7 @@
       "source_file": "frontend/src/components/settings/SecurityVault.tsx",
       "source_location": "L84",
       "id": "settings_securityvault_providerstate",
-      "community": 28,
+      "community": 62,
       "norm_label": "providerstate"
     },
     {
@@ -6885,7 +6885,7 @@
       "source_file": "frontend/src/components/settings/SecurityVault.tsx",
       "source_location": "L94",
       "id": "settings_securityvault_defaultproviderstate",
-      "community": 28,
+      "community": 62,
       "norm_label": "defaultproviderstate()"
     },
     {
@@ -6894,7 +6894,7 @@
       "source_file": "frontend/src/components/settings/SecurityVault.tsx",
       "source_location": "L111",
       "id": "settings_securityvault_getorloadvault",
-      "community": 28,
+      "community": 62,
       "norm_label": "getorloadvault()"
     },
     {
@@ -6903,7 +6903,7 @@
       "source_file": "frontend/src/components/settings/SecurityVault.tsx",
       "source_location": "L139",
       "id": "settings_securityvault_readfromvault",
-      "community": 28,
+      "community": 62,
       "norm_label": "readfromvault()"
     },
     {
@@ -6912,7 +6912,7 @@
       "source_file": "frontend/src/components/settings/SecurityVault.tsx",
       "source_location": "L153",
       "id": "settings_securityvault_writetovault",
-      "community": 28,
+      "community": 62,
       "norm_label": "writetovault()"
     },
     {
@@ -6921,7 +6921,7 @@
       "source_file": "frontend/src/components/settings/SecurityVault.tsx",
       "source_location": "L164",
       "id": "settings_securityvault_securityvault",
-      "community": 28,
+      "community": 62,
       "norm_label": "securityvault()"
     },
     {
@@ -7101,7 +7101,7 @@
       "source_file": "frontend/src/hooks/useHistoricalData.ts",
       "source_location": "L1",
       "id": "frontend_src_hooks_usehistoricaldata_ts",
-      "community": 22,
+      "community": 79,
       "norm_label": "usehistoricaldata.ts"
     },
     {
@@ -7110,7 +7110,7 @@
       "source_file": "frontend/src/hooks/useHistoricalData.ts",
       "source_location": "L19",
       "id": "hooks_usehistoricaldata_historicalcandle",
-      "community": 22,
+      "community": 79,
       "norm_label": "historicalcandle"
     },
     {
@@ -7119,7 +7119,7 @@
       "source_file": "frontend/src/hooks/useHistoricalData.ts",
       "source_location": "L29",
       "id": "hooks_usehistoricaldata_questdbresponse",
-      "community": 22,
+      "community": 79,
       "norm_label": "questdbresponse"
     },
     {
@@ -7128,7 +7128,7 @@
       "source_file": "frontend/src/hooks/useHistoricalData.ts",
       "source_location": "L37",
       "id": "hooks_usehistoricaldata_usehistoricaldatareturn",
-      "community": 22,
+      "community": 79,
       "norm_label": "usehistoricaldatareturn"
     },
     {
@@ -7137,7 +7137,7 @@
       "source_file": "frontend/src/hooks/useHistoricalData.ts",
       "source_location": "L45",
       "id": "hooks_usehistoricaldata_istauri",
-      "community": 22,
+      "community": 79,
       "norm_label": "istauri()"
     },
     {
@@ -7146,7 +7146,7 @@
       "source_file": "frontend/src/hooks/useHistoricalData.ts",
       "source_location": "L55",
       "id": "hooks_usehistoricaldata_parsebincodecandles",
-      "community": 22,
+      "community": 79,
       "norm_label": "parsebincodecandles()"
     },
     {
@@ -7155,7 +7155,7 @@
       "source_file": "frontend/src/hooks/useHistoricalData.ts",
       "source_location": "L93",
       "id": "hooks_usehistoricaldata_parsequestdbrows",
-      "community": 22,
+      "community": 79,
       "norm_label": "parsequestdbrows()"
     },
     {
@@ -7164,7 +7164,7 @@
       "source_file": "frontend/src/hooks/useHistoricalData.ts",
       "source_location": "L111",
       "id": "hooks_usehistoricaldata_getqueries",
-      "community": 22,
+      "community": 79,
       "norm_label": "getqueries()"
     },
     {
@@ -7173,7 +7173,7 @@
       "source_file": "frontend/src/hooks/useHistoricalData.ts",
       "source_location": "L122",
       "id": "hooks_usehistoricaldata_waitforpool",
-      "community": 22,
+      "community": 79,
       "norm_label": "waitforpool()"
     },
     {
@@ -7182,7 +7182,7 @@
       "source_file": "frontend/src/hooks/useHistoricalData.ts",
       "source_location": "L141",
       "id": "hooks_usehistoricaldata_fetchviaipcproxy",
-      "community": 22,
+      "community": 79,
       "norm_label": "fetchviaipcproxy()"
     },
     {
@@ -7191,7 +7191,7 @@
       "source_file": "frontend/src/hooks/useHistoricalData.ts",
       "source_location": "L173",
       "id": "hooks_usehistoricaldata_fetchfromquestdb",
-      "community": 22,
+      "community": 79,
       "norm_label": "fetchfromquestdb()"
     },
     {
@@ -7200,7 +7200,7 @@
       "source_file": "frontend/src/hooks/useHistoricalData.ts",
       "source_location": "L206",
       "id": "hooks_usehistoricaldata_resolveinstrumenttoken",
-      "community": 22,
+      "community": 79,
       "norm_label": "resolveinstrumenttoken()"
     },
     {
@@ -7209,7 +7209,7 @@
       "source_file": "frontend/src/hooks/useHistoricalData.ts",
       "source_location": "L221",
       "id": "hooks_usehistoricaldata_tokencache",
-      "community": 22,
+      "community": 79,
       "norm_label": "tokencache"
     },
     {
@@ -7218,7 +7218,7 @@
       "source_file": "frontend/src/hooks/useHistoricalData.ts",
       "source_location": "L231",
       "id": "hooks_usehistoricaldata_fetchkitebatch",
-      "community": 22,
+      "community": 79,
       "norm_label": "fetchkitebatch()"
     },
     {
@@ -7227,7 +7227,7 @@
       "source_file": "frontend/src/hooks/useHistoricalData.ts",
       "source_location": "L301",
       "id": "hooks_usehistoricaldata_fetchfromkitehistorical",
-      "community": 22,
+      "community": 79,
       "norm_label": "fetchfromkitehistorical()"
     },
     {
@@ -7434,7 +7434,7 @@
       "source_file": "frontend/src/hooks/useTauriLiveData.ts",
       "source_location": "L1",
       "id": "frontend_src_hooks_usetaurilivedata_ts",
-      "community": 22,
+      "community": 17,
       "norm_label": "usetaurilivedata.ts"
     },
     {
@@ -7443,7 +7443,7 @@
       "source_file": "frontend/src/hooks/useTauriLiveData.ts",
       "source_location": "L16",
       "id": "hooks_usetaurilivedata_istauri",
-      "community": 22,
+      "community": 17,
       "norm_label": "istauri()"
     },
     {
@@ -7542,7 +7542,7 @@
       "source_file": "frontend/src/store/useQuantStore.ts",
       "source_location": "L1",
       "id": "frontend_src_store_usequantstore_ts",
-      "community": 16,
+      "community": 47,
       "norm_label": "usequantstore.ts"
     },
     {
@@ -7551,7 +7551,7 @@
       "source_file": "frontend/src/store/useQuantStore.ts",
       "source_location": "L10",
       "id": "store_usequantstore_consensusreport",
-      "community": 16,
+      "community": 47,
       "norm_label": "consensusreport"
     },
     {
@@ -7560,7 +7560,7 @@
       "source_file": "frontend/src/store/useQuantStore.ts",
       "source_location": "L26",
       "id": "store_usequantstore_aiexecutionplan",
-      "community": 16,
+      "community": 47,
       "norm_label": "aiexecutionplan"
     },
     {
@@ -7569,7 +7569,7 @@
       "source_file": "frontend/src/store/useQuantStore.ts",
       "source_location": "L34",
       "id": "store_usequantstore_sentimentpayload",
-      "community": 16,
+      "community": 47,
       "norm_label": "sentimentpayload"
     },
     {
@@ -7587,7 +7587,7 @@
       "source_file": "frontend/src/store/useQuantStore.ts",
       "source_location": "L56",
       "id": "store_usequantstore_completedtrade",
-      "community": 16,
+      "community": 47,
       "norm_label": "completedtrade"
     },
     {
@@ -7596,7 +7596,7 @@
       "source_file": "frontend/src/store/useQuantStore.ts",
       "source_location": "L70",
       "id": "store_usequantstore_quantstore",
-      "community": 16,
+      "community": 47,
       "norm_label": "quantstore"
     },
     {
@@ -7605,7 +7605,7 @@
       "source_file": "frontend/src/store/useQuantStore.ts",
       "source_location": "L118",
       "id": "store_usequantstore_sentimentinflight",
-      "community": 16,
+      "community": 47,
       "norm_label": "sentimentinflight"
     },
     {
@@ -7614,7 +7614,7 @@
       "source_file": "frontend/src/store/useQuantStore.ts",
       "source_location": "L125",
       "id": "store_usequantstore_tauriinvoke",
-      "community": 16,
+      "community": 47,
       "norm_label": "tauriinvoke()"
     },
     {
@@ -7623,7 +7623,7 @@
       "source_file": "frontend/src/store/useQuantStore.ts",
       "source_location": "L137",
       "id": "store_usequantstore_parseexecutionplan",
-      "community": 16,
+      "community": 47,
       "norm_label": "parseexecutionplan()"
     },
     {
@@ -7632,7 +7632,7 @@
       "source_file": "frontend/src/store/useQuantStore.ts",
       "source_location": "L161",
       "id": "store_usequantstore_extractfinaltrade",
-      "community": 16,
+      "community": 47,
       "norm_label": "extractfinaltrade()"
     },
     {
@@ -7641,7 +7641,7 @@
       "source_file": "frontend/src/store/useQuantStore.ts",
       "source_location": "L227",
       "id": "store_usequantstore_usequantstore",
-      "community": 16,
+      "community": 47,
       "norm_label": "usequantstore"
     },
     {
@@ -7659,7 +7659,7 @@
       "source_file": "frontend/src/store/useTradeStore.ts",
       "source_location": "L4",
       "id": "store_usetradestore_tradeprofile",
-      "community": 4,
+      "community": 170,
       "norm_label": "tradeprofile"
     },
     {
@@ -7704,7 +7704,7 @@
       "source_file": "frontend/src/store/useTradeStore.ts",
       "source_location": "L43",
       "id": "store_usetradestore_ohlccandle",
-      "community": 22,
+      "community": 44,
       "norm_label": "ohlccandle"
     },
     {
@@ -7731,7 +7731,7 @@
       "source_file": "frontend/src/store/useTradeStore.ts",
       "source_location": "L70",
       "id": "store_usetradestore_predictivesignal",
-      "community": 22,
+      "community": 17,
       "norm_label": "predictivesignal"
     },
     {
@@ -7740,7 +7740,7 @@
       "source_file": "frontend/src/store/useTradeStore.ts",
       "source_location": "L78",
       "id": "store_usetradestore_marketinsight",
-      "community": 4,
+      "community": 17,
       "norm_label": "marketinsight"
     },
     {
@@ -7974,7 +7974,7 @@
       "source_file": "frontend/src/utils/chartTypes.ts",
       "source_location": "L125",
       "id": "utils_charttypes_timeframe_groups",
-      "community": 170,
+      "community": 22,
       "norm_label": "timeframe_groups"
     },
     {
@@ -8334,7 +8334,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_core_permissions",
-      "community": 206,
+      "community": 77,
       "norm_label": "permissions"
     },
     {
@@ -8388,7 +8388,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_allow_app_hide",
-      "community": 206,
+      "community": 0,
       "norm_label": "allow-app-hide"
     },
     {
@@ -8397,7 +8397,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_app_hide_identifier",
-      "community": 206,
+      "community": 0,
       "norm_label": "identifier"
     },
     {
@@ -8406,7 +8406,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_app_hide_description",
-      "community": 206,
+      "community": 0,
       "norm_label": "description"
     },
     {
@@ -8415,7 +8415,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_app_hide_commands",
-      "community": 206,
+      "community": 65,
       "norm_label": "commands"
     },
     {
@@ -8424,7 +8424,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_commands_allow",
-      "community": 65,
+      "community": 33,
       "norm_label": "allow"
     },
     {
@@ -8478,7 +8478,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_allow_bundle_type",
-      "community": 173,
+      "community": 0,
       "norm_label": "allow-bundle-type"
     },
     {
@@ -8487,7 +8487,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_bundle_type_identifier",
-      "community": 173,
+      "community": 0,
       "norm_label": "identifier"
     },
     {
@@ -8496,7 +8496,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_bundle_type_description",
-      "community": 173,
+      "community": 0,
       "norm_label": "description"
     },
     {
@@ -8505,7 +8505,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_bundle_type_commands",
-      "community": 173,
+      "community": 0,
       "norm_label": "commands"
     },
     {
@@ -8514,7 +8514,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_allow_default_window_icon",
-      "community": 174,
+      "community": 0,
       "norm_label": "allow-default-window-icon"
     },
     {
@@ -8523,7 +8523,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_default_window_icon_identifier",
-      "community": 174,
+      "community": 0,
       "norm_label": "identifier"
     },
     {
@@ -8532,7 +8532,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_default_window_icon_description",
-      "community": 174,
+      "community": 0,
       "norm_label": "description"
     },
     {
@@ -8541,7 +8541,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_default_window_icon_commands",
-      "community": 174,
+      "community": 0,
       "norm_label": "commands"
     },
     {
@@ -8586,7 +8586,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_allow_identifier",
-      "community": 0,
+      "community": 188,
       "norm_label": "allow-identifier"
     },
     {
@@ -8595,7 +8595,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_identifier_identifier",
-      "community": 0,
+      "community": 188,
       "norm_label": "identifier"
     },
     {
@@ -8604,7 +8604,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_identifier_description",
-      "community": 0,
+      "community": 188,
       "norm_label": "description"
     },
     {
@@ -8613,7 +8613,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_identifier_commands",
-      "community": 0,
+      "community": 188,
       "norm_label": "commands"
     },
     {
@@ -8622,7 +8622,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_allow_name",
-      "community": 0,
+      "community": 191,
       "norm_label": "allow-name"
     },
     {
@@ -8631,7 +8631,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_name_identifier",
-      "community": 0,
+      "community": 191,
       "norm_label": "identifier"
     },
     {
@@ -8640,7 +8640,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_name_description",
-      "community": 0,
+      "community": 191,
       "norm_label": "description"
     },
     {
@@ -8649,7 +8649,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_name_commands",
-      "community": 0,
+      "community": 191,
       "norm_label": "commands"
     },
     {
@@ -8658,7 +8658,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_allow_register_listener",
-      "community": 0,
+      "community": 76,
       "norm_label": "allow-register-listener"
     },
     {
@@ -8667,7 +8667,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_register_listener_identifier",
-      "community": 0,
+      "community": 76,
       "norm_label": "identifier"
     },
     {
@@ -8676,7 +8676,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_register_listener_description",
-      "community": 0,
+      "community": 76,
       "norm_label": "description"
     },
     {
@@ -8685,7 +8685,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_register_listener_commands",
-      "community": 0,
+      "community": 76,
       "norm_label": "commands"
     },
     {
@@ -8730,7 +8730,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_allow_remove_listener",
-      "community": 182,
+      "community": 0,
       "norm_label": "allow-remove-listener"
     },
     {
@@ -8739,7 +8739,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_remove_listener_identifier",
-      "community": 182,
+      "community": 0,
       "norm_label": "identifier"
     },
     {
@@ -8748,7 +8748,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_remove_listener_description",
-      "community": 182,
+      "community": 0,
       "norm_label": "description"
     },
     {
@@ -8757,7 +8757,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_remove_listener_commands",
-      "community": 182,
+      "community": 0,
       "norm_label": "commands"
     },
     {
@@ -8766,7 +8766,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_allow_set_app_theme",
-      "community": 0,
+      "community": 192,
       "norm_label": "allow-set-app-theme"
     },
     {
@@ -8775,7 +8775,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_set_app_theme_identifier",
-      "community": 0,
+      "community": 192,
       "norm_label": "identifier"
     },
     {
@@ -8784,7 +8784,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_set_app_theme_description",
-      "community": 0,
+      "community": 192,
       "norm_label": "description"
     },
     {
@@ -8793,7 +8793,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_set_app_theme_commands",
-      "community": 0,
+      "community": 192,
       "norm_label": "commands"
     },
     {
@@ -8874,7 +8874,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_allow_tauri_version",
-      "community": 188,
+      "community": 0,
       "norm_label": "allow-tauri-version"
     },
     {
@@ -8883,7 +8883,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_tauri_version_identifier",
-      "community": 188,
+      "community": 0,
       "norm_label": "identifier"
     },
     {
@@ -8892,7 +8892,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_tauri_version_description",
-      "community": 188,
+      "community": 0,
       "norm_label": "description"
     },
     {
@@ -8901,7 +8901,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_tauri_version_commands",
-      "community": 188,
+      "community": 0,
       "norm_label": "commands"
     },
     {
@@ -8982,7 +8982,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_deny_app_show",
-      "community": 206,
+      "community": 0,
       "norm_label": "deny-app-show"
     },
     {
@@ -8991,7 +8991,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_app_show_identifier",
-      "community": 206,
+      "community": 0,
       "norm_label": "identifier"
     },
     {
@@ -9000,7 +9000,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_app_show_description",
-      "community": 206,
+      "community": 0,
       "norm_label": "description"
     },
     {
@@ -9009,7 +9009,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_app_show_commands",
-      "community": 206,
+      "community": 0,
       "norm_label": "commands"
     },
     {
@@ -9054,7 +9054,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_deny_default_window_icon",
-      "community": 202,
+      "community": 0,
       "norm_label": "deny-default-window-icon"
     },
     {
@@ -9063,7 +9063,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_default_window_icon_identifier",
-      "community": 202,
+      "community": 0,
       "norm_label": "identifier"
     },
     {
@@ -9072,7 +9072,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_default_window_icon_description",
-      "community": 202,
+      "community": 0,
       "norm_label": "description"
     },
     {
@@ -9081,7 +9081,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_default_window_icon_commands",
-      "community": 202,
+      "community": 0,
       "norm_label": "commands"
     },
     {
@@ -9090,7 +9090,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_deny_fetch_data_store_identifiers",
-      "community": 0,
+      "community": 176,
       "norm_label": "deny-fetch-data-store-identifiers"
     },
     {
@@ -9099,7 +9099,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_fetch_data_store_identifiers_identifier",
-      "community": 0,
+      "community": 176,
       "norm_label": "identifier"
     },
     {
@@ -9108,7 +9108,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_fetch_data_store_identifiers_description",
-      "community": 0,
+      "community": 176,
       "norm_label": "description"
     },
     {
@@ -9117,7 +9117,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_fetch_data_store_identifiers_commands",
-      "community": 0,
+      "community": 176,
       "norm_label": "commands"
     },
     {
@@ -9126,7 +9126,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_deny_identifier",
-      "community": 203,
+      "community": 175,
       "norm_label": "deny-identifier"
     },
     {
@@ -9135,7 +9135,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_identifier_identifier",
-      "community": 203,
+      "community": 175,
       "norm_label": "identifier"
     },
     {
@@ -9144,7 +9144,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_identifier_description",
-      "community": 203,
+      "community": 175,
       "norm_label": "description"
     },
     {
@@ -9153,7 +9153,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_identifier_commands",
-      "community": 203,
+      "community": 175,
       "norm_label": "commands"
     },
     {
@@ -9162,7 +9162,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_deny_name",
-      "community": 209,
+      "community": 0,
       "norm_label": "deny-name"
     },
     {
@@ -9171,7 +9171,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_name_identifier",
-      "community": 209,
+      "community": 0,
       "norm_label": "identifier"
     },
     {
@@ -9180,7 +9180,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_name_description",
-      "community": 209,
+      "community": 0,
       "norm_label": "description"
     },
     {
@@ -9189,7 +9189,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_name_commands",
-      "community": 209,
+      "community": 0,
       "norm_label": "commands"
     },
     {
@@ -9198,7 +9198,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_deny_register_listener",
-      "community": 210,
+      "community": 0,
       "norm_label": "deny-register-listener"
     },
     {
@@ -9207,7 +9207,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_register_listener_identifier",
-      "community": 210,
+      "community": 0,
       "norm_label": "identifier"
     },
     {
@@ -9216,7 +9216,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_register_listener_description",
-      "community": 210,
+      "community": 0,
       "norm_label": "description"
     },
     {
@@ -9225,7 +9225,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_register_listener_commands",
-      "community": 210,
+      "community": 0,
       "norm_label": "commands"
     },
     {
@@ -9234,7 +9234,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_deny_remove_data_store",
-      "community": 0,
+      "community": 203,
       "norm_label": "deny-remove-data-store"
     },
     {
@@ -9243,7 +9243,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_remove_data_store_identifier",
-      "community": 0,
+      "community": 203,
       "norm_label": "identifier"
     },
     {
@@ -9252,7 +9252,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_remove_data_store_description",
-      "community": 0,
+      "community": 203,
       "norm_label": "description"
     },
     {
@@ -9261,7 +9261,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_remove_data_store_commands",
-      "community": 0,
+      "community": 203,
       "norm_label": "commands"
     },
     {
@@ -9306,7 +9306,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_deny_set_app_theme",
-      "community": 0,
+      "community": 176,
       "norm_label": "deny-set-app-theme"
     },
     {
@@ -9315,7 +9315,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_set_app_theme_identifier",
-      "community": 0,
+      "community": 176,
       "norm_label": "identifier"
     },
     {
@@ -9324,7 +9324,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_set_app_theme_description",
-      "community": 0,
+      "community": 176,
       "norm_label": "description"
     },
     {
@@ -9333,7 +9333,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_set_app_theme_commands",
-      "community": 65,
+      "community": 176,
       "norm_label": "commands"
     },
     {
@@ -9342,7 +9342,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_deny_set_dock_visibility",
-      "community": 196,
+      "community": 205,
       "norm_label": "deny-set-dock-visibility"
     },
     {
@@ -9351,7 +9351,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_set_dock_visibility_identifier",
-      "community": 196,
+      "community": 205,
       "norm_label": "identifier"
     },
     {
@@ -9360,7 +9360,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_set_dock_visibility_description",
-      "community": 196,
+      "community": 205,
       "norm_label": "description"
     },
     {
@@ -9369,7 +9369,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_set_dock_visibility_commands",
-      "community": 196,
+      "community": 205,
       "norm_label": "commands"
     },
     {
@@ -9450,7 +9450,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_deny_version",
-      "community": 196,
+      "community": 207,
       "norm_label": "deny-version"
     },
     {
@@ -9459,7 +9459,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_version_identifier",
-      "community": 196,
+      "community": 207,
       "norm_label": "identifier"
     },
     {
@@ -9468,7 +9468,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_version_description",
-      "community": 196,
+      "community": 207,
       "norm_label": "description"
     },
     {
@@ -9477,7 +9477,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_version_commands",
-      "community": 196,
+      "community": 207,
       "norm_label": "commands"
     },
     {
@@ -10035,7 +10035,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_size_commands",
-      "community": 65,
+      "community": 35,
       "norm_label": "commands"
     },
     {
@@ -10125,7 +10125,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_new_identifier",
-      "community": 196,
+      "community": 0,
       "norm_label": "identifier"
     },
     {
@@ -10134,7 +10134,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_new_description",
-      "community": 0,
+      "community": 35,
       "norm_label": "description"
     },
     {
@@ -10143,7 +10143,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_new_commands",
-      "community": 35,
+      "community": 76,
       "norm_label": "commands"
     },
     {
@@ -10215,7 +10215,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_size_commands",
-      "community": 35,
+      "community": 33,
       "norm_label": "commands"
     },
     {
@@ -10305,7 +10305,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_allow_create_default",
-      "community": 206,
+      "community": 187,
       "norm_label": "allow-create-default"
     },
     {
@@ -10314,7 +10314,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_create_default_identifier",
-      "community": 206,
+      "community": 187,
       "norm_label": "identifier"
     },
     {
@@ -10323,7 +10323,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_create_default_description",
-      "community": 206,
+      "community": 187,
       "norm_label": "description"
     },
     {
@@ -10332,7 +10332,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_create_default_commands",
-      "community": 65,
+      "community": 187,
       "norm_label": "commands"
     },
     {
@@ -10413,7 +10413,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_allow_is_checked",
-      "community": 176,
+      "community": 33,
       "norm_label": "allow-is-checked"
     },
     {
@@ -10422,7 +10422,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_is_checked_identifier",
-      "community": 176,
+      "community": 33,
       "norm_label": "identifier"
     },
     {
@@ -10431,7 +10431,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_is_checked_description",
-      "community": 176,
+      "community": 33,
       "norm_label": "description"
     },
     {
@@ -10440,7 +10440,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_is_checked_commands",
-      "community": 176,
+      "community": 33,
       "norm_label": "commands"
     },
     {
@@ -10485,7 +10485,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_allow_items",
-      "community": 196,
+      "community": 76,
       "norm_label": "allow-items"
     },
     {
@@ -10494,7 +10494,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_items_identifier",
-      "community": 196,
+      "community": 76,
       "norm_label": "identifier"
     },
     {
@@ -10503,7 +10503,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_items_description",
-      "community": 196,
+      "community": 76,
       "norm_label": "description"
     },
     {
@@ -10512,7 +10512,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_items_commands",
-      "community": 65,
+      "community": 76,
       "norm_label": "commands"
     },
     {
@@ -10593,7 +10593,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_allow_remove",
-      "community": 206,
+      "community": 33,
       "norm_label": "allow-remove"
     },
     {
@@ -10602,7 +10602,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_remove_identifier",
-      "community": 206,
+      "community": 33,
       "norm_label": "identifier"
     },
     {
@@ -10611,7 +10611,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_remove_description",
-      "community": 206,
+      "community": 33,
       "norm_label": "description"
     },
     {
@@ -10620,7 +10620,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_remove_commands",
-      "community": 206,
+      "community": 33,
       "norm_label": "commands"
     },
     {
@@ -10665,7 +10665,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_allow_set_accelerator",
-      "community": 33,
+      "community": 76,
       "norm_label": "allow-set-accelerator"
     },
     {
@@ -10674,7 +10674,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_set_accelerator_identifier",
-      "community": 33,
+      "community": 76,
       "norm_label": "identifier"
     },
     {
@@ -10683,7 +10683,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_set_accelerator_description",
-      "community": 33,
+      "community": 76,
       "norm_label": "description"
     },
     {
@@ -10692,7 +10692,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_set_accelerator_commands",
-      "community": 33,
+      "community": 76,
       "norm_label": "commands"
     },
     {
@@ -10773,7 +10773,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_allow_set_as_window_menu",
-      "community": 184,
+      "community": 33,
       "norm_label": "allow-set-as-window-menu"
     },
     {
@@ -10782,7 +10782,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_set_as_window_menu_identifier",
-      "community": 184,
+      "community": 33,
       "norm_label": "identifier"
     },
     {
@@ -10791,7 +10791,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_set_as_window_menu_description",
-      "community": 184,
+      "community": 33,
       "norm_label": "description"
     },
     {
@@ -10800,7 +10800,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_set_as_window_menu_commands",
-      "community": 184,
+      "community": 33,
       "norm_label": "commands"
     },
     {
@@ -10881,7 +10881,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_allow_set_enabled",
-      "community": 185,
+      "community": 76,
       "norm_label": "allow-set-enabled"
     },
     {
@@ -10890,7 +10890,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_set_enabled_identifier",
-      "community": 185,
+      "community": 76,
       "norm_label": "identifier"
     },
     {
@@ -10899,7 +10899,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_set_enabled_description",
-      "community": 185,
+      "community": 76,
       "norm_label": "description"
     },
     {
@@ -10908,7 +10908,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_set_enabled_commands",
-      "community": 185,
+      "community": 33,
       "norm_label": "commands"
     },
     {
@@ -10917,7 +10917,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_allow_set_icon",
-      "community": 33,
+      "community": 76,
       "norm_label": "allow-set-icon"
     },
     {
@@ -10926,7 +10926,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_set_icon_identifier",
-      "community": 33,
+      "community": 76,
       "norm_label": "identifier"
     },
     {
@@ -10935,7 +10935,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_set_icon_description",
-      "community": 33,
+      "community": 76,
       "norm_label": "description"
     },
     {
@@ -10944,7 +10944,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_set_icon_commands",
-      "community": 33,
+      "community": 76,
       "norm_label": "commands"
     },
     {
@@ -10953,7 +10953,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_allow_set_text",
-      "community": 187,
+      "community": 33,
       "norm_label": "allow-set-text"
     },
     {
@@ -10962,7 +10962,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_set_text_identifier",
-      "community": 187,
+      "community": 33,
       "norm_label": "identifier"
     },
     {
@@ -10971,7 +10971,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_set_text_description",
-      "community": 187,
+      "community": 33,
       "norm_label": "description"
     },
     {
@@ -10980,7 +10980,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_allow_set_text_commands",
-      "community": 187,
+      "community": 33,
       "norm_label": "commands"
     },
     {
@@ -11025,7 +11025,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_deny_append",
-      "community": 191,
+      "community": 33,
       "norm_label": "deny-append"
     },
     {
@@ -11034,7 +11034,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_append_identifier",
-      "community": 191,
+      "community": 33,
       "norm_label": "identifier"
     },
     {
@@ -11043,7 +11043,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_append_description",
-      "community": 191,
+      "community": 33,
       "norm_label": "description"
     },
     {
@@ -11052,7 +11052,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_append_commands",
-      "community": 191,
+      "community": 33,
       "norm_label": "commands"
     },
     {
@@ -11061,7 +11061,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_deny_create_default",
-      "community": 192,
+      "community": 33,
       "norm_label": "deny-create-default"
     },
     {
@@ -11070,7 +11070,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_create_default_identifier",
-      "community": 192,
+      "community": 33,
       "norm_label": "identifier"
     },
     {
@@ -11079,7 +11079,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_create_default_description",
-      "community": 192,
+      "community": 33,
       "norm_label": "description"
     },
     {
@@ -11088,7 +11088,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_create_default_commands",
-      "community": 192,
+      "community": 33,
       "norm_label": "commands"
     },
     {
@@ -11133,7 +11133,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_deny_insert",
-      "community": 33,
+      "community": 202,
       "norm_label": "deny-insert"
     },
     {
@@ -11142,7 +11142,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_insert_identifier",
-      "community": 33,
+      "community": 202,
       "norm_label": "identifier"
     },
     {
@@ -11151,7 +11151,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_insert_description",
-      "community": 33,
+      "community": 202,
       "norm_label": "description"
     },
     {
@@ -11160,7 +11160,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_insert_commands",
-      "community": 33,
+      "community": 202,
       "norm_label": "commands"
     },
     {
@@ -11169,7 +11169,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_deny_is_checked",
-      "community": 205,
+      "community": 33,
       "norm_label": "deny-is-checked"
     },
     {
@@ -11178,7 +11178,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_is_checked_identifier",
-      "community": 205,
+      "community": 33,
       "norm_label": "identifier"
     },
     {
@@ -11187,7 +11187,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_is_checked_description",
-      "community": 205,
+      "community": 33,
       "norm_label": "description"
     },
     {
@@ -11196,7 +11196,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_is_checked_commands",
-      "community": 205,
+      "community": 33,
       "norm_label": "commands"
     },
     {
@@ -11241,7 +11241,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_permissions_deny_items",
-      "community": 207,
+      "community": 33,
       "norm_label": "deny-items"
     },
     {
@@ -11250,7 +11250,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_items_identifier",
-      "community": 207,
+      "community": 33,
       "norm_label": "identifier"
     },
     {
@@ -11259,7 +11259,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_items_description",
-      "community": 207,
+      "community": 33,
       "norm_label": "description"
     },
     {
@@ -11268,7 +11268,7 @@
       "source_file": "frontend/src-tauri/gen/schemas/acl-manifests.json",
       "source_location": "L1",
       "id": "schemas_acl_manifests_deny_items_commands",
-      "community": 207,
+      "community": 33,
       "norm_label": "commands"
     },
     {
@@ -12654,7 +12654,7 @@
       "source_file": "frontend/src-tauri/src/lib.rs",
       "source_location": "L44",
       "id": "src_lib_mock_ai_execution_plan",
-      "community": 41,
+      "community": 93,
       "norm_label": "mock_ai_execution_plan()"
     },
     {
@@ -12879,7 +12879,7 @@
       "source_file": "frontend/src-tauri/src/commands/instruments.rs",
       "source_location": "L1",
       "id": "frontend_src_tauri_src_commands_instruments_rs",
-      "community": 22,
+      "community": 79,
       "norm_label": "instruments.rs"
     },
     {
@@ -12888,7 +12888,7 @@
       "source_file": "frontend/src-tauri/src/commands/instruments.rs",
       "source_location": "L15",
       "id": "commands_instruments_instrumentrecord",
-      "community": 22,
+      "community": 79,
       "norm_label": "instrumentrecord"
     },
     {
@@ -12897,7 +12897,7 @@
       "source_file": "frontend/src-tauri/src/commands/instruments.rs",
       "source_location": "L35",
       "id": "commands_instruments_search_instruments",
-      "community": 22,
+      "community": 79,
       "norm_label": "search_instruments()"
     },
     {
@@ -12906,7 +12906,7 @@
       "source_file": "frontend/src-tauri/src/commands/instruments.rs",
       "source_location": "L104",
       "id": "commands_instruments_resolve_instrument_token",
-      "community": 22,
+      "community": 79,
       "norm_label": "resolve_instrument_token()"
     },
     {
@@ -13338,14 +13338,14 @@
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
       "source_location": "L1",
       "id": "frontend_src_tauri_src_quant_mod_rs",
-      "community": 48,
+      "community": 43,
       "norm_label": "mod.rs"
     },
     {
       "label": ".from_candles_basic()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L65",
+      "source_location": "L64",
       "id": "quant_mod_indicatorstate_from_candles_basic",
       "community": 2,
       "norm_label": ".from_candles_basic()"
@@ -13354,7 +13354,7 @@
       "label": ".compute_orb()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L118",
+      "source_location": "L117",
       "id": "quant_mod_indicatorstate_compute_orb",
       "community": 2,
       "norm_label": ".compute_orb()"
@@ -13363,7 +13363,7 @@
       "label": ".compute_parabolic_sar()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L131",
+      "source_location": "L130",
       "id": "quant_mod_indicatorstate_compute_parabolic_sar",
       "community": 2,
       "norm_label": ".compute_parabolic_sar()"
@@ -13372,7 +13372,7 @@
       "label": ".compute_stoch_k()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L174",
+      "source_location": "L173",
       "id": "quant_mod_indicatorstate_compute_stoch_k",
       "community": 2,
       "norm_label": ".compute_stoch_k()"
@@ -13381,7 +13381,7 @@
       "label": ".compute_obv()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L194",
+      "source_location": "L193",
       "id": "quant_mod_indicatorstate_compute_obv",
       "community": 2,
       "norm_label": ".compute_obv()"
@@ -13390,7 +13390,7 @@
       "label": ".compute_cmf()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L219",
+      "source_location": "L218",
       "id": "quant_mod_indicatorstate_compute_cmf",
       "community": 2,
       "norm_label": ".compute_cmf()"
@@ -13399,7 +13399,7 @@
       "label": ".compute_smas()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L243",
+      "source_location": "L242",
       "id": "quant_mod_indicatorstate_compute_smas",
       "community": 2,
       "norm_label": ".compute_smas()"
@@ -13408,7 +13408,7 @@
       "label": ".compute_avg_volume()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L252",
+      "source_location": "L251",
       "id": "quant_mod_indicatorstate_compute_avg_volume",
       "community": 2,
       "norm_label": ".compute_avg_volume()"
@@ -13417,7 +13417,7 @@
       "label": ".compute_rsi()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L258",
+      "source_location": "L257",
       "id": "quant_mod_indicatorstate_compute_rsi",
       "community": 2,
       "norm_label": ".compute_rsi()"
@@ -13426,7 +13426,7 @@
       "label": ".compute_ema()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L276",
+      "source_location": "L275",
       "id": "quant_mod_indicatorstate_compute_ema",
       "community": 2,
       "norm_label": ".compute_ema()"
@@ -13435,7 +13435,7 @@
       "label": ".compute_macd()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L292",
+      "source_location": "L291",
       "id": "quant_mod_indicatorstate_compute_macd",
       "community": 2,
       "norm_label": ".compute_macd()"
@@ -13444,7 +13444,7 @@
       "label": ".compute_atr()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L338",
+      "source_location": "L337",
       "id": "quant_mod_indicatorstate_compute_atr",
       "community": 2,
       "norm_label": ".compute_atr()"
@@ -13453,7 +13453,7 @@
       "label": ".compute_bollinger_bands()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L359",
+      "source_location": "L358",
       "id": "quant_mod_indicatorstate_compute_bollinger_bands",
       "community": 2,
       "norm_label": ".compute_bollinger_bands()"
@@ -13462,7 +13462,7 @@
       "label": ".compute_vwap()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L374",
+      "source_location": "L373",
       "id": "quant_mod_indicatorstate_compute_vwap",
       "community": 2,
       "norm_label": ".compute_vwap()"
@@ -13471,16 +13471,16 @@
       "label": "AiExecutionPlan",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L413",
+      "source_location": "L412",
       "id": "quant_mod_aiexecutionplan",
-      "community": 153,
+      "community": 43,
       "norm_label": "aiexecutionplan"
     },
     {
       "label": ".trend_score()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L555",
+      "source_location": "L554",
       "id": "quant_mod_consensusengine_trend_score",
       "community": 2,
       "norm_label": ".trend_score()"
@@ -13489,7 +13489,7 @@
       "label": ".momentum()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L572",
+      "source_location": "L571",
       "id": "quant_mod_consensusengine_momentum",
       "community": 2,
       "norm_label": ".momentum()"
@@ -13498,7 +13498,7 @@
       "label": ".volatility()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L580",
+      "source_location": "L579",
       "id": "quant_mod_consensusengine_volatility",
       "community": 2,
       "norm_label": ".volatility()"
@@ -13507,7 +13507,7 @@
       "label": ".volume_flow()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/quant/mod.rs",
-      "source_location": "L592",
+      "source_location": "L591",
       "id": "quant_mod_consensusengine_volume_flow",
       "community": 2,
       "norm_label": ".volume_flow()"
@@ -14247,7 +14247,7 @@
       "source_file": "frontend/src-tauri/src/services/live_bridges.rs",
       "source_location": "L1",
       "id": "frontend_src_tauri_src_services_live_bridges_rs",
-      "community": 211,
+      "community": 79,
       "norm_label": "live_bridges.rs"
     },
     {
@@ -14256,7 +14256,7 @@
       "source_file": "frontend/src-tauri/src/services/live_bridges.rs",
       "source_location": "L36",
       "id": "services_live_bridges_ensure_bootstrapped",
-      "community": 211,
+      "community": 79,
       "norm_label": "ensure_bootstrapped()"
     },
     {
@@ -14265,7 +14265,7 @@
       "source_file": "frontend/src-tauri/src/services/live_bridges.rs",
       "source_location": "L66",
       "id": "services_live_bridges_spawn_bridge",
-      "community": 211,
+      "community": 79,
       "norm_label": "spawn_bridge()"
     },
     {
@@ -14391,7 +14391,7 @@
       "source_file": "frontend/src-tauri/src/services/llm.rs",
       "source_location": "L124",
       "id": "services_llm_build_system_prompt",
-      "community": 25,
+      "community": 61,
       "norm_label": "build_system_prompt()"
     },
     {
@@ -14445,7 +14445,7 @@
       "source_file": "frontend/src-tauri/src/services/llm.rs",
       "source_location": "L231",
       "id": "services_llm_build_request_body",
-      "community": 25,
+      "community": 61,
       "norm_label": "build_request_body()"
     },
     {
@@ -14454,7 +14454,7 @@
       "source_file": "frontend/src-tauri/src/services/llm.rs",
       "source_location": "L308",
       "id": "services_llm_generate_deep_quant_plan",
-      "community": 25,
+      "community": 41,
       "norm_label": "generate_deep_quant_plan()"
     },
     {
@@ -14589,7 +14589,7 @@
       "source_file": "frontend/src-tauri/tests/api_tests.rs",
       "source_location": "L81",
       "id": "tests_api_tests_test_request_contract_carries_consensus_strings",
-      "community": 25,
+      "community": 61,
       "norm_label": "test_request_contract_carries_consensus_strings()"
     },
     {
@@ -14778,7 +14778,7 @@
       "source_file": "frontend/tests/e2e.spec.ts",
       "source_location": "L161",
       "id": "tests_e2e_spec_invoke",
-      "community": 57,
+      "community": 47,
       "norm_label": "invoke()"
     },
     {
@@ -14805,7 +14805,7 @@
       "source_file": "ingestion/build.rs",
       "source_location": "L1",
       "id": "ingestion_build_rs",
-      "community": 212,
+      "community": 3,
       "norm_label": "build.rs"
     },
     {
@@ -14814,7 +14814,7 @@
       "source_file": "ingestion/build.rs",
       "source_location": "L13",
       "id": "ingestion_build_main",
-      "community": 212,
+      "community": 3,
       "norm_label": "main()"
     },
     {
@@ -14877,7 +14877,7 @@
       "source_file": "ingestion/src/kite_auth.rs",
       "source_location": "L1",
       "id": "ingestion_src_kite_auth_rs",
-      "community": 172,
+      "community": 3,
       "norm_label": "kite_auth.rs"
     },
     {
@@ -14886,7 +14886,7 @@
       "source_file": "ingestion/src/kite_auth.rs",
       "source_location": "L18",
       "id": "src_kite_auth_kitesessionresponse",
-      "community": 172,
+      "community": 3,
       "norm_label": "kitesessionresponse"
     },
     {
@@ -14895,7 +14895,7 @@
       "source_file": "ingestion/src/kite_auth.rs",
       "source_location": "L25",
       "id": "src_kite_auth_kitesessiondata",
-      "community": 172,
+      "community": 3,
       "norm_label": "kitesessiondata"
     },
     {
@@ -14904,7 +14904,7 @@
       "source_file": "ingestion/src/kite_auth.rs",
       "source_location": "L40",
       "id": "src_kite_auth_generate_access_token",
-      "community": 172,
+      "community": 3,
       "norm_label": "generate_access_token()"
     },
     {
@@ -14913,7 +14913,7 @@
       "source_file": "ingestion/src/kite_client.rs",
       "source_location": "L1",
       "id": "ingestion_src_kite_client_rs",
-      "community": 213,
+      "community": 3,
       "norm_label": "kite_client.rs"
     },
     {
@@ -14922,7 +14922,7 @@
       "source_file": "ingestion/src/kite_client.rs",
       "source_location": "L48",
       "id": "src_kite_client_connect_ticker",
-      "community": 213,
+      "community": 3,
       "norm_label": "connect_ticker()"
     },
     {
@@ -14949,7 +14949,7 @@
       "source_file": "ingestion/src/parser.rs",
       "source_location": "L1",
       "id": "ingestion_src_parser_rs",
-      "community": 156,
+      "community": 3,
       "norm_label": "parser.rs"
     },
     {
@@ -14958,7 +14958,7 @@
       "source_file": "ingestion/src/parser.rs",
       "source_location": "L79",
       "id": "src_parser_parse_binary_tick",
-      "community": 156,
+      "community": 3,
       "norm_label": "parse_binary_tick()"
     },
     {
@@ -14967,7 +14967,7 @@
       "source_file": "ingestion/src/parser.rs",
       "source_location": "L199",
       "id": "src_parser_parse_binary_frame",
-      "community": 156,
+      "community": 3,
       "norm_label": "parse_binary_frame()"
     },
     {
@@ -14976,7 +14976,7 @@
       "source_file": "ingestion/src/parser.rs",
       "source_location": "L257",
       "id": "src_parser_make_ltp_packet",
-      "community": 156,
+      "community": 3,
       "norm_label": "make_ltp_packet()"
     },
     {
@@ -14985,7 +14985,7 @@
       "source_file": "ingestion/src/parser.rs",
       "source_location": "L265",
       "id": "src_parser_test_ltp_mode_parsing",
-      "community": 156,
+      "community": 3,
       "norm_label": "test_ltp_mode_parsing()"
     },
     {
@@ -14994,7 +14994,7 @@
       "source_file": "ingestion/src/parser.rs",
       "source_location": "L275",
       "id": "src_parser_test_packet_too_short",
-      "community": 156,
+      "community": 3,
       "norm_label": "test_packet_too_short()"
     },
     {
@@ -15003,7 +15003,7 @@
       "source_file": "ingestion/src/parser.rs",
       "source_location": "L281",
       "id": "src_parser_test_frame_with_no_packets",
-      "community": 156,
+      "community": 3,
       "norm_label": "test_frame_with_no_packets()"
     },
     {
@@ -16281,7 +16281,7 @@
       "source_file": "PRODUCTION_SETUP.md",
       "source_location": "L62",
       "id": "ai_trader_production_setup_step_2_start_the_backend_brain_docker",
-      "community": 60,
+      "community": 12,
       "norm_label": "step 2: start the backend brain (docker)"
     },
     {
@@ -16290,7 +16290,7 @@
       "source_file": "PRODUCTION_SETUP.md",
       "source_location": "L66",
       "id": "ai_trader_production_setup_codeblock_3",
-      "community": 60,
+      "community": 12,
       "norm_label": "code:bash (docker-compose up -d --build)"
     },
     {
@@ -16299,7 +16299,7 @@
       "source_file": "PRODUCTION_SETUP.md",
       "source_location": "L84",
       "id": "ai_trader_production_setup_verify_all_services_are_healthy",
-      "community": 60,
+      "community": 12,
       "norm_label": "verify all services are healthy"
     },
     {
@@ -16308,7 +16308,7 @@
       "source_file": "PRODUCTION_SETUP.md",
       "source_location": "L86",
       "id": "ai_trader_production_setup_codeblock_4",
-      "community": 60,
+      "community": 12,
       "norm_label": "code:bash (docker-compose ps)"
     },
     {
@@ -16317,7 +16317,7 @@
       "source_file": "PRODUCTION_SETUP.md",
       "source_location": "L92",
       "id": "ai_trader_production_setup_codeblock_5",
-      "community": 60,
+      "community": 12,
       "norm_label": "code:bash (docker-compose logs -f ingestion)"
     },
     {
@@ -16326,7 +16326,7 @@
       "source_file": "PRODUCTION_SETUP.md",
       "source_location": "L97",
       "id": "ai_trader_production_setup_verify_kafka_topics",
-      "community": 60,
+      "community": 12,
       "norm_label": "verify kafka topics"
     },
     {
@@ -16335,7 +16335,7 @@
       "source_file": "PRODUCTION_SETUP.md",
       "source_location": "L99",
       "id": "ai_trader_production_setup_codeblock_6",
-      "community": 60,
+      "community": 12,
       "norm_label": "code:bash (docker exec -it stratai-redpanda rpk topic list)"
     },
     {
@@ -16353,7 +16353,7 @@
       "source_file": "PRODUCTION_SETUP.md",
       "source_location": "L113",
       "id": "ai_trader_production_setup_development_mode",
-      "community": 161,
+      "community": 12,
       "norm_label": "development mode"
     },
     {
@@ -16362,7 +16362,7 @@
       "source_file": "PRODUCTION_SETUP.md",
       "source_location": "L115",
       "id": "ai_trader_production_setup_codeblock_7",
-      "community": 161,
+      "community": 12,
       "norm_label": "code:bash (cd frontend)"
     },
     {
@@ -16371,7 +16371,7 @@
       "source_file": "PRODUCTION_SETUP.md",
       "source_location": "L123",
       "id": "ai_trader_production_setup_production_build",
-      "community": 161,
+      "community": 12,
       "norm_label": "production build"
     },
     {
@@ -16380,7 +16380,7 @@
       "source_file": "PRODUCTION_SETUP.md",
       "source_location": "L125",
       "id": "ai_trader_production_setup_codeblock_8",
-      "community": 161,
+      "community": 12,
       "norm_label": "code:bash (cd frontend)"
     },
     {
@@ -16641,7 +16641,7 @@
       "source_file": "README.md",
       "source_location": "L182",
       "id": "ai_trader_readme_codeblock_5",
-      "community": 60,
+      "community": 12,
       "norm_label": "code:bash (docker-compose up -d)"
     },
     {
@@ -18477,7 +18477,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L1",
       "id": "technical_indicators_analysis_md",
-      "community": 78,
+      "community": 53,
       "norm_label": "technical_indicators_analysis.md"
     },
     {
@@ -18486,7 +18486,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L1",
       "id": "ai_trader_technical_indicators_analysis_strat_ai_technical_indicators_patterns_strategies_ai_pipeline",
-      "community": 78,
+      "community": 53,
       "norm_label": "strat ai \u2014 technical indicators, patterns, strategies & ai pipeline"
     },
     {
@@ -18495,7 +18495,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L7",
       "id": "ai_trader_technical_indicators_analysis_1_the_complete_indicator_inventory",
-      "community": 78,
+      "community": 53,
       "norm_label": "1. the complete indicator inventory"
     },
     {
@@ -18504,7 +18504,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L32",
       "id": "ai_trader_technical_indicators_analysis_2_where_each_indicator_lives_3_compute_layers",
-      "community": 78,
+      "community": 60,
       "norm_label": "2. where each indicator lives (3 compute layers)"
     },
     {
@@ -18513,7 +18513,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L34",
       "id": "ai_trader_technical_indicators_analysis_layer_a_technical_agent_agents_technical_rust_real_time",
-      "community": 78,
+      "community": 60,
       "norm_label": "layer a: technical agent (`/agents/technical` \u00b7 rust \u00b7 real-time)"
     },
     {
@@ -18522,7 +18522,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L44",
       "id": "ai_trader_technical_indicators_analysis_codeblock_1",
-      "community": 78,
+      "community": 60,
       "norm_label": "code:block1 (rsi < 30  and  price > vwap  \u2192  score 85  (strong bullish))"
     },
     {
@@ -18531,7 +18531,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L58",
       "id": "ai_trader_technical_indicators_analysis_layer_b_consensus_engine_frontend_src_tauri_src_quant_rust_tauri_local",
-      "community": 78,
+      "community": 60,
       "norm_label": "layer b: consensus engine (`/frontend/src-tauri/src/quant/` \u00b7 rust \u00b7 tauri-local)"
     },
     {
@@ -18540,7 +18540,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L64",
       "id": "ai_trader_technical_indicators_analysis_codeblock_2",
-      "community": 78,
+      "community": 60,
       "norm_label": "code:rust (pub struct indicatorstate {)"
     },
     {
@@ -18549,7 +18549,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L97",
       "id": "ai_trader_technical_indicators_analysis_layer_c_frontend_frontend_src_hooks_typescript_client_side",
-      "community": 78,
+      "community": 60,
       "norm_label": "layer c: frontend (`/frontend/src/hooks/` \u00b7 typescript \u00b7 client-side)"
     },
     {
@@ -18558,7 +18558,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L100",
       "id": "ai_trader_technical_indicators_analysis_codeblock_3",
-      "community": 78,
+      "community": 60,
       "norm_label": "code:typescript (// sma-seeded initialization, then exponential smoothing)"
     },
     {
@@ -18567,7 +18567,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L107",
       "id": "ai_trader_technical_indicators_analysis_codeblock_4",
-      "community": 78,
+      "community": 60,
       "norm_label": "code:typescript (// standard wilder's smoothing)"
     },
     {
@@ -18576,7 +18576,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L118",
       "id": "ai_trader_technical_indicators_analysis_3_candlestick_patterns_5_patterns",
-      "community": 78,
+      "community": 53,
       "norm_label": "3. candlestick patterns (5 patterns)"
     },
     {
@@ -18585,7 +18585,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L131",
       "id": "ai_trader_technical_indicators_analysis_codeblock_5",
-      "community": 78,
+      "community": 53,
       "norm_label": "code:rust (body()         \u2192 |close - open|)"
     },
     {
@@ -18594,7 +18594,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L142",
       "id": "ai_trader_technical_indicators_analysis_4_institutional_strategies_5_strategies",
-      "community": 78,
+      "community": 53,
       "norm_label": "4. institutional strategies (5 strategies)"
     },
     {
@@ -18603,7 +18603,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L156",
       "id": "ai_trader_technical_indicators_analysis_5_the_consensusengine_how_it_fuses_everything",
-      "community": 78,
+      "community": 50,
       "norm_label": "5. the consensusengine \u2014 how it fuses everything"
     },
     {
@@ -18612,7 +18612,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L160",
       "id": "ai_trader_technical_indicators_analysis_5_1_trend_score_100_to_100",
-      "community": 78,
+      "community": 50,
       "norm_label": "5.1 trend score (-100 to +100)"
     },
     {
@@ -18621,7 +18621,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L164",
       "id": "ai_trader_technical_indicators_analysis_codeblock_6",
-      "community": 78,
+      "community": 50,
       "norm_label": "code:block6 (close > sma 50    \u2192  +25     close < sma 50    \u2192  -25)"
     },
     {
@@ -18630,7 +18630,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L172",
       "id": "ai_trader_technical_indicators_analysis_5_2_momentum_state",
-      "community": 78,
+      "community": 50,
       "norm_label": "5.2 momentum state"
     },
     {
@@ -18639,7 +18639,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L174",
       "id": "ai_trader_technical_indicators_analysis_codeblock_7",
-      "community": 78,
+      "community": 50,
       "norm_label": "code:block7 (rsi > 70 or stoch %k > 80  \u2192  \"overbought\")"
     },
     {
@@ -18648,7 +18648,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L180",
       "id": "ai_trader_technical_indicators_analysis_5_3_volatility_state",
-      "community": 78,
+      "community": 50,
       "norm_label": "5.3 volatility state"
     },
     {
@@ -18657,7 +18657,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L182",
       "id": "ai_trader_technical_indicators_analysis_codeblock_8",
-      "community": 78,
+      "community": 50,
       "norm_label": "code:block8 (price breaks above bb upper or below bb lower  \u2192  \"expanding)"
     },
     {
@@ -18666,7 +18666,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L188",
       "id": "ai_trader_technical_indicators_analysis_5_4_volume_flow_state",
-      "community": 78,
+      "community": 50,
       "norm_label": "5.4 volume flow state"
     },
     {
@@ -18675,7 +18675,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L190",
       "id": "ai_trader_technical_indicators_analysis_codeblock_9",
-      "community": 78,
+      "community": 50,
       "norm_label": "code:block9 (cmf > 0.05  and  obv rising  \u2192  \"accumulation\")"
     },
     {
@@ -18684,7 +18684,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L196",
       "id": "ai_trader_technical_indicators_analysis_5_5_active_patterns_vec_string",
-      "community": 78,
+      "community": 50,
       "norm_label": "5.5 active patterns \u2192 `vec<string>`"
     },
     {
@@ -18693,7 +18693,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L199",
       "id": "ai_trader_technical_indicators_analysis_5_6_active_strategies_vec_string",
-      "community": 78,
+      "community": 50,
       "norm_label": "5.6 active strategies \u2192 `vec<string>`"
     },
     {
@@ -18828,7 +18828,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L362",
       "id": "ai_trader_technical_indicators_analysis_7_data_flow_summary",
-      "community": 78,
+      "community": 53,
       "norm_label": "7. data flow summary"
     },
     {
@@ -18837,7 +18837,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L364",
       "id": "ai_trader_technical_indicators_analysis_codeblock_17",
-      "community": 78,
+      "community": 53,
       "norm_label": "code:mermaid (graph tb)"
     },
     {
@@ -18846,7 +18846,7 @@
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L402",
       "id": "ai_trader_technical_indicators_analysis_8_quick_reference_what_feeds_what",
-      "community": 78,
+      "community": 53,
       "norm_label": "8. quick reference: what feeds what"
     },
     {
@@ -19003,69 +19003,6 @@
       "norm_label": "deploy on vercel"
     },
     {
-      "label": "Helper function to calculate Exponential Moving Average (EMA).",
-      "file_type": "rationale",
-      "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L8",
-      "community": 171,
-      "norm_label": "helper function to calculate exponential moving average (ema).",
-      "id": "deep_quant_loop_tools_rationale_8"
-    },
-    {
-      "label": "Fetches the latest N (up to 200) OHLCV historical candles from the QuestDB datab",
-      "file_type": "rationale",
-      "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L21",
-      "community": 171,
-      "norm_label": "fetches the latest n (up to 200) ohlcv historical candles from the questdb datab",
-      "id": "deep_quant_loop_tools_rationale_21"
-    },
-    {
-      "label": "Establishes the multi-timeframe directional trend bias for the specified trading",
-      "file_type": "rationale",
-      "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L71",
-      "community": 171,
-      "norm_label": "establishes the multi-timeframe directional trend bias for the specified trading",
-      "id": "deep_quant_loop_tools_rationale_71"
-    },
-    {
-      "label": "Identifies exact support and resistance liquidity zones for the specified tradin",
-      "file_type": "rationale",
-      "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L122",
-      "community": 171,
-      "norm_label": "identifies exact support and resistance liquidity zones for the specified tradin",
-      "id": "deep_quant_loop_tools_rationale_122"
-    },
-    {
-      "label": "Retrieves the latest news headlines and sentiment context for the specified trad",
-      "file_type": "rationale",
-      "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L175",
-      "community": 171,
-      "norm_label": "retrieves the latest news headlines and sentiment context for the specified trad",
-      "id": "deep_quant_loop_tools_rationale_175"
-    },
-    {
-      "label": "Registers a target condition watcher with the backend watcher service. Graph exe",
-      "file_type": "rationale",
-      "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L237",
-      "community": 171,
-      "norm_label": "registers a target condition watcher with the backend watcher service. graph exe",
-      "id": "deep_quant_loop_tools_rationale_237"
-    },
-    {
-      "label": "Declares the final trading decision for the current analysis session.     Specif",
-      "file_type": "rationale",
-      "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L289",
-      "community": 171,
-      "norm_label": "declares the final trading decision for the current analysis session.     specif",
-      "id": "deep_quant_loop_tools_rationale_289"
-    },
-    {
       "label": "PrioCandle",
       "file_type": "code",
       "source_file": "frontend/src-tauri/src/commands/deep_quant.rs",
@@ -19100,6 +19037,15 @@
       "community": 67,
       "norm_label": "resumes a paused state graph run and returns the subsequent execution as an sse",
       "id": "deep_quant_loop_main_rationale_77"
+    },
+    {
+      "label": "Fetch recent OHLCV candles from QuestDB for a given trading symbol.          Arg",
+      "file_type": "rationale",
+      "source_file": "agents/deep-quant-loop/tools.py",
+      "source_location": "L9",
+      "community": 171,
+      "norm_label": "fetch recent ohlcv candles from questdb for a given trading symbol.          arg",
+      "id": "deep_quant_loop_tools_rationale_9"
     },
     {
       "label": "Evaluate technical indicators (SMA, EMA, RSI, MACD, OBV, CMF, etc.) and     patt",
@@ -19349,7 +19295,7 @@
       "file_type": "document",
       "source_file": "technical_indicators_analysis.md",
       "source_location": "L1",
-      "community": 78,
+      "community": 53,
       "norm_label": "alpha suite \u2014 technical indicators, patterns, strategies & ai pipeline",
       "id": "ai_trader_technical_indicators_analysis_alpha_suite_technical_indicators_patterns_strategies_ai_pipeline"
     },
@@ -19457,7 +19403,7 @@
       "file_type": "code",
       "source_file": "frontend/src/components/layout/TerminalLayout.tsx",
       "source_location": "L276",
-      "community": 14,
+      "community": 19,
       "norm_label": "cyclemagnetmode()",
       "id": "layout_terminallayout_cyclemagnetmode"
     },
@@ -19502,7 +19448,7 @@
       "file_type": "code",
       "source_file": "frontend/src/components/panels/LeftPanel.tsx",
       "source_location": "L206",
-      "community": 57,
+      "community": 47,
       "norm_label": "handler()",
       "id": "panels_leftpanel_handler"
     },
@@ -19574,7 +19520,7 @@
       "file_type": "code",
       "source_file": "frontend/src/components/settings/SecurityVault.tsx",
       "source_location": "L329",
-      "community": 28,
+      "community": 62,
       "norm_label": "toggleexpanded()",
       "id": "settings_securityvault_toggleexpanded"
     },
@@ -19655,7 +19601,7 @@
       "file_type": "code",
       "source_file": "agents/sentiment/src/analyzer.js",
       "source_location": "L59",
-      "community": 18,
+      "community": 7,
       "norm_label": "getclient()",
       "id": "src_analyzer_getclient"
     },
@@ -19826,7 +19772,7 @@
       "file_type": "code",
       "source_file": "frontend/src/app/auth/layout.tsx",
       "source_location": "L1",
-      "community": 14,
+      "community": 46,
       "norm_label": "layout.tsx",
       "id": "frontend_src_app_auth_layout_tsx"
     },
@@ -19835,7 +19781,7 @@
       "file_type": "code",
       "source_file": "frontend/src/app/auth/layout.tsx",
       "source_location": "L22",
-      "community": 14,
+      "community": 46,
       "norm_label": "authlayout()",
       "id": "auth_layout_authlayout"
     },
@@ -19844,7 +19790,7 @@
       "file_type": "code",
       "source_file": "frontend/src/app/auth/login/page.tsx",
       "source_location": "L1",
-      "community": 14,
+      "community": 170,
       "norm_label": "page.tsx",
       "id": "frontend_src_app_auth_login_page_tsx"
     },
@@ -19853,7 +19799,7 @@
       "file_type": "code",
       "source_file": "frontend/src/app/auth/login/page.tsx",
       "source_location": "L11",
-      "community": 14,
+      "community": 170,
       "norm_label": "loginpage()",
       "id": "login_page_loginpage"
     },
@@ -19862,7 +19808,7 @@
       "file_type": "code",
       "source_file": "frontend/src/app/auth/oauth/complete/OAuthCompleteInner.tsx",
       "source_location": "L19",
-      "community": 14,
+      "community": 170,
       "norm_label": "oauthcompleteinner()",
       "id": "complete_oauthcompleteinner_oauthcompleteinner"
     },
@@ -19925,7 +19871,7 @@
       "file_type": "code",
       "source_file": "frontend/src/app/auth/signup/page.tsx",
       "source_location": "L1",
-      "community": 14,
+      "community": 170,
       "norm_label": "page.tsx",
       "id": "frontend_src_app_auth_signup_page_tsx"
     },
@@ -19934,7 +19880,7 @@
       "file_type": "code",
       "source_file": "frontend/src/app/auth/signup/page.tsx",
       "source_location": "L11",
-      "community": 14,
+      "community": 170,
       "norm_label": "signuppage()",
       "id": "signup_page_signuppage"
     },
@@ -19952,7 +19898,7 @@
       "file_type": "code",
       "source_file": "frontend/src/components/auth/GoogleAuthButton.tsx",
       "source_location": "L1",
-      "community": 14,
+      "community": 170,
       "norm_label": "googleauthbutton.tsx",
       "id": "frontend_src_components_auth_googleauthbutton_tsx"
     },
@@ -19961,7 +19907,7 @@
       "file_type": "code",
       "source_file": "frontend/src/components/auth/GoogleAuthButton.tsx",
       "source_location": "L10",
-      "community": 14,
+      "community": 170,
       "norm_label": "googleicon()",
       "id": "auth_googleauthbutton_googleicon"
     },
@@ -19970,7 +19916,7 @@
       "file_type": "code",
       "source_file": "frontend/src/components/auth/LoginForm.tsx",
       "source_location": "L1",
-      "community": 14,
+      "community": 28,
       "norm_label": "loginform.tsx",
       "id": "frontend_src_components_auth_loginform_tsx"
     },
@@ -19979,7 +19925,7 @@
       "file_type": "code",
       "source_file": "frontend/src/components/auth/LoginForm.tsx",
       "source_location": "L14",
-      "community": 14,
+      "community": 28,
       "norm_label": "validateemail()",
       "id": "auth_loginform_validateemail"
     },
@@ -19988,7 +19934,7 @@
       "file_type": "code",
       "source_file": "frontend/src/components/auth/LoginForm.tsx",
       "source_location": "L20",
-      "community": 14,
+      "community": 28,
       "norm_label": "validatepassword()",
       "id": "auth_loginform_validatepassword"
     },
@@ -19997,7 +19943,7 @@
       "file_type": "code",
       "source_file": "frontend/src/components/auth/LoginForm.tsx",
       "source_location": "L48",
-      "community": 14,
+      "community": 28,
       "norm_label": "handleemailblur()",
       "id": "auth_loginform_handleemailblur"
     },
@@ -20006,7 +19952,7 @@
       "file_type": "code",
       "source_file": "frontend/src/components/auth/LoginForm.tsx",
       "source_location": "L49",
-      "community": 14,
+      "community": 28,
       "norm_label": "handlepassblur()",
       "id": "auth_loginform_handlepassblur"
     },
@@ -20015,7 +19961,7 @@
       "file_type": "code",
       "source_file": "frontend/src/components/auth/MfaChallenge.tsx",
       "source_location": "L1",
-      "community": 14,
+      "community": 170,
       "norm_label": "mfachallenge.tsx",
       "id": "frontend_src_components_auth_mfachallenge_tsx"
     },
@@ -20024,7 +19970,7 @@
       "file_type": "code",
       "source_file": "frontend/src/components/auth/MfaChallenge.tsx",
       "source_location": "L43",
-      "community": 14,
+      "community": 170,
       "norm_label": "loadsetup()",
       "id": "auth_mfachallenge_loadsetup"
     },
@@ -20033,7 +19979,7 @@
       "file_type": "code",
       "source_file": "frontend/src/components/auth/MfaChallenge.tsx",
       "source_location": "L110",
-      "community": 14,
+      "community": 170,
       "norm_label": "handlechange()",
       "id": "auth_mfachallenge_handlechange"
     },
@@ -20042,7 +19988,7 @@
       "file_type": "code",
       "source_file": "frontend/src/components/auth/MfaChallenge.tsx",
       "source_location": "L136",
-      "community": 14,
+      "community": 170,
       "norm_label": "handlekeydown()",
       "id": "auth_mfachallenge_handlekeydown"
     },
@@ -20051,7 +19997,7 @@
       "file_type": "code",
       "source_file": "frontend/src/components/auth/SignupForm.tsx",
       "source_location": "L1",
-      "community": 14,
+      "community": 28,
       "norm_label": "signupform.tsx",
       "id": "frontend_src_components_auth_signupform_tsx"
     },
@@ -20060,7 +20006,7 @@
       "file_type": "code",
       "source_file": "frontend/src/components/auth/SignupForm.tsx",
       "source_location": "L34",
-      "community": 14,
+      "community": 28,
       "norm_label": "validateemail()",
       "id": "auth_signupform_validateemail"
     },
@@ -20069,7 +20015,7 @@
       "file_type": "code",
       "source_file": "frontend/src/components/auth/SignupForm.tsx",
       "source_location": "L41",
-      "community": 14,
+      "community": 28,
       "norm_label": "validatepassword()",
       "id": "auth_signupform_validatepassword"
     },
@@ -20078,7 +20024,7 @@
       "file_type": "code",
       "source_file": "frontend/src/components/layout/TerminalLayout.tsx",
       "source_location": "L364",
-      "community": 14,
+      "community": 19,
       "norm_label": "async()",
       "id": "layout_terminallayout_async"
     },
@@ -20087,7 +20033,7 @@
       "file_type": "code",
       "source_file": "frontend/src/context/AuthContext.tsx",
       "source_location": "L1",
-      "community": 14,
+      "community": 46,
       "norm_label": "authcontext.tsx",
       "id": "frontend_src_context_authcontext_tsx"
     },
@@ -20096,7 +20042,7 @@
       "file_type": "code",
       "source_file": "frontend/src/context/AuthContext.tsx",
       "source_location": "L66",
-      "community": 14,
+      "community": 46,
       "norm_label": "sessionprovider()",
       "id": "context_authcontext_sessionprovider"
     },
@@ -20105,7 +20051,7 @@
       "file_type": "code",
       "source_file": "frontend/src/context/AuthContext.tsx",
       "source_location": "L194",
-      "community": 14,
+      "community": 170,
       "norm_label": "useauth()",
       "id": "context_authcontext_useauth"
     },
@@ -20159,7 +20105,7 @@
       "file_type": "code",
       "source_file": "frontend/src/lib/onboarding.ts",
       "source_location": "L1",
-      "community": 14,
+      "community": 170,
       "norm_label": "onboarding.ts",
       "id": "frontend_src_lib_onboarding_ts"
     },
@@ -20177,7 +20123,7 @@
       "file_type": "code",
       "source_file": "frontend/src/lib/onboarding.ts",
       "source_location": "L28",
-      "community": 14,
+      "community": 170,
       "norm_label": "resolvepostauthdestination()",
       "id": "lib_onboarding_resolvepostauthdestination"
     },
@@ -20483,7 +20429,7 @@
       "file_type": "code",
       "source_file": "frontend/src/hooks/useHistoricalData.ts",
       "source_location": "L44",
-      "community": 22,
+      "community": 79,
       "norm_label": "getquestdburl()",
       "id": "hooks_usehistoricaldata_getquestdburl"
     },
@@ -20717,7 +20663,7 @@
       "file_type": "code",
       "source_file": "frontend/src/components/layout/TerminalLayout.tsx",
       "source_location": "L66",
-      "community": 14,
+      "community": 19,
       "norm_label": "handleclickoutside()",
       "id": "layout_terminallayout_handleclickoutside"
     },
@@ -21101,7 +21047,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 19,
+      "community": 62,
       "norm_label": "ingestion service",
       "id": "architecture_ingestion"
     },
@@ -21114,7 +21060,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 19,
+      "community": 62,
       "norm_label": "zerodha kite connect websocket api",
       "id": "architecture_kite_connect_websocket"
     },
@@ -21127,7 +21073,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 19,
+      "community": 62,
       "norm_label": "parsedtick struct",
       "id": "architecture_parsed_tick"
     },
@@ -21153,7 +21099,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 19,
+      "community": 62,
       "norm_label": "questdb time-series database",
       "id": "architecture_questdb"
     },
@@ -21192,7 +21138,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 50,
+      "community": 22,
       "norm_label": "technical analysis agent",
       "id": "architecture_technical_agent"
     },
@@ -21257,7 +21203,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 74,
+      "community": 62,
       "norm_label": "glass-box trading frontend",
       "id": "architecture_frontend"
     },
@@ -21309,7 +21255,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 46,
+      "community": 22,
       "norm_label": "alphapredictivechart.tsx",
       "id": "architecture_alpha_predictive_chart"
     },
@@ -21322,7 +21268,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 74,
+      "community": 62,
       "norm_label": "zustand usetradestore",
       "id": "architecture_zustand_store"
     },
@@ -21374,7 +21320,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 19,
+      "community": 62,
       "norm_label": "questdb historical_candles table",
       "id": "architecture_historical_candles_table"
     },
@@ -21387,7 +21333,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 19,
+      "community": 62,
       "norm_label": "history_loader.rs service",
       "id": "architecture_history_loader"
     },
@@ -21400,7 +21346,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 46,
+      "community": 62,
       "norm_label": "charttimeframe state engine",
       "id": "architecture_chart_timeframe"
     },
@@ -21413,7 +21359,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 46,
+      "community": 62,
       "norm_label": "predictive ghost line overlay",
       "id": "architecture_ghost_line"
     },
@@ -21439,7 +21385,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 74,
+      "community": 62,
       "norm_label": "orderbook.tsx level-2 dom",
       "id": "architecture_order_book"
     },
@@ -21452,7 +21398,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 74,
+      "community": 62,
       "norm_label": "swingconfluencepanel",
       "id": "architecture_swing_confluence_panel"
     },
@@ -21465,7 +21411,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 74,
+      "community": 62,
       "norm_label": "macrosentimentpanel",
       "id": "architecture_macro_sentiment_panel"
     },
@@ -21478,7 +21424,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 74,
+      "community": 62,
       "norm_label": "profileswitcher.tsx",
       "id": "architecture_profile_switcher"
     },
@@ -21491,7 +21437,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 19,
+      "community": 62,
       "norm_label": "tick protobuf contract",
       "id": "contracts_tick"
     },
@@ -21504,7 +21450,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 50,
+      "community": 22,
       "norm_label": "techsignal protobuf contract",
       "id": "contracts_techsignal"
     },
@@ -21569,7 +21515,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 48,
+      "community": 43,
       "norm_label": "consensusengine (tauri quant)",
       "id": "complete_analysis_consensus_engine"
     },
@@ -21595,7 +21541,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 74,
+      "community": 62,
       "norm_label": "usetaurilivedata.ts hook",
       "id": "complete_analysis_use_tauri_live_data"
     },
@@ -21621,7 +21567,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 48,
+      "community": 43,
       "norm_label": "quant radar background scanner",
       "id": "complete_analysis_quant_radar"
     },
@@ -21647,7 +21593,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 28,
+      "community": 62,
       "norm_label": "securityvault.tsx (stronghold)",
       "id": "complete_analysis_security_vault"
     },
@@ -21725,7 +21671,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 46,
+      "community": 22,
       "norm_label": "vwepr curvature regression model",
       "id": "readme_vwepr"
     },
@@ -21764,7 +21710,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 46,
+      "community": 22,
       "norm_label": "indicatorstate struct (16 indicators)",
       "id": "readme_indicator_state"
     },
@@ -21777,7 +21723,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 50,
+      "community": 22,
       "norm_label": "rsi 14-period indicator",
       "id": "technical_indicators_rsi"
     },
@@ -21790,7 +21736,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 50,
+      "community": 22,
       "norm_label": "vwap indicator",
       "id": "technical_indicators_vwap"
     },
@@ -21803,7 +21749,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 46,
+      "community": 22,
       "norm_label": "ema 9 indicator",
       "id": "technical_indicators_ema9"
     },
@@ -21816,7 +21762,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 46,
+      "community": 22,
       "norm_label": "ema 21 indicator",
       "id": "technical_indicators_ema21"
     },
@@ -21829,7 +21775,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 46,
+      "community": 22,
       "norm_label": "bollinger bands indicator",
       "id": "technical_indicators_bollinger_bands"
     },
@@ -21842,7 +21788,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 46,
+      "community": 22,
       "norm_label": "macd histogram indicator",
       "id": "technical_indicators_macd"
     },
@@ -21855,7 +21801,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 48,
+      "community": 43,
       "norm_label": "candlestick pattern engine (5 patterns)",
       "id": "technical_indicators_patterns"
     },
@@ -21868,7 +21814,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 48,
+      "community": 43,
       "norm_label": "institutional strategy engine (5 strategies)",
       "id": "technical_indicators_strategies"
     },
@@ -21881,7 +21827,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 46,
+      "community": 62,
       "norm_label": "ols linear regression (predictive)",
       "id": "technical_indicators_ols_regression"
     },
@@ -21972,7 +21918,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 74,
+      "community": 62,
       "norm_label": "usetradestore zustand (websocket)",
       "id": "session_memory_zustand_store"
     },
@@ -21985,7 +21931,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 50,
+      "community": 22,
       "norm_label": "technical agent rust service",
       "id": "session_memory_technical_agent_rs"
     },
@@ -21998,7 +21944,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 50,
+      "community": 22,
       "norm_label": "kafka_consumer.rs (technical agent)",
       "id": "session_memory_kafka_consumer_rs"
     },
@@ -22011,7 +21957,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 50,
+      "community": 22,
       "norm_label": "signal_engine.rs conviction scorer",
       "id": "session_memory_signal_engine_rs"
     },
@@ -22024,7 +21970,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 50,
+      "community": 22,
       "norm_label": "indicators.rs (rsi + vwap)",
       "id": "session_memory_indicators_rs"
     },
@@ -22037,7 +21983,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 50,
+      "community": 22,
       "norm_label": "state.rs symbolstate/marketstate",
       "id": "session_memory_state_rs"
     },
@@ -22050,7 +21996,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 50,
+      "community": 22,
       "norm_label": "kafka_producer.rs (technical agent)",
       "id": "session_memory_kafka_producer_rs"
     },
@@ -22063,7 +22009,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 19,
+      "community": 62,
       "norm_label": "historical pipeline phase 6",
       "id": "state_historical_pipeline"
     },
@@ -22076,7 +22022,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 19,
+      "community": 62,
       "norm_label": "002_historical.sql questdb migration",
       "id": "state_questdb_migration"
     },
@@ -22102,7 +22048,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 19,
+      "community": 62,
       "norm_label": "questdb docker service",
       "id": "docker_compose_questdb_service"
     },
@@ -22141,7 +22087,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 19,
+      "community": 62,
       "norm_label": "ingestion docker service",
       "id": "docker_compose_ingestion_service"
     },
@@ -22206,7 +22152,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 19,
+      "community": 62,
       "norm_label": "get_historical_view rust command",
       "id": "prompt_get_historical_view_rs"
     },
@@ -22219,7 +22165,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 22,
+      "community": 79,
       "norm_label": "usehistoricaldata.ts hook",
       "id": "prompt_use_historical_data_ts"
     },
@@ -22232,7 +22178,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 46,
+      "community": 22,
       "norm_label": "alphapredictivechart.tsx chart render",
       "id": "prompt_alpha_predictive_chart_tsx"
     },
@@ -22245,7 +22191,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 19,
+      "community": 62,
       "norm_label": "ingestion/parser.rs binary parser",
       "id": "sysarch_ingestion_parser"
     },
@@ -22258,7 +22204,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 19,
+      "community": 62,
       "norm_label": "ingestion/questdb_sink.rs",
       "id": "sysarch_ingestion_questdb_sink"
     },
@@ -22284,7 +22230,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 46,
+      "community": 62,
       "norm_label": "agents/predictive/math.rs ols engine",
       "id": "sysarch_predictive_math_rs"
     },
@@ -22336,7 +22282,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 48,
+      "community": 43,
       "norm_label": "quant/mod.rs consensusengine",
       "id": "sysarch_quant_mod_rs"
     },
@@ -22349,7 +22295,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 48,
+      "community": 43,
       "norm_label": "quant/patterns.rs pattern detection",
       "id": "sysarch_quant_patterns_rs"
     },
@@ -22362,7 +22308,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 48,
+      "community": 43,
       "norm_label": "quant/strategies.rs strategy signals",
       "id": "sysarch_quant_strategies_rs"
     },
@@ -22375,7 +22321,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 48,
+      "community": 43,
       "norm_label": "quant/radar.rs quant radar worker",
       "id": "sysarch_quant_radar_rs"
     },
@@ -22388,7 +22334,7 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 48,
+      "community": 43,
       "norm_label": "quantradar.tsx alert overlay",
       "id": "sysarch_quant_radar_tsx"
     }
@@ -22828,16 +22774,6 @@
       "target": "deep_quant_loop_tools_declare_trade"
     },
     {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L9",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "deep_quant_loop_tools_rationale_9",
-      "target": "deep_quant_loop_tools_calculate_ema"
-    },
-    {
       "relation": "calls",
       "context": "call",
       "confidence": "EXTRACTED",
@@ -22857,16 +22793,6 @@
       "confidence_score": 1.0,
       "source": "deep_quant_loop_tools_rationale_8",
       "target": "deep_quant_loop_tools_calculate_ema"
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L22",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "deep_quant_loop_tools_rationale_22",
-      "target": "deep_quant_loop_tools_get_candles"
     },
     {
       "relation": "rationale_for",
@@ -22912,31 +22838,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L69",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "deep_quant_loop_tools_rationale_69",
-      "target": "deep_quant_loop_tools_get_multi_tf_trend"
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "agents/deep-quant-loop/tools.py",
       "source_location": "L71",
       "weight": 1.0,
       "confidence_score": 1.0,
       "source": "deep_quant_loop_tools_rationale_71",
       "target": "deep_quant_loop_tools_get_multi_tf_trend"
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L91",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "deep_quant_loop_tools_rationale_91",
-      "target": "deep_quant_loop_tools_get_support_resistance"
     },
     {
       "relation": "rationale_for",
@@ -22952,31 +22858,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L144",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "deep_quant_loop_tools_rationale_144",
-      "target": "deep_quant_loop_tools_get_news_context"
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "agents/deep-quant-loop/tools.py",
       "source_location": "L175",
       "weight": 1.0,
       "confidence_score": 1.0,
       "source": "deep_quant_loop_tools_rationale_175",
       "target": "deep_quant_loop_tools_get_news_context"
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L207",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "deep_quant_loop_tools_rationale_207",
-      "target": "deep_quant_loop_tools_watch_price_condition"
     },
     {
       "relation": "rationale_for",
@@ -22997,16 +22883,6 @@
       "confidence_score": 1.0,
       "source": "deep_quant_loop_tools_rationale_62",
       "target": "deep_quant_loop_tools_watch_price_condition"
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "agents/deep-quant-loop/tools.py",
-      "source_location": "L260",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "deep_quant_loop_tools_rationale_260",
-      "target": "deep_quant_loop_tools_declare_trade"
     },
     {
       "relation": "rationale_for",
@@ -56350,9 +56226,9 @@
       "source_file": "frontend/src-tauri/src/quant/tool_server.rs",
       "source_location": "L372",
       "weight": 1.0,
-      "confidence_score": 1.0,
       "source": "frontend_src_tauri_src_quant_tool_server_rs",
-      "target": "quant_tool_server_multitfrequest"
+      "target": "quant_tool_server_multitfrequest",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -56360,9 +56236,9 @@
       "source_file": "frontend/src-tauri/src/quant/tool_server.rs",
       "source_location": "L377",
       "weight": 1.0,
-      "confidence_score": 1.0,
       "source": "frontend_src_tauri_src_quant_tool_server_rs",
-      "target": "quant_tool_server_multitfresponse"
+      "target": "quant_tool_server_multitfresponse",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -56370,9 +56246,9 @@
       "source_file": "frontend/src-tauri/src/quant/tool_server.rs",
       "source_location": "L387",
       "weight": 1.0,
-      "confidence_score": 1.0,
       "source": "frontend_src_tauri_src_quant_tool_server_rs",
-      "target": "quant_tool_server_get_multi_tf_trend_handler"
+      "target": "quant_tool_server_get_multi_tf_trend_handler",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",

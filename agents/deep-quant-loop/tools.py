@@ -1,6 +1,7 @@
 import httpx
 from langchain_core.tools import tool
 from langgraph.types import interrupt
+from langchain_core.runnables import RunnableConfig
 
 RUST_SERVER_URL = "http://localhost:8084"
 
@@ -17,15 +18,14 @@ def calculate_ema(prices: list, period: int) -> float:
     return ema
 
 @tool
-def get_candles(symbol: str, limit: int = 200) -> list:
+def get_candles(symbol: str, timeframe: str, limit: int) -> list:
     """
-    Fetches the latest N (up to 200) OHLCV historical candles from the QuestDB database. 
-    Use this to analyze granular price action, historical trends, and apply custom mathematical 
-    regression models or indicators on the primary execution timeframe.
+    Fetches raw OHLCV data. Valid timeframes: '1m', '5m', '15m', '1h', '4h', '1d'.
     
     Args:
         symbol (str): The trading symbol to fetch (e.g. "RELIANCE").
-        limit (int, optional): The number of recent candles to retrieve. Defaults to 200.
+        timeframe (str): The candle timeframe (e.g. "1m", "5m", "15m", "1h", "4h", "1d").
+        limit (int): The number of recent candles to retrieve.
         
     Returns:
         list: A list of candles, where each candle is a dictionary containing open, high, low, close, and volume.
@@ -33,7 +33,7 @@ def get_candles(symbol: str, limit: int = 200) -> list:
     try:
         response = httpx.post(
             f"{RUST_SERVER_URL}/tools/get_candles",
-            json={"symbol": symbol, "limit": limit},
+            json={"symbol": symbol, "timeframe": timeframe, "limit": limit},
             timeout=10.0
         )
         response.raise_for_status()
@@ -42,23 +42,21 @@ def get_candles(symbol: str, limit: int = 200) -> list:
         return [{"error": f"Failed to retrieve candles from Rust server: {str(e)}"}]
 
 @tool
-def get_consensus_report(symbol: str, limit: int = 200) -> dict:
+def get_consensus_report(symbol: str, timeframe: str) -> dict:
     """
-    Retrieves the compiled multi-signal technical consensus report from the Rust quantitative engine.
-    Analyzes live Volatility, Momentum, Volume Flow, and Active Candlestick Patterns on the execution 
-    timeframe. Use this to determine micro-structure signals, indicator crossovers, and strategies bias.
+    Calculates live technical consensus (Trend, Momentum, Volatility, VWEPR/OLS curves) for a specific timeframe.
     
     Args:
         symbol (str): The trading symbol (e.g., "RELIANCE").
-        limit (int, optional): Number of candles to use for indicators computation. Defaults to 200.
+        timeframe (str): The timeframe to analyze (e.g., "1m", "5m", "15m", "1h", "4h", "1d").
         
     Returns:
-        dict: The compiled consensus report with trend score, momentum state, and active patterns.
+        dict: The compiled consensus report with trend score, momentum state, active patterns, and curve parameters.
     """
     try:
         response = httpx.post(
             f"{RUST_SERVER_URL}/tools/get_consensus",
-            json={"symbol": symbol, "limit": limit},
+            json={"symbol": symbol, "timeframe": timeframe, "limit": 200},
             timeout=10.0
         )
         response.raise_for_status()
@@ -69,10 +67,7 @@ def get_consensus_report(symbol: str, limit: int = 200) -> dict:
 @tool
 def get_multi_tf_trend(symbol: str) -> dict:
     """
-    Establishes the multi-timeframe directional trend bias for the specified trading symbol.
-    Fetches historical candle data and calculates short, medium, and long-term trend alignment
-    across 1-Hour (1H), 4-Hour (4H), and 1-Day (1D) equivalent horizons.
-    Use this first to avoid trading against the macro trend.
+    Fetches the macro directional bias across 1H, 4H, and 1D simultaneously.
     
     Args:
         symbol (str): The trading symbol (e.g., "RELIANCE").
@@ -82,38 +77,12 @@ def get_multi_tf_trend(symbol: str) -> dict:
     """
     try:
         response = httpx.post(
-            f"{RUST_SERVER_URL}/tools/get_candles",
-            json={"symbol": symbol, "limit": 200},
+            f"{RUST_SERVER_URL}/tools/get_multi_tf_trend",
+            json={"symbol": symbol},
             timeout=10.0
         )
         response.raise_for_status()
-        candles = response.json()
-        closes = [c["close"] for c in candles if "close" in c]
-        if not closes:
-            return {"error": "No candle price data found for trend analysis."}
-        
-        # Calculate EMA-9, EMA-21, EMA-50, and EMA-100 equivalents
-        ema9 = calculate_ema(closes, 9)
-        ema21 = calculate_ema(closes, 21)
-        ema50 = calculate_ema(closes, 50)
-        ema100 = calculate_ema(closes, 100)
-        
-        trend_1h = "Bullish" if ema9 > ema21 else "Bearish"
-        trend_4h = "Bullish" if ema21 > ema50 else "Bearish"
-        trend_1d = "Bullish" if ema50 > ema100 else "Bearish"
-        
-        return {
-            "symbol": symbol,
-            "trend_1h": trend_1h,
-            "trend_4h": trend_4h,
-            "trend_1d": trend_1d,
-            "indicators": {
-                "ema_9": round(ema9, 2),
-                "ema_21": round(ema21, 2),
-                "ema_50": round(ema50, 2),
-                "ema_100": round(ema100, 2)
-            }
-        }
+        return response.json()
     except Exception as e:
         return {"error": f"Failed to compute multi-tf trend: {str(e)}"}
 
@@ -228,31 +197,32 @@ def get_news_context(symbol: str) -> dict:
 
 @tool
 def watch_price_condition(
-    thread_id: str,
+    symbol: str,
+    timeframe: str,
     price_level: float,
     direction: str,
     volume_multiplier: float,
-    symbol: str = None
+    config: RunnableConfig
 ) -> str:
     """
-    Registers a target condition watcher with the backend watcher service. Graph execution 
-    will automatically pause (interrupt) and enter a 'watching' state. Execution resumes 
-    automatically with meeting candle data when the condition triggers.
+    Suspends the agent to wait for a specific condition to trigger on the live ticker.
     
     Args:
-        thread_id (str): The active thread/session identifier for state persistence.
+        symbol (str): The symbol to watch (e.g. "RELIANCE").
+        timeframe (str): The timeframe to watch (e.g. "1m", "5m", "15m", "1h", "4h", "1d").
         price_level (float): The price level to watch.
         direction (str): Trigger direction, either "above" (or "up") or "below" (or "down").
         volume_multiplier (float): Volume threshold multiplier relative to the 20-period average.
-        symbol (str, optional): The symbol to watch. If omitted, the server will default to the current active symbol.
         
     Returns:
         str: Description of the triggered event once resumed.
     """
     try:
+        thread_id = config.get("configurable", {}).get("thread_id", "default_thread")
         payload = {
             "thread_id": thread_id,
             "symbol": symbol,
+            "timeframe": timeframe,
             "price_level": price_level,
             "direction": direction,
             "volume_multiplier": volume_multiplier
@@ -271,6 +241,7 @@ def watch_price_condition(
             "status": "watching_registered",
             "thread_id": thread_id,
             "symbol": symbol,
+            "timeframe": timeframe,
             "price_level": price_level,
             "direction": direction,
             "volume_multiplier": volume_multiplier
