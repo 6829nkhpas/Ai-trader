@@ -42,6 +42,10 @@ fn fixture_consensus() -> ConsensusReport {
         volume_flow_state: "ACCUMULATION".to_string(),
         active_patterns: vec!["Bullish Engulfing".to_string(), "Hammer".to_string()],
         active_strategies: vec!["Golden Cross".to_string(), "VWAP Bounce (Bullish)".to_string()],
+        vwepr_value: Some(2465.0),
+        vwepr_slope: Some(1.2),
+        ols_value: Some(2460.0),
+        ols_slope: Some(0.8),
     }
 }
 

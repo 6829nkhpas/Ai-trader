@@ -160,7 +160,7 @@
       "label": "format_system_prompt()",
       "file_type": "code",
       "source_file": "agents/deep-quant-loop/graph.py",
-      "source_location": "L91",
+      "source_location": "L89",
       "id": "deep_quant_loop_graph_format_system_prompt",
       "community": 181,
       "norm_label": "format_system_prompt()"
@@ -169,7 +169,7 @@
       "label": "call_model()",
       "file_type": "code",
       "source_file": "agents/deep-quant-loop/graph.py",
-      "source_location": "L140",
+      "source_location": "L138",
       "id": "deep_quant_loop_graph_call_model",
       "community": 181,
       "norm_label": "call_model()"
@@ -178,7 +178,7 @@
       "label": "should_continue()",
       "file_type": "code",
       "source_file": "agents/deep-quant-loop/graph.py",
-      "source_location": "L154",
+      "source_location": "L152",
       "id": "deep_quant_loop_graph_should_continue",
       "community": 181,
       "norm_label": "should_continue()"
@@ -14578,7 +14578,7 @@
       "label": "isolate_env()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/tests/api_tests.rs",
-      "source_location": "L55",
+      "source_location": "L51",
       "id": "tests_api_tests_isolate_env",
       "community": 61,
       "norm_label": "isolate_env()"
@@ -14587,7 +14587,7 @@
       "label": "test_request_contract_carries_consensus_strings()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/tests/api_tests.rs",
-      "source_location": "L85",
+      "source_location": "L81",
       "id": "tests_api_tests_test_request_contract_carries_consensus_strings",
       "community": 25,
       "norm_label": "test_request_contract_carries_consensus_strings()"
@@ -14596,7 +14596,7 @@
       "label": "test_deepseek_happy_path_parses_into_struct()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/tests/api_tests.rs",
-      "source_location": "L133",
+      "source_location": "L129",
       "id": "tests_api_tests_test_deepseek_happy_path_parses_into_struct",
       "community": 61,
       "norm_label": "test_deepseek_happy_path_parses_into_struct()"
@@ -14605,7 +14605,7 @@
       "label": "test_deepseek_handles_429_rate_limit()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/tests/api_tests.rs",
-      "source_location": "L211",
+      "source_location": "L207",
       "id": "tests_api_tests_test_deepseek_handles_429_rate_limit",
       "community": 61,
       "norm_label": "test_deepseek_handles_429_rate_limit()"
@@ -14614,7 +14614,7 @@
       "label": "test_deepseek_handles_malformed_json()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/tests/api_tests.rs",
-      "source_location": "L258",
+      "source_location": "L254",
       "id": "tests_api_tests_test_deepseek_handles_malformed_json",
       "community": 61,
       "norm_label": "test_deepseek_handles_malformed_json()"
@@ -14623,7 +14623,7 @@
       "label": "test_deepseek_handles_malformed_inner_content()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/tests/api_tests.rs",
-      "source_location": "L305",
+      "source_location": "L301",
       "id": "tests_api_tests_test_deepseek_handles_malformed_inner_content",
       "community": 61,
       "norm_label": "test_deepseek_handles_malformed_inner_content()"
@@ -14632,7 +14632,7 @@
       "label": "test_audit_logger_writes_to_disk_in_test_mode()",
       "file_type": "code",
       "source_file": "frontend/src-tauri/tests/api_tests.rs",
-      "source_location": "L360",
+      "source_location": "L356",
       "id": "tests_api_tests_test_audit_logger_writes_to_disk_in_test_mode",
       "community": 61,
       "norm_label": "test_audit_logger_writes_to_disk_in_test_mode()"
@@ -66458,5 +66458,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "4c285395e76f2e30cd576771f67d74757ee605e5"
+  "built_at_commit": "f3d2e1547be3a9ec254cc4d78fa27c5749435d78"
 }

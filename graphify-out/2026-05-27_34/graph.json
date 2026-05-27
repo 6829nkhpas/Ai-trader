@@ -160,7 +160,7 @@
       "label": "format_system_prompt()",
       "file_type": "code",
       "source_file": "agents/deep-quant-loop/graph.py",
-      "source_location": "L91",
+      "source_location": "L89",
       "id": "deep_quant_loop_graph_format_system_prompt",
       "community": 181,
       "norm_label": "format_system_prompt()"
@@ -169,7 +169,7 @@
       "label": "call_model()",
       "file_type": "code",
       "source_file": "agents/deep-quant-loop/graph.py",
-      "source_location": "L140",
+      "source_location": "L138",
       "id": "deep_quant_loop_graph_call_model",
       "community": 181,
       "norm_label": "call_model()"
@@ -178,7 +178,7 @@
       "label": "should_continue()",
       "file_type": "code",
       "source_file": "agents/deep-quant-loop/graph.py",
-      "source_location": "L154",
+      "source_location": "L152",
       "id": "deep_quant_loop_graph_should_continue",
       "community": 181,
       "norm_label": "should_continue()"
