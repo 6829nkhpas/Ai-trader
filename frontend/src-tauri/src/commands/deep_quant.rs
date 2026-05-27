@@ -477,6 +477,40 @@ pub async fn run_deep_quant_analysis(
     run_ai_analysis(app, symbol, "FIND".to_string(), None).await
 }
 
+async fn get_latest_tick_time(pool: &sqlx::PgPool, symbol: &str) -> Option<i64> {
+    use sqlx::Row;
+    if let Ok(row) = sqlx::query(
+        "SELECT CAST(timestamp AS LONG) AS ts_epoch \
+         FROM live_ticks \
+         WHERE symbol = $1 \
+         ORDER BY timestamp DESC \
+         LIMIT 1"
+    )
+    .bind(symbol)
+    .fetch_one(pool)
+    .await {
+        if let Ok(ts_micros) = row.try_get::<i64, _>("ts_epoch") {
+            return Some(ts_micros / 1_000_000); // micros -> seconds
+        }
+    }
+    
+    if let Ok(row) = sqlx::query(
+        "SELECT CAST(ts AS LONG) AS ts_epoch \
+         FROM historical_intraday \
+         WHERE symbol = $1 \
+         ORDER BY ts DESC \
+         LIMIT 1"
+    )
+    .bind(symbol)
+    .fetch_one(pool)
+    .await {
+        if let Ok(ts_micros) = row.try_get::<i64, _>("ts_epoch") {
+            return Some(ts_micros / 1_000_000); // micros -> seconds
+        }
+    }
+    None
+}
+
 async fn run_glass_box_loop(
     app: AppHandle,
     symbol: String,
@@ -698,9 +732,17 @@ async fn run_glass_box_loop(
         };
 
         format!(
-            "You are an elite, highly critical quantitative risk manager. \n\
-            The user is proposing a trade. Your job is to verify it against the current technical data. Look for RED FLAGS. \n\
-            Is they trading against the MACD trend? Is their Stop Loss too tight for current volatility? Is the Risk:Reward ratio terrible? \n\
+            "You are an elite, highly critical quantitative risk manager with strict consistency standards.\n\
+            The user is proposing a trade. Your job is to verify and analyze this setup against the current technical indicators. Look for RED FLAGS.\n\
+            \n\
+            CRITICAL DIRECTIONAL CONSISTENCY RULE:\n\
+            - If this trade aligns with our mathematical consensus (e.g., strong trend score, MACD alignment, EMA breakout, or custom curves) or matches a setup previously recommended in this session, you MUST actively DEFEND and VALIDATE the trade decision. Explain why it is a winning setup based on the data. Do not nitpick technically sound, high-probability setups or contradict your own quant consensus.\n\
+            - If the proposed trade is a high-probability trade, approve it clearly. If it is NOT, decisively choose HOLD/WAIT.\n\
+            - Do not fall into analysis dilemmas or hesitate. Act as a decisive quantitative validator.\n\
+            \n\
+            FORMING PATTERNS & WAIT DIRECTIVES:\n\
+            - If there is NO high-probability entry right now, do NOT approve the trade. Instead, analyze the indicators to see if a winning pattern is CURRENTLY FORMING (e.g. an impending MACD golden cross, volume accumulation, or Bollinger band squeezing breakout).\n\
+            - You must explicitly instruct the user to WAIT until a specific candle close or event (e.g., 'Wait until the next 10m candle closes to confirm the golden cross crossover before entering') and outline what confirmation you are looking for.\n\
             \n\
             MARKET STATE & MACRO CONTEXT:\n\
             - Symbol: {} | Timeframe: {}\n\
@@ -723,13 +765,13 @@ async fn run_glass_box_loop(
             \n\
             {}\n\
             DIRECTIVES:\n\
-            1. Output your analysis directly. Point out any red flags clearly.\n\
+            1. Output your analysis directly. Point out any red flags clearly, or defend and validate the entry if it aligns with our high-conviction criteria.\n\
             2. You may still use the wait_for_next_candle tool if you need to see the next close before giving your final verdict on their trade.\n\
             3. Return a JSON object EXACTLY matching this structure when finalizing your critique:\n\
             {{\n\
                 \"conviction_score\": <int 0-100 representing your risk confidence or trade score after critique>,\n\
-                \"setup_validation\": \"<2-sentence aggressive critique of entry, stop loss, take profit, and any RED FLAGS found>\",\n\
-                \"execution_plan\": \"<Your final recommendation: entry adjustment, recommended SL/TP placement, or position sizing warning>\"\n\
+                \"setup_validation\": \"<2-sentence aggressive critique/defense of entry, stop loss, take profit, and any RED FLAGS or confirmations>\",\n\
+                \"execution_plan\": \"<Your final recommendation: entry adjustment, recommended SL/TP placement, or explicit wait instructions if holding>\"\n\
             }}",
             symbol, timeframe, macro_context, latest_close, vwap_val, ofi_val, vol_multiplier, atr_val,
             bb_upper, bb_mid, bb_lower, rsi_val, macd_val, macd_signal, ema9_val, ema21_val,
@@ -847,28 +889,200 @@ async fn run_glass_box_loop(
                     info!("🤖 [Glass Box Agent] Calling tool: {} with args: {}", tool_name, args);
 
                     if tool_name == "wait_for_next_candle" {
-                        // 1. Emit to the UI that the AI is waiting
+                        let timeframe_arg = args.get("timeframe")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(&timeframe);
+
+                        let interval_sec: u64 = match timeframe_arg {
+                            "1m"  => 60,
+                            "3m"  => 180,
+                            "5m"  => 300,
+                            "10m" => 600,
+                            "15m" => 900,
+                            "30m" => 1_800,
+                            "60m" | "1h" => 3_600,
+                            "1d"  => 86_400,
+                            _     => 600,
+                        };
+                        
+                        let is_sandbox = std::env::var("DEEP_QUANT_SIMULATE_WAIT")
+                            .unwrap_or_else(|_| "false".to_string()) == "true";
+
+                        let (remaining_secs, next_boundary) = {
+                            use std::time::{SystemTime, UNIX_EPOCH};
+                            let now_secs = SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs();
+                            let current_boundary = (now_secs / interval_sec) * interval_sec;
+                            let next_bound = current_boundary + interval_sec;
+                            let mut rem = if next_bound > now_secs { next_bound - now_secs } else { 1 };
+                            
+                            // Only cap at 30 seconds if sandbox mode is EXPLICITLY enabled
+                            if is_sandbox {
+                                info!("[deep_quant] SANDBOX MODE: capping wait from {}s to 30s", rem);
+                                rem = rem.min(30);
+                            }
+                            info!(
+                                "[deep_quant] wait_for_next_candle: timeframe={} interval={}s now={} current_boundary={} next_boundary={} remaining={}s sandbox={}",
+                                timeframe_arg, interval_sec, now_secs, current_boundary, next_bound, rem, is_sandbox
+                            );
+                            (rem + 5, next_bound) // 5s ingestion buffer
+                        };
+
+                        let mut fresh_candles = candles.clone();
+                        let mut has_new_candle = false;
+
+                        let wait_display = if remaining_secs >= 60 {
+                            format!("{}m {}s", remaining_secs / 60, remaining_secs % 60)
+                        } else {
+                            format!("{}s", remaining_secs)
+                        };
+
                         let _ = app.emit("agent_message", llm::AgentMessagePayload { 
                             role: "assistant".to_string(), 
-                            content: "I need confirmation. Pausing analysis to wait for the next candle to close...".to_string() 
+                            content: format!(
+                                "⏳ Waiting {} for the next {} candle to close before continuing analysis...", 
+                                wait_display,
+                                timeframe_arg
+                            ) 
                         });
 
-                        // 2. FORCE THE BACKEND TO SLEEP (e.g., simulate a 10-second wait for testing)
-                        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+                        // 2. Perform the calculated boundary sleep
+                        tokio::time::sleep(tokio::time::Duration::from_secs(remaining_secs)).await;
 
-                        // 3. Fetch fresh data from the DB here
-                        let fresh_data = "Future Data: New candle closed. Volume increased."; // Replace with actual DB call
+                        // 3. Dynamic polling loop to synchronize database ingestion lag
+                        for poll_idx in 1..=6 {
+                            let _ = app.emit("agent_status", format!("⏳ Synchronizing database ticks (attempt {}/6)...", poll_idx));
+                            
+                            if let Some(db_latest_sec) = get_latest_tick_time(pool.inner(), &symbol).await {
+                                // If database has tick time >= next_boundary (or sandbox mode caps it),
+                                // it means the next candle tick has successfully been ingested!
+                                let is_new_tick = db_latest_sec >= next_boundary as i64;
+                                
+                                // In sandbox wait mode, let it pass on attempt >= 2 to allow testing
+                                let is_sandbox_timeout = is_sandbox && poll_idx >= 2;
+                                
+                                if is_new_tick || is_sandbox_timeout {
+                                    has_new_candle = true;
+                                    if is_sandbox_timeout && !is_new_tick {
+                                        info!("[deep_quant] SANDBOX: early exit on poll {} (db_latest={} next_boundary={}).", poll_idx, db_latest_sec, next_boundary);
+                                    } else {
+                                        info!("[deep_quant] Ingestion boundary sync succeeded on poll {} (db_latest={} next_boundary={}).", poll_idx, db_latest_sec, next_boundary);
+                                    }
+                                    break;
+                                } else {
+                                    info!("[deep_quant] Poll {}/6: db_latest={} < next_boundary={}, waiting 5s...", poll_idx, db_latest_sec, next_boundary);
+                                }
+                            } else if is_sandbox && poll_idx >= 2 {
+                                // Sandbox fallback if DB is empty
+                                info!("[deep_quant] SANDBOX: DB empty fallback exit on poll {}.", poll_idx);
+                                has_new_candle = true;
+                                break;
+                            }
+                            
+                            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                        }
+
+                        // Always reload full candles at the end of the sync loop to recalculate
+                        if let Ok(c) = load_candles_from_db(pool.inner(), &symbol, 200).await {
+                            fresh_candles = c;
+                        }
+
+                        // Calculate updated indicators and consensus
+                        let fresh_indicators = IndicatorState::from_candles_basic(&fresh_candles);
+                        let fresh_consensus = ConsensusEngine::compile_consensus(&symbol, &fresh_candles, &fresh_indicators);
+
+                        // Broadcast new consensus to React UI immediately so charts refresh
+                        let _ = app.emit("quant-consensus", &fresh_consensus);
+
+                        let fresh_close = fresh_candles.last().map(|c| c.close).unwrap_or(0.0);
+                        let rsi_val = if fresh_indicators.rsi_14.is_finite() { fresh_indicators.rsi_14 } else { 50.0 };
+                        let macd_val = if fresh_indicators.macd_line.is_finite() { fresh_indicators.macd_line } else { 0.0 };
+                        let macd_signal = if fresh_indicators.macd_signal.is_finite() { fresh_indicators.macd_signal } else { 0.0 };
+                        let ema9_val = if fresh_indicators.ema_9.is_finite() { fresh_indicators.ema_9 } else { fresh_close };
+                        let ema21_val = if fresh_indicators.ema_21.is_finite() { fresh_indicators.ema_21 } else { fresh_close };
+                        let vwap_val = if fresh_indicators.vwap.is_finite() { fresh_indicators.vwap } else { fresh_close };
+                        let atr_val = if fresh_indicators.atr_14.is_finite() { fresh_indicators.atr_14 } else { 0.0 };
+                        let bb_upper = if fresh_indicators.bb_upper.is_finite() { fresh_indicators.bb_upper } else { fresh_close };
+                        let bb_mid = if fresh_indicators.bb_mid.is_finite() { fresh_indicators.bb_mid } else { fresh_close };
+                        let bb_lower = if fresh_indicators.bb_lower.is_finite() { fresh_indicators.bb_lower } else { fresh_close };
+
+                        let latest_vol = fresh_candles.iter().rev()
+                            .find(|c| c.volume > 1e-6)
+                            .map(|c| c.volume)
+                            .unwrap_or(0.0);
+                        let vol_multiplier = if fresh_indicators.average_volume > 1e-6 {
+                            latest_vol / fresh_indicators.average_volume
+                        } else {
+                            1.0
+                        };
+
+                        let detected_patterns: String = {
+                            use crate::quant::patterns::PatternEngine;
+                            use std::collections::HashSet;
+
+                            const PATTERN_SCAN_WINDOW: usize = 10;
+                            let scan_start = if fresh_candles.len() > PATTERN_SCAN_WINDOW {
+                                fresh_candles.len() - PATTERN_SCAN_WINDOW
+                            } else {
+                                0
+                            };
+
+                            let mut seen: HashSet<String> = HashSet::new();
+                            let mut found: Vec<String> = Vec::new();
+
+                            for end in (scan_start + 1)..=fresh_candles.len() {
+                                let window = &fresh_candles[scan_start..end];
+                                for p in PatternEngine::analyze(window) {
+                                    if seen.insert(p.clone()) {
+                                        found.push(p);
+                                    }
+                                }
+                            }
+
+                            for p in &fresh_consensus.active_patterns {
+                                if seen.insert(p.clone()) {
+                                    found.push(p.clone());
+                                }
+                            }
+
+                            if found.is_empty() { "None".to_string() } else { found.join(", ") }
+                        };
+
+                        let fresh_data = format!(
+                            "LIVE MARKET UPDATE - New Candle Closed / Checked.\n\
+                             - Timeframe Checked: {}\n\
+                             - Status: {}\n\
+                             - New Close: {:.2} | VWAP: {:.2}\n\
+                             - Volume Spike: {:.2}x above 20-period average\n\
+                             - ATR (14): {:.2}\n\
+                             - Bollinger Bands: [U: {:.2}, M: {:.2}, L: {:.2}]\n\
+                             - RSI (14): {:.2} | MACD Line: {:.4} / Signal: {:.4}\n\
+                             - EMA-9: {:.2} | EMA-21: {:.2}\n\
+                             - Consensus Trend Score: {} (-100 to +100)\n\
+                             - Momentum State: {}\n\
+                             - Volatility State: {}\n\
+                             - Volume Flow: {}\n\
+                             - Active Candlestick Patterns: {}\n",
+                            timeframe_arg,
+                            if has_new_candle { "New candle closed successfully." } else { "Polled up to timeout. Using latest available ticks." },
+                            fresh_close, vwap_val, vol_multiplier, atr_val,
+                            bb_upper, bb_mid, bb_lower, rsi_val, macd_val, macd_signal, ema9_val, ema21_val,
+                            fresh_consensus.trend_score, fresh_consensus.momentum_state, fresh_consensus.volatility_state, fresh_consensus.volume_flow_state,
+                            detected_patterns
+                        );
 
                         // 4. Emit the system response to the UI
                         let _ = app.emit("agent_message", llm::AgentMessagePayload { 
                             role: "system".to_string(), 
-                            content: fresh_data.to_string() 
+                            content: format!("Real-time update processed. Next Close: ₹{:.2}", fresh_close) 
                         });
 
                         // 5. Append to messages and CONTINUE the loop back to the LLM
                         messages.push(llm::ChatMessage {
                             role: "tool".to_string(),
-                            content: fresh_data.to_string(),
+                            content: fresh_data,
                             tool_calls: None,
                             tool_call_id: Some(tc.id.clone()),
                         });

@@ -168,12 +168,14 @@ pub fn build_system_prompt(
         1. MANDATORY TOOL USAGE: Unless you see an incredibly obvious, 99%-probability 'Grab Opportunity', you are FORBIDDEN from generating the final JSON execution plan on your first turn. \n\
         2. YOU MUST call the `wait_for_next_candle` tool first to observe the market flow and confirm the momentum.\n\
         3. If you output JSON without using a tool to confirm the setup, you will be penalized.\n\
+        4. HIGH-PROBABILITY ONLY (NO DILEMMA): You are strictly forbidden from recommending low-conviction entry trades to avoid analysis dilemmas. If the technical consensus is weak, choppy, or flat, you must DECISIVELY recommend a HOLD / WAIT plan. \n\
+        5. IMPENDING PATTERN WAIT DIRECTIVE: If you choose HOLD/WAIT, you must inspect the technical indicators to see if a high-probability pattern is CURRENTLY FORMING (e.g., a rounding bottom from VWEPR acceleration, an impending MACD crossover, or volume contraction). You must explicitly instruct the user to WAIT until a specific candle boundary closes (e.g., 'Wait until the next 10m candle closes to confirm MACD crossover validation') and state exactly what confirmation is needed before re-evaluating.\n\
         \n\
         Return a JSON object EXACTLY matching this structure when finalizing a trade:\n\
         {{\n\
             \"conviction_score\": <int 0-100>,\n\
             \"setup_validation\": \"<2-sentence aggressive synthesis of historical similarities, current signals, and order flow>\",\n\
-            \"execution_plan\": \"<Actionable Buy/Sell/Hold plan with precise entry/SL/TP levels based on the data>\"\n\
+            \"execution_plan\": \"<Actionable Buy/Sell/Hold plan with precise entry/SL/TP levels, or explicit wait instructions if holding>\"\n\
         }}",
         symbol, timeframe, macro_context, latest_close, vwap_val, ofi_val, vol_multiplier, atr_val, bb_upper, bb_mid, bb_lower, rsi_val, macd_val, macd_signal, ema9_val, ema21_val, acceleration_coeff, detected_patterns
     );
