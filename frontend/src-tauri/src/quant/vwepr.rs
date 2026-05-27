@@ -48,18 +48,16 @@ pub struct OhlcCandle {
 // ── Constants ───────────────────────────────────────────────────────────────
 
 /// Maximum number of trailing candles to consider for the regression window.
-const MAX_WINDOW: usize = 60;
+/// Tuned down to 20 periods to actively track recent volume spikes.
+const MAX_WINDOW: usize = 20;
 
 /// Exponential decay factor. Closer to 1.0 = slower decay (more uniform weighting).
-/// 0.96 gives meaningful decay over 60 bars: 0.96^59 ≈ 0.087.
-const ALPHA: f64 = 0.96;
-
-/// Guard threshold for determinant near-zero checks (Cramer's Rule).
-const DET_EPSILON: f64 = 1e-30;
+/// 0.90 gives meaningful decay over 20 bars: 0.90^19 ≈ 0.135.
+const ALPHA: f64 = 0.90;
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
-/// Calculate the VWEPR curve: fit a weighted quadratic polynomial to recent
+/// Calculate the VWEPR curve: fit a weighted cubic polynomial to recent
 /// candles and project `projection_length` bars into the future.
 ///
 /// # Arguments
@@ -87,9 +85,9 @@ pub fn calculate_vwepr_curve(
 /// signal into downstream AI analysis (e.g., DeepSeek conviction scoring).
 ///
 /// # Returns
-/// `(projected_points, acceleration_coefficient)` — `a` is the quadratic
-/// coefficient from `y = ax² + bx + c`. Positive `a` = accelerating upward,
-/// negative `a` = accelerating downward, near-zero = linear trend.
+/// `(projected_points, acceleration_coefficient)` — `a` is the instantaneous
+/// acceleration coefficient from the polynomial fit at the anchor point.
+/// Positive = accelerating upward, negative = accelerating downward, near-zero = linear trend.
 ///
 /// Returns `(points, 0.0)` when the matrix is singular and no fit is possible.
 pub fn calculate_vwepr_with_accel(
@@ -100,9 +98,9 @@ pub fn calculate_vwepr_with_accel(
     vwepr_core(candles, projection_length, interval_sec)
 }
 
-/// Internal core: fits the weighted quadratic polynomial and projects forward.
+/// Internal core: fits the weighted cubic polynomial and projects forward.
 ///
-/// Returns `(projected_points, acceleration_coefficient_a)`.
+/// Returns `(projected_points, acceleration_coefficient)`.
 fn vwepr_core(
     candles: &[OhlcCandle],
     projection_length: usize,
@@ -118,22 +116,28 @@ fn vwepr_core(
 
     // ── 2. Accumulate weighted sums for the normal equations ────────────────
     //
-    // We solve:
-    //   | s0  s1  s2 |   | c |   | sy   |
-    //   | s1  s2  s3 | × | b | = | sxy  |
-    //   | s2  s3  s4 |   | a |   | sx2y |
+    // We fit a cubic polynomial: y = a_3·x³ + a_2·x² + a_1·x + a_0
     //
-    // where s_k = Σ w_i · x_i^k  and  sy/sxy/sx2y = Σ w_i · y_i · x_i^k.
+    // We solve:
+    //   | s0  s1  s2  s3 |   | a_0 |   | sy0 |
+    //   | s1  s2  s3  s4 | × | a_1 | = | sy1 |
+    //   | s2  s3  s4  s5 |   | a_2 |   | sy2 |
+    //   | s3  s4  s5  s6 |   | a_3 |   | sy3 |
+    //
+    // where s_k = Σ w_i · x_i^k  and  sy_k = Σ w_i · y_i · x_i^k.
 
     let mut s0: f64 = 0.0; // Σ w
     let mut s1: f64 = 0.0; // Σ w·x
     let mut s2: f64 = 0.0; // Σ w·x²
     let mut s3: f64 = 0.0; // Σ w·x³
     let mut s4: f64 = 0.0; // Σ w·x⁴
+    let mut s5: f64 = 0.0; // Σ w·x⁵
+    let mut s6: f64 = 0.0; // Σ w·x⁶
 
-    let mut sy: f64 = 0.0;   // Σ w·y
-    let mut sxy: f64 = 0.0;  // Σ w·x·y
-    let mut sx2y: f64 = 0.0; // Σ w·x²·y
+    let mut sy0: f64 = 0.0; // Σ w·y
+    let mut sy1: f64 = 0.0; // Σ w·x·y
+    let mut sy2: f64 = 0.0; // Σ w·x²·y
+    let mut sy3: f64 = 0.0; // Σ w·x³·y
 
     for (i, candle) in window.iter().enumerate() {
         // Weight = volume × exponential decay (recent bars weighted more).
@@ -148,66 +152,49 @@ fn vwepr_core(
         let x2 = x * x;
         let x3 = x2 * x;
         let x4 = x3 * x;
+        let x5 = x4 * x;
+        let x6 = x5 * x;
 
         s0 += w;
         s1 += w * x;
         s2 += w * x2;
         s3 += w * x3;
         s4 += w * x4;
+        s5 += w * x5;
+        s6 += w * x6;
 
-        sy += w * y;
-        sxy += w * x * y;
-        sx2y += w * x2 * y;
+        sy0 += w * y;
+        sy1 += w * x * y;
+        sy2 += w * x2 * y;
+        sy3 += w * x3 * y;
     }
 
-    // ── 3. Solve via Cramer's Rule ──────────────────────────────────────────
-    //
-    // Matrix form  M · [c, b, a]ᵀ = [sy, sxy, sx2y]ᵀ
-    //
-    //     | s0  s1  s2 |
-    // M = | s1  s2  s3 |
-    //     | s2  s3  s4 |
+    // ── 3. Solve via 4x4 Gaussian Elimination with Partial Pivoting ─────────
+    let mat = [
+        [s0, s1, s2, s3],
+        [s1, s2, s3, s4],
+        [s2, s3, s4, s5],
+        [s3, s4, s5, s6],
+    ];
+    let rhs = [sy0, sy1, sy2, sy3];
 
-    let det_m = det3(
-        s0, s1, s2,
-        s1, s2, s3,
-        s2, s3, s4,
-    );
+    let coeffs = match solve_system_4x4(mat, rhs) {
+        Some(x) => x,
+        None => {
+            // Singular or near-singular matrix — cannot solve. Return only the
+            // anchor point so the UI always has at least the last known price.
+            let last = &window[window.len() - 1];
+            return (vec![ProjectedPoint {
+                time: last.time,
+                value: last.close,
+            }], 0.0);
+        }
+    };
 
-    if det_m.abs() < DET_EPSILON {
-        // Singular or near-singular matrix — cannot solve. Return only the
-        // anchor point so the UI always has at least the last known price.
-        let last = &window[window.len() - 1];
-        return (vec![ProjectedPoint {
-            time: last.time,
-            value: last.close,
-        }], 0.0);
-    }
-
-    // det(M_c): replace column 0 with RHS
-    let det_c = det3(
-        sy,  s1, s2,
-        sxy, s2, s3,
-        sx2y, s3, s4,
-    );
-
-    // det(M_b): replace column 1 with RHS
-    let det_b = det3(
-        s0, sy,  s2,
-        s1, sxy, s3,
-        s2, sx2y, s4,
-    );
-
-    // det(M_a): replace column 2 with RHS
-    let det_a = det3(
-        s0, s1, sy,
-        s1, s2, sxy,
-        s2, s3, sx2y,
-    );
-
-    let c = det_c / det_m; // intercept
-    let b = det_b / det_m; // linear coefficient
-    let a = det_a / det_m; // quadratic coefficient
+    let a_0 = coeffs[0]; // intercept
+    let a_1 = coeffs[1]; // linear coefficient
+    let a_2 = coeffs[2]; // quadratic coefficient
+    let a_3 = coeffs[3]; // cubic coefficient
 
     // ── 4. Anchored Projection ──────────────────────────────────────────────
     //
@@ -222,7 +209,7 @@ fn vwepr_core(
     let n_index = (window_size - 1) as f64; // x-coordinate of the last data point
 
     // Value of the fitted polynomial at the anchor point
-    let fitted_at_anchor = a * n_index * n_index + b * n_index + c;
+    let fitted_at_anchor = a_3 * n_index * n_index * n_index + a_2 * n_index * n_index + a_1 * n_index + a_0;
 
     let mut result = Vec::with_capacity(projection_length + 1);
 
@@ -238,7 +225,7 @@ fn vwepr_core(
         let future_time = last_time + (i as i64 * interval_sec);
 
         // Polynomial value at future_x
-        let fitted_at_future = a * future_x * future_x + b * future_x + c;
+        let fitted_at_future = a_3 * future_x * future_x * future_x + a_2 * future_x * future_x + a_1 * future_x + a_0;
 
         // Delta = change in fitted value from the anchor to this future point
         let delta = fitted_at_future - fitted_at_anchor;
@@ -251,27 +238,61 @@ fn vwepr_core(
         });
     }
 
-    (result, a)
+    // Instantaneous acceleration is the second derivative at the anchor point n_index.
+    // y = a_3 · x³ + a_2 · x² + a_1 · x + a_0
+    // y' = 3 · a_3 · x² + 2 · a_2 · x + a_1
+    // y'' = 6 · a_3 · x + 2 · a_2
+    // Half the second derivative is 3.0 · a_3 · n_index + a_2, which is perfectly analogous
+    // to the quadratic coefficient `a` of a parabola (where the second derivative is constant 2a, so half is `a`).
+    let accel = 3.0 * a_3 * n_index + a_2;
+
+    (result, accel)
 }
 
-// ── Cramer's Rule: 3×3 Determinant ─────────────────────────────────────────
+// ── Linear Solver: 4×4 Gaussian Elimination with Partial Pivoting ───────────
 
-/// Compute the determinant of a 3×3 matrix using the rule of Sarrus.
+/// Solves a 4x4 system of linear equations using Gaussian elimination with partial pivoting.
 ///
-/// ```text
-/// | a  b  c |
-/// | d  e  f |  =  a(ei − fh) − b(di − fg) + c(dh − eg)
-/// | g  h  i |
-/// ```
-#[inline]
-fn det3(
-    a: f64, b: f64, c: f64,
-    d: f64, e: f64, f: f64,
-    g: f64, h: f64, i: f64,
-) -> f64 {
-    a * (e * i - f * h)
-  - b * (d * i - f * g)
-  + c * (d * h - e * g)
+/// Returns `Some([a_0, a_1, a_2, a_3])` on success, or `None` if the matrix is singular.
+fn solve_system_4x4(mut a: [[f64; 4]; 4], mut b: [f64; 4]) -> Option<[f64; 4]> {
+    const N: usize = 4;
+    for i in 0..N {
+        // Find pivot
+        let mut max_row = i;
+        for r in (i + 1)..N {
+            if a[r][i].abs() > a[max_row][i].abs() {
+                max_row = r;
+            }
+        }
+        if a[max_row][i].abs() < 1e-30 {
+            return None; // Singular matrix
+        }
+        // Swap rows
+        if max_row != i {
+            a.swap(i, max_row);
+            b.swap(i, max_row);
+        }
+
+        // Eliminate column elements below pivot
+        for r in (i + 1)..N {
+            let factor = a[r][i] / a[i][i];
+            b[r] -= factor * b[i];
+            for c in i..N {
+                a[r][c] -= factor * a[i][c];
+            }
+        }
+    }
+
+    // Back substitution
+    let mut x = [0.0; N];
+    for i in (0..N).rev() {
+        let mut sum = 0.0;
+        for j in (i + 1)..N {
+            sum += a[i][j] * x[j];
+        }
+        x[i] = (b[i] - sum) / a[i][i];
+    }
+    Some(x)
 }
 
 // ── Unit Tests ──────────────────────────────────────────────────────────────
@@ -421,27 +442,36 @@ mod tests {
     }
 
     #[test]
-    fn cramer_det3_identity() {
-        // Identity matrix determinant = 1
-        let d = det3(
-            1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 1.0,
-        );
-        assert!((d - 1.0).abs() < 1e-15);
+    fn solver_4x4_identity() {
+        let mat = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        let rhs = [5.0, 6.0, 7.0, 8.0];
+        let res = solve_system_4x4(mat, rhs).unwrap();
+        assert_eq!(res, [5.0, 6.0, 7.0, 8.0]);
     }
 
     #[test]
-    fn cramer_det3_known_value() {
-        // | 1  2  3 |
-        // | 4  5  6 | = 1(45-48) - 2(36-42) + 3(32-35) = -3 + 12 - 9 = 0
-        // | 7  8  9 |
-        let d = det3(
-            1.0, 2.0, 3.0,
-            4.0, 5.0, 6.0,
-            7.0, 8.0, 9.0,
-        );
-        assert!(d.abs() < 1e-10, "Singular matrix should have det ≈ 0");
+    fn solver_4x4_known_system() {
+        // 2x_0 + x_1 - x_2 + 2x_3 = 5
+        // 4x_0 + 5x_1 - 3x_2 + 6x_3 = 11
+        // -2x_0 + 5x_1 - 2x_2 + 6x_3 = 3
+        // 4x_0 + 11x_1 - 4x_2 + 8x_3 = 9
+        let mat = [
+            [2.0, 1.0, -1.0, 2.0],
+            [4.0, 5.0, -3.0, 6.0],
+            [-2.0, 5.0, -2.0, 6.0],
+            [4.0, 11.0, -4.0, 8.0],
+        ];
+        let rhs = [5.0, 11.0, 3.0, 9.0];
+        let res = solve_system_4x4(mat, rhs).unwrap();
+        assert!((res[0] - 1.0).abs() < 1e-10);
+        assert!((res[1] - -1.0).abs() < 1e-10);
+        assert!((res[2] - -2.0).abs() < 1e-10);
+        assert!((res[3] - 1.0).abs() < 1e-10);
     }
 
     #[test]

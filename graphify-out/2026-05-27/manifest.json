@@ -955,8 +955,8 @@
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\docker-compose.yml": {
-    "mtime": 1779621973.0684817,
-    "ast_hash": "3fe2e1143b69dcab0204cdfaf432a67a",
+    "mtime": 1778843411.347083,
+    "ast_hash": "cfc47483f4785216f7fa10ee505e0de1",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\MASTER_CONTEXT.md": {
@@ -965,13 +965,13 @@
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\PRODUCTION_SETUP.md": {
-    "mtime": 1779621967.657582,
-    "ast_hash": "b1c17c6207e36d0a6f81d9173afa2d74",
+    "mtime": 1778219482.643475,
+    "ast_hash": "d688525eae355ad8ec5a478826271c00",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\prompt.md": {
-    "mtime": 1779621954.535093,
-    "ast_hash": "03dd7ba6e4ae37e2856107eff24747e6",
+    "mtime": 1779196633.6944728,
+    "ast_hash": "b3df0d8156b909b71da017439b7a22d4",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\README.md": {
@@ -990,13 +990,13 @@
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\system_architecture_and_data_flows.md": {
-    "mtime": 1779621949.8168545,
-    "ast_hash": "e7bea71de4c5825543735577152104d7",
+    "mtime": 1779270982.1257737,
+    "ast_hash": "a50693abb68d7fa52d3a79170478be73",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\technical_indicators_analysis.md": {
-    "mtime": 1779621944.9503345,
-    "ast_hash": "a8187232efdcd64fbb293fe27bd8ac93",
+    "mtime": 1779270994.8038702,
+    "ast_hash": "2e05383b427ac0a288ab700edf05cc42",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\AGENTS.md": {
@@ -1045,73 +1045,73 @@
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\128x128.png": {
-    "mtime": 1779621150.2508698,
-    "ast_hash": "2f81310b8e7b740df11a3dd073117c27",
+    "mtime": 1778012051.5306683,
+    "ast_hash": "3a0071e4ad670fad0329d3a5e83d0bf9",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\128x128@2x.png": {
-    "mtime": 1779621150.3164737,
-    "ast_hash": "ad5bc3aa0c15289586f257cea5810c15",
+    "mtime": 1778012051.5306683,
+    "ast_hash": "eab2be12c5f8aeaf104a4695dd9171df",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\32x32.png": {
-    "mtime": 1779621150.1289742,
-    "ast_hash": "ccd89d73ee9932661340f978ad5f4f48",
+    "mtime": 1778012051.5311854,
+    "ast_hash": "faf8ee6541b945b98db35239b8a75715",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\icon.png": {
-    "mtime": 1779621150.4074707,
-    "ast_hash": "44ec061d0860df0c204fde5f0a2782a5",
+    "mtime": 1778012051.5350757,
+    "ast_hash": "9fdc4367276aafdd2c05ac214e9553c7",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\Square107x107Logo.png": {
-    "mtime": 1779621148.712294,
-    "ast_hash": "afa893e53e05fdb00c93da79bc59dcfd",
+    "mtime": 1778012051.5311854,
+    "ast_hash": "d4bc38359e2c01daa08354c55fa4df7c",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\Square142x142Logo.png": {
-    "mtime": 1779621148.7694857,
-    "ast_hash": "66e5c9fb66ec08a9f530d2248623ce90",
+    "mtime": 1778012051.5319417,
+    "ast_hash": "1e9c0358705085439e5c989fcbd6e988",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\Square150x150Logo.png": {
-    "mtime": 1779621148.827337,
-    "ast_hash": "b072cc3a6973b4157b0fef27c4a69bdd",
+    "mtime": 1778012051.532483,
+    "ast_hash": "084d20bce8096367fc694dfdf72c8ac5",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\Square284x284Logo.png": {
-    "mtime": 1779621148.8929443,
-    "ast_hash": "8a9c04b6784ce31d5da8e217d83d8b22",
+    "mtime": 1778012051.532483,
+    "ast_hash": "6a936fe84398f24b7a63a36bddfd58d7",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\Square30x30Logo.png": {
-    "mtime": 1779621148.4877362,
-    "ast_hash": "559fc513a778380ff579889c83072464",
+    "mtime": 1778012051.5329976,
+    "ast_hash": "011e9cb456309157a9fc78c978248e00",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\Square310x310Logo.png": {
-    "mtime": 1779621148.962297,
-    "ast_hash": "c619ec7f0972822f9dfed36b231df617",
+    "mtime": 1778012051.5329976,
+    "ast_hash": "832231852e8e683e6aa2b690d194bdd2",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\Square44x44Logo.png": {
-    "mtime": 1779621148.5462132,
-    "ast_hash": "e86cb7eafcadf2f643b0573e3e2a5ce9",
+    "mtime": 1778012051.533524,
+    "ast_hash": "a06297a35014e770cc33756fafa3b3a8",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\Square71x71Logo.png": {
-    "mtime": 1779621148.5995011,
-    "ast_hash": "32e5f7bf5c34393219a4adc50e52fb67",
+    "mtime": 1778012051.533524,
+    "ast_hash": "a3c80a0af688359094aa685881570eed",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\Square89x89Logo.png": {
-    "mtime": 1779621148.6556811,
-    "ast_hash": "d3fae26913b0b6358527499fa4f87ff0",
+    "mtime": 1778012051.5340385,
+    "ast_hash": "9f91ee8e1c1232ebde61c64d7923038f",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\StoreLogo.png": {
-    "mtime": 1779621148.4288642,
-    "ast_hash": "12e51752268e5fcee2f7f81172fd919e",
+    "mtime": 1778012051.5340385,
+    "ast_hash": "387b412d411bbd532dd3302d3948bf0e",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\ignition.sh": {
@@ -1190,9 +1190,9 @@
     "semantic_hash": "2bb327331dbfbeabd34c0bae7717d445"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\quant\\vwepr.rs": {
-    "mtime": 1779857309.07638,
-    "ast_hash": "0f346429f91f444680cb22f58f4c981c",
-    "semantic_hash": ""
+    "mtime": 1779622011.6665087,
+    "ast_hash": "b9a5dcfa542f667eabc1d7fe3756bfb1",
+    "semantic_hash": "b9a5dcfa542f667eabc1d7fe3756bfb1"
   },
   "D:\\projects\\Ai-trader\\frontend\\test-results\\.last-run.json": {
     "mtime": 1779128720.4520142,
@@ -1313,180 +1313,5 @@
     "mtime": 1779694462.1651168,
     "ast_hash": "9066310562a9047b16c82c61ffbc898e",
     "semantic_hash": "9066310562a9047b16c82c61ffbc898e"
-  },
-  "D:\\projects\\Ai-trader\\frontend\\public\\strat.svg": {
-    "mtime": 1779616156.315701,
-    "ast_hash": "50438655f9e2071d8a7616d9afccb2fa",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\64x64.png": {
-    "mtime": 1779621150.195434,
-    "ast_hash": "5636756269da588cc2fa1a035fe07c7b",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\android\\mipmap-hdpi\\ic_launcher.png": {
-    "mtime": 1779621152.1497934,
-    "ast_hash": "c405d64d7e4b3e782f5303c426267212",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\android\\mipmap-hdpi\\ic_launcher_foreground.png": {
-    "mtime": 1779621151.7571018,
-    "ast_hash": "6d7b19a745e3282507e828cd8eee1ce4",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\android\\mipmap-hdpi\\ic_launcher_round.png": {
-    "mtime": 1779621152.088927,
-    "ast_hash": "f590d97b896edff3825d95e1a30bf689",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\android\\mipmap-mdpi\\ic_launcher.png": {
-    "mtime": 1779621152.279024,
-    "ast_hash": "cc023fe25a90112348fc509d38706d06",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\android\\mipmap-mdpi\\ic_launcher_foreground.png": {
-    "mtime": 1779621151.8169065,
-    "ast_hash": "6a7c5f42a6e2e4b6e46000455b65c355",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\android\\mipmap-mdpi\\ic_launcher_round.png": {
-    "mtime": 1779621152.2192235,
-    "ast_hash": "932cb833b89c9add49c076d7f4bbb55e",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\android\\mipmap-xhdpi\\ic_launcher.png": {
-    "mtime": 1779621152.4006433,
-    "ast_hash": "65269d492ddd13397baeeca672c05480",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\android\\mipmap-xhdpi\\ic_launcher_foreground.png": {
-    "mtime": 1779621151.879394,
-    "ast_hash": "b80363ef8fdbfc4c041cef0bb762daa5",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\android\\mipmap-xhdpi\\ic_launcher_round.png": {
-    "mtime": 1779621152.3406756,
-    "ast_hash": "e590ff06edd2d692b18ac8fe569e34ca",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\android\\mipmap-xxhdpi\\ic_launcher.png": {
-    "mtime": 1779621152.5462039,
-    "ast_hash": "b7f5be8b707f7c7ba3a86a4afff96d20",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\android\\mipmap-xxhdpi\\ic_launcher_foreground.png": {
-    "mtime": 1779621151.951431,
-    "ast_hash": "f10789da880b1fb3b4081c346dc5210b",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\android\\mipmap-xxhdpi\\ic_launcher_round.png": {
-    "mtime": 1779621152.4782045,
-    "ast_hash": "ae892b0e8b2dd3c8b9eb4367f74058ab",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\android\\mipmap-xxxhdpi\\ic_launcher.png": {
-    "mtime": 1779621152.688393,
-    "ast_hash": "d34dd40aba364350b6e5436d4eeda6cb",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\android\\mipmap-xxxhdpi\\ic_launcher_foreground.png": {
-    "mtime": 1779621152.038634,
-    "ast_hash": "1243f542710d2a6a951a662307eddda1",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\android\\mipmap-xxxhdpi\\ic_launcher_round.png": {
-    "mtime": 1779621152.6156323,
-    "ast_hash": "7691642fb8a9615563898a4b0c9e50ac",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\ios\\AppIcon-20x20@1x.png": {
-    "mtime": 1779621150.5292923,
-    "ast_hash": "0045e9e94844e5d3665e5b657cf88a36",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\ios\\AppIcon-20x20@2x-1.png": {
-    "mtime": 1779621150.4663544,
-    "ast_hash": "a4bcec99b9217b80d75c35e234bcebbf",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\ios\\AppIcon-20x20@2x.png": {
-    "mtime": 1779621150.5915601,
-    "ast_hash": "a4bcec99b9217b80d75c35e234bcebbf",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\ios\\AppIcon-20x20@3x.png": {
-    "mtime": 1779621150.6506767,
-    "ast_hash": "cd0118f74f36e22a7d6b9f1c3eb4285b",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\ios\\AppIcon-29x29@1x.png": {
-    "mtime": 1779621150.791249,
-    "ast_hash": "5b3bc9ba702b356175781a817283f874",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\ios\\AppIcon-29x29@2x-1.png": {
-    "mtime": 1779621150.7057757,
-    "ast_hash": "6f8154fe556ace1502d1212d21fe29b4",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\ios\\AppIcon-29x29@2x.png": {
-    "mtime": 1779621150.8591695,
-    "ast_hash": "6f8154fe556ace1502d1212d21fe29b4",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\ios\\AppIcon-29x29@3x.png": {
-    "mtime": 1779621150.9166086,
-    "ast_hash": "3789fd435ae4d11ef51dc5b1100abca4",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\ios\\AppIcon-40x40@1x.png": {
-    "mtime": 1779621151.036552,
-    "ast_hash": "a4bcec99b9217b80d75c35e234bcebbf",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\ios\\AppIcon-40x40@2x-1.png": {
-    "mtime": 1779621150.9742446,
-    "ast_hash": "38f54675ccf417af378039d3c31672a1",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\ios\\AppIcon-40x40@2x.png": {
-    "mtime": 1779621151.1041093,
-    "ast_hash": "38f54675ccf417af378039d3c31672a1",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\ios\\AppIcon-40x40@3x.png": {
-    "mtime": 1779621151.1780837,
-    "ast_hash": "da1cb5248487a1c68d806107b87fb1dd",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\ios\\AppIcon-512@2x.png": {
-    "mtime": 1779621151.6919107,
-    "ast_hash": "64d829b8d1a764c23fd4d3683695a8bd",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\ios\\AppIcon-60x60@2x.png": {
-    "mtime": 1779621151.239094,
-    "ast_hash": "da1cb5248487a1c68d806107b87fb1dd",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\ios\\AppIcon-60x60@3x.png": {
-    "mtime": 1779621151.3007965,
-    "ast_hash": "ce5bdac001d1dd00b23ec2c9b9b3aa9f",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\ios\\AppIcon-76x76@1x.png": {
-    "mtime": 1779621151.352746,
-    "ast_hash": "20be5ab7b2b4dc99ffa047576b304d3b",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\ios\\AppIcon-76x76@2x.png": {
-    "mtime": 1779621151.43728,
-    "ast_hash": "8aa092425a07c2840939e721f57c346f",
-    "semantic_hash": ""
-  },
-  "D:\\projects\\Ai-trader\\frontend\\src-tauri\\icons\\ios\\AppIcon-83.5x83.5@2x.png": {
-    "mtime": 1779621151.5043273,
-    "ast_hash": "54345c3d1ef49122f340f7e2bc7b1735",
-    "semantic_hash": ""
   }
 }
