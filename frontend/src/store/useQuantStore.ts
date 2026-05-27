@@ -433,6 +433,14 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
         'run_deep_quant_agent',
         {
           symbol,
+          mode: activeMode,
+          manualTrade: manualTrade ? {
+            side: manualTrade.side,
+            entry: manualTrade.entry,
+            stop_loss: manualTrade.stopLoss,
+            take_profit: manualTrade.takeProfit,
+            user_analysis: manualTrade.userAnalysis
+          } : null
         }
       );
 

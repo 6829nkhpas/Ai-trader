@@ -195,7 +195,13 @@ export default function DeepQuantPanel() {
     console.log(`🧠 [AI HANDOFF] Proposed Trade: ${side} Entry:${entryNum} SL:${slNum} TP:${tpNum}`);
 
     clearAgentChatLog();
-    fetchDeepAnalysis(activeSymbol);
+    fetchDeepAnalysis(activeSymbol, 'VERIFY', {
+      side,
+      entry: entryNum,
+      stopLoss: slNum,
+      takeProfit: tpNum,
+      userAnalysis,
+    });
   };
 
   const handleDeployStrategy = async () => {
@@ -398,6 +404,9 @@ export default function DeepQuantPanel() {
           slPercent={slPercent}
           tpPercent={tpPercent}
           riskToReward={riskToReward}
+          onSubmit={handleVerifyAnalysis}
+          isAnalyzing={isAnalyzing}
+          dataReady={dataReady}
         />
       )}
 

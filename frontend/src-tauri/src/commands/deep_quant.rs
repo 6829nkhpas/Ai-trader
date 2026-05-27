@@ -1372,16 +1372,43 @@ async fn run_sentinel_loop(app: tauri::AppHandle, symbol: String, timeframe: Str
 
 /// Run deep quant agent loop with real-time SSE stream proxy.
 #[tauri::command]
-pub async fn run_deep_quant_agent(app: tauri::AppHandle, symbol: String) -> Result<(), String> {
-    info!("[deep_quant_agent] Starting LangGraph ReAct loop proxy for {}", symbol);
+pub async fn run_deep_quant_agent(
+    app: tauri::AppHandle,
+    symbol: String,
+    mode: Option<String>,
+    manual_trade: Option<ManualTradeInfo>,
+) -> Result<(), String> {
+    let mode_str = mode.unwrap_or_else(|| "FIND".to_string());
+    info!("[deep_quant_agent] Starting LangGraph ReAct loop proxy for {} in mode={}", symbol, mode_str);
     
     // Generate a unique thread ID
     let thread_id = format!("thread_{}_{}", symbol, chrono::Utc::now().timestamp_millis());
     
+    let message = if mode_str == "VERIFY" && manual_trade.is_some() {
+        let info = manual_trade.as_ref().unwrap();
+        format!(
+            "Verify the following proposed trade setup for the trading ticker symbol '{}':\n\
+             - Side: {}\n\
+             - Entry Price: {}\n\
+             - Stop Loss: {}\n\
+             - Target/Take Profit: {}\n\
+             - My Trade Logic/Analysis: '{}'\n\
+             Please evaluate this setup against recent candlestick data and technical consensus, validate the risk-reward profile, and recommend whether to execute, adjust, or reject the trade.",
+            symbol,
+            info.side,
+            info.entry,
+            info.stop_loss,
+            info.take_profit,
+            info.user_analysis
+        )
+    } else {
+        format!("Analyze the trading ticker symbol '{}' and recommend a setup.", symbol)
+    };
+    
     // Prepare the payload for Python FastAPI
     let payload = serde_json::json!({
         "thread_id": thread_id,
-        "message": format!("Analyze the trading ticker symbol '{}' and recommend a setup.", symbol)
+        "message": message
     });
     
     // Spawn the streaming reqwest client in the background

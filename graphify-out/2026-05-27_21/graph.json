@@ -6712,7 +6712,7 @@
       "label": "VerificationFormProps",
       "file_type": "code",
       "source_file": "frontend/src/components/quant/deep-quant/VerificationForm.tsx",
-      "source_location": "L4",
+      "source_location": "L5",
       "id": "deep_quant_verificationform_verificationformprops",
       "community": 43,
       "norm_label": "verificationformprops"
@@ -6721,7 +6721,7 @@
       "label": "VerificationForm()",
       "file_type": "code",
       "source_file": "frontend/src/components/quant/deep-quant/VerificationForm.tsx",
-      "source_location": "L26",
+      "source_location": "L24",
       "id": "deep_quant_verificationform_verificationform",
       "community": 43,
       "norm_label": "verificationform()"
@@ -22409,9 +22409,9 @@
       "source_file": "agents/deep-quant-loop/main.py",
       "source_location": "L66",
       "weight": 1.0,
-      "confidence_score": 1.0,
       "source": "deep_quant_loop_main_rationale_66",
-      "target": "deep_quant_loop_main_run_agent"
+      "target": "deep_quant_loop_main_run_agent",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
@@ -22439,9 +22439,9 @@
       "source_file": "agents/deep-quant-loop/main.py",
       "source_location": "L77",
       "weight": 1.0,
-      "confidence_score": 1.0,
       "source": "deep_quant_loop_main_rationale_77",
-      "target": "deep_quant_loop_main_resume_agent"
+      "target": "deep_quant_loop_main_resume_agent",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
@@ -65913,5 +65913,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "2f68149f26d1e90da9ab71c6f4d396d20e8e193e"
+  "built_at_commit": "10a787f87a8e0cca337379b0bd01514e677eb7cb"
 }

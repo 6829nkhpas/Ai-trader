@@ -150,6 +150,9 @@ export default function AgentTerminal() {
       <div className="flex-1 overflow-y-auto p-4 space-y-3.5 scrollbar-thin scrollbar-track-slate-950/20 scrollbar-thumb-slate-800">
         {reasoningSteps.map((step) => {
           if (step.type === 'message') {
+            const cleanContent = step.content.replace(/\{[\s\S]*\}/g, '').trim();
+            if (!cleanContent) return null;
+
             return (
               <div key={step.id} className="flex justify-start animate-fade-in font-sans">
                 <div className="max-w-[95%] bg-slate-900/40 text-slate-100 border border-slate-800/40 rounded-xl px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap shadow-sm">
@@ -157,7 +160,7 @@ export default function AgentTerminal() {
                     <Cpu size={10} className="animate-pulse" />
                     Agent Reasoning
                   </div>
-                  {step.content}
+                  {cleanContent}
                 </div>
               </div>
             );

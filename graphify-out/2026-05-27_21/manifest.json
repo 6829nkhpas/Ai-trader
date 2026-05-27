@@ -640,8 +640,8 @@
     "semantic_hash": "ea628c20f0af272c8ea226407fce4120"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\quant\\DeepQuantPanel.tsx": {
-    "mtime": 1779875441.112341,
-    "ast_hash": "6abb57b604a870c1c0ca6cc7cd572c1b",
+    "mtime": 1779870935.5649283,
+    "ast_hash": "46f58adb423f77d0f8adae56a223d58d",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\quant\\QuantRadar.tsx": {
@@ -710,8 +710,8 @@
     "semantic_hash": "b686655e63c24544f3073cabd4d59ce7"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\store\\useQuantStore.ts": {
-    "mtime": 1779875455.7872298,
-    "ast_hash": "af054d5a2f32ef1825043d354740bb7d",
+    "mtime": 1779873037.732799,
+    "ast_hash": "3556de511d3ad7f14f2ee513cefbde63",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\store\\useTradeStore.ts": {
@@ -755,8 +755,8 @@
     "semantic_hash": "ee66edf56ccd137eb04a7503e60205b2"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\commands\\deep_quant.rs": {
-    "mtime": 1779875462.7630014,
-    "ast_hash": "437e052d11a9ce58874b144e88b4ba20",
+    "mtime": 1779872712.8172705,
+    "ast_hash": "3660218570aacf50f4bc3a951a587ab2",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\commands\\instruments.rs": {
@@ -1280,8 +1280,8 @@
     "semantic_hash": "f1a31ce2927add37ce819bb171695b33"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\quant\\AgentTerminal.tsx": {
-    "mtime": 1779875469.7699847,
-    "ast_hash": "79e72b80f35a6068b5f59f7cefc40504",
+    "mtime": 1779870903.455735,
+    "ast_hash": "a5ad73313b08e7e3d9d89ced6a65090a",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\quant\\PortfolioDashboard.tsx": {
@@ -1300,9 +1300,9 @@
     "semantic_hash": "b0ba697f014d22c06f118ad03bee5dc6"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\quant\\deep-quant\\VerificationForm.tsx": {
-    "mtime": 1779875539.8938694,
-    "ast_hash": "76653ba02f60f3c36306c4057ef2c03f",
-    "semantic_hash": ""
+    "mtime": 1779784804.7088218,
+    "ast_hash": "7d3b09eea0cc5b387647275a4e6cbfd9",
+    "semantic_hash": "7d3b09eea0cc5b387647275a4e6cbfd9"
   },
   "D:\\projects\\Ai-trader\\frontend\\src-tauri\\src\\execution\\mod.rs": {
     "mtime": 1779694508.4945815,

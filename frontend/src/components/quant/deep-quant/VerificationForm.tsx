@@ -1,6 +1,5 @@
-'use client';
-
 import React from 'react';
+import { Shield, Loader2 } from 'lucide-react';
 
 interface VerificationFormProps {
   side: 'BUY' | 'SELL';
@@ -19,6 +18,9 @@ interface VerificationFormProps {
   slPercent: string | null;
   tpPercent: string | null;
   riskToReward: string | null;
+  onSubmit: () => void;
+  isAnalyzing: boolean;
+  dataReady: boolean;
 }
 
 export default function VerificationForm({
@@ -38,6 +40,9 @@ export default function VerificationForm({
   slPercent,
   tpPercent,
   riskToReward,
+  onSubmit,
+  isAnalyzing,
+  dataReady,
 }: VerificationFormProps) {
   return (
     <div className="mx-3 mt-3 p-3 rounded-xl border border-slate-800 bg-slate-900/30 backdrop-blur-md flex flex-col gap-3">
@@ -162,16 +167,42 @@ export default function VerificationForm({
         </div>
       )}
 
-      {/* User analysis note */}
-      <div className="flex flex-col gap-1.5">
-        <label className="text-[8px] font-semibold text-slate-400 uppercase">My Trade Logic / Notes</label>
+      {/* User Analysis Notes */}
+      <div className="flex flex-col gap-1">
+        <label className="text-[8px] font-semibold text-slate-400 uppercase">My Analysis Notes / Setup Rationale</label>
         <textarea
+          rows={3}
           value={userAnalysis}
           onChange={(e) => setUserAnalysis(e.target.value)}
-          placeholder="Describe your reasoning (e.g. buying the bounce on ema-21, MACD divergence)"
-          className="w-full bg-slate-950/80 border border-slate-800 rounded px-2 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:border-emerald-500 focus:outline-none min-h-[60px] max-h-[120px] resize-y leading-relaxed"
+          placeholder="E.g. Bullish engulfing on 10m VWAP bounce, expecting target resistance test..."
+          className="w-full bg-slate-950/80 border border-slate-800 rounded px-2 py-1.5 text-xs text-white placeholder-slate-600 focus:border-emerald-500 focus:outline-none resize-none"
         />
       </div>
+
+      {/* Verify Button */}
+      <button
+        type="button"
+        disabled={isAnalyzing || !dataReady}
+        onClick={onSubmit}
+        className={`
+          w-full flex items-center justify-center gap-1.5 rounded-lg py-2.5 text-xs font-bold text-white transition-all
+          bg-gradient-to-r from-teal-600 to-cyan-600 border border-teal-500/30
+          hover:from-teal-500 hover:to-cyan-500 hover:shadow-lg hover:shadow-teal-500/20 active:scale-[0.99]
+          ${(isAnalyzing || !dataReady) ? 'opacity-50 cursor-not-allowed' : ''}
+        `}
+      >
+        {isAnalyzing ? (
+          <>
+            <Loader2 size={12} className="animate-spin text-teal-300" />
+            VERIFYING SETUP...
+          </>
+        ) : (
+          <>
+            <Shield size={12} className="text-emerald-300 animate-pulse" />
+            VERIFY MY SETUP
+          </>
+        )}
+      </button>
     </div>
   );
 }
