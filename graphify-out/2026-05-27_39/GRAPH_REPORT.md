@@ -1,7 +1,7 @@
 # Graph Report - Ai-trader  (2026-05-27)
 
 ## Corpus Check
-- 194 files · ~215,828 words
+- 244 files · ~232,251 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -10,7 +10,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `ede8a451`
+- Built from commit: `35788762`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -189,8 +189,8 @@
 6. `identifier` - 74 edges
 7. `main()` - 32 edges
 8. `permissions` - 31 edges
-9. `AlphaPredictiveChartProps` - 30 edges
-10. `permissions` - 30 edges
+9. `getPool()` - 30 edges
+10. `AlphaPredictiveChartProps` - 30 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `main()` --calls--> `publish_tick()`  [INFERRED]
@@ -799,11 +799,11 @@ Nodes (15): OhlcEngine, SymbolState, confidence_is_clamped(), flat_prices_yield_
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `resolve_instrument_token()` connect `Community 27` to `Community 41`, `Community 26`, `Community 79`?**
-  _High betweenness centrality (0.094) - this node is a cross-community bridge._
+  _High betweenness centrality (0.101) - this node is a cross-community bridge._
 - **Why does `useHistoricalData.ts Hook` connect `Community 27` to `Community 16`, `Community 17`, `Community 19`?**
+  _High betweenness centrality (0.095) - this node is a cross-community bridge._
+- **Why does `run()` connect `Community 93` to `Community 1`, `Community 6`, `Community 7`, `Community 70`, `Community 86`, `Community 89`, `Community 27`, `Community 60`, `Community 157`?**
   _High betweenness centrality (0.090) - this node is a cross-community bridge._
-- **Why does `useTradeStore` connect `Community 17` to `Community 161`, `Community 4`, `Community 170`, `Community 43`, `Community 44`, `Community 47`, `Community 16`, `Community 50`, `Community 51`, `Community 22`, `Community 56`, `Community 27`, `Community 30`?**
-  _High betweenness centrality (0.072) - this node is a cross-community bridge._
 - **What connects `name`, `version`, `private` to the rest of the system?**
   _775 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**

@@ -52,25 +52,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Infrastructure: PostgreSQL (Auth DB) ──────────────────────────────────
-  postgres:
-    image: postgres:16-alpine
-    container_name: stratai-postgres
-    environment:
-      POSTGRES_DB: ai_trade_auth
-      POSTGRES_USER: auth_admin
-      POSTGRES_PASSWORD: ${POSTGRES_AUTH_PASSWORD:-auth_secret_dev}
-    ports:
-      - "5890:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./auth/migrations:/docker-entrypoint-initdb.d
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U auth_admin -d ai_trade_auth"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   # ── Infrastructure: Redis (Session Cache) ─────────────────────────────────
   redis:
     image: redis:7-alpine
@@ -172,4 +153,3 @@ services:
 # ── Persistent Volumes ──────────────────────────────────────────────────────
 volumes:
   questdb_data:
-  pgdata:

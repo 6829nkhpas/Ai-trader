@@ -151,8 +151,7 @@ The system prompt resolves and format-injects the exact quantitative metrics of 
 │   └── sentiment/        # Claude-powered real-time news evaluation engine with Redis Cache
 ├── aggregator/           # Decision broadcasting, Dynamic Weighting & Conflict Resolution (Rust)
 ├── ingestion/            # High-speed binary Zerodha Kite WS tick aggregator (Rust)
-├── backend/              # KYC Database, user profile & Identity state machine
-├── auth/                 # Fastify identity engine using Argon2id passwords and RS256 JWT tokens
+├── backend/              # QuestDB Schema Migration Runner
 └── frontend/
     ├── src-tauri/        # Tauri Native Bridge
     │   ├── src/
@@ -173,7 +172,6 @@ The system prompt resolves and format-injects the exact quantitative metrics of 
 Create a `.env` file at the root:
 ```env
 # ── database configuration ───────────────────────────────
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/ai_trader"
 QUESTDB_HTTP_URL="http://127.0.0.1:9000"
 QUESTDB_PG_URL="postgresql://admin:quest@localhost:8812/qdb"
 
@@ -196,7 +194,7 @@ KAFKA_BROKER_URL="127.0.0.1:9092"
     ```bash
     docker-compose up -d
     ```
-    This registers PostgreSQL, Redis, Apache Kafka, and QuestDB.
+    This registers Redis, Apache Kafka, and QuestDB.
 
 2.  **Boot Deep Quant ReAct Agent Service**:
     ```bash
