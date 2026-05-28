@@ -18,6 +18,43 @@ use crate::quant::{
 };
 use crate::services::llm;
 
+pub fn get_kite_credentials() -> (String, String) {
+    let mut api_key = std::env::var("KITE_API_KEY").unwrap_or_default();
+    let mut access_token = std::env::var("KITE_ACCESS_TOKEN").unwrap_or_default();
+
+    if let Ok(mut current_dir) = std::env::current_dir() {
+        loop {
+            let env_path = current_dir.join(".env");
+            if env_path.is_file() {
+                if let Ok(content) = std::fs::read_to_string(env_path) {
+                    for line in content.lines() {
+                        let line = line.trim();
+                        if line.starts_with('#') || !line.contains('=') {
+                            continue;
+                        }
+                        let parts: Vec<&str> = line.splitn(2, '=').collect();
+                        if parts.len() == 2 {
+                            let key = parts[0].trim();
+                            let val = parts[1].trim().trim_matches('"').trim_matches('\'');
+                            if key == "KITE_API_KEY" && !val.is_empty() {
+                                api_key = val.to_string();
+                            } else if key == "KITE_ACCESS_TOKEN" && !val.is_empty() {
+                                access_token = val.to_string();
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+            if !current_dir.pop() {
+                break;
+            }
+        }
+    }
+
+    (api_key, access_token)
+}
+
 // ── News Fetcher (with Google News RSS fallback) ────────────────────────────
 
 /// Fetch recent news headlines for a symbol.
@@ -579,8 +616,9 @@ async fn run_glass_box_loop(
 
     // Low data / proactive Kite fetch logic (same as original, but inside loop)
     if candles.len() < 50 {
-        let api_key = std::env::var("KITE_API_KEY").ok();
-        let access_token = std::env::var("KITE_ACCESS_TOKEN").ok();
+        let (api_key_val, access_token_val) = get_kite_credentials();
+        let api_key = if !api_key_val.is_empty() { Some(api_key_val) } else { None };
+        let access_token = if !access_token_val.is_empty() { Some(access_token_val) } else { None };
 
         if let (Some(api_key), Some(access_token)) = (api_key, access_token) {
             let local_token: Option<u32> = {

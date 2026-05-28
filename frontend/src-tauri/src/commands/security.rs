@@ -186,3 +186,58 @@ pub fn get_api_key_from_vault(app: &AppHandle, provider: &str) -> Option<String>
     app.try_state::<SecureKeyStore>()
         .and_then(|store| store.get(provider))
 }
+
+/// Programmatic Tauri command to encrypt and save the Zerodha access token into Stronghold/SecureKeyStore.
+#[tauri::command]
+pub async fn vault_store_token(
+    app: AppHandle,
+    token: String,
+) -> Result<(), String> {
+    use tauri::Manager;
+
+    if token.trim().is_empty() {
+        return Err("Token cannot be empty.".to_string());
+    }
+
+    let store = app
+        .try_state::<SecureKeyStore>()
+        .ok_or("SecureKeyStore not initialized.")?;
+    
+    store.insert("zerodha", &token);
+
+    info!(
+        "[security] Zerodha access token successfully stored in vault. length={}",
+        token.len()
+    );
+
+    Ok(())
+}
+
+/// Opens a URL in the user's default OS browser.
+/// This bypasses issues where window.open() is blocked or does not work in some Tauri configurations.
+#[tauri::command]
+pub fn open_browser(url: String) -> Result<(), String> {
+    info!("[system] Request to open URL in browser: {}", url);
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "", &url])
+            .spawn()
+            .map_err(|e| format!("Failed to open browser: {}", e))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("Failed to open browser: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("Failed to open browser: {}", e))?;
+    }
+    Ok(())
+}

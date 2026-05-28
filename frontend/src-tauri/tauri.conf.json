@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Alpha-Terminal",
+  "productName": "Strat Ai",
   "version": "2.0.0",
-  "identifier": "com.alphasuite.terminal",
+  "identifier": "com.stratai.terminal",
   "build": {
     "frontendDist": "../out",
     "devUrl": "http://localhost:3000",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Strat Ai ",
+        "title": "Strat Ai",
         "width": 1440,
         "height": 900,
         "minWidth": 1024,
@@ -25,6 +25,15 @@
     ],
     "security": {
       "csp": "default-src 'self'; connect-src 'self' ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:* https://integrate.api.nvidia.com https://api.kite.trade; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:"
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "strat"
+        ]
+      }
     }
   },
   "bundle": {

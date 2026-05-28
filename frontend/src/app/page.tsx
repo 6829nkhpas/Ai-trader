@@ -21,6 +21,9 @@ import { useQuantStore } from '../store/useQuantStore';
 import type { ConsensusReport } from '../store/useQuantStore';
 import type { DataRange } from '../utils/chartTypes';
 import { TIMEFRAME_GROUPS } from '../utils/chartTypes';
+import { useAuthStore } from '../store/useAuthStore';
+import AuthOverlay from '../components/auth/AuthOverlay';
+import BrokerConnectCard from '../components/broker/BrokerConnectCard';
 
 // ── Sidebar labels per profile ──────────────────────────────────────────
 type SidebarTab = 'profile' | 'deepquant';
@@ -33,6 +36,11 @@ const SIDEBAR_CONFIG: Record<TradeProfile, { label: string; badge: string; badge
 
 export default function Home() {
   const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, setActiveTimeframe, activeRange, setActiveRange, selectedSymbol, paperPortfolio } = useTradeStore();
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isBrokerConnected = useAuthStore((s) => s.isBrokerConnected);
+  const setBrokerConnected = useAuthStore((s) => s.setBrokerConnected);
+  const fetchProfile = useAuthStore((s) => s.fetchProfile);
+
   const [indicatorsEnabled, setIndicatorsEnabled] = useState(true);
   const [aiEnabled, setAiEnabled] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -45,6 +53,11 @@ export default function Home() {
   const clearConsensusData = useQuantStore((s) => s.clearConsensusData);
   const loadConsensusForSymbol = useQuantStore((s) => s.loadConsensusForSymbol);
   const clearAiPlan = useQuantStore((s) => s.clearAiPlan);
+
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Listen for Tauri consensus events
   useEffect(() => {
@@ -78,6 +91,37 @@ export default function Home() {
     };
   }, [setConsensusData]);
 
+  // Listen for Tauri broker deep-link success event
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        if (cancelled) return;
+        const u = await listen('broker-connection-success', () => {
+          if (!cancelled) {
+            console.log('[App] Intercepted broker-connection-success deep link event! Enabling trading terminal.');
+            setBrokerConnected(true);
+          }
+        });
+        if (cancelled) {
+          u();
+        } else {
+          unlisten = u;
+        }
+      } catch {
+        // Not in Tauri context (e.g. browser preview)
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [setBrokerConnected]);
+
   // ── Real-time Kite quote for the active symbol ────────────────────
   interface SymbolQuote {
     symbol: string;
@@ -95,7 +139,8 @@ export default function Home() {
   useEffect(() => {
     connectWebSocket();
     hydratePaperPortfolio();
-  }, [connectWebSocket]);
+    fetchProfile();
+  }, [connectWebSocket, fetchProfile]);
 
   useEffect(() => {
     connectAlphaWebSocket('ws://127.0.0.1:8081');
@@ -213,6 +258,18 @@ export default function Home() {
   };
 
   const sidebarTitle = sidebarTab === 'deepquant' ? 'Deep Quant' : sidebarCfg.label;
+
+  if (!mounted) {
+    return <div className="flex h-screen w-screen items-center justify-center bg-background" />;
+  }
+
+  if (!isAuthenticated) {
+    return <AuthOverlay />;
+  }
+
+  if (!isBrokerConnected) {
+    return <BrokerConnectCard />;
+  }
 
   return (
     <div className="flex h-full flex-col bg-background">

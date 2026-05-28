@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # 1. High-Performance Enterprise Database (PostgreSQL)
+  postgres:
+    image: postgres:15-alpine
+    container_name: alpha-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+      # We auto-create the two isolated schemas/databases via pg entrypoint script
+      POSTGRES_MULTIPLE_DATABASES: "auth_db,payment_db"
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-postgres-db.sh:/docker-entrypoint-initdb.d/init-postgres-db.sh
+    networks:
+      - alpha-network
+    restart: always
+
+  # 2. High-Speed Distributed Caching & Rate Limiting (Redis)
+  redis:
+    image: redis:7-alpine
+    container_name: alpha-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - alpha-network
+    restart: always
+
+  # 3. Auth Service (Port 3001)
+  auth-service:
+    build:
+      context: .
+      dockerfile: services/auth-service/Dockerfile
+    container_name: alpha-auth-service
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - DATABASE_URL=postgresql://postgres:postgres123@postgres:5432/auth_db?schema=public
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=alpha-jwt-secret-key-39281!@
+      - INTERNAL_API_KEY=alpha-internal-super-secret-key-29831!
+      - KITE_API_KEY=kite-mock-api-key
+      - KITE_API_SECRET=kite-mock-api-secret
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - alpha-network
+    restart: always
+
+  # 4. Payment Service (Port 3002)
+  payment-service:
+    build:
+      context: .
+      dockerfile: services/payment-service/Dockerfile
+    container_name: alpha-payment-service
+    ports:
+      - "3002:3002"
+    environment:
+      - PORT=3002
+      - DATABASE_URL=postgresql://postgres:postgres123@postgres:5432/payment_db?schema=public
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=alpha-jwt-secret-key-39281!@
+      - INTERNAL_API_KEY=alpha-internal-super-secret-key-29831!
+      - AUTH_SERVICE_URL=http://auth-service:3001
+      - PHONEPE_MERCHANT_ID=MERCHANT_MOCK_123
+      - PHONEPE_SALT_KEY=mock-salt-key-9283-1029
+      - PHONEPE_SALT_INDEX=1
+    depends_on:
+      - postgres
+      - redis
+      - auth-service
+    networks:
+      - alpha-network
+    restart: always
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  alpha-network:
+    driver: bridge

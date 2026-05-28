@@ -1,4 +1,4 @@
-use tauri::Manager;
+use tauri::{Manager, Emitter};
 use log::{info, error};
 
 pub mod commands;
@@ -9,6 +9,46 @@ pub mod execution;
 
 use commands::security::SecureKeyStore;
 
+/// Handles deep links received from the OS (e.g. alphasuite://broker-callback?token=XXXXX)
+fn handle_deep_link(app: &tauri::AppHandle, url_str: &str) {
+    info!("[deep link] Intercepted incoming URL: {}", url_str);
+    if let Ok(parsed_url) = url::Url::parse(url_str) {
+        // Match path or host structure
+        let is_callback = parsed_url.host_str() == Some("broker-callback") 
+            || parsed_url.path().contains("broker-callback");
+            
+        if is_callback {
+            let mut access_token = None;
+            for (key, val) in parsed_url.query_pairs() {
+                if key == "token" || key == "access_token" {
+                    access_token = Some(val.into_owned());
+                    break;
+                }
+            }
+
+            if let Some(token) = access_token {
+                info!("[deep link] Parsed Zerodha token. Encryption-saving to vault...");
+                if let Some(store) = app.try_state::<SecureKeyStore>() {
+                    store.insert("zerodha", &token);
+                    info!("[deep link] Encrypted token cached in SecureKeyStore.");
+
+                    // Emit event to React frontend so the UI clears any loader screen
+                    if let Err(e) = app.emit("broker-connection-success", serde_json::json!({})) {
+                        error!("[deep link] Failed to emit broker-connection-success: {:?}", e);
+                    } else {
+                        info!("[deep link] Emitted connection success event to UI.");
+                    }
+                } else {
+                    error!("[deep link] SecureKeyStore is not initialized.");
+                }
+            } else {
+                log::warn!("[deep link] No token found in url parameters.");
+            }
+        }
+    } else {
+        error!("[deep link] Failed to parse deep link URL structure.");
+    }
+}
 
 /// Check if the application is running in E2E test mode.
 /// When ALPHA_TEST_MODE is set, live APIs (Zerodha/DeepSeek) are bypassed
@@ -84,6 +124,20 @@ pub fn run() {
   }
 
   tauri::Builder::default()
+    .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        // Focus the existing window(s)
+        for window in app.webview_windows().values() {
+            let _ = window.set_focus();
+        }
+        
+        // Pass any deep link URLs from command line arguments to the active instance
+        for arg in args {
+            if arg.starts_with("strat://") || arg.contains("broker-callback") {
+                handle_deep_link(app, &arg);
+            }
+        }
+    }))
+    .plugin(tauri_plugin_deep_link::init())
     .plugin({
       // ── Stronghold Encrypted Credential Vault ──────────────────────────
       // Argon2id derives a 32-byte key from the vault password.
@@ -120,6 +174,22 @@ pub fn run() {
             .level(log::LevelFilter::Info)
             .build(),
         )?;
+      }
+
+      // ── OS Deep Linking Interceptor (Tauri Plugin) ─────────────────
+      #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+      {
+          use tauri_plugin_deep_link::DeepLinkExt;
+          
+          // Programmatically register the scheme in the OS registry at startup
+          let _ = app.deep_link().register("strat");
+          
+          let handle = app.handle().clone();
+          app.deep_link().on_open_url(move |event| {
+              for url in event.urls() {
+                  handle_deep_link(&handle, url.as_str());
+              }
+          });
       }
 
       // ── Local Workspace SQLite Database ───────────────────────────
@@ -222,6 +292,8 @@ pub fn run() {
         commands::security::save_api_key,
         commands::security::check_api_key_exists,
         commands::security::hydrate_key_cache,
+        commands::security::vault_store_token,
+        commands::security::open_browser,
         db::save_workspace,
         db::load_workspace,
         db::log_completed_trade,

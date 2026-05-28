@@ -64,7 +64,7 @@ Once you have formulated your final trading decision, critique, or hold instruct
     "setup_validation": "<2-sentence synthesis of findings, validation of entry/SL/TP, or warning flags>",
     "execution_plan": "<Precise Buy/Sell/Hold execution instructions with recommended Entry/SL/TP levels>"
 }
-</json_format>
+</json_format>  
 """
 
 RISK_MANAGER_PROMPT = """

@@ -101,11 +101,13 @@ import {
   Settings,
   X as XIcon,
   Shield,
+  User,
 } from 'lucide-react';
 import { useTradeStore, TradeProfile } from '../../store/useTradeStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
 import { ToolMenu, type ToolMenuEntry } from '../chart/ToolMenu';
 import QuantRadar from '../quant/QuantRadar';
+import UserProfileModal from '../profile/UserProfileModal';
 
 // SSR-disabled dynamic import: Tauri plugins (Stronghold, Path API) are only
 // available in the desktop WebView. Loading them during Next.js server render
@@ -137,6 +139,7 @@ interface TerminalLayoutProps {
 export default function TerminalLayout({ children, leftPanel }: TerminalLayoutProps) {
   const { activeProfile, setActiveProfile, resetSession } = useTradeStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const {
     activeCursor,
@@ -338,6 +341,15 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
 
           {/* Quant Radar Dropdown */}
           <QuantRadar />
+
+          {/* User Profile Avatar Icon */}
+          <button
+            onClick={() => setProfileOpen(true)}
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border-default bg-surface/50 hover:bg-elevated/45 text-text-secondary hover:text-white transition-all shadow-sm"
+            title="Account Profile & Settings"
+          >
+            <User size={15} />
+          </button>
         </div>
       </header>
 
@@ -489,6 +501,9 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
         </main>
 
       </div>
+
+      {/* User Profile Modal Overlay */}
+      <UserProfileModal isOpen={profileOpen} onClose={() => setProfileOpen(false)} />
     </div>
   );
 }

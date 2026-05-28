@@ -120,12 +120,46 @@ fn token_cache() -> &'static tokio::sync::RwLock<HashMap<String, u64>> {
     TOKEN_CACHE.get_or_init(|| tokio::sync::RwLock::new(HashMap::new()))
 }
 
+pub fn get_kite_credentials() -> (String, String) {
+    let mut api_key = std::env::var("KITE_API_KEY").unwrap_or_default();
+    let mut access_token = std::env::var("KITE_ACCESS_TOKEN").unwrap_or_default();
+
+    if let Ok(mut current_dir) = std::env::current_dir() {
+        loop {
+            let env_path = current_dir.join(".env");
+            if env_path.is_file() {
+                if let Ok(content) = std::fs::read_to_string(env_path) {
+                    for line in content.lines() {
+                        let line = line.trim();
+                        if line.starts_with('#') || !line.contains('=') {
+                            continue;
+                        }
+                        let parts: Vec<&str> = line.splitn(2, '=').collect();
+                        if parts.len() == 2 {
+                            let key = parts[0].trim();
+                            let val = parts[1].trim().trim_matches('"').trim_matches('\'');
+                            if key == "KITE_API_KEY" && !val.is_empty() {
+                                api_key = val.to_string();
+                            } else if key == "KITE_ACCESS_TOKEN" && !val.is_empty() {
+                                access_token = val.to_string();
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+            if !current_dir.pop() {
+                break;
+            }
+        }
+    }
+
+    (api_key, access_token)
+}
+
 impl KiteApiState {
     fn new() -> Self {
-        let api_key = std::env::var("KITE_API_KEY")
-            .unwrap_or_else(|_| String::new());
-        let access_token = std::env::var("KITE_ACCESS_TOKEN")
-            .unwrap_or_else(|_| String::new());
+        let (api_key, access_token) = get_kite_credentials();
 
         if api_key.is_empty() || access_token.is_empty() {
             log::warn!("KITE_API_KEY or KITE_ACCESS_TOKEN not set — Kite REST API will return errors");
@@ -152,7 +186,10 @@ impl KiteApiState {
     }
 
     fn auth_header(&self) -> String {
-        format!("token {}:{}", self.api_key, self.access_token)
+        let (api_key, access_token) = get_kite_credentials();
+        let final_key = if api_key.is_empty() { &self.api_key } else { &api_key };
+        let final_token = if access_token.is_empty() { &self.access_token } else { &access_token };
+        format!("token {}:{}", final_key, final_token)
     }
 
     /// Load instrument cache from disk. Returns empty vec on any error.

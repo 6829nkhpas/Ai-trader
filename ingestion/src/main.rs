@@ -1,4 +1,4 @@
-﻿// src/main.rs â€” AI-Trade Ingestion Service (Power Phase 1.2 â€” Subphases 16-18)
+// src/main.rs â€” AI-Trade Ingestion Service (Power Phase 1.2 â€” Subphases 16-18)
 //
 // Pipeline topology â€” DUAL SINK ARCHITECTURE:
 //
@@ -55,7 +55,7 @@ use log::{error, info, warn};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::signal;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{mpsc, RwLock};
 use tokio_tungstenite::tungstenite::Message;
 
 #[cfg(feature = "kafka")]
@@ -78,6 +78,43 @@ const KAFKA_TOPIC: &str = "market.ticks";
 enum SubscribeCmd {
     /// Subscribe to a new instrument token with the given symbol name.
     Add { token: u32, symbol: String },
+}
+
+pub fn get_kite_credentials() -> (String, String) {
+    let mut api_key = std::env::var("KITE_API_KEY").unwrap_or_default();
+    let mut access_token = std::env::var("KITE_ACCESS_TOKEN").unwrap_or_default();
+
+    if let Ok(mut current_dir) = std::env::current_dir() {
+        loop {
+            let env_path = current_dir.join(".env");
+            if env_path.is_file() {
+                if let Ok(content) = std::fs::read_to_string(env_path) {
+                    for line in content.lines() {
+                        let line = line.trim();
+                        if line.starts_with('#') || !line.contains('=') {
+                            continue;
+                        }
+                        let parts: Vec<&str> = line.splitn(2, '=').collect();
+                        if parts.len() == 2 {
+                            let key = parts[0].trim();
+                            let val = parts[1].trim().trim_matches('"').trim_matches('\'');
+                            if key == "KITE_API_KEY" && !val.is_empty() {
+                                api_key = val.to_string();
+                            } else if key == "KITE_ACCESS_TOKEN" && !val.is_empty() {
+                                access_token = val.to_string();
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+            if !current_dir.pop() {
+                break;
+            }
+        }
+    }
+
+    (api_key, access_token)
 }
 
 #[tokio::main]
@@ -104,27 +141,13 @@ async fn main() {
     let questdb_postgres_url = std::env::var("QUESTDB_POSTGRES_URL")
         .unwrap_or_else(|_| "postgresql://admin:quest@localhost:8812/qdb".to_string());
 
-    let api_key = std::env::var("KITE_API_KEY")
-        .expect("KITE_API_KEY must be set in .env");
-
-    // Access token: either pre-set in .env, or generate via request_token exchange
-    let access_token = match std::env::var("KITE_ACCESS_TOKEN") {
-        Ok(token) if !token.is_empty() => {
-            info!("Using KITE_ACCESS_TOKEN from environment");
-            token
-        }
-        _ => {
-            let api_secret = std::env::var("KITE_API_SECRET")
-                .expect("KITE_API_SECRET must be set when KITE_ACCESS_TOKEN is absent");
-            let request_token = std::env::var("KITE_REQUEST_TOKEN")
-                .expect("KITE_REQUEST_TOKEN must be set when KITE_ACCESS_TOKEN is absent");
-
-            info!("Generating access token via request_token exchange...");
-            kite_auth::generate_access_token(&api_key, &api_secret, &request_token)
-                .await
-                .expect("Failed to generate Kite access token")
-        }
-    };
+    let (api_key, access_token) = get_kite_credentials();
+    if api_key.is_empty() {
+        warn!("KITE_API_KEY is not set in .env! Startup will proceed, but connection attempts will fail until set.");
+    }
+    if access_token.is_empty() {
+        warn!("KITE_ACCESS_TOKEN is not set in .env! Startup will proceed, but connection attempts will fail until user logs in.");
+    }
 
     // â”€â”€ 3. Dynamic instrument map (starts EMPTY â€” no env scaffolding) â”€â”€â”€â”€â”€â”€â”€
     //
@@ -265,149 +288,157 @@ async fn main() {
     let pg_pool_clone = Arc::clone(&pg_pool);
 
     let direct_handle = tokio::spawn(async move {
-        info!("Direct-stream loop: connecting to Kite WebSocket...");
+        let mut backoff = std::time::Duration::from_secs(2);
+        loop {
+            let (api_key, access_token) = get_kite_credentials();
+            if api_key.is_empty() || access_token.is_empty() {
+                warn!("Direct-stream: KITE_API_KEY or KITE_ACCESS_TOKEN is empty in .env. Retrying in {:?}", backoff);
+                tokio::time::sleep(backoff).await;
+                backoff = std::cmp::min(backoff * 2, std::time::Duration::from_secs(30));
+                continue;
+            }
 
-        let (ws_reader, ws_writer) =
-            match kite_client::connect_ticker(&api_key, &access_token).await {
+            info!("Direct-stream: Connecting to Kite WebSocket...");
+            let (ws_reader, mut ws_writer) = match kite_client::connect_ticker(&api_key, &access_token).await {
                 Ok(pair) => pair,
                 Err(e) => {
-                    error!("Direct-stream: Kite WS connect failed: {}", e);
-                    return;
+                    error!("Direct-stream: Kite WS connect failed: {}. Retrying in {:?}", e, backoff);
+                    tokio::time::sleep(backoff).await;
+                    backoff = std::cmp::min(backoff * 2, std::time::Duration::from_secs(30));
+                    continue;
                 }
             };
 
-        // Wrap the writer in Arc<Mutex> so the sub_rx handler can send messages
-        // while the reader loop is running concurrently.
-        let ws_writer = Arc::new(Mutex::new(ws_writer));
+            // Connected! Reset backoff
+            backoff = std::time::Duration::from_secs(2);
+            info!("Direct-stream: WebSocket connected. Sending subscription.");
 
-        info!("Direct-stream loop: WebSocket connected. Sending subscription.");
+            // Subscribe to any pre-existing tokens
+            {
+                let map = symbol_map_arc.read().await;
+                if !map.is_empty() {
+                    let token_vals: Vec<serde_json::Value> = map
+                        .keys()
+                        .map(|&t| serde_json::Value::Number(t.into()))
+                        .collect();
 
-        // Subscribe to any pre-existing tokens (will be empty on clean boot).
-        // Dynamic subscriptions arrive via the control socket as the user
-        // selects symbols in the UI.
-        {
-            let map = symbol_map_arc.read().await;
-            if map.is_empty() {
-                info!(
-                    "Direct-stream: No initial subscriptions. \
-                     Sitting idle — awaiting dynamic subscribe commands on TCP control port."
-                );
-            } else {
-                let token_vals: Vec<serde_json::Value> = map
-                    .keys()
-                    .map(|&t| serde_json::Value::Number(t.into()))
-                    .collect();
+                    let subscribe_msg = serde_json::json!({ "a": "subscribe", "v": token_vals }).to_string();
+                    let mode_msg = serde_json::json!({ "a": "mode", "v": ["full", token_vals] }).to_string();
 
-                let subscribe_msg = serde_json::json!({ "a": "subscribe", "v": token_vals }).to_string();
-                let mode_msg = serde_json::json!({ "a": "mode", "v": ["full", token_vals] }).to_string();
-
-                let mut writer = ws_writer.lock().await;
-                if let Err(e) = writer.send(Message::Text(subscribe_msg)).await {
-                    error!("Failed to send subscribe message: {}", e);
+                    if let Err(e) = ws_writer.send(Message::Text(subscribe_msg)).await {
+                        error!("Failed to send initial subscribe message: {}", e);
+                    }
+                    if let Err(e) = ws_writer.send(Message::Text(mode_msg)).await {
+                        error!("Failed to send initial mode message: {}", e);
+                    }
+                    info!("Subscribed to {} instruments in Full mode", map.len());
+                } else {
+                    info!("Direct-stream: No initial subscriptions. Sitting idle — awaiting dynamic subscribe commands on TCP control port.");
                 }
-                if let Err(e) = writer.send(Message::Text(mode_msg)).await {
-                    error!("Failed to send mode message: {}", e);
-                }
-                info!("Subscribed to {} instruments in Full mode", map.len());
             }
-        }
 
-        // â”€â”€ Dynamic subscribe handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        // Runs as a separate task so the reader loop isn't blocked waiting for commands.
-        let ws_writer_sub = Arc::clone(&ws_writer);
-        tokio::spawn(async move {
-            while let Some(cmd) = sub_rx.recv().await {
-                match cmd {
-                    SubscribeCmd::Add { token, symbol } => {
-                        let token_val = serde_json::json!([token]);
-                        let subscribe_msg = serde_json::json!({ "a": "subscribe", "v": token_val }).to_string();
-                        let mode_msg = serde_json::json!({ "a": "mode", "v": ["full", token_val] }).to_string();
+            // Unified select loop for message reading and dynamic subscriptions
+            let mut ws_reader = ws_reader;
+            loop {
+                tokio::select! {
+                    msg = ws_reader.next() => {
+                        match msg {
+                            Some(Ok(Message::Binary(payload))) => {
+                                // Parse all tick packets from the binary frame.
+                                // Hold the read lock for the duration of parsing only.
+                                let ticks = {
+                                    let map = symbol_map_arc.read().await;
+                                    parser::parse_binary_frame(&payload, &*map)
+                                };
 
-                        // ── DIAGNOSTIC TRACER — Kite WS dynamic subscribe payload ──
-                        info!(
-                            "[Control] Subscribing token={} symbol={}", token, symbol
-                        );
+                                for tick in ticks {
+                                    let parsed_tick = crate::types::ParsedTick {
+                                        instrument_token: tick.instrument_token,
+                                        symbol: tick.symbol.clone(),
+                                        last_price: tick.last_traded_price,
+                                        volume: tick.volume as u32,
+                                        best_bid: tick.best_bid,
+                                        best_ask: tick.best_ask,
+                                        open: tick.open,
+                                        high: tick.high,
+                                        low: tick.low,
+                                        close: tick.close,
+                                        timestamp_ms: tick.timestamp_ms,
+                                    };
+                                    let _ = tx.send(parsed_tick).await;
+                                    // Clone Arc handles for the spawned task
+                                    #[cfg(feature = "kafka")]
+                                    let kp = Arc::clone(&kafka_producer_clone);
+                                    let pg = Arc::clone(&pg_pool_clone);
+                                    let tick_clone = tick.clone();
 
-                        let mut writer = ws_writer_sub.lock().await;
-                        let ok = writer.send(Message::Text(subscribe_msg)).await.is_ok()
-                            && writer.send(Message::Text(mode_msg)).await.is_ok();
+                                    // Concurrently send to Kafka and QuestDB PG
+                                    tokio::spawn(async move {
+                                        // Kafka publish (feature-gated)
+                                        #[cfg(feature = "kafka")]
+                                        let kafka_fut = kafka_producer::publish_tick(&kp, KAFKA_TOPIC, &tick_clone);
 
-                        if ok {
-                            info!("[Control] âœ“ Dynamically subscribed: {} (token {})", symbol, token);
-                        } else {
-                            error!("[Control] âœ— Failed to subscribe {} â€” WS may be disconnected", symbol);
+                                        // QuestDB PG insert
+                                        let questdb_fut = questdb_sink::insert_tick(&pg, &tick_clone);
+
+                                        #[cfg(feature = "kafka")]
+                                        tokio::join!(kafka_fut, questdb_fut);
+
+                                        #[cfg(not(feature = "kafka"))]
+                                        questdb_fut.await;
+                                    });
+                                }
+                            }
+                            Some(Ok(Message::Ping(data))) => {
+                                log::trace!("Direct-stream: Ping received ({} bytes)", data.len());
+                            }
+                            Some(Ok(Message::Close(frame))) => {
+                                warn!("Direct-stream: WebSocket closed by server: {:?}", frame);
+                                break;
+                            }
+                            Some(Ok(_)) => { /* Text / Pong / Frame — ignore */ }
+                            Some(Err(e)) => {
+                                error!("Direct-stream: WebSocket error: {}", e);
+                                break;
+                            }
+                            None => {
+                                warn!("Direct-stream: WebSocket stream ended.");
+                                break;
+                            }
+                        }
+                    }
+                    cmd = sub_rx.recv() => {
+                        match cmd {
+                            Some(SubscribeCmd::Add { token, symbol }) => {
+                                let token_val = serde_json::json!([token]);
+                                let subscribe_msg = serde_json::json!({ "a": "subscribe", "v": token_val }).to_string();
+                                let mode_msg = serde_json::json!({ "a": "mode", "v": ["full", token_val] }).to_string();
+
+                                // ── DIAGNOSTIC TRACER — Kite WS dynamic subscribe payload ──
+                                info!(
+                                    "[Control] Subscribing token={} symbol={}", token, symbol
+                                );
+
+                                let ok = ws_writer.send(Message::Text(subscribe_msg)).await.is_ok()
+                                    && ws_writer.send(Message::Text(mode_msg)).await.is_ok();
+
+                                if ok {
+                                    info!("[Control] ✓ Dynamically subscribed: {} (token {})", symbol, token);
+                                } else {
+                                    error!("[Control] ✗ Failed to subscribe {} — WS may be disconnected", symbol);
+                                }
+                            }
+                            None => {
+                                warn!("Direct-stream: control subscription channel closed");
+                            }
                         }
                     }
                 }
             }
-        });
-
-        // â”€â”€ Main event loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        let mut ws_reader = ws_reader;
-        while let Some(msg) = ws_reader.next().await {
-            match msg {
-                Ok(Message::Binary(payload)) => {
-                    // Parse all tick packets from the binary frame.
-                    // Hold the read lock for the duration of parsing only.
-                    let ticks = {
-                        let map = symbol_map_arc.read().await;
-                        parser::parse_binary_frame(&payload, &*map)
-                    };
-
-                    for tick in ticks {
-                        let parsed_tick = crate::types::ParsedTick {
-                            instrument_token: tick.instrument_token,
-                            symbol: tick.symbol.clone(),
-                            last_price: tick.last_traded_price,
-                            volume: tick.volume as u32,
-                            best_bid: tick.best_bid,
-                            best_ask: tick.best_ask,
-                            open: tick.open,
-                            high: tick.high,
-                            low: tick.low,
-                            close: tick.close,
-                            timestamp_ms: tick.timestamp_ms,
-                        };
-                        let _ = tx.send(parsed_tick).await;
-                        // Clone Arc handles for the spawned task
-                        #[cfg(feature = "kafka")]
-                        let kp = Arc::clone(&kafka_producer_clone);
-                        let pg = Arc::clone(&pg_pool_clone);
-                        let tick_clone = tick.clone();
-
-                        // Concurrently send to Kafka and QuestDB PG
-                        tokio::spawn(async move {
-                            // Kafka publish (feature-gated)
-                            #[cfg(feature = "kafka")]
-                            let kafka_fut = kafka_producer::publish_tick(&kp, KAFKA_TOPIC, &tick_clone);
-
-                            // QuestDB PG insert
-                            let questdb_fut = questdb_sink::insert_tick(&pg, &tick_clone);
-
-                            #[cfg(feature = "kafka")]
-                            tokio::join!(kafka_fut, questdb_fut);
-
-                            #[cfg(not(feature = "kafka"))]
-                            questdb_fut.await;
-                        });
-                    }
-                }
-                Ok(Message::Ping(data)) => {
-                    log::trace!("Direct-stream: Ping received ({} bytes)", data.len());
-                }
-                Ok(Message::Close(frame)) => {
-                    warn!("Direct-stream: WebSocket closed by server: {:?}", frame);
-                    break;
-                }
-                Ok(_) => { /* Text / Pong / Frame â€” ignore */ }
-                Err(e) => {
-                    error!("Direct-stream: WebSocket error: {}", e);
-                    break;
-                }
-            }
+            warn!("Direct-stream: Active connection lost. Retrying connection in {:?}", backoff);
+            tokio::time::sleep(backoff).await;
+            backoff = std::cmp::min(backoff * 2, std::time::Duration::from_secs(30));
         }
-
-        info!("Direct-stream loop exited.");
     });
 
     // â”€â”€ 11. Graceful shutdown on Ctrl-C / SIGTERM â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

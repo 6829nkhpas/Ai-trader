@@ -1,4 +1,4 @@
-Write-Host "Stopping infrastructure (Kafka, QuestDB, Redis, postgres)..."
+Write-Host "Stopping infrastructure (Kafka, QuestDB, Redis)..."
 
 # Try modern Docker Compose first
 try {

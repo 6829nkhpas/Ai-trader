@@ -1,0 +1,95 @@
+import React from 'react';
+import { Activity } from 'lucide-react';
+import { VirtualPosition } from '../../../store/useTradeStore';
+
+interface PortfolioTabProps {
+  paperPortfolio: any;
+}
+
+export default function PortfolioTab({ paperPortfolio }: PortfolioTabProps) {
+  return (
+    <div className="flex flex-col h-full space-y-5">
+      <div>
+        <h2 className="text-xl font-extrabold text-white tracking-tight">Paper Trading State</h2>
+        <p className="text-xs text-text-secondary mt-1">Real-time mock balance, active risk layers, and open orders</p>
+      </div>
+
+      {/* Statistics Panel */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4 text-center">
+          <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Simulated Balance</span>
+          <span className="text-base font-black text-emerald-400 block mt-1">
+            ₹{paperPortfolio?.balance?.toLocaleString(undefined, { minimumFractionDigits: 2 }) || '1,000,000.00'}
+          </span>
+        </div>
+        <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4 text-center">
+          <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Active Open Positions</span>
+          <span className="text-base font-black text-white block mt-1">
+            {paperPortfolio?.active_positions?.length || 0}
+          </span>
+        </div>
+        <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4 text-center">
+          <span className="text-[10px] uppercase tracking-wider text-text-secondary block">History Count</span>
+          <span className="text-base font-black text-text-secondary block mt-1">
+            {paperPortfolio?.trade_history?.length || 0}
+          </span>
+        </div>
+      </div>
+
+      {/* Active Positions Sub-grid */}
+      <div className="flex-1 min-h-0 flex flex-col space-y-2.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Activity size={14} className="text-emerald-400 animate-pulse" />
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider">Active Open Positions</h3>
+          </div>
+          <span className="text-[10px] text-text-secondary font-mono">Tauri Engine Subscription Sync</span>
+        </div>
+
+        <div className="flex-1 min-h-0 rounded-xl border border-border-default/40 bg-[#0c0f1d]/30 overflow-auto">
+          {!paperPortfolio || paperPortfolio.active_positions.length === 0 ? (
+            <div className="flex h-32 flex-col items-center justify-center text-center p-4">
+              <p className="text-xs text-text-secondary font-medium">No Active Open Positions</p>
+              <p className="text-[10px] text-text-muted mt-1 leading-normal max-w-xs">
+                Open the trading charts panel, set up risk criteria parameters, and execute buying/selling transactions to engage simulated tracking.
+              </p>
+            </div>
+          ) : (
+            <table className="w-full text-left border-collapse">
+              <thead className="bg-[#0e1222]/80 border-b border-border-default/40">
+                <tr>
+                  <th className="px-4 py-2.5 text-[9px] font-bold uppercase tracking-wider text-text-secondary">Symbol</th>
+                  <th className="px-4 py-2.5 text-[9px] font-bold uppercase tracking-wider text-text-secondary">Side</th>
+                  <th className="px-4 py-2.5 text-[9px] font-bold uppercase tracking-wider text-text-secondary">Qty</th>
+                  <th className="px-4 py-2.5 text-[9px] font-bold uppercase tracking-wider text-text-secondary">Entry Price</th>
+                  <th className="px-4 py-2.5 text-[9px] font-bold uppercase tracking-wider text-text-secondary">Stop Loss</th>
+                  <th className="px-4 py-2.5 text-[9px] font-bold uppercase tracking-wider text-text-secondary text-right">Take Profit</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border-default/10">
+                {paperPortfolio.active_positions.map((pos: VirtualPosition) => (
+                  <tr key={pos.id} className="hover:bg-elevated/10">
+                    <td className="px-4 py-2.5 text-xs font-bold text-white">{pos.symbol}</td>
+                    <td className="px-4 py-2.5 text-xs">
+                      <span className={`rounded px-1.5 py-0.5 text-[8px] font-bold ${
+                        pos.side === 'BUY' 
+                          ? 'bg-emerald-500/10 text-emerald-400' 
+                          : 'bg-red-500/10 text-red-400'
+                      }`}>
+                        {pos.side}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-text-primary font-mono">{pos.quantity}</td>
+                    <td className="px-4 py-2.5 text-xs text-text-primary">₹{pos.entry_price.toFixed(2)}</td>
+                    <td className="px-4 py-2.5 text-xs text-red-400/90">₹{pos.stop_loss.toFixed(2)}</td>
+                    <td className="px-4 py-2.5 text-xs text-emerald-400/95 text-right">₹{pos.take_profit.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

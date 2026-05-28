@@ -24,6 +24,43 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::services::history_loader;
 
+pub fn get_kite_credentials() -> (String, String) {
+    let mut api_key = std::env::var("KITE_API_KEY").unwrap_or_default();
+    let mut access_token = std::env::var("KITE_ACCESS_TOKEN").unwrap_or_default();
+
+    if let Ok(mut current_dir) = std::env::current_dir() {
+        loop {
+            let env_path = current_dir.join(".env");
+            if env_path.is_file() {
+                if let Ok(content) = std::fs::read_to_string(env_path) {
+                    for line in content.lines() {
+                        let line = line.trim();
+                        if line.starts_with('#') || !line.contains('=') {
+                            continue;
+                        }
+                        let parts: Vec<&str> = line.splitn(2, '=').collect();
+                        if parts.len() == 2 {
+                            let key = parts[0].trim();
+                            let val = parts[1].trim().trim_matches('"').trim_matches('\'');
+                            if key == "KITE_API_KEY" && !val.is_empty() {
+                                api_key = val.to_string();
+                            } else if key == "KITE_ACCESS_TOKEN" && !val.is_empty() {
+                                access_token = val.to_string();
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+            if !current_dir.pop() {
+                break;
+            }
+        }
+    }
+
+    (api_key, access_token)
+}
+
 /// A single OHLCV candle for binary serialization.
 ///
 /// Field order matches the QuestDB query column order.
@@ -159,8 +196,9 @@ pub async fn get_historical_view(
     //   - User switches to 4m → base_tf="1m" → data already cached, skip fetch!
     //   - User switches to 1m → base_tf="1m" → data already cached, skip fetch!
     if matches!(source, HistorySource::Intraday) {
-        let api_key = std::env::var("KITE_API_KEY").ok();
-        let access_token = std::env::var("KITE_ACCESS_TOKEN").ok();
+        let (api_key_val, access_token_val) = get_kite_credentials();
+        let api_key = if !api_key_val.is_empty() { Some(api_key_val) } else { None };
+        let access_token = if !access_token_val.is_empty() { Some(access_token_val) } else { None };
 
         if let (Some(api_key), Some(access_token)) = (api_key, access_token) {
             // Resolve instrument token from the local SQLite cache
@@ -535,10 +573,13 @@ pub async fn load_historical(
 
     info!("load_historical: starting ingestion for {} (token {})", symbol, instrument_token);
 
-    let api_key = std::env::var("KITE_API_KEY")
-        .map_err(|_| "KITE_API_KEY not set in .env".to_string())?;
-    let access_token = std::env::var("KITE_ACCESS_TOKEN")
-        .map_err(|_| "KITE_ACCESS_TOKEN not set in .env".to_string())?;
+    let (api_key, access_token) = get_kite_credentials();
+    if api_key.is_empty() {
+        return Err("KITE_API_KEY not set in .env".to_string());
+    }
+    if access_token.is_empty() {
+        return Err("KITE_ACCESS_TOKEN not set in .env".to_string());
+    }
 
     match history_loader::load_historical_data(
         pool.inner(),

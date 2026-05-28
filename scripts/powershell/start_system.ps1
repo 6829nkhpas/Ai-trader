@@ -40,12 +40,11 @@ function Cleanup {
 }
 
 try {
-    # ── Pre-flight: Kill anything occupying our ports ────────────────────────
-    # Ports: 3000=Next.js, 8080-8083=WS agents, 8084=Tauri Tool Server, 8085=Ingestion Control,
+    # Ports: 3000=Next.js, 3001=Auth, 3002=Payment, 8080-8083=WS agents, 8084=Tauri Tool Server, 8085=Ingestion Control,
     #        8086=Python Agent, 8087=Kite REST API, 9000/9009=QuestDB, 5432=PG, 6379=Redis, 19092=Kafka
     Write-Host "==> Cleaning up stale processes and ports..." -ForegroundColor Magenta
 
-    $portsToKill = @(3000, 8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 9000, 9009, 5432, 6379, 19092)
+    $portsToKill = @(3000, 3001, 3002, 8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 9000, 9009, 5432, 6379, 19092)
     $netstatOut = netstat -ano
     foreach ($port in $portsToKill) {
         $matched = $netstatOut | Select-String (":$port\s")
@@ -75,12 +74,11 @@ try {
     }
 
     # ── Start infrastructure ─────────────────────────────────────────────────
-    Write-Host "Starting infrastructure (Kafka/Redpanda, QuestDB, Redis, Postgres)..." -ForegroundColor Cyan
-    docker-compose up -d redpanda questdb postgres redis
+    Write-Host "Starting infrastructure (Kafka/Redpanda, QuestDB, Redis)..." -ForegroundColor Cyan
+    docker-compose up -d redpanda questdb redis
 
     # Wait for each infra service to be reachable before proceeding
     Wait-ForPort -Port 6379  -TimeoutSec 60 -Label "Redis (:6379)"
-    Wait-ForPort -Port 5890  -TimeoutSec 90 -Label "Postgres (:5890)"
     Wait-ForPort -Port 9000  -TimeoutSec 90 -Label "QuestDB (:9000)"
     Wait-ForPort -Port 19092 -TimeoutSec 90 -Label "Redpanda/Kafka (:19092)"
 
@@ -149,6 +147,19 @@ try {
     Wait-ForPort -Port 8086 -TimeoutSec 60 -Label "Python Deep Quant Loop (:8086)"
 
     Start-Sleep -Seconds 3
+
+    Write-Host "Starting Alpha-Backend Auth Service (Port 3001)..." -ForegroundColor Cyan
+    Push-Location alpha-backend
+    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cmd.exe" -ArgumentList "/c npm run auth:dev"
+    Pop-Location
+
+    Write-Host "Starting Alpha-Backend Payment Service (Port 3002)..." -ForegroundColor Cyan
+    Push-Location alpha-backend
+    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cmd.exe" -ArgumentList "/c npm run payment:dev"
+    Pop-Location
+
+    Wait-ForPort -Port 3001 -TimeoutSec 30 -Label "Auth Service (:3001)"
+    Wait-ForPort -Port 3002 -TimeoutSec 30 -Label "Payment Service (:3002)"
 
     Write-Host "Starting Next.js Frontend (Tauri)..." -ForegroundColor Cyan
     Push-Location frontend
