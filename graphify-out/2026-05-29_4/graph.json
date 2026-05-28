@@ -31012,7 +31012,7 @@
       "label": "ProfileTabProps",
       "file_type": "code",
       "source_file": "frontend/src/components/profile/tabs/ProfileTab.tsx",
-      "source_location": "L21",
+      "source_location": "L3",
       "id": "tabs_profiletab_profiletabprops",
       "community": 160,
       "norm_label": "profiletabprops"
@@ -31021,7 +31021,7 @@
       "label": "ProfileTab()",
       "file_type": "code",
       "source_file": "frontend/src/components/profile/tabs/ProfileTab.tsx",
-      "source_location": "L31",
+      "source_location": "L10",
       "id": "tabs_profiletab_profiletab",
       "community": 160,
       "norm_label": "profiletab()"
@@ -182666,5 +182666,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "bae26bbfbcbbae969312e59228aa089fa30795b0"
+  "built_at_commit": "bd0c2268371bdbdd18cb0389343aa7d423aba8c9"
 }

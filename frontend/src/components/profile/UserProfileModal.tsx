@@ -196,29 +196,10 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
           <div>
             {/* User Info Header */}
             <div className="mb-8 flex items-center gap-3">
-              {broker?.avatarUrl ? (
-                <div className="relative h-10 w-10 shrink-0">
-                  <img 
-                    src={broker.avatarUrl} 
-                    alt={user?.name || 'Avatar'} 
-                    className="h-10 w-10 rounded-xl object-cover border border-emerald-500/30"
-                  />
-                  <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-400 border-2 border-[#0b0e1a] shadow-[0_0_8px_#34d399]" />
-                </div>
-              ) : (
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold text-xs tracking-wider">
-                  {(() => {
-                    const name = user?.name || '';
-                    if (!name) return 'SA';
-                    const parts = name.trim().split(/\s+/);
-                    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-                    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-                  })()}
-                </div>
-              )}
+              {/* User Info */}
               <div className="min-w-0">
-                <h3 className="text-sm font-bold text-white truncate">{user?.name || 'Strat AI User'}</h3>
-                <p className="text-[10px] text-emerald-400 font-semibold tracking-wider uppercase mt-0.5">{user?.tier || 'FREE'} Tier</p>
+                <h3 className="text-sm font-bold text-white truncate">{user?.name}</h3>
+                <p className="text-[10px] text-emerald-400 font-semibold tracking-wider uppercase mt-0.5">{user?.tier} Tier</p>
               </div>
             </div>
 
@@ -354,6 +335,9 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
                   ? marginsData.equity.net
                   : ((marginsData?.equity?.available as any)?.live_balance ?? marginsData?.equity?.available?.cash)
               }
+              marginsData={marginsData}
+              positionsData={positionsData}
+              orders={ordersData}
             />
           )}
 

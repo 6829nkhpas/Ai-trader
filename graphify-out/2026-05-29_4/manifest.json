@@ -1590,8 +1590,8 @@
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\profile\\UserProfileModal.tsx": {
-    "mtime": 1779995682.3371737,
-    "ast_hash": "13b75c2d6d9cf3707eebe166e7a2aca3",
+    "mtime": 1779992895.440123,
+    "ast_hash": "9090be2b84a885a2fef2a9f6031536a2",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\profile\\tabs\\BrokerTab.tsx": {
@@ -1605,8 +1605,8 @@
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\profile\\tabs\\ProfileTab.tsx": {
-    "mtime": 1779995760.56013,
-    "ast_hash": "acedf1a0b4049af8f1230102c2752d7d",
+    "mtime": 1779990578.9569588,
+    "ast_hash": "c39211f69fba330d9783b77fddcf79f4",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\profile\\tabs\\SubscriptionTab.tsx": {

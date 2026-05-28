@@ -31012,7 +31012,7 @@
       "label": "ProfileTabProps",
       "file_type": "code",
       "source_file": "frontend/src/components/profile/tabs/ProfileTab.tsx",
-      "source_location": "L21",
+      "source_location": "L4",
       "id": "tabs_profiletab_profiletabprops",
       "community": 160,
       "norm_label": "profiletabprops"
@@ -31021,7 +31021,7 @@
       "label": "ProfileTab()",
       "file_type": "code",
       "source_file": "frontend/src/components/profile/tabs/ProfileTab.tsx",
-      "source_location": "L31",
+      "source_location": "L14",
       "id": "tabs_profiletab_profiletab",
       "community": 160,
       "norm_label": "profiletab()"
