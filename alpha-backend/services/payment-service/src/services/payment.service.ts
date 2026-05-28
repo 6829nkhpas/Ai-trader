@@ -21,7 +21,7 @@ export class PaymentService {
       merchantTransactionId,
       merchantUserId: userId,
       amount: Math.round(amount * 100),
-      redirectUrl: `http://localhost:3000/payment-status?transactionId=${merchantTransactionId}`,
+      redirectUrl: `http://localhost:3002/api/payments/phonepe/redirect?transactionId=${merchantTransactionId}`,
       callbackUrl: `http://localhost:3002/api/payments/phonepe/webhook`,
       paymentInstrument: {
         type: 'PAY_PAGE'

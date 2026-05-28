@@ -41,6 +41,16 @@ export default function Home() {
   const setBrokerConnected = useAuthStore((s) => s.setBrokerConnected);
   const fetchProfile = useAuthStore((s) => s.fetchProfile);
 
+  // ── Premium Toast Notification State ────────────────────────────────
+  const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'info' }[]>([]);
+  const showToast = useCallback((message: string, type: 'success' | 'info' = 'success') => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4500);
+  }, []);
+
   const [indicatorsEnabled, setIndicatorsEnabled] = useState(true);
   const [aiEnabled, setAiEnabled] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -91,26 +101,35 @@ export default function Home() {
     };
   }, [setConsensusData]);
 
-  // Listen for Tauri broker deep-link success event
+  // Listen for Tauri deep-link events emitted by Rust
   useEffect(() => {
     let cancelled = false;
-    let unlisten: (() => void) | undefined;
+    let unlistenBroker: (() => void) | undefined;
+    let unlistenPayment: (() => void) | undefined;
 
     (async () => {
       try {
         const { listen } = await import('@tauri-apps/api/event');
         if (cancelled) return;
-        const u = await listen('broker-connection-success', () => {
+
+        // Listen for broker connection success
+        unlistenBroker = await listen('broker-connection-success', () => {
           if (!cancelled) {
             console.log('[App] Intercepted broker-connection-success deep link event! Enabling trading terminal.');
             setBrokerConnected(true);
+            showToast("Zerodha Kite Connected Successfully.", "success");
           }
         });
-        if (cancelled) {
-          u();
-        } else {
-          unlisten = u;
-        }
+
+        // Listen for payment success
+        unlistenPayment = await listen('payment-success', async () => {
+          if (!cancelled) {
+            console.log('[App] Intercepted payment-success deep link event! Refreshing user profile.');
+            // Refresh user profile in Zustand (fetchUserProfile hits /api/auth/me)
+            await useAuthStore.getState().fetchUserProfile();
+            showToast("Payment Verified. Welcome to PRO.", "success");
+          }
+        });
       } catch {
         // Not in Tauri context (e.g. browser preview)
       }
@@ -118,9 +137,10 @@ export default function Home() {
 
     return () => {
       cancelled = true;
-      unlisten?.();
+      unlistenBroker?.();
+      unlistenPayment?.();
     };
-  }, [setBrokerConnected]);
+  }, [setBrokerConnected, showToast]);
 
   // ── Real-time Kite quote for the active symbol ────────────────────
   interface SymbolQuote {
@@ -493,6 +513,32 @@ export default function Home() {
 
       {/* ── System Status Console (Bottom Drawer) ─────── */}
       {/* <SystemConsole /> */}
+
+      {/* ── Premium Toast Notifications ──────────────────────────────── */}
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 max-w-sm pointer-events-none">
+        {toasts.map((toast) => (
+          <div
+            key={toast.id}
+            className="flex items-center gap-3 px-4 py-3.5 rounded-xl border border-emerald-500/20 bg-surface-elevated/80 backdrop-blur-xl shadow-2xl pointer-events-auto animate-slide-in-right"
+            style={{
+              background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(5, 150, 105, 0.03) 100%)',
+              backgroundColor: 'rgba(15, 23, 42, 0.85)',
+              borderColor: 'rgba(16, 185, 129, 0.25)',
+              boxShadow: '0 10px 30px -5px rgba(0, 0, 0, 0.5), 0 0 15px 0 rgba(16, 185, 129, 0.05)',
+            }}
+          >
+            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[10px] font-black tracking-widest text-emerald-400 uppercase">SYSTEM NOTIFICATION</span>
+              <span className="text-xs font-semibold text-white/90 leading-tight mt-0.5">{toast.message}</span>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

@@ -17,6 +17,18 @@ export class AuthService {
     return jwt.sign({ userId, tier }, JWT_SECRET, { expiresIn: '24h' });
   }
 
+  isTrialActive(createdAt: Date | string): boolean {
+    const createdTime = new Date(createdAt).getTime();
+    return (Date.now() - createdTime) < 3 * 24 * 60 * 60 * 1000;
+  }
+
+  getEffectiveTier(user: any): string {
+    if (user.tier === 'FREE' && this.isTrialActive(user.createdAt)) {
+      return 'PRO';
+    }
+    return user.tier;
+  }
+
   // 1. Core Login/Auto-Registration Business Logic
   async authenticateUser(email: string, password: string) {
     let user = await userRepository.findByEmail(email);
@@ -30,7 +42,8 @@ export class AuthService {
       }
     }
 
-    const token = this.generateToken(user.id, user.tier);
+    const effectiveTier = this.getEffectiveTier(user);
+    const token = this.generateToken(user.id, effectiveTier);
 
     return {
       token,
@@ -38,7 +51,7 @@ export class AuthService {
         id: user.id,
         email: user.email,
         name: user.name,
-        tier: user.tier,
+        tier: effectiveTier,
         walletBalance: user.walletBalance
       }
     };
@@ -54,7 +67,8 @@ export class AuthService {
     console.log(`[Auth Service] Creating new user profile: ${email} (${tier})`);
     const user = await userRepository.createUser({ email, password, name, tier });
 
-    const token = this.generateToken(user.id, user.tier);
+    const effectiveTier = this.getEffectiveTier(user);
+    const token = this.generateToken(user.id, effectiveTier);
 
     return {
       token,
@@ -62,7 +76,7 @@ export class AuthService {
         id: user.id,
         email: user.email,
         name: user.name,
-        tier: user.tier,
+        tier: effectiveTier,
         walletBalance: user.walletBalance
       }
     };
@@ -307,11 +321,17 @@ export class AuthService {
       console.warn(`[Auth Service] Failed to retrieve subscription via raw query:`, err.message);
     }
 
+    const effectiveTier = this.getEffectiveTier(user);
+    const trialActive = user.tier === 'FREE' && this.isTrialActive(user.createdAt);
+    const trialExpiresAt = new Date(new Date(user.createdAt).getTime() + 3 * 24 * 60 * 60 * 1000);
+
     const profileData = {
       id: user.id,
       email: user.email,
       name: user.name,
-      tier: user.tier,
+      tier: effectiveTier,
+      trialActive,
+      trialExpiresAt,
       walletBalance: user.walletBalance,
       createdAt: user.createdAt,
       brokerConnection: (user as any).brokerConnection || null,

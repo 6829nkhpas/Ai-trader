@@ -1,16 +1,16 @@
-# Graph Report - Ai-trader  (2026-05-27)
+# Graph Report - Ai-trader  (2026-05-28)
 
 ## Corpus Check
-- 258 files · ~327,937 words
+- 264 files · ~333,162 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 5376 nodes · 12634 edges · 294 communities (276 shown, 18 thin omitted)
+- 5410 nodes · 12695 edges · 291 communities (273 shown, 18 thin omitted)
 - Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 119 edges (avg confidence: 0.83)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `89da06b8`
+- Built from commit: `f91e6060`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -248,24 +248,21 @@
 - [[_COMMUNITY_Community 281|Community 281]]
 - [[_COMMUNITY_Community 282|Community 282]]
 - [[_COMMUNITY_Community 283|Community 283]]
-- [[_COMMUNITY_Community 284|Community 284]]
-- [[_COMMUNITY_Community 285|Community 285]]
 - [[_COMMUNITY_Community 286|Community 286]]
 - [[_COMMUNITY_Community 287|Community 287]]
 - [[_COMMUNITY_Community 288|Community 288]]
-- [[_COMMUNITY_Community 289|Community 289]]
 - [[_COMMUNITY_Community 290|Community 290]]
 - [[_COMMUNITY_Community 291|Community 291]]
 - [[_COMMUNITY_Community 293|Community 293]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `permissions` - 79 edges
-2. `useTradeStore` - 78 edges
+1. `useTradeStore` - 80 edges
+2. `permissions` - 79 edges
 3. `allow` - 76 edges
 4. `deny` - 76 edges
 5. `commands` - 75 edges
 6. `identifier` - 74 edges
-7. `main()` - 32 edges
+7. `main()` - 33 edges
 8. `permissions` - 31 edges
 9. `AlphaPredictiveChartProps` - 30 edges
 10. `permissions` - 30 edges
@@ -282,7 +279,7 @@
 - `AlphaPredictiveChartProps` --calls--> `useHistoricalData.ts Hook`  [EXTRACTED]
   frontend/src/utils/chartTypes.ts → prompt.md
 
-## Communities (294 total, 18 thin omitted)
+## Communities (291 total, 18 thin omitted)
 
 ### Community 0 - "Community 0"
 Cohesion: 0.05
@@ -293,28 +290,28 @@ Cohesion: 0.13
 Nodes (12): fetch_candles_for_symbol(), RadarAlert, spawn_radar_worker(), current_count(), download_csv(), ensure_schema(), is_stale(), parse_and_persist() (+4 more)
 
 ### Community 2 - "Community 2"
-Cohesion: 0.15
-Nodes (23): base_state(), candle(), compile_consensus_full_bullish(), compile_consensus_serializes_to_json(), full_pipeline_bullish_engulfing_with_golden_cross(), momentum_neutral(), momentum_overbought_rsi(), momentum_overbought_stoch() (+15 more)
+Cohesion: 0.05
+Nodes (53): ConsensusEngine (Tauri Quant), Quant Radar Background Scanner, base_state(), candle(), compile_consensus_full_bullish(), compile_consensus_serializes_to_json(), ConsensusEngine, ConsensusReport (+45 more)
 
 ### Community 3 - "Community 3"
 Cohesion: 0.09
-Nodes (13): generate_access_token(), KiteSessionData, KiteSessionResponse, connect_ticker(), Args, init_producer(), main(), now_ms() (+5 more)
+Nodes (14): generate_access_token(), KiteSessionData, KiteSessionResponse, connect_ticker(), Args, get_kite_credentials(), init_producer(), main() (+6 more)
 
 ### Community 4 - "Community 4"
 Cohesion: 0.13
 Nodes (26): aggregateToTimeframe(), calculateEMA(), calculateRSI(), computeTrend(), generateSyntheticOhlc(), TIMEFRAME_CONFIGS, TimeframeTrend, TrendBias (+18 more)
 
 ### Community 5 - "Community 5"
-Cohesion: 0.10
-Nodes (26): 19-21 — The Billing Schema & Product Mapping, 22-24 — The Upgrade/Downgrade Orchestrator, 25-27 — Billing Ignition (Webhooks & Trade Enforcement), 49-51 — `frontend/src/components/TradingChart.tsx` & `frontend/src/app/page.tsx`, 4 — JWT Engine (RS256), 52-54 — Dashboard Components & Integration, 5 — Stateful Refresh Rotation & Breach Detection, 61 � `frontend/src/store/useTradeStore.ts` � Portfolio State (+18 more)
+Cohesion: 0.07
+Nodes (36): 19-21 — The Billing Schema & Product Mapping, 22-24 — The Upgrade/Downgrade Orchestrator, 25-27 — Billing Ignition (Webhooks & Trade Enforcement), 49-51 — `frontend/src/components/TradingChart.tsx` & `frontend/src/app/page.tsx`, 4 — JWT Engine (RS256), 52-54 — Dashboard Components & Integration, 58 — `frontend/src/store/useTradeStore.ts` — Telemetry state added, 59 — `frontend/src/components/panels/NetworkMetrics.tsx` — NEW (+28 more)
 
 ### Community 6 - "Community 6"
-Cohesion: 0.18
-Nodes (9): BILLING_CATALOG, handlePolarWebhook(), verifySignature(), BillingRepository, findUserById(), BillingService, getPool(), body (+1 more)
+Cohesion: 0.14
+Nodes (15): BILLING_CATALOG, handlePolarWebhook(), verifySignature(), BillingRepository, BillingService, config, __dirname, required (+7 more)
 
 ### Community 7 - "Community 7"
 Cohesion: 0.10
-Nodes (24): registerErrorHandler(), registerStocksRoutes(), getClient(), isArticleProcessed(), markArticleProcessed(), getClient(), scoreArticle(), closePool() (+16 more)
+Nodes (24): registerErrorHandler(), registerStocksRoutes(), analyzeSentiment(), getClient(), getClient(), isArticleProcessed(), markArticleProcessed(), getClient() (+16 more)
 
 ### Community 8 - "Community 8"
 Cohesion: 0.11
@@ -354,11 +351,11 @@ Nodes (166): AccelerateEngineConfig, ActiveConnectorType, Aggregate, AnyNull, Ap
 
 ### Community 17 - "Community 17"
 Cohesion: 0.06
-Nodes (38): SystemConsole.tsx, StatusDot(), StatusLabel(), SystemConsole(), SystemLog, TradingChart(), TradingChartProps, AgentStatusPanel() (+30 more)
+Nodes (39): SystemConsole.tsx, StatusDot(), StatusLabel(), SystemConsole(), SystemLog, TradingChart(), TradingChartProps, AgentStatusPanel() (+31 more)
 
 ### Community 18 - "Community 18"
-Cohesion: 0.15
-Nodes (13): handleKycVendorWebhook(), requireActiveSubscription(), requireVerified(), updateKycStatus(), registerTradeRoutes(), registerWebhookRoutes(), futureDate, mockReply (+5 more)
+Cohesion: 0.21
+Nodes (9): handleKycVendorWebhook(), requireActiveSubscription(), requireVerified(), updateKycStatus(), registerTradeRoutes(), registerWebhookRoutes(), KYC_STATES, transitionState() (+1 more)
 
 ### Community 19 - "Community 19"
 Cohesion: 0.01
@@ -385,16 +382,16 @@ Cohesion: 0.14
 Nodes (22): handleGetProfile(), handleGetUploadUrl(), handleLivenessCheck(), handleUpsertProfile(), handleVerifyPan(), decryptSymmetric(), encryptSymmetric(), getKey() (+14 more)
 
 ### Community 25 - "Community 25"
-Cohesion: 0.09
-Nodes (30): AgentChoice, AgentMessage, AgentMessagePayload, AgentResponse, AgentToolCall, AppHandleExt, build_request_body(), build_system_prompt() (+22 more)
+Cohesion: 0.10
+Nodes (27): AgentChoice, AgentMessage, AgentMessagePayload, AgentResponse, AgentToolCall, AppHandleExt, ChatChoice, ChatMessage (+19 more)
 
 ### Community 26 - "Community 26"
-Cohesion: 0.14
-Nodes (16): fetchInstruments(), GET(), GET(), historical_handler(), HistoricalParams, InstrumentCache, instruments_search(), InstrumentSearchParams (+8 more)
+Cohesion: 0.12
+Nodes (20): lookup_instrument_token(), resolve_token_blocking(), fetchInstruments(), GET(), GET(), get_kite_credentials(), historical_handler(), HistoricalParams (+12 more)
 
 ### Community 27 - "Community 27"
 Cohesion: 0.12
-Nodes (20): BinaryCandle, broadcast_error(), get_historical_view(), HistorySource, load_historical(), run_migrations(), bulk_insert(), bulk_insert_intraday() (+12 more)
+Nodes (21): BinaryCandle, broadcast_error(), get_historical_view(), get_kite_credentials(), HistorySource, load_historical(), run_migrations(), bulk_insert() (+13 more)
 
 ### Community 28 - "Community 28"
 Cohesion: 0.08
@@ -417,8 +414,8 @@ Cohesion: 0.20
 Nodes (10): Candle, detects_bearish_engulfing(), detects_bullish_engulfing(), detects_doji(), detects_hammer(), detects_shooting_star(), empty_history_returns_empty(), no_doji_on_large_body() (+2 more)
 
 ### Community 33 - "Community 33"
-Cohesion: 0.04
-Nodes (56): commands, description, identifier, commands, description, identifier, commands, description (+48 more)
+Cohesion: 0.05
+Nodes (51): commands, commands, description, identifier, commands, description, identifier, commands (+43 more)
 
 ### Community 34 - "Community 34"
 Cohesion: 0.10
@@ -446,11 +443,11 @@ Nodes (29): 40 — `aggregator/src/state.rs` — NEW, 41 — `aggregator/src/eng
 
 ### Community 40 - "Community 40"
 Cohesion: 0.03
-Nodes (160): Aa(), ai(), Al(), An(), ar(), au(), Bc(), _c() (+152 more)
+Nodes (150): Aa(), ai(), Ao(), ar(), Bc(), _c(), Ca(), Ce() (+142 more)
 
 ### Community 41 - "Community 41"
-Cohesion: 0.16
-Nodes (18): deploy_ai_sentinel(), fetch_google_news_rss_for_context(), fetch_macro_context(), fetch_news_context(), get_latest_tick_time(), load_candles_from_db(), ManualTradeInfo, parse_agent_response() (+10 more)
+Cohesion: 0.15
+Nodes (19): deploy_ai_sentinel(), fetch_google_news_rss_for_context(), fetch_macro_context(), fetch_news_context(), get_kite_credentials(), get_latest_tick_time(), load_candles_from_db(), ManualTradeInfo (+11 more)
 
 ### Community 42 - "Community 42"
 Cohesion: 0.18
@@ -461,16 +458,16 @@ Cohesion: 0.17
 Nodes (13): formatINR(), formatVolume(), MetricsHUD(), MetricsHUDProps, SymbolQuote, ReasoningBlockProps, SymbolQuote, computeATR() (+5 more)
 
 ### Community 45 - "Community 45"
-Cohesion: 0.18
-Nodes (13): 32 — `agents/sentiment/src/kafkaProducer.js` — NEW, 34 — `agents/sentiment/src/kafkaProducer.js` — REBUILT, 35 — `agents/sentiment/src/index.js` — REPLACED (continuous polling loop), 36 — Graceful Shutdown (SIGINT handler), code:block15 (node --input-type=module --eval "import all 4 modules"), code:js (const payload = {), code:block18 (1. loadNewsSentimentType()   → NewsSentiment (injected into ), code:block19 (fetchLatestNews(symbol)) (+5 more)
+Cohesion: 0.10
+Nodes (24): 31 — `agents/sentiment/src/cache.js` — NEW, 31 — `agents/sentiment/src/claude.js` — NEW, 32 — `agents/sentiment/src/analyzer.js` — NEW, 32 — `agents/sentiment/src/kafkaProducer.js` — NEW, 33 — `agents/sentiment/src/index.js` — REPLACED (full pipeline), 33 — `agents/sentiment/src/index.js` — REPLACED (testable integration flow), 34 — `agents/sentiment/src/kafkaProducer.js` — REBUILT, 35 — `agents/sentiment/src/index.js` — REPLACED (continuous polling loop) (+16 more)
 
 ### Community 46 - "Community 46"
 Cohesion: 0.12
 Nodes (11): isSection(), ToolMenu(), ToolMenuEntry, ToolMenuProps, ToolOption, ToolSection, PROFILES, SecurityVault (+3 more)
 
 ### Community 47 - "Community 47"
-Cohesion: 0.07
-Nodes (40): lookup_instrument_token(), resolve_token_blocking(), LiveAssetHUD(), LiveAssetHUDProps, stateColor(), trendBg(), trendColor(), SentimentBlock() (+32 more)
+Cohesion: 0.08
+Nodes (36): LiveAssetHUD(), LiveAssetHUDProps, stateColor(), trendBg(), trendColor(), SentimentBlock(), SentimentBlockProps, sentimentImpactColor() (+28 more)
 
 ### Community 48 - "Community 48"
 Cohesion: 0.03
@@ -542,7 +539,7 @@ Nodes (15): 2. High-Level Architecture, code:mermaid (graph TB), code:mermaid (g
 
 ### Community 65 - "Community 65"
 Cohesion: 0.07
-Nodes (35): commands, commands, description, identifier, commands, description, identifier, commands (+27 more)
+Nodes (32): commands, description, identifier, commands, description, identifier, commands, commands (+24 more)
 
 ### Community 66 - "Community 66"
 Cohesion: 0.22
@@ -561,12 +558,12 @@ Cohesion: 0.39
 Nodes (4): CandleAccumulator, init_tick_consumer(), run_ohlc_pipeline(), start_ohlc_ws_server()
 
 ### Community 70 - "Community 70"
-Cohesion: 0.14
-Nodes (15): _a(), addItem(), Am(), Br(), _getName(), Gl(), It(), ln() (+7 more)
+Cohesion: 0.12
+Nodes (20): Al(), An(), au(), Fs(), gr(), gs(), handleRequestError(), highlight() (+12 more)
 
 ### Community 71 - "Community 71"
-Cohesion: 0.27
-Nodes (6): check_api_key_exists(), get_api_key_from_vault(), hydrate_key_cache(), save_api_key(), SecureKeyStore, vault_store_token()
+Cohesion: 0.26
+Nodes (7): check_api_key_exists(), get_api_key_from_vault(), hydrate_key_cache(), open_browser(), save_api_key(), SecureKeyStore, vault_store_token()
 
 ### Community 72 - "Community 72"
 Cohesion: 0.29
@@ -577,8 +574,8 @@ Cohesion: 0.25
 Nodes (7): 1. Tick (`market_data.proto`), 2. TechSignal (`technical_data.proto`), 3. NewsSentiment (`sentiment_data.proto`), 4. AggregatedDecision (`decision.proto`), 5. OHLCCandle (`market_data.proto`), 6. PredictiveSignal (`predictive_data.proto`), Universal Data Contracts
 
 ### Community 74 - "Community 74"
-Cohesion: 0.38
-Nodes (10): generate_deep_quant_plan_with_url(), tauri::AppHandle, fixture_consensus(), isolate_env(), lock_env(), test_audit_logger_writes_to_disk_in_test_mode(), test_deepseek_handles_429_rate_limit(), test_deepseek_handles_malformed_inner_content() (+2 more)
+Cohesion: 0.17
+Nodes (13): bs(), cm(), fc(), Fe(), getGlobalOmit(), Ll(), Os(), shouldApplyGlobalOmit() (+5 more)
 
 ### Community 75 - "Community 75"
 Cohesion: 0.14
@@ -586,7 +583,7 @@ Nodes (7): GetCandlesRequest, GetConsensusRequest, MultiTfRequest, MultiTfRespon
 
 ### Community 76 - "Community 76"
 Cohesion: 0.08
-Nodes (24): commands, description, identifier, commands, description, identifier, commands, description (+16 more)
+Nodes (24): commands, description, identifier, description, identifier, commands, description, identifier (+16 more)
 
 ### Community 77 - "Community 77"
 Cohesion: 0.19
@@ -614,15 +611,15 @@ Nodes (5): 1. Our Purpose, 2. Core Standards of Professionalism, 3. Operational 
 
 ### Community 83 - "Community 83"
 Cohesion: 0.03
-Nodes (150): ac(), Ao(), apiKey(), applyPendingMigrations(), As(), Au(), Bc(), Bl() (+142 more)
+Nodes (148): ac(), addItem(), Ao(), apiKey(), applyPendingMigrations(), As(), Au(), Bc() (+140 more)
 
 ### Community 84 - "Community 84"
 Cohesion: 0.33
 Nodes (6): 43 — `aggregator/src/kafka_producer.rs` — NEW, 44 — `aggregator/src/ws_server.rs` — NEW, 45 — Integration: `aggregator/Cargo.toml`, `consumer.rs` & `main.rs` — UPDATED, code:block26 (cargo test --no-default-features  (aggregator)), Final Cargo Test Result (Aggregator — Subphases 40-42), Subphases 43-45: Decision Broadcasting & WebSocket Server ✅ COMPLETE THIS SESSION
 
 ### Community 85 - "Community 85"
-Cohesion: 0.12
-Nodes (17): 28 — `agents/sentiment/` — Node.js project initialized, 29 — Dependencies installed (50 packages, 0 vulnerabilities), 30a — `agents/sentiment/src/protoLoader.js` — NEW, 30b — `agents/sentiment/src/fetcher.js` — NEW, 30c — `agents/sentiment/src/index.js` — NEW (scaffolding version), 31 — `agents/sentiment/src/cache.js` — NEW, 31 — `agents/sentiment/src/claude.js` — NEW, 32 — `agents/sentiment/src/analyzer.js` — NEW (+9 more)
+Cohesion: 0.33
+Nodes (6): 28 — `agents/sentiment/` — Node.js project initialized, 29 — Dependencies installed (50 packages, 0 vulnerabilities), 30a — `agents/sentiment/src/protoLoader.js` — NEW, 30b — `agents/sentiment/src/fetcher.js` — NEW, 30c — `agents/sentiment/src/index.js` — NEW (scaffolding version), Subphases 28-30: Sentiment Agent Scaffolding & News Fetcher ✅ COMPLETE
 
 ### Community 86 - "Community 86"
 Cohesion: 0.16
@@ -633,8 +630,8 @@ Cohesion: 0.33
 Nodes (5): description, identifier, permissions, $schema, windows
 
 ### Community 89 - "Community 89"
-Cohesion: 0.28
-Nodes (13): analyze_sentiment_via_llm(), fetch_google_news_rss(), fetch_news_headlines(), fetch_symbol_sentiment(), first_non_empty(), LlmSentimentResponse, mock_sentiment(), resolve_llm_endpoint() (+5 more)
+Cohesion: 0.32
+Nodes (11): analyze_sentiment_via_llm(), fetch_google_news_rss(), fetch_news_headlines(), fetch_symbol_sentiment(), first_non_empty(), LlmSentimentResponse, mock_sentiment(), resolve_llm_endpoint() (+3 more)
 
 ### Community 90 - "Community 90"
 Cohesion: 0.40
@@ -665,8 +662,8 @@ Cohesion: 0.24
 Nodes (8): axios, cleanUp(), main(), runTests(), sleep(), { spawn }, startServices(), LlmClient
 
 ### Community 152 - "Community 152"
-Cohesion: 0.32
-Nodes (14): base_indicators(), candle(), detects_death_cross(), detects_golden_cross(), detects_orb_breakdown_bearish(), detects_orb_breakout_bullish(), detects_vwap_bounce_bullish(), empty_history_returns_empty() (+6 more)
+Cohesion: 0.24
+Nodes (11): ko(), Lo(), Lu(), No(), Nu(), qr(), rl(), So() (+3 more)
 
 ### Community 154 - "Community 154"
 Cohesion: 0.28
@@ -689,8 +686,8 @@ Cohesion: 0.14
 Nodes (15): code:bash (docker-compose up -d --build), code:bash (docker-compose ps), code:bash (docker-compose logs -f ingestion), code:bash (docker exec -it stratai-redpanda rpk topic list), Step 2: Start the Backend Brain (Docker), Verify All Services Are Healthy, Verify Kafka Topics, code:env (# ── database configuration ───────────────────────────────) (+7 more)
 
 ### Community 159 - "Community 159"
-Cohesion: 0.20
-Nodes (10): 58 — `frontend/src/store/useTradeStore.ts` — Telemetry state added, 59 — `frontend/src/components/panels/NetworkMetrics.tsx` — NEW, 60 — `frontend/src/components/layout/TerminalLayout.tsx` — Integrated, Frontend Build Verification, Frontend Build Verification, Layout Integration, Scope Execution (Strict), Subphases 58-60: Telemetry & Latency Metrics ✅ COMPLETE THIS SESSION (+2 more)
+Cohesion: 0.21
+Nodes (8): commands, description, identifier, commands, description, identifier, allow-items, allow-set-text
 
 ### Community 160 - "Community 160"
 Cohesion: 0.20
@@ -709,12 +706,12 @@ Cohesion: 0.24
 Nodes (10): type, webviews, windows, items, description, items, type, description (+2 more)
 
 ### Community 164 - "Community 164"
-Cohesion: 0.20
-Nodes (10): $ref, description, items, type, uniqueItems, description, items, type (+2 more)
+Cohesion: 0.50
+Nodes (4): description, type, uniqueItems, permissions
 
 ### Community 165 - "Community 165"
-Cohesion: 0.24
-Nodes (10): type, webviews, windows, items, description, items, type, description (+2 more)
+Cohesion: 0.15
+Nodes (16): $ref, type, items, description, items, type, platforms, webviews (+8 more)
 
 ### Community 166 - "Community 166"
 Cohesion: 0.31
@@ -745,12 +742,12 @@ Cohesion: 0.20
 Nodes (7): aiQuantTab, deepQuantBtn, handlers, keys, MOCK_AI_EXECUTION_PLAN, MOCK_QUOTE, plan
 
 ### Community 173 - "Community 173"
-Cohesion: 0.09
-Nodes (36): ACCESS_COOKIE_OPTS, COOKIE_OPTS, handleGenerateMfa(), handleGoogleLogin(), handleHealth(), handleLogin(), handleLogout(), handleRefresh() (+28 more)
+Cohesion: 0.11
+Nodes (32): ACCESS_COOKIE_OPTS, COOKIE_OPTS, handleGenerateMfa(), handleGoogleLogin(), handleHealth(), handleLogin(), handleLogout(), handleRefresh() (+24 more)
 
 ### Community 174 - "Community 174"
-Cohesion: 0.14
-Nodes (19): AlphaPredictiveChart.tsx, Technical Analysis Agent, TechSignal Protobuf Contract, AlphaPredictiveChart.tsx Chart Render, IndicatorState Struct (16 indicators), Seasoned Historian V3 Prompt Core, VWEPR Curvature Regression Model, indicators.rs (RSI + VWAP) (+11 more)
+Cohesion: 0.15
+Nodes (18): AlphaPredictiveChart.tsx, Technical Analysis Agent, TechSignal Protobuf Contract, AlphaPredictiveChart.tsx Chart Render, IndicatorState Struct (16 indicators), VWEPR Curvature Regression Model, indicators.rs (RSI + VWAP), kafka_consumer.rs (Technical Agent) (+10 more)
 
 ### Community 175 - "Community 175"
 Cohesion: 0.21
@@ -809,16 +806,16 @@ Cohesion: 0.50
 Nodes (4): commands, description, identifier, deny-insert
 
 ### Community 189 - "Community 189"
-Cohesion: 0.50
-Nodes (4): commands, description, identifier, allow-insert
+Cohesion: 0.47
+Nodes (4): ARGON2_OPTIONS, hashPassword(), start, verifyPassword()
 
 ### Community 190 - "Community 190"
 Cohesion: 0.50
 Nodes (4): commands, description, identifier, allow-is-enabled
 
 ### Community 191 - "Community 191"
-Cohesion: 0.07
-Nodes (24): gate(), Home(), SIDEBAR_CONFIG, SidebarTab, AuthOverlay(), BrokerConnectCard(), OAuthCompleteInner(), OAuthCompletePage() (+16 more)
+Cohesion: 0.05
+Nodes (32): gate(), Home(), SIDEBAR_CONFIG, SidebarTab, AuthOverlay(), BrokerConnectCard(), OAuthCompleteInner(), OAuthCompletePage() (+24 more)
 
 ### Community 192 - "Community 192"
 Cohesion: 0.50
@@ -880,7 +877,7 @@ Nodes (62): {
 
 ### Community 203 - "Community 203"
 Cohesion: 0.13
-Nodes (48): addErrorMessage(), addField(), addSuggestion(), Ao(), asObject(), Au(), bu(), co() (+40 more)
+Nodes (49): addErrorMessage(), addField(), addSuggestion(), Ao(), asObject(), Au(), bu(), co() (+41 more)
 
 ### Community 204 - "Community 204"
 Cohesion: 0.50
@@ -903,16 +900,16 @@ Cohesion: 0.18
 Nodes (9): confidence_is_clamped(), flat_prices_yield_high_confidence(), PredictionEngine, returns_none_when_window_incomplete(), returns_prediction_at_full_window(), window_never_exceeds_capacity(), AggregatorState, MarketState (+1 more)
 
 ### Community 209 - "Community 209"
-Cohesion: 0.15
-Nodes (44): addErrorMessage(), addField(), addSuggestion(), Ao(), Ar(), asObject(), Au(), bu() (+36 more)
+Cohesion: 0.14
+Nodes (46): addErrorMessage(), addField(), addSuggestion(), Ao(), Ar(), asObject(), Au(), bu() (+38 more)
 
 ### Community 210 - "Community 210"
 Cohesion: 0.07
-Nodes (44): addItem(), append(), as(), Br(), bt(), cs(), dc(), e (+36 more)
+Nodes (41): addItem(), append(), as(), Br(), bt(), cs(), dc(), e (+33 more)
 
 ### Community 211 - "Community 211"
-Cohesion: 0.06
-Nodes (43): ap(), ci(), en(), ep(), Es(), fromContent(), He(), ic() (+35 more)
+Cohesion: 0.07
+Nodes (44): ap(), cc(), ci(), en(), ep(), He(), highlight(), ic() (+36 more)
 
 ### Community 212 - "Community 212"
 Cohesion: 0.15
@@ -923,8 +920,8 @@ Cohesion: 0.17
 Nodes (40): addErrorMessage(), addField(), addSuggestion(), asObject(), Bp(), dp(), Fp(), getDeepField() (+32 more)
 
 ### Community 214 - "Community 214"
-Cohesion: 0.06
-Nodes (40): a(), append(), be(), bl(), bn(), cu(), dr(), e (+32 more)
+Cohesion: 0.08
+Nodes (31): a(), append(), be(), bl(), bn(), cu(), dr(), e (+23 more)
 
 ### Community 215 - "Community 215"
 Cohesion: 0.09
@@ -939,44 +936,44 @@ Cohesion: 0.09
 Nodes (37): $(), ae(), alloc(), allocUnsafe(), allocUnsafeSlow(), byteLength(), ci(), cn() (+29 more)
 
 ### Community 218 - "Community 218"
-Cohesion: 0.08
-Nodes (36): an(), Ba(), cc(), Cd(), da(), Dn(), Et(), extractHostAndApiKey() (+28 more)
+Cohesion: 0.11
+Nodes (28): an(), Ba(), Cd(), da(), Dn(), Et(), extractHostAndApiKey(), getLocation() (+20 more)
 
 ### Community 219 - "Community 219"
 Cohesion: 0.07
 Nodes (36): buildQueryError(), consumeError(), createEngineSpan(), dm(), fd(), fm(), forEach(), Ft() (+28 more)
 
 ### Community 220 - "Community 220"
-Cohesion: 0.08
-Nodes (35): bl(), ce(), Dt(), el(), eo(), Er(), findField(), getGlobalOmit() (+27 more)
+Cohesion: 0.07
+Nodes (37): bl(), ce(), cl(), Dt(), el(), eo(), Er(), findField() (+29 more)
 
 ### Community 221 - "Community 221"
-Cohesion: 0.08
-Nodes (34): append(), Bd(), Bu(), cp(), dd(), e(), Fi(), Gd() (+26 more)
+Cohesion: 0.07
+Nodes (37): append(), Bd(), Bu(), cp(), dd(), e(), Fi(), Gd() (+29 more)
 
 ### Community 222 - "Community 222"
 Cohesion: 0.12
 Nodes (34): ac(), Bt(), cc(), Cn(), findField(), fo(), Fr(), getArgumentName() (+26 more)
 
 ### Community 223 - "Community 223"
-Cohesion: 0.09
-Nodes (33): append(), bc(), Be(), cs(), ds(), e, ec(), get() (+25 more)
+Cohesion: 0.08
+Nodes (35): append(), bc(), Be(), cs(), ds(), e, ec(), get() (+27 more)
 
 ### Community 224 - "Community 224"
-Cohesion: 0.10
-Nodes (32): ct(), ea(), Fu(), ii(), ko(), lc(), Lo(), Lu() (+24 more)
+Cohesion: 0.11
+Nodes (29): _a(), Am(), Br(), ct(), ea(), Fu(), Gl(), ii() (+21 more)
 
 ### Community 225 - "Community 225"
-Cohesion: 0.23
-Nodes (5): ConsensusEngine, derive_bias_bearish(), derive_bias_mixed_on_conflicting_signals(), derive_bias_neutral_on_no_signals(), legacy_analyze_still_works()
+Cohesion: 0.27
+Nodes (13): build_request_body(), build_system_prompt(), generate_deep_quant_plan_with_url(), tauri::AppHandle, fixture_consensus(), isolate_env(), lock_env(), test_audit_logger_writes_to_disk_in_test_mode() (+5 more)
 
 ### Community 226 - "Community 226"
 Cohesion: 0.11
 Nodes (30): addMarginSymbol(), afterNextNewline(), B(), compare(), copy(), cs(), getCurrentLineLength(), Ht() (+22 more)
 
 ### Community 227 - "Community 227"
-Cohesion: 0.10
-Nodes (29): ba(), Ea(), fn(), Fs(), ha(), Hr(), ii(), indentedCurrentLine() (+21 more)
+Cohesion: 0.18
+Nodes (17): ba(), ha(), Hr(), ii(), Kr(), ni(), Oe(), oi() (+9 more)
 
 ### Community 228 - "Community 228"
 Cohesion: 0.09
@@ -995,12 +992,12 @@ Cohesion: 0.20
 Nodes (25): aa(), de(), di(), Dr(), fi(), findField(), getArgumentName(), getArgumentPath() (+17 more)
 
 ### Community 232 - "Community 232"
-Cohesion: 0.09
-Nodes (24): ac(), extractHostAndApiKey(), getGlobalOmit(), Gr(), He(), ht(), ic(), jc() (+16 more)
+Cohesion: 0.22
+Nodes (9): getGlobalOmit(), He(), jc(), Kr(), nt(), Pe(), shouldApplyGlobalOmit(), To() (+1 more)
 
 ### Community 233 - "Community 233"
-Cohesion: 0.10
-Nodes (23): Bs(), Cr(), Do(), dt(), Fr(), _getName(), handleRequestError(), indentedCurrentLine() (+15 more)
+Cohesion: 0.09
+Nodes (26): ac(), Bs(), Cr(), Do(), dt(), extractHostAndApiKey(), _getName(), Gr() (+18 more)
 
 ### Community 234 - "Community 234"
 Cohesion: 0.13
@@ -1031,20 +1028,20 @@ Cohesion: 0.12
 Nodes (18): addItem(), As(), at(), de(), Dl(), Fe(), getGlobalOmit(), js() (+10 more)
 
 ### Community 241 - "Community 241"
-Cohesion: 0.18
-Nodes (17): applyPendingMigrations(), buildQueryError(), json(), Lr(), metrics(), parseEngineResponse(), parseRequestError(), prometheus() (+9 more)
+Cohesion: 0.11
+Nodes (26): applyPendingMigrations(), buildQueryError(), createEngineSpan(), emit(), getActiveContext(), getGlobalTracingHelper(), getTraceParent(), handleAndLogRequestError() (+18 more)
 
 ### Community 242 - "Community 242"
 Cohesion: 0.20
 Nodes (16): addMarginSymbol(), afterNextNewline(), bi(), Ei(), getCurrentLineLength(), indent(), setColor(), underline() (+8 more)
 
 ### Community 243 - "Community 243"
-Cohesion: 0.20
-Nodes (16): addMarginSymbol(), afterNextNewline(), ci(), getCurrentLineLength(), indent(), pi(), setColor(), ui() (+8 more)
+Cohesion: 0.12
+Nodes (24): addMarginSymbol(), afterNextNewline(), ci(), Ea(), fn(), getCurrentLineLength(), indent(), indentedCurrentLine() (+16 more)
 
 ### Community 244 - "Community 244"
-Cohesion: 0.36
-Nodes (4): handleEmailBlur(), handlePassBlur(), validateEmail(), validatePassword()
+Cohesion: 0.50
+Nodes (4): commands, description, identifier, allow-set-enabled
 
 ### Community 245 - "Community 245"
 Cohesion: 0.24
@@ -1085,8 +1082,8 @@ Nodes (9): alternativePaths, config, fs, path, Prisma, PrismaClient, {
 }, { warnEnvConflicts } (+1 more)
 
 ### Community 249 - "Community 249"
-Cohesion: 0.20
-Nodes (11): ./sql, require, browser, default, edge-light, node, types, worker (+3 more)
+Cohesion: 0.25
+Nodes (9): require, browser, default, edge-light, node, types, worker, workerd (+1 more)
 
 ### Community 250 - "Community 250"
 Cohesion: 0.22
@@ -1097,8 +1094,8 @@ Cohesion: 0.42
 Nodes (8): evaluate_signal(), fields_propagated_correctly(), neutral_signal(), overbought_above_vwap(), oversold_below_vwap(), strong_bearish_signal(), strong_bullish_signal(), vwap_distance_calculation()
 
 ### Community 252 - "Community 252"
-Cohesion: 0.25
-Nodes (9): import, browser, default, edge-light, node, types, worker, workerd (+1 more)
+Cohesion: 0.20
+Nodes (11): ./sql, import, browser, default, edge-light, node, types, worker (+3 more)
 
 ### Community 253 - "Community 253"
 Cohesion: 0.25
@@ -1113,8 +1110,8 @@ Cohesion: 0.43
 Nodes (6): browser, main, name, sideEffects, types, version
 
 ### Community 256 - "Community 256"
-Cohesion: 0.16
-Nodes (5): PaymentController, paymentService, SubscriptionRepository, PaymentService, subscriptionRepository
+Cohesion: 0.24
+Nodes (3): SubscriptionRepository, PaymentService, subscriptionRepository
 
 ### Community 257 - "Community 257"
 Cohesion: 0.48
@@ -1151,12 +1148,12 @@ Cohesion: 0.52
 Nodes (6): make_ltp_packet(), parse_binary_frame(), parse_binary_tick(), test_frame_with_no_packets(), test_ltp_mode_parsing(), test_packet_too_short()
 
 ### Community 260 - "Community 260"
-Cohesion: 0.29
-Nodes (7): gc(), jl(), mo(), no(), po(), vl(), ye()
+Cohesion: 0.14
+Nodes (15): Fr(), gc(), handleRequestError(), jl(), mo(), no(), Nr(), po() (+7 more)
 
 ### Community 261 - "Community 261"
-Cohesion: 0.40
-Nodes (6): Ao(), co(), ec(), Pe(), rt(), Vc()
+Cohesion: 0.36
+Nodes (4): handleEmailBlur(), handlePassBlur(), validateEmail(), validatePassword()
 
 ### Community 262 - "Community 262"
 Cohesion: 0.40
@@ -1191,7 +1188,7 @@ Cohesion: 0.40
 Nodes (5): ./wasm, default, import, require, types
 
 ### Community 278 - "Community 278"
-Cohesion: 0.15
+Cohesion: 0.16
 Nodes (6): redis, BrokerRepository, UserRepository, brokerRepository, userRepository, prisma
 
 ### Community 279 - "Community 279"
@@ -1202,21 +1199,13 @@ Nodes (13): AuthenticatedRequest, authenticateJWT(), base64Payload, calculatedSh
 Cohesion: 0.17
 Nodes (11): name, private, scripts, build, dev, lint, start, tauri (+3 more)
 
-### Community 281 - "Community 281"
-Cohesion: 0.18
-Nodes (4): AuthController, authService, controller, router
-
 ### Community 282 - "Community 282"
-Cohesion: 0.38
-Nodes (4): AuthenticatedRequest, authenticateJWT(), controller, router
+Cohesion: 0.18
+Nodes (6): PaymentController, paymentService, PhonePeController, controller, phonePeController, router
 
 ### Community 283 - "Community 283"
 Cohesion: 0.25
 Nodes (4): inter, metadata, AuthLayout(), SessionProvider()
-
-### Community 285 - "Community 285"
-Cohesion: 0.25
-Nodes (10): ConsensusEngine (Tauri Quant), Quant Radar Background Scanner, ConsensusReport, quant/mod.rs ConsensusEngine, quant/patterns.rs Pattern Detection, quant/radar.rs Quant Radar Worker, QuantRadar.tsx Alert Overlay, quant/strategies.rs Strategy Signals (+2 more)
 
 ### Community 287 - "Community 287"
 Cohesion: 0.44
@@ -1226,20 +1215,16 @@ Nodes (9): ActivePositions(), calcPnl(), calcPnlPercent(), formatPercent(), form
 Cohesion: 0.53
 Nodes (5): rsi_warm_up_gating(), update_rsi(), update_vwap(), vwap_basic_calculation(), vwap_no_volume_returns_none()
 
-### Community 289 - "Community 289"
-Cohesion: 0.46
-Nodes (7): AiExecutionPlanView(), AiExecutionPlanViewProps, AiPlanShape, convictionColor(), convictionIcon(), convictionLabel(), AiExecutionPlan
-
 ### Community 290 - "Community 290"
-Cohesion: 0.15
-Nodes (13): DeepSeek v4 Pro via NVIDIA NIM, DeepQuantPanel.tsx, LOADING_PHASES, LoadingStateProps, VerificationForm(), VerificationFormProps, convictionIcon(), convictionLabel() (+5 more)
+Cohesion: 0.09
+Nodes (23): DeepSeek v4 Pro via NVIDIA NIM, DeepQuantPanel.tsx, AiExecutionPlanView(), AiExecutionPlanViewProps, AiPlanShape, convictionColor(), convictionIcon(), convictionLabel() (+15 more)
 
 ### Community 293 - "Community 293"
-Cohesion: 0.40
-Nodes (3): app, token, userId
+Cohesion: 0.20
+Nodes (7): AuthenticatedRequest, authenticateJWT(), controller, router, app, token, userId
 
 ## Knowledge Gaps
-- **1098 isolated node(s):** `name`, `version`, `private`, `test:rust`, `test:e2e` (+1093 more)
+- **1108 isolated node(s):** `name`, `version`, `private`, `test:rust`, `test:e2e` (+1103 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **18 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
@@ -1247,16 +1232,16 @@ Nodes (3): app, token, userId
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `run()` connect `Community 50` to `Community 1`, `Community 7`, `Community 173`, `Community 154`, `Community 27`, `Community 93`?**
-  _High betweenness centrality (0.019) - this node is a cross-community bridge._
-- **Why does `resolve_instrument_token()` connect `Community 9` to `Community 41`, `Community 27`, `Community 245`, `Community 47`?**
-  _High betweenness centrality (0.018) - this node is a cross-community bridge._
+  _High betweenness centrality (0.027) - this node is a cross-community bridge._
+- **Why does `resolve_instrument_token()` connect `Community 9` to `Community 41`, `Community 26`, `Community 27`, `Community 245`?**
+  _High betweenness centrality (0.021) - this node is a cross-community bridge._
 - **Why does `useHistoricalData.ts Hook` connect `Community 9` to `Community 17`, `Community 44`, `Community 22`, `Community 14`?**
-  _High betweenness centrality (0.017) - this node is a cross-community bridge._
+  _High betweenness centrality (0.020) - this node is a cross-community bridge._
 - **What connects `name`, `version`, `private` to the rest of the system?**
-  _1122 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _1132 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
   _Cohesion score 0.04644412191582003 - nodes in this community are weakly interconnected._
 - **Should `Community 1` be split into smaller, more focused modules?**
   _Cohesion score 0.12857142857142856 - nodes in this community are weakly interconnected._
-- **Should `Community 3` be split into smaller, more focused modules?**
-  _Cohesion score 0.08735632183908046 - nodes in this community are weakly interconnected._
+- **Should `Community 2` be split into smaller, more focused modules?**
+  _Cohesion score 0.05042016806722689 - nodes in this community are weakly interconnected._

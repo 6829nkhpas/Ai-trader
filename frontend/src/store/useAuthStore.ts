@@ -10,6 +10,7 @@ interface AuthState {
   logout: () => void;
   setBrokerConnected: (connected: boolean) => void;
   fetchProfile: () => Promise<void>;
+  fetchUserProfile: () => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set) => {
@@ -138,6 +139,32 @@ export const useAuthStore = create<AuthState>((set) => {
         }
       } catch (err) {
         console.error('[Auth Store] Failed to fetch profile:', err);
+      }
+    },
+
+    fetchUserProfile: async () => {
+      const token = useAuthStore.getState().token;
+      if (!token) return;
+      try {
+        const response = await fetch('http://localhost:3001/api/auth/me', {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          set({ 
+            user: data.profile,
+            isBrokerConnected: !!data.profile?.brokerConnection
+          });
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('user', JSON.stringify(data.profile));
+          }
+          console.log('[Auth Store] fetchUserProfile success:', data.profile?.tier);
+        }
+      } catch (err) {
+        console.error('[Auth Store] Failed to fetch user profile:', err);
       }
     },
   };

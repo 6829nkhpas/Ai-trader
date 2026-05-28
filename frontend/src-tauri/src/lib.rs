@@ -17,6 +17,9 @@ fn handle_deep_link(app: &tauri::AppHandle, url_str: &str) {
         let is_callback = parsed_url.host_str() == Some("broker-callback") 
             || parsed_url.path().contains("broker-callback");
             
+        let is_payment_success = parsed_url.host_str() == Some("payment-success")
+            || parsed_url.path().contains("payment-success");
+            
         if is_callback {
             let mut access_token = None;
             for (key, val) in parsed_url.query_pairs() {
@@ -43,6 +46,13 @@ fn handle_deep_link(app: &tauri::AppHandle, url_str: &str) {
                 }
             } else {
                 log::warn!("[deep link] No token found in url parameters.");
+            }
+        } else if is_payment_success {
+            info!("[deep link] Parsed payment-success deep link. Emitting to UI...");
+            if let Err(e) = app.emit("payment-success", serde_json::json!({})) {
+                error!("[deep link] Failed to emit payment-success: {:?}", e);
+            } else {
+                info!("[deep link] Emitted payment-success event to UI.");
             }
         }
     } else {
@@ -132,7 +142,7 @@ pub fn run() {
         
         // Pass any deep link URLs from command line arguments to the active instance
         for arg in args {
-            if arg.starts_with("strat://") || arg.contains("broker-callback") {
+            if arg.starts_with("strat://") || arg.contains("broker-callback") || arg.contains("payment-success") {
                 handle_deep_link(app, &arg);
             }
         }
