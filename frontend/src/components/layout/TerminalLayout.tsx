@@ -105,7 +105,8 @@ import {
 } from 'lucide-react';
 import { useTradeStore, TradeProfile } from '../../store/useTradeStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
-import { ToolMenu, type ToolMenuEntry } from '../chart/ToolMenu';
+import { useAuthStore } from '../../store/useAuthStore';
+import { ToolMenu, type ToolMenuEntry, PremiumTooltip, toolDescriptions } from '../chart/ToolMenu';
 import QuantRadar from '../quant/QuantRadar';
 import UserProfileModal from '../profile/UserProfileModal';
 
@@ -138,8 +139,18 @@ interface TerminalLayoutProps {
 
 export default function TerminalLayout({ children, leftPanel }: TerminalLayoutProps) {
   const { activeProfile, setActiveProfile, resetSession } = useTradeStore();
+  const { user } = useAuthStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+
+  const broker = user?.brokerConnection;
+
+  const getInitials = (name: string | null | undefined) => {
+    if (!name) return 'SA';
+    const parts = name.trim().split(/\s+/);
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  };
 
   const {
     activeCursor,
@@ -345,10 +356,20 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
           {/* User Profile Avatar Icon */}
           <button
             onClick={() => setProfileOpen(true)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border-default bg-surface/50 hover:bg-elevated/45 text-text-secondary hover:text-white transition-all shadow-sm"
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border-default bg-surface/50 hover:bg-elevated/45 text-text-secondary hover:text-white transition-all shadow-sm overflow-hidden"
             title="Account Profile & Settings"
           >
-            <User size={15} />
+            {broker?.avatarUrl ? (
+              <img 
+                src={broker.avatarUrl} 
+                alt={user?.name || 'Profile Avatar'} 
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center bg-emerald-500/10 text-emerald-400 font-bold text-xs tracking-wider">
+                {getInitials(user?.name)}
+              </div>
+            )}
           </button>
         </div>
       </header>
@@ -415,83 +436,89 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
           />
 
           <div className="flex flex-col items-center gap-1.5 pb-2 border-b border-border-default w-full mb-2">
-            <button
-              type="button"
-              onClick={() => setActiveDrawingTool(activeDrawingTool === 'measure' ? null : 'measure')}
-              title="Measure"
-              className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${activeDrawingTool === 'measure'
-                  ? 'text-primary bg-primary/10'
-                  : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
-                }`}
-            >
-              <Ruler size={16} />
-            </button>
+            <PremiumTooltip title="Measure Tool" content={toolDescriptions['measure']}>
+              <button
+                type="button"
+                onClick={() => setActiveDrawingTool(activeDrawingTool === 'measure' ? null : 'measure')}
+                className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${activeDrawingTool === 'measure'
+                    ? 'text-primary bg-primary/10'
+                    : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
+                  }`}
+              >
+                <Ruler size={16} />
+              </button>
+            </PremiumTooltip>
           </div>
 
           {/* Color Picker */}
           <div className="flex flex-col items-center pb-2 border-b border-border-default w-full">
-            <label
-              htmlFor="color-picker"
-              className="group relative flex h-8 w-8 items-center justify-center rounded-md cursor-pointer hover:bg-elevated transition-colors"
-              title="Drawing Color"
-            >
-              <div 
-                className="w-5 h-5 rounded-full border border-border-default/50 shadow-sm transition-transform group-hover:scale-110"
-                style={{ backgroundColor: drawingColor }}
-              />
-              <input
-                id="color-picker"
-                type="color"
-                value={drawingColor}
-                onChange={(e) => setDrawingColor(e.target.value)}
-                className="absolute opacity-0 w-0 h-0"
-              />
-            </label>
+            <PremiumTooltip title="Drawing Color" content={toolDescriptions['color']}>
+              <label
+                htmlFor="color-picker"
+                className="group relative flex h-8 w-8 items-center justify-center rounded-md cursor-pointer hover:bg-elevated transition-colors"
+              >
+                <div 
+                  className="w-5 h-5 rounded-full border border-border-default/50 shadow-sm transition-transform group-hover:scale-110"
+                  style={{ backgroundColor: drawingColor }}
+                />
+                <input
+                  id="color-picker"
+                  type="color"
+                  value={drawingColor}
+                  onChange={(e) => setDrawingColor(e.target.value)}
+                  className="absolute opacity-0 w-0 h-0"
+                />
+              </label>
+            </PremiumTooltip>
           </div>
 
           {/* Standalone bottom buttons */}
           <div className="flex flex-col items-center gap-1.5 pt-2">
-            <button
-              type="button"
-              onClick={cycleMagnetMode}
-              title={`Magnet Mode: ${magnetMode}`}
-              className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${magnetMode !== 'off'
-                  ? 'text-primary bg-primary/10'
-                  : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
-                }`}
-            >
-              <Magnet size={15} />
-            </button>
+            <PremiumTooltip title={`Magnet Mode: ${magnetMode.toUpperCase()}`} content={toolDescriptions[`magnet-${magnetMode}`] || toolDescriptions['magnet-off']}>
+              <button
+                type="button"
+                onClick={cycleMagnetMode}
+                className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${magnetMode !== 'off'
+                    ? 'text-primary bg-primary/10'
+                    : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
+                  }`}
+              >
+                <Magnet size={15} />
+              </button>
+            </PremiumTooltip>
 
-            <button
-              type="button"
-              onClick={toggleDrawingsLocked}
-              title="Lock All Drawings"
-              className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${drawingsLocked
-                  ? 'text-primary bg-primary/10'
-                  : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
-                }`}
-            >
-              <Lock size={15} />
-            </button>
+            <PremiumTooltip title="Lock Drawings" content={toolDescriptions['lock']}>
+              <button
+                type="button"
+                onClick={toggleDrawingsLocked}
+                className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${drawingsLocked
+                    ? 'text-primary bg-primary/10'
+                    : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
+                  }`}
+              >
+                <Lock size={15} />
+              </button>
+            </PremiumTooltip>
 
-            <button
-              type="button"
-              onClick={toggleDrawingsVisible}
-              title={drawingsVisible ? 'Hide Drawings' : 'Show Drawings'}
-              className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
-            >
-              {drawingsVisible ? <Eye size={15} /> : <EyeOff size={15} />}
-            </button>
+            <PremiumTooltip title={drawingsVisible ? 'Hide Drawings' : 'Show Drawings'} content={toolDescriptions['visible']}>
+              <button
+                type="button"
+                onClick={toggleDrawingsVisible}
+                className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
+              >
+                {drawingsVisible ? <Eye size={15} /> : <EyeOff size={15} />}
+              </button>
+            </PremiumTooltip>
 
-            <button
-              type="button"
-              onClick={clearDrawings}
-              title="Clear Drawings"
-              className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-elevated hover:text-red-400"
-            >
-              <Trash2 size={15} />
-            </button>
+            <PremiumTooltip title="Clear Drawings" content={toolDescriptions['clear']}>
+              <button
+                type="button"
+                onClick={clearDrawings}
+                className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-elevated hover:text-red-400"
+              >
+                <Trash2 size={15} />
+              </button>
+            </PremiumTooltip>
           </div>
         </div>
 

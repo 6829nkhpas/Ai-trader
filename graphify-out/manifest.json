@@ -275,8 +275,8 @@
     "semantic_hash": "41f1b0c44c7ca1794f0fb196a5020061"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\app\\page.tsx": {
-    "mtime": 1779981927.8650029,
-    "ast_hash": "10428e9b0c72ab9b6c3853401d56edc8",
+    "mtime": 1779989999.3616724,
+    "ast_hash": "c0206067f28d78313ec6cff0e8464791",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\app\\api\\kite\\historical\\route.ts": {
@@ -320,13 +320,13 @@
     "semantic_hash": "8d1219d1b9747bc5fdee6faf77eb3def"
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\chart\\ToolMenu.tsx": {
-    "mtime": 1778589630.2648017,
-    "ast_hash": "c44e6eb02a4f6b05ed5de114e1b632c7",
-    "semantic_hash": "c44e6eb02a4f6b05ed5de114e1b632c7"
+    "mtime": 1779992150.5867045,
+    "ast_hash": "c479402c3f2a002b7adccad3b25c8e9c",
+    "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\layout\\TerminalLayout.tsx": {
-    "mtime": 1779905345.0106878,
-    "ast_hash": "e1001090e0fa247dfb1a59534597c568",
+    "mtime": 1779992129.8754845,
+    "ast_hash": "f7f1677bbf4a2ee548612857d1595ab8",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\layouts\\IntradayLayout.tsx": {
@@ -690,8 +690,8 @@
     "semantic_hash": "0ae54f51d45a3ec04e7632624fdd3546"
   },
   "D:\\projects\\Ai-trader\\ARCHITECTURE.md": {
-    "mtime": 1779204676.2929778,
-    "ast_hash": "a9c583accd69321adca21c2880d7644e",
+    "mtime": 1779989781.1786225,
+    "ast_hash": "f89ea8d911292a6cde7d862d954f0f0d",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\COMPLETE_ANALYSIS.md": {
@@ -735,8 +735,8 @@
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\STATE.md": {
-    "mtime": 1778237930.803004,
-    "ast_hash": "fec14a84b5013f5a8a61b6e734a4e604",
+    "mtime": 1779989787.9840362,
+    "ast_hash": "b4189ddb3184bbef668275c996872755",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\system_architecture_and_data_flows.md": {
@@ -1295,8 +1295,8 @@
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\alpha-backend\\services\\auth-service\\src\\index.ts": {
-    "mtime": 1779894928.4507315,
-    "ast_hash": "0f62f35a5698afbb0eeca02e97d5ad23",
+    "mtime": 1779989705.9708886,
+    "ast_hash": "91d4aa14ee13364789abe8d3cde1c23f",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\alpha-backend\\services\\payment-service\\src\\db.ts": {
@@ -1315,53 +1315,53 @@
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\alpha-backend\\services\\auth-service\\src\\generated\\client\\default.d.ts": {
-    "mtime": 1779897652.442034,
+    "mtime": 1779985052.0745947,
     "ast_hash": "6cfa5c5e0b5de6abfc20f2532414712c",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\alpha-backend\\services\\auth-service\\src\\generated\\client\\default.js": {
-    "mtime": 1779897652.442034,
+    "mtime": 1779985052.0745947,
     "ast_hash": "1f0db1021cfeac03b7418b20a4eedd9c",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\alpha-backend\\services\\auth-service\\src\\generated\\client\\edge.d.ts": {
-    "mtime": 1779897652.4425614,
+    "mtime": 1779985052.076253,
     "ast_hash": "b1a34f9b323447f227db5aa901d5f3a9",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\alpha-backend\\services\\auth-service\\src\\generated\\client\\edge.js": {
-    "mtime": 1779897652.4425614,
-    "ast_hash": "8435a374157e611f2499148a71a059bd",
+    "mtime": 1779985052.076253,
+    "ast_hash": "bc3f25e3e88c2ac279129bbc2c5f3863",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\alpha-backend\\services\\auth-service\\src\\generated\\client\\index-browser.js": {
-    "mtime": 1779897652.4425614,
-    "ast_hash": "65be977edf9924bec858427ce84a912f",
+    "mtime": 1779985052.076253,
+    "ast_hash": "20c6b61090c606b1540f52822b7f5dff",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\alpha-backend\\services\\auth-service\\src\\generated\\client\\index.d.ts": {
-    "mtime": 1779897652.4425614,
-    "ast_hash": "3b8537c7c134f97fe4cc61779996a7d7",
+    "mtime": 1779985052.075915,
+    "ast_hash": "ca1b4d927e96e0737a7d56e86af51608",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\alpha-backend\\services\\auth-service\\src\\generated\\client\\index.js": {
-    "mtime": 1779897652.442034,
-    "ast_hash": "a03d2ef9f84bb899026d7d94f5229065",
+    "mtime": 1779985052.0745947,
+    "ast_hash": "6f65552a64f83549a72414ca2f7ab616",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\alpha-backend\\services\\auth-service\\src\\generated\\client\\package.json": {
-    "mtime": 1779897652.4425614,
-    "ast_hash": "b5103b943182ecfbda959206242024e0",
+    "mtime": 1779985052.0767574,
+    "ast_hash": "361b75965b5d8b2feda7c281116543d6",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\alpha-backend\\services\\auth-service\\src\\generated\\client\\wasm.d.ts": {
-    "mtime": 1779897652.4425614,
+    "mtime": 1779985052.076253,
     "ast_hash": "6cfa5c5e0b5de6abfc20f2532414712c",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\alpha-backend\\services\\auth-service\\src\\generated\\client\\wasm.js": {
-    "mtime": 1779897652.4425614,
-    "ast_hash": "65be977edf9924bec858427ce84a912f",
+    "mtime": 1779985052.0767574,
+    "ast_hash": "20c6b61090c606b1540f52822b7f5dff",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\alpha-backend\\services\\auth-service\\src\\generated\\client\\runtime\\edge-esm.js": {
@@ -1535,8 +1535,8 @@
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\alpha-backend\\services\\auth-service\\src\\services\\auth.service.ts": {
-    "mtime": 1779981870.4861138,
-    "ast_hash": "aff070acc97b7336309adcf8c5234bfa",
+    "mtime": 1779990838.312877,
+    "ast_hash": "a90291128756733e79e2e8fb7f1b3946",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\alpha-backend\\services\\auth-service\\src\\middlewares\\auth.middleware.ts": {
@@ -1590,13 +1590,13 @@
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\profile\\UserProfileModal.tsx": {
-    "mtime": 1779907296.5986173,
-    "ast_hash": "c0a9285d628e1c50c04793fe16e866bf",
+    "mtime": 1779992895.440123,
+    "ast_hash": "9090be2b84a885a2fef2a9f6031536a2",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\profile\\tabs\\BrokerTab.tsx": {
-    "mtime": 1779907279.693689,
-    "ast_hash": "93cd7361d7f987f0b038d8746fab6666",
+    "mtime": 1779985900.806662,
+    "ast_hash": "23fca73217584380fbf3a970e61d5a9c",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\profile\\tabs\\PortfolioTab.tsx": {
@@ -1605,8 +1605,8 @@
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\profile\\tabs\\ProfileTab.tsx": {
-    "mtime": 1779907135.0686386,
-    "ast_hash": "f16c230b5edf64dae6d884f51b00837a",
+    "mtime": 1779990578.9569588,
+    "ast_hash": "c39211f69fba330d9783b77fddcf79f4",
     "semantic_hash": ""
   },
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\profile\\tabs\\SubscriptionTab.tsx": {
@@ -1617,6 +1617,46 @@
   "D:\\projects\\Ai-trader\\frontend\\src\\components\\profile\\tabs\\TransactionsTab.tsx": {
     "mtime": 1779907284.763106,
     "ast_hash": "f5e791f7dfd8feed809c85f309d194ac",
+    "semantic_hash": ""
+  },
+  "D:\\projects\\Ai-trader\\alpha-backend\\services\\auth-service\\src\\services\\kiteService.ts": {
+    "mtime": 1779992692.7006922,
+    "ast_hash": "684b1cb1e95a04a54cee45da1f0de93d",
+    "semantic_hash": ""
+  },
+  "D:\\projects\\Ai-trader\\alpha-backend\\services\\auth-service\\src\\controllers\\portfolioController.ts": {
+    "mtime": 1779994475.5002916,
+    "ast_hash": "174ab71b14fb2843bf2aa3c1fa6e1df3",
+    "semantic_hash": ""
+  },
+  "D:\\projects\\Ai-trader\\alpha-backend\\services\\auth-service\\src\\routes\\portfolio.ts": {
+    "mtime": 1779989700.7577531,
+    "ast_hash": "387deb6829cf09e6084258129b89e37c",
+    "semantic_hash": ""
+  },
+  "D:\\projects\\Ai-trader\\frontend\\src\\hooks\\useAlphaData.ts": {
+    "mtime": 1779989719.5971456,
+    "ast_hash": "17693d5c09a3151e91da98eddf5ac587",
+    "semantic_hash": ""
+  },
+  "D:\\projects\\Ai-trader\\frontend\\src\\components\\TerminalDashboard.tsx": {
+    "mtime": 1779992910.2485156,
+    "ast_hash": "71e08a167d694d6e454601932122dc4b",
+    "semantic_hash": ""
+  },
+  "D:\\projects\\Ai-trader\\frontend\\src\\components\\profile\\tabs\\PositionsTab.tsx": {
+    "mtime": 1779992986.2082756,
+    "ast_hash": "5d319bf6da74b8ee6d60529a8cfc31ae",
+    "semantic_hash": ""
+  },
+  "D:\\projects\\Ai-trader\\frontend\\src\\components\\profile\\tabs\\RiskTab.tsx": {
+    "mtime": 1779992589.7557135,
+    "ast_hash": "62679ae45ca24f3bd9873e94dbbebfb5",
+    "semantic_hash": ""
+  },
+  "D:\\projects\\Ai-trader\\frontend\\src\\components\\profile\\tabs\\OrdersTab.tsx": {
+    "mtime": 1779993427.0242584,
+    "ast_hash": "79a23d8a1304eaaba0ed1436e877ff55",
     "semantic_hash": ""
   }
 }

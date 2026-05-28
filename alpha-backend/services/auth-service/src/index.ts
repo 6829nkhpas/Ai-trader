@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import authRoutes from './routes/auth.routes';
+import portfolioRoutes from './routes/portfolio';
 
 dotenv.config();
 
@@ -19,6 +20,7 @@ app.use((req, res, next) => {
 
 // Register routers
 app.use('/api', authRoutes);
+app.use('/api', portfolioRoutes);
 
 // Base status route
 app.get('/health', (req, res) => {

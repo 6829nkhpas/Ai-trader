@@ -9,6 +9,12 @@ interface BrokerTabProps {
   formatDate: (date: any) => string;
 }
 
+const maskValue = (value: string | null | undefined, visibleChars = 5) => {
+  if (!value) return 'N/A';
+  if (value.length <= visibleChars * 2) return '••••••••';
+  return `${value.slice(0, visibleChars)}••••••••${value.slice(-visibleChars)}`;
+};
+
 export default function BrokerTab({
   broker,
   connectingBroker,
@@ -26,30 +32,54 @@ export default function BrokerTab({
       {broker ? (
         /* Connected State View */
         <div className="space-y-5">
-          <div className="flex items-center gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-400">
-              <CheckCircle size={20} />
-            </div>
+          <div className="flex items-center gap-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+            {broker.avatarUrl ? (
+              <img 
+                src={broker.avatarUrl} 
+                alt={broker.userName || 'Broker Avatar'} 
+                className="h-12 w-12 shrink-0 rounded-xl object-cover border border-emerald-500/30 shadow-md"
+              />
+            ) : (
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-400">
+                <CheckCircle size={24} />
+              </div>
+            )}
             <div>
-              <h4 className="text-sm font-bold text-white">Zerodha Kite Connected Successfully</h4>
-              <p className="text-[11px] text-emerald-400/80 mt-0.5">Stream is active. Key token cached in Tauri Stronghold secure vault.</p>
+              <h4 className="text-sm font-bold text-white">Zerodha Kite Connected</h4>
+              <p className="text-[11px] text-emerald-400/80 mt-0.5">
+                Active Session for {broker.userName || 'User'}. Credentials securely stored in Tauri Key Vault.
+              </p>
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4">
+              <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Client User Name</span>
+              <span className="text-sm font-bold text-white block mt-1">{broker.userName || 'N/A'}</span>
+            </div>
+            <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4">
               <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Broker User ID</span>
               <span className="text-sm font-mono font-bold text-white block mt-1">{broker.brokerUserId || 'N/A'}</span>
+            </div>
+            <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4">
+              <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Account Type</span>
+              <span className="text-xs font-bold text-white block mt-1 uppercase tracking-wide">
+                {broker.userType?.replace('/', ' / ') || 'N/A'}
+              </span>
             </div>
             <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4">
               <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Connected Account Email</span>
               <span className="text-sm font-bold text-white block mt-1 truncate">{broker.email || 'N/A'}</span>
             </div>
             <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4">
-              <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Client User Name</span>
-              <span className="text-sm font-bold text-white block mt-1">{broker.userName || 'N/A'}</span>
+              <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Kite API Key</span>
+              <span className="text-xs font-mono font-bold text-white block mt-1">{maskValue(broker.apiKey)}</span>
             </div>
             <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4">
+              <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Public Token</span>
+              <span className="text-xs font-mono font-bold text-white block mt-1">{maskValue(broker.publicToken, 6)}</span>
+            </div>
+            <div className="col-span-2 rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4">
               <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Session Auth Time</span>
               <span className="text-sm font-bold text-white block mt-1">{formatDate(broker.loginTime)}</span>
             </div>
@@ -57,12 +87,12 @@ export default function BrokerTab({
 
           {/* Permissions & Capabilities */}
           <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-5">
-            <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center gap-2 mb-4">
               <Layers size={14} className="text-emerald-400" />
-              <h4 className="text-xs font-bold text-white uppercase tracking-wider">Authorized Market Streams</h4>
+              <h4 className="text-xs font-bold text-white uppercase tracking-wider">Authorized Market Streams & Limits</h4>
             </div>
             
-            <div className="space-y-3.5">
+            <div className="space-y-4">
               <div>
                 <span className="text-[9px] uppercase tracking-wider text-text-secondary block mb-1.5">Exchanges Supported</span>
                 <div className="flex flex-wrap gap-1.5">
@@ -80,6 +110,17 @@ export default function BrokerTab({
                   {broker.products?.map((prod: string) => (
                     <span key={prod} className="rounded bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[9px] font-bold text-emerald-400 uppercase tracking-wide">
                       {prod}
+                    </span>
+                  )) || <span className="text-text-muted text-xs">None</span>}
+                </div>
+              </div>
+
+              <div>
+                <span className="text-[9px] uppercase tracking-wider text-text-secondary block mb-1.5">Supported Order Types</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {broker.orderTypes?.map((ord: string) => (
+                    <span key={ord} className="rounded bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[9px] font-bold text-emerald-400 uppercase tracking-wide">
+                      {ord}
                     </span>
                   )) || <span className="text-text-muted text-xs">None</span>}
                 </div>

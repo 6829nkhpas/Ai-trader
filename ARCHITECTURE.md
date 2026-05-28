@@ -228,3 +228,32 @@ The Predictive Agent (`/agents/predictive`) uses a 14-period rolling window of *
 
 This constraint prevents misleading projections from being displayed to the user when viewing timeframes that the ML model was not trained on.
 
+## Perfection Phase 4 (Cont.): Institutional Portfolio & Risk Engine
+
+Real-time portfolio management, purchasing power calculation, and execution tracking integrated with Zerodha Kite Connect REST API.
+
+### Backend Kite Connect Service (`kiteService.ts`)
+- **Direct REST Integration:** Connects to Zerodha Kite Connect API endpoints using standard HTTP requests:
+  - Margins: `GET https://api.kite.trade/user/margins`
+  - Positions: `GET https://api.kite.trade/portfolio/positions`
+  - Holdings: `GET https://api.kite.trade/portfolio/holdings`
+  - Orders: `GET https://api.kite.trade/orders`
+  - Trades: `GET https://api.kite.trade/trades`
+- **Request Authentication:** Appends necessary headers for Kite API version 3 protocol:
+  - `Authorization: token {api_key}:{access_token}`
+  - `X-Kite-Version: 3`
+
+### Redis Caching Layer (`portfolioController.ts`)
+- **60-Second TTL Caching:** Margin limits (`available.cash`, `utilised.exposure`, etc.) and Holdings arrays are cached in Redis to prevent rate limit penalties during consecutive terminal loads.
+- **WebSocket Routing Exemption:** Orders, Positions, and Trades REST reads bypass Redis cache completely to ensure zero-latency accuracy for real-time portfolio P&L tracking and execution sync.
+
+### Custom React Hooks (`useAlphaData.ts`)
+- Exposes `useMargins()`, `usePositions()`, and `useOrderBook()` hooks with dedicated `loading`, `error`, and manual `refetch` controls, passing JWT authorization headers from the global Auth Zustand store.
+
+### Tabbed Terminal Interface (`TerminalDashboard.tsx`)
+- Tab 1: **Risk & Margins** — Large typography visualization of available margin alongside tabular breakdown of utilised M2M and active exposure.
+- Tab 2: **Active Positions** — Data grid grouping Net and Day arrays from Kite positions payload, showing symbol, product, quantity, average price, LTP, and P&L.
+- Tab 3: **Order Book** — Real-time list of all orders, featuring custom color-coded status badges and detailed error tooltip popups for `REJECTED` orders on cursor hover.
+- **Monospace Financial Styling:** All numeric financial values are formatted with monospace digits to ensure perfect column alignment. Conditional P&L text colors are strictly green (`#22c55e`) for values > 0 and red (`#ef4444`) for values < 0.
+
+

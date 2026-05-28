@@ -10,7 +10,10 @@ import {
   Wallet,
   X,
   LogOut,
-  CreditCard
+  CreditCard,
+  Shield,
+  Layers,
+  ClipboardList
 } from 'lucide-react';
 
 import ProfileTab from './tabs/ProfileTab';
@@ -18,6 +21,10 @@ import SubscriptionTab from './tabs/SubscriptionTab';
 import BrokerTab from './tabs/BrokerTab';
 import TransactionsTab from './tabs/TransactionsTab';
 import PortfolioTab from './tabs/PortfolioTab';
+import RiskTab from './tabs/RiskTab';
+import PositionsTab from './tabs/PositionsTab';
+import OrdersTab from './tabs/OrdersTab';
+import { useMargins, usePositions, useOrderBook } from '../../hooks/useAlphaData';
 
 interface UserProfileModalProps {
   isOpen: boolean;
@@ -38,7 +45,12 @@ interface SqlTrade {
 export default function UserProfileModal({ isOpen, onClose }: UserProfileModalProps) {
   const { user, logout, fetchProfile } = useAuthStore();
   const { paperPortfolio, fetchPaperPortfolio } = useTradeStore();
-  const [activeTab, setActiveTab] = useState<'profile' | 'subscription' | 'broker' | 'transactions' | 'portfolio'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'risk' | 'portfolio' | 'positions' | 'orders' | 'subscription' | 'broker' | 'transactions'>('profile');
+
+  // Load data hooks for dynamic portfolio/risk details
+  const { data: marginsData, loading: marginsLoading, error: marginsError, refetch: refetchMargins } = useMargins();
+  const { data: positionsData, loading: positionsLoading, error: positionsError, refetch: refetchPositions } = usePositions();
+  const { orders: ordersData, loading: ordersLoading, error: ordersError, refetch: refetchOrders } = useOrderBook();
   const [sqlTrades, setSqlTrades] = useState<SqlTrade[]>([]);
   const [loadingTrades, setLoadingTrades] = useState(false);
   const [connectingBroker, setConnectingBroker] = useState(false);
@@ -55,6 +67,19 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
       }
     }
   }, [isOpen]);
+
+  // Auto-hydrate specific tabs on tab switch or modal open
+  useEffect(() => {
+    if (isOpen) {
+      if (activeTab === 'risk' || activeTab === 'profile') {
+        refetchMargins();
+      } else if (activeTab === 'positions') {
+        refetchPositions();
+      } else if (activeTab === 'orders') {
+        refetchOrders();
+      }
+    }
+  }, [isOpen, activeTab]);
 
   // Fetch SQLite completed trades on open or tab change
   useEffect(() => {
@@ -155,7 +180,7 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md transition-all duration-300">
       <div 
-        className="relative flex h-[580px] w-full max-w-4xl overflow-hidden rounded-2xl border border-border-default/60 bg-[#0d1222]/80 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-200"
+        className="relative flex h-[720px] w-full max-w-5xl overflow-hidden rounded-2xl border border-border-default/60 bg-[#0d1222]/80 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Close Button */}
@@ -171,9 +196,26 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
           <div>
             {/* User Info Header */}
             <div className="mb-8 flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold">
-                {user?.name ? user.name[0].toUpperCase() : 'U'}
-              </div>
+              {broker?.avatarUrl ? (
+                <div className="relative h-10 w-10 shrink-0">
+                  <img 
+                    src={broker.avatarUrl} 
+                    alt={user?.name || 'Avatar'} 
+                    className="h-10 w-10 rounded-xl object-cover border border-emerald-500/30"
+                  />
+                  <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-400 border-2 border-[#0b0e1a] shadow-[0_0_8px_#34d399]" />
+                </div>
+              ) : (
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold text-xs tracking-wider">
+                  {(() => {
+                    const name = user?.name || '';
+                    if (!name) return 'SA';
+                    const parts = name.trim().split(/\s+/);
+                    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+                    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+                  })()}
+                </div>
+              )}
               <div className="min-w-0">
                 <h3 className="text-sm font-bold text-white truncate">{user?.name || 'Strat AI User'}</h3>
                 <p className="text-[10px] text-emerald-400 font-semibold tracking-wider uppercase mt-0.5">{user?.tier || 'FREE'} Tier</p>
@@ -191,7 +233,55 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
                 }`}
               >
                 <User size={15} />
-                <span>My Profile</span>
+                <span>Profile</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('risk')}
+                className={`flex w-full items-center gap-3 rounded-lg px-3.5 py-2.5 text-xs font-semibold transition-all ${
+                  activeTab === 'risk'
+                    ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shadow-sm'
+                    : 'text-text-secondary border border-transparent hover:bg-elevated/40 hover:text-text-primary'
+                }`}
+              >
+                <Shield size={15} />
+                <span>Margins & Risk</span>
+              </button>
+
+              {/* <button
+                onClick={() => setActiveTab('portfolio')}
+                className={`flex w-full items-center gap-3 rounded-lg px-3.5 py-2.5 text-xs font-semibold transition-all ${
+                  activeTab === 'portfolio'
+                    ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shadow-sm'
+                    : 'text-text-secondary border border-transparent hover:bg-elevated/40 hover:text-text-primary'
+                }`}
+              >
+                <Wallet size={15} />
+                <span>Simulated Portfolio</span>
+              </button> */}
+
+              <button
+                onClick={() => setActiveTab('positions')}
+                className={`flex w-full items-center gap-3 rounded-lg px-3.5 py-2.5 text-xs font-semibold transition-all ${
+                  activeTab === 'positions'
+                    ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shadow-sm'
+                    : 'text-text-secondary border border-transparent hover:bg-elevated/40 hover:text-text-primary'
+                }`}
+              >
+                <Layers size={15} />
+                <span>Positions</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('orders')}
+                className={`flex w-full items-center gap-3 rounded-lg px-3.5 py-2.5 text-xs font-semibold transition-all ${
+                  activeTab === 'orders'
+                    ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shadow-sm'
+                    : 'text-text-secondary border border-transparent hover:bg-elevated/40 hover:text-text-primary'
+                }`}
+              >
+                <ClipboardList size={15} />
+                <span>Order Book</span>
               </button>
 
               <button
@@ -216,7 +306,7 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
               >
                 <div className="flex items-center gap-3">
                   <LinkIcon size={15} />
-                  <span>Kite Broker Connection</span>
+                  <span>Broker Connection</span>
                 </div>
                 {broker ? (
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
@@ -236,18 +326,6 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
                 <FileText size={15} />
                 <span>Transaction Journal</span>
               </button>
-
-              <button
-                onClick={() => setActiveTab('portfolio')}
-                className={`flex w-full items-center gap-3 rounded-lg px-3.5 py-2.5 text-xs font-semibold transition-all ${
-                  activeTab === 'portfolio'
-                    ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shadow-sm'
-                    : 'text-text-secondary border border-transparent hover:bg-elevated/40 hover:text-text-primary'
-                }`}
-              >
-                <Wallet size={15} />
-                <span>Paper Trading State</span>
-              </button>
             </nav>
           </div>
 
@@ -260,17 +338,22 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
             className="flex w-full items-center gap-3 rounded-lg border border-border-default/40 bg-elevated/10 hover:bg-red-500/10 hover:border-red-500/20 hover:text-red-400 px-3.5 py-2.5 text-xs font-semibold text-text-secondary transition-all"
           >
             <LogOut size={15} />
-            <span>Sign Out Account</span>
+            <span>Log Out</span>
           </button>
         </aside>
 
         {/* ── RIGHT DETAIL VIEW PANEL ── */}
-        <main className="flex-1 flex flex-col min-h-0 bg-[#090c16]/35 p-8 overflow-y-auto">
+        <main className="flex-1 flex flex-col min-h-0 bg-[#090c16]/35 p-8 overflow-y-auto scrollbar-none">
           {activeTab === 'profile' && (
             <ProfileTab 
               user={user} 
               paperPortfolio={paperPortfolio} 
               formatDate={formatDate} 
+              realWalletBalance={
+                marginsData?.equity?.net !== undefined && marginsData?.equity?.net !== 0
+                  ? marginsData.equity.net
+                  : ((marginsData?.equity?.available as any)?.live_balance ?? marginsData?.equity?.available?.cash)
+              }
             />
           )}
 
@@ -301,9 +384,36 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
             />
           )}
 
+          {activeTab === 'risk' && (
+            <RiskTab 
+              marginsData={marginsData}
+              loading={marginsLoading}
+              error={marginsError}
+              refetch={refetchMargins}
+            />
+          )}
+
           {activeTab === 'portfolio' && (
             <PortfolioTab 
               paperPortfolio={paperPortfolio} 
+            />
+          )}
+
+          {activeTab === 'positions' && (
+            <PositionsTab 
+              positionsData={positionsData}
+              loading={positionsLoading}
+              error={positionsError}
+              refetch={refetchPositions}
+            />
+          )}
+
+          {activeTab === 'orders' && (
+            <OrdersTab 
+              orders={ordersData}
+              loading={ordersLoading}
+              error={ordersError}
+              refetch={refetchOrders}
             />
           )}
         </main>

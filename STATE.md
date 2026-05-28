@@ -1,25 +1,23 @@
 # Dynamic Sprint Board
 
-**Phase:** Perfection Phase 6 — Historical Data Ingestion
+**Phase:** Perfection Phase 4 — Institutional Portfolio & Risk Engine
 
-**System Health:** V1 Core is fully operational (Ingestion, Tech, Sentiment, Aggregator, UI).
+**System Health:** Core is fully operational (Ingestion, Tech, Sentiment, Aggregator, UI, Timeframe routing, Historical data, and real-time Portfolio/Risk Limits).
 
-**Current Objective:** Perfection Phase 6 — Historical Pipeline Integration.
+**Current Objective:** Perfection Phase 4 — Risk Management & Portfolio Engine.
 
-**Current Status:** Historical Pipeline Integrated. QuestDB 5-Year Partitioning Active.
+**Current Status:** Perfection Phase 4 Complete. Backend Kite API integrated. Terminal UI now displays live Margins, Positions, and Order Book with conditional P&L styling.
 
-**Key Changes (Phase 6):**
-- `backend/db/migrations/002_historical.sql` — QuestDB DDL: `historical_candles` table with `PARTITION BY YEAR`.
-- `frontend/src-tauri/src/services/history_loader.rs` — Zerodha Kite Historical API client with 365-day chunking, rate limiting, deduplication, and bulk insert.
-- `frontend/src-tauri/src/commands/charts.rs` — `get_historical_view` Tauri command: QuestDB → bincode → Uint8Array binary transfer.
-- `frontend/src-tauri/src/lib.rs` — QuestDB managed state, migration runner, command registration.
-- `frontend/src-tauri/Cargo.toml` — Added sqlx, bincode, chrono, reqwest, dotenvy dependencies.
+**Key Changes (Phase 4):**
+- `/backend/src/services/kiteService.ts` — Kite Connect REST API client with standard fetch calls to Zerodha.
+- `/backend/src/controllers/portfolioController.ts` — Implemented Redis caching (60s TTL) for margin limits and holdings; orders and positions bypass cache.
+- `/backend/src/routes/portfolio.ts` — Express router exposing `/api/portfolio/*` protected routes.
+- `/frontend/src/hooks/useAlphaData.ts` — Custom React hooks for `useMargins`, `usePositions`, and `useOrderBook` with state management.
+- `/frontend/src/components/TerminalDashboard.tsx` — Glass-morphic dark-mode component displaying Margins, Net/Day positions with monospace conditional coloring, and Order Book with tooltip rejected messages.
 
-**Historical Pipeline Summary:**
-1. On Tauri startup: QuestDB pool initialized → `historical_candles` migration executed.
-2. `history_loader::load_historical_data()` — fetches 5 years of daily candles from Kite API in 1-year chunks.
-3. `get_historical_view` command — queries QuestDB, returns bincode-serialized binary buffer to frontend.
+**Next Steps:**
+- "Perfection Phase 5: WebSocket Order Updates & Zero-Latency Redis Sync - Migrating from REST polling to live tick-driven state updates."
 
 **Deprecated:**
-Explicitly note that `MASTER_CONTEXT.md` and `SESSION_MEMORY.md` are now obsolete and should be ignored entirely by the system.
-Google Gemini 1.5 Flash has been fully deprecated and replaced by DeepSeek v4 Pro (via NVIDIA NIM). The `GEMINI_API_KEY` environment variable is no longer used.
+- Explicitly note that `MASTER_CONTEXT.md` and `SESSION_MEMORY.md` are now obsolete and should be ignored entirely by the system.
+- Google Gemini 1.5 Flash has been fully deprecated and replaced by DeepSeek v4 Pro (via NVIDIA NIM). The `GEMINI_API_KEY` environment variable is no longer used.

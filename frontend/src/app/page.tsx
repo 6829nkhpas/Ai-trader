@@ -16,6 +16,7 @@ import SystemConsole from '../components/SystemConsole';
 import DeepQuantPanel from '../components/quant/DeepQuantPanel';
 import ActivePositions from '../components/quant/ActivePositions';
 import PortfolioDashboard from '../components/quant/PortfolioDashboard';
+import TerminalDashboard from '../components/TerminalDashboard';
 import { useTradeStore, TradeProfile, ChartTimeframe, hydratePaperPortfolio } from '../store/useTradeStore';
 import { useQuantStore } from '../store/useQuantStore';
 import type { ConsensusReport } from '../store/useQuantStore';

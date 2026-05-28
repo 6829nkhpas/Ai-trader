@@ -4,6 +4,7 @@ import { UserRepository } from '../repositories/user.repository';
 import { BrokerRepository } from '../repositories/broker.repository';
 import { redis } from '../config/redis';
 import { prisma } from '../db';
+import { KiteService } from './kiteService';
 
 const userRepository = new UserRepository();
 const brokerRepository = new BrokerRepository();
@@ -95,7 +96,7 @@ export class AuthService {
     }
 
     const apiKey = process.env.KITE_API_KEY || 'sn5szo9fhwkjdi8a';
-    const callbackUrl = `https://kite.trade/connect/login?api_key=${apiKey}&v=3&state=${targetUserId}`;
+    const callbackUrl = `https://kite.trade/connect/login?api_key=${apiKey}&v=3&redirect_params=state%3D${targetUserId}`;
 
     console.log(`[Auth Service] Connect URL generated: ${callbackUrl}`);
 
@@ -156,6 +157,7 @@ export class AuthService {
     }
 
     const result = (await response.json()) as any;
+    console.log('[Auth Service] Zerodha OAuth raw response payload:', JSON.stringify(result, null, 2));
     if (result.status !== 'success' || !result.data) {
       throw new Error(`Zerodha OAuth returned unsuccessful status: ${result.message || 'Unknown error'}`);
     }
@@ -182,6 +184,17 @@ export class AuthService {
     };
 
     await brokerRepository.upsertBrokerConnection(targetUserId, brokerData);
+
+    // Update User profile name to Zerodha account holder's name
+    try {
+      await prisma.user.update({
+        where: { id: targetUserId },
+        data: { name: brokerData.userName }
+      });
+      console.log(`[Auth Service] Updated User ${targetUserId} name to Zerodha userName: ${brokerData.userName}`);
+    } catch (err: any) {
+      console.warn(`[Auth Service] Failed to update User name in database:`, err.message);
+    }
 
     // Synchronize to root .env file for local ingestion and aggregator services to reference
     try {
@@ -300,6 +313,52 @@ export class AuthService {
       throw new Error('User not found');
     }
 
+    // Self-healing: if user name is null or default, but broker userName exists, set it
+    let displayName = user.name;
+    if ((!displayName || displayName === 'John Doe' || displayName === 'Strat AI Client' || displayName === 'Strat AI User') && user.brokerConnection?.userName) {
+      displayName = user.brokerConnection.userName;
+      try {
+        await prisma.user.update({
+          where: { id: userId },
+          data: { name: displayName }
+        });
+        console.log(`[Auth Service] Self-healed user name to Zerodha name: ${displayName}`);
+      } catch (err: any) {
+        console.warn(`[Auth Service] Self-healing user name update failed:`, err.message);
+      }
+    }
+
+    // Fetch and sync real cash balance from Zerodha margins if broker connected
+    let realWalletBalance = user.walletBalance;
+    if (user.brokerConnection) {
+      try {
+        const kiteService = new KiteService();
+        const margins = await kiteService.getMargins(
+          user.brokerConnection.apiKey || '',
+          user.brokerConnection.accessToken || ''
+        );
+        // Prefer net margin (buying power) if non-zero, fallback to live_balance or cash
+        const netMargin = margins?.equity?.net;
+        const cashMargin = margins?.equity?.available?.cash;
+        const liveBalance = margins?.equity?.available?.live_balance;
+        const finalMargin = (typeof netMargin === 'number' && netMargin !== 0)
+          ? netMargin
+          : (typeof liveBalance === 'number' ? liveBalance : (typeof cashMargin === 'number' ? cashMargin : null));
+
+        if (finalMargin !== null) {
+          realWalletBalance = finalMargin;
+          // Dynamically persist to database to keep in sync
+          await prisma.user.update({
+            where: { id: userId },
+            data: { walletBalance: finalMargin }
+          });
+          console.log(`[Auth Service] Dynamic wallet balance synced with real Kite margin cash/net: ₹${finalMargin}`);
+        }
+      } catch (err: any) {
+        console.warn(`[Auth Service] Failed to dynamically sync broker cash margin to walletBalance:`, err.message);
+      }
+    }
+
     // Query shared Subscription table directly using Prisma raw query
     let subscription = null;
     try {
@@ -328,11 +387,11 @@ export class AuthService {
     const profileData = {
       id: user.id,
       email: user.email,
-      name: user.name,
+      name: displayName || user.name || 'Strat AI Client',
       tier: effectiveTier,
       trialActive,
       trialExpiresAt,
-      walletBalance: user.walletBalance,
+      walletBalance: realWalletBalance,
       createdAt: user.createdAt,
       brokerConnection: (user as any).brokerConnection || null,
       subscription: subscription || null
