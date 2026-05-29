@@ -20,7 +20,7 @@ def calculate_ema(prices: list, period: int) -> float:
 @tool
 def get_candles(symbol: str, timeframe: str, limit: int) -> list:
     """
-    Fetches raw OHLCV data. Valid timeframes: '1m', '5m', '15m', '1h', '4h', '1d'.
+    實Raw OHLCV data. Valid timeframes: '1m', '5m', '15m', '1h', '4h', '1d'.
     
     Args:
         symbol (str): The trading symbol to fetch (e.g. "RELIANCE").
@@ -30,15 +30,21 @@ def get_candles(symbol: str, timeframe: str, limit: int) -> list:
     Returns:
         list: A list of candles, where each candle is a dictionary containing open, high, low, close, and volume.
     """
+    print(f"\n[Tool Call] >>> get_candles: symbol={symbol}, timeframe={timeframe}, limit={limit}")
     try:
         response = httpx.post(
             f"{RUST_SERVER_URL}/tools/get_candles",
             json={"symbol": symbol, "timeframe": timeframe, "limit": limit},
             timeout=10.0
         )
+        if response.status_code != 200:
+            print(f"[Tool Error] Server returned {response.status_code}: {response.text}")
         response.raise_for_status()
-        return response.json()
+        res = response.json()
+        print(f"[Tool Success] <<< get_candles: symbol={symbol}, timeframe={timeframe}, retrieved {len(res)} candles.")
+        return res
     except Exception as e:
+        print(f"[Tool Error] <<< get_candles FAIL: {str(e)}")
         return [{"error": f"Failed to retrieve candles from Rust server: {str(e)}"}]
 
 @tool
@@ -53,15 +59,21 @@ def get_consensus_report(symbol: str, timeframe: str) -> dict:
     Returns:
         dict: The compiled consensus report with trend score, momentum state, active patterns, and curve parameters.
     """
+    print(f"\n[Tool Call] >>> get_consensus_report: symbol={symbol}, timeframe={timeframe}")
     try:
         response = httpx.post(
             f"{RUST_SERVER_URL}/tools/get_consensus",
             json={"symbol": symbol, "timeframe": timeframe, "limit": 200},
             timeout=10.0
         )
+        if response.status_code != 200:
+            print(f"[Tool Error] Server returned {response.status_code}: {response.text}")
         response.raise_for_status()
-        return response.json()
+        res = response.json()
+        print(f"[Tool Success] <<< get_consensus_report: symbol={symbol}, trend_score={res.get('trend_score')}, momentum={res.get('momentum_state')}")
+        return res
     except Exception as e:
+        print(f"[Tool Error] <<< get_consensus_report FAIL: {str(e)}")
         return {"error": f"Failed to compile consensus report: {str(e)}"}
 
 @tool
@@ -75,6 +87,7 @@ def get_multi_tf_trend(symbol: str) -> dict:
     Returns:
         dict: Directional trend bias ("Bullish" or "Bearish") across 1H, 4H, and 1D horizons.
     """
+    print(f"\n[Tool Call] >>> get_multi_tf_trend: symbol={symbol}")
     try:
         response = httpx.post(
             f"{RUST_SERVER_URL}/tools/get_multi_tf_trend",
@@ -82,8 +95,11 @@ def get_multi_tf_trend(symbol: str) -> dict:
             timeout=10.0
         )
         response.raise_for_status()
-        return response.json()
+        res = response.json()
+        print(f"[Tool Success] <<< get_multi_tf_trend: symbol={symbol}, response={res}")
+        return res
     except Exception as e:
+        print(f"[Tool Error] <<< get_multi_tf_trend FAIL: {str(e)}")
         return {"error": f"Failed to compute multi-tf trend: {str(e)}"}
 
 @tool
@@ -100,6 +116,7 @@ def get_support_resistance(symbol: str) -> dict:
     Returns:
         dict: Key support and resistance levels (Pivot, S1, S2, R1, R2, high, low).
     """
+    print(f"\n[Tool Call] >>> get_support_resistance: symbol={symbol}")
     try:
         response = httpx.post(
             f"{RUST_SERVER_URL}/tools/get_candles",
@@ -114,6 +131,7 @@ def get_support_resistance(symbol: str) -> dict:
         closes = [c["close"] for c in candles if "close" in c]
         
         if not highs or not lows or not closes:
+            print("[Tool Warning] <<< get_support_resistance: Insufficient candle data.")
             return {"error": "Insufficient candle data to determine support/resistance."}
             
         h = max(highs[-20:])
@@ -126,7 +144,7 @@ def get_support_resistance(symbol: str) -> dict:
         r2 = pivot + (h - l)
         s2 = pivot - (h - l)
         
-        return {
+        res = {
             "symbol": symbol,
             "pivot_point": round(pivot, 2),
             "resistance_1": round(r1, 2),
@@ -136,7 +154,10 @@ def get_support_resistance(symbol: str) -> dict:
             "recent_high": round(h, 2),
             "recent_low": round(l, 2)
         }
+        print(f"[Tool Success] <<< get_support_resistance: symbol={symbol}, pivot={res['pivot_point']}, S1={res['support_1']}, R1={res['resistance_1']}")
+        return res
     except Exception as e:
+        print(f"[Tool Error] <<< get_support_resistance FAIL: {str(e)}")
         return {"error": f"Failed to compute support/resistance: {str(e)}"}
 
 @tool
@@ -152,6 +173,7 @@ def get_news_context(symbol: str) -> dict:
     Returns:
         dict: List of recent headlines and a basic rule-based sentiment summary.
     """
+    print(f"\n[Tool Call] >>> get_news_context: symbol={symbol}")
     try:
         import xml.etree.ElementTree as ET
         query = f"{symbol} stock NSE India"
@@ -181,18 +203,22 @@ def get_news_context(symbol: str) -> dict:
         else:
             sentiment = "Neutral Catalyst"
             
-        return {
+        res = {
             "symbol": symbol,
             "headlines": headlines,
             "sentiment_summary": sentiment
         }
+        print(f"[Tool Success] <<< get_news_context: symbol={symbol}, sentiment={sentiment}")
+        return res
     except Exception as e:
+        print(f"[Tool Warning] <<< get_news_context Google RSS fail, trying local fallback: {str(e)}")
         try:
             fallback_response = httpx.get(f"http://localhost:8087/api/news?symbol={symbol}", timeout=5.0)
             if fallback_response.is_success:
+                print(f"[Tool Success] <<< get_news_context: symbol={symbol}, retrieved from local aggregator.")
                 return {"symbol": symbol, "news": fallback_response.text, "sentiment_summary": "Retrieved from local aggregator"}
-        except:
-            pass
+        except Exception as fe:
+            print(f"[Tool Error] <<< get_news_context local fallback also failed: {str(fe)}")
         return {"error": f"Failed to fetch news context: {str(e)}"}
 
 @tool
@@ -217,6 +243,7 @@ def watch_price_condition(
     Returns:
         str: Description of the triggered event once resumed.
     """
+    print(f"\n[Tool Call] >>> watch_price_condition: symbol={symbol}, timeframe={timeframe}, level={price_level}, direction={direction}, vol_mult={volume_multiplier}")
     try:
         thread_id = config.get("configurable", {}).get("thread_id", "default_thread")
         payload = {
@@ -233,9 +260,12 @@ def watch_price_condition(
             timeout=10.0
         )
         response.raise_for_status()
+        print(f"[Tool Success] <<< watch_price_condition registered watcher for symbol={symbol} on Rust server.")
     except Exception as e:
+        print(f"[Tool Error] <<< watch_price_condition FAIL: {str(e)}")
         return f"Error registering watcher on Rust server: {str(e)}"
 
+    print(f"[Tool Pause] watch_price_condition: Interrupting graph, waiting for user resume...")
     triggered_candle = interrupt(
         {
             "status": "watching_registered",
@@ -248,6 +278,7 @@ def watch_price_condition(
         }
     )
     
+    print(f"[Tool Resumed] <<< watch_price_condition triggered with candle: {triggered_candle}")
     return f"Condition met! Triggered candle details: {triggered_candle}"
 
 @tool
@@ -272,4 +303,7 @@ def declare_trade(
     Returns:
         str: Confirmation message.
     """
+    print(f"\n[Tool Call] >>> declare_trade: action={action}, conviction={conviction_score}%")
+    print(f"[Tool Detail] Setup Validation: {setup_validation}")
+    print(f"[Tool Detail] Execution Plan: {execution_plan}")
     return f"Trade declared successfully: {action} with {conviction_score}% conviction."

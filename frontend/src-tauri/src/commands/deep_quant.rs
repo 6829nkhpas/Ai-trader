@@ -236,6 +236,7 @@ async fn fetch_google_news_rss_for_context(client: &reqwest::Client, symbol: &st
 ///    keep the one from the highest-priority source (live > intraday > daily).
 /// 6. Slice to the most recent `limit` candles so the AI sees the current price.
 pub(crate) async fn load_candles_from_db(
+    app: Option<&AppHandle>,
     pool: &PgPool,
     symbol: &str,
     timeframe: &str,
@@ -245,6 +246,59 @@ pub(crate) async fn load_candles_from_db(
 
     // Hardcode minimum fetch limit to 100 candles
     let limit = limit.max(100);
+
+    let is_daily = timeframe.eq_ignore_ascii_case("1d") || timeframe.eq_ignore_ascii_case("day");
+
+    // ── Proactive Zerodha Kite loading if AppHandle is provided ──────────────────
+    if let Some(app) = app {
+        let (api_key_val, access_token_val) = get_kite_credentials();
+        let api_key = if !api_key_val.is_empty() { Some(api_key_val) } else { None };
+        let access_token = if !access_token_val.is_empty() { Some(access_token_val) } else { None };
+
+        if let (Some(api_key), Some(access_token)) = (api_key, access_token) {
+            let local_token: Option<u32> = {
+                app.try_state::<crate::db::DbState>()
+                    .and_then(|db_state| {
+                        crate::commands::instruments::resolve_instrument_token(
+                            &db_state, symbol
+                        )
+                    })
+            };
+
+            if let Some(token) = local_token {
+                if is_daily {
+                    info!("[deep_quant] Proactive fetch daily: {} (token {})", symbol, token);
+                    let _ = crate::services::history_loader::load_historical_data(
+                        pool,
+                        token,
+                        symbol,
+                        &api_key,
+                        &access_token,
+                    ).await;
+                } else {
+                    let base_tf = match timeframe.to_lowercase().as_str() {
+                        "1m" | "1min" | "2m" | "2min" | "4m" | "4min" => "1m",
+                        "3m" | "3min" => "3m",
+                        "5m" | "5min" => "5m",
+                        "10m" | "10min" => "10m",
+                        "15m" | "15min" | "75m" | "75min" | "125m" | "125min" => "15m",
+                        "30m" | "30min" => "30m",
+                        "1h" | "60m" | "2h" | "120m" | "3h" | "180m" | "4h" | "240m" => "1h",
+                        _ => "10m",
+                    };
+                    info!("[deep_quant] Proactive fetch intraday: {} (token {}) [base_tf={}]", symbol, token, base_tf);
+                    let _ = crate::services::history_loader::load_intraday_data(
+                        pool,
+                        token,
+                        symbol,
+                        base_tf,
+                        &api_key,
+                        &access_token,
+                    ).await;
+                }
+            }
+        }
+    }
 
     // ── Source priority constants (higher = preferred on timestamp collision) ──
     const PRIO_DAILY: u8 = 1;
@@ -271,8 +325,19 @@ pub(crate) async fn load_candles_from_db(
                 let volume: i64 = row.try_get::<i64, _>("volume")
                     .or_else(|_| row.try_get::<i32, _>("volume").map(|v| v as i64))
                     .unwrap_or(0);
-                let ts_micros: i64 = row.try_get::<i64, _>("ts_epoch")
-                    .unwrap_or(0);
+                let ts_dt = row.try_get::<chrono::NaiveDateTime, _>("ts");
+                let ts_i64 = row.try_get::<i64, _>("ts");
+                
+                let ts_micros = match ts_dt {
+                    Ok(dt) => dt.and_utc().timestamp_micros(),
+                    Err(e1) => match ts_i64 {
+                        Ok(val) => val,
+                        Err(e2) => {
+                            error!("[deep_quant] ts parsing failed! NaiveDateTime err: {}, i64 err: {}", e1, e2);
+                            0
+                        }
+                    }
+                };
                 let ts_millis = ts_micros / 1000;
                 Some(PrioCandle {
                     ts_millis,
@@ -285,12 +350,10 @@ pub(crate) async fn load_candles_from_db(
 
     let mut all_candles: Vec<PrioCandle> = Vec::new();
 
-    let is_daily = timeframe.eq_ignore_ascii_case("1d") || timeframe.eq_ignore_ascii_case("day");
-
     if is_daily {
         // ── Source 1: historical_candles (daily archive) ─────────────────────
         let daily_result = sqlx::query(
-            "SELECT CAST(ts AS LONG) AS ts_epoch, open, high, low, close, volume \
+            "SELECT ts, open, high, low, close, volume \
              FROM historical_candles \
              WHERE symbol = $1 \
              ORDER BY ts DESC \
@@ -319,18 +382,63 @@ pub(crate) async fn load_candles_from_db(
         }
     } else {
         // ── Source 2: historical_intraday (filtered by timeframe) ────────────
-        let intraday_result = sqlx::query(
-            "SELECT CAST(ts AS LONG) AS ts_epoch, open, high, low, close, volume \
-             FROM historical_intraday \
-             WHERE symbol = $1 AND timeframe = $2 \
-             ORDER BY ts DESC \
-             LIMIT $3",
-        )
-        .bind(symbol)
-        .bind(timeframe)
-        .bind(limit)
-        .fetch_all(pool)
-        .await;
+        let base_tf = match timeframe.to_lowercase().as_str() {
+            "1m" | "1min" | "2m" | "2min" | "4m" | "4min" => "1m",
+            "3m" | "3min" => "3m",
+            "5m" | "5min" => "5m",
+            "10m" | "10min" => "10m",
+            "15m" | "15min" | "75m" | "75min" | "125m" | "125min" => "15m",
+            "30m" | "30min" => "30m",
+            "1h" | "60m" | "2h" | "120m" | "3h" | "180m" | "4h" | "240m" => "1h",
+            _ => "10m",
+        };
+        let is_derived = timeframe.to_lowercase() != base_tf;
+
+        let intraday_result = if is_derived {
+            let sample_interval = match timeframe.to_lowercase().as_str() {
+                "2m" | "2min" => "2m",
+                "4m" | "4min" => "4m",
+                "75m" | "75min" => "75m",
+                "125m" | "125min" => "125m",
+                "2h" | "120m" => "2h",
+                "3h" | "180m" => "3h",
+                "4h" | "240m" => "4h",
+                _ => timeframe,
+            };
+            let derived_query = format!(
+                "SELECT ts, \
+                        first(open) AS open, \
+                        max(high) AS high, \
+                        min(low) AS low, \
+                        last(close) AS close, \
+                        sum(volume) AS volume \
+                 FROM historical_intraday \
+                 WHERE symbol = $1 AND timeframe = $2 \
+                 SAMPLE BY {} ALIGN TO CALENDAR \
+                 ORDER BY ts DESC \
+                 LIMIT $3",
+                sample_interval
+            );
+            sqlx::query(&derived_query)
+                .bind(symbol)
+                .bind(base_tf)
+                .bind(limit)
+                .fetch_all(pool)
+                .await
+        } else {
+            sqlx::query(
+                "SELECT ts, open, high, low, close, volume \
+                 FROM historical_intraday \
+                 WHERE symbol = $1 AND timeframe = $2 \
+                 ORDER BY ts DESC \
+                 LIMIT $3",
+            )
+            .bind(symbol)
+            .bind(timeframe)
+            .bind(limit)
+            .fetch_all(pool)
+            .await
+        };
 
         match &intraday_result {
             Ok(rows) if !rows.is_empty() => {
@@ -364,7 +472,7 @@ pub(crate) async fn load_candles_from_db(
     };
 
     let live_query = format!(
-        "SELECT CAST(timestamp AS LONG) AS ts_epoch, \
+        "SELECT timestamp AS ts, \
                 first(last_traded_price) AS open, \
                 max(last_traded_price)   AS high, \
                 min(last_traded_price)   AS low, \
@@ -603,7 +711,7 @@ async fn run_glass_box_loop(
         msg
     })?;
 
-    let mut candles = match load_candles_from_db(pool.inner(), &symbol, &timeframe, 200).await {
+    let mut candles = match load_candles_from_db(Some(&app), pool.inner(), &symbol, &timeframe, 200).await {
         Ok(c) => c,
         Err(e) => {
             let _ = app.emit("agent_message", llm::AgentMessagePayload {
@@ -647,7 +755,7 @@ async fn run_glass_box_loop(
                             role: "system".to_string(),
                             content: format!("Ingested {} candles from Kite.", count),
                         });
-                        if let Ok(new_candles) = load_candles_from_db(pool.inner(), &symbol, &timeframe, 200).await {
+                        if let Ok(new_candles) = load_candles_from_db(Some(&app), pool.inner(), &symbol, &timeframe, 200).await {
                             candles = new_candles;
                         }
                     }
@@ -1037,7 +1145,7 @@ async fn run_glass_box_loop(
                         }
 
                         // Always reload full candles at the end of the sync loop to recalculate
-                        if let Ok(c) = load_candles_from_db(pool.inner(), &symbol, &timeframe, 200).await {
+                        if let Ok(c) = load_candles_from_db(Some(&app), pool.inner(), &symbol, &timeframe, 200).await {
                             fresh_candles = c;
                         }
 
@@ -1297,7 +1405,7 @@ async fn run_sentinel_loop(app: tauri::AppHandle, symbol: String, timeframe: Str
         };
 
         // 1. Fetch the absolute latest data from the database/live ticks.
-        let candles = match load_candles_from_db(pool.inner(), &symbol, "10m", 200).await {
+        let candles = match load_candles_from_db(Some(&app), pool.inner(), &symbol, "10m", 200).await {
             Ok(c) => c,
             Err(e) => {
                 let msg = format!("Failed to fetch candles: {}. Retrying...", e);

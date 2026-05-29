@@ -82,11 +82,11 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None)
             
             # Yield tool calls to show the user what data is being parsed
             yield f"event: TOOL_CALL_START\ndata: {json.dumps({'tool': 'get_consensus_report', 'args': {'symbol': symbol, 'timeframe': '10m'}})}\n\n"
-            consensus = get_consensus_report(symbol, "10m")
+            consensus = get_consensus_report.func(symbol, "10m")
             yield f"event: TOOL_CALL_END\ndata: {json.dumps({'tool': 'get_consensus_report', 'status': 'success'})}\n\n"
             
             yield f"event: TOOL_CALL_START\ndata: {json.dumps({'tool': 'get_candles', 'args': {'symbol': symbol, 'timeframe': '10m', 'limit': 50}})}\n\n"
-            candles = get_candles(symbol, "10m", 50)
+            candles = get_candles.func(symbol, "10m", 50)
             yield f"event: TOOL_CALL_END\ndata: {json.dumps({'tool': 'get_candles', 'status': 'success'})}\n\n"
             
             # Extract technical indicators from consensus

@@ -106,6 +106,7 @@ async fn get_candles(
     let limit = payload.limit.unwrap_or(200);
     let tf = payload.timeframe.unwrap_or_else(|| "10m".to_string());
     let candles = crate::commands::deep_quant::load_candles_from_db(
+        Some(&state.app),
         pool.inner(),
         &payload.symbol,
         &tf,
@@ -138,6 +139,7 @@ async fn get_consensus(
     let limit = payload.limit.unwrap_or(200);
     let tf = payload.timeframe.unwrap_or_else(|| "10m".to_string());
     let candles = crate::commands::deep_quant::load_candles_from_db(
+        Some(&state.app),
         pool.inner(),
         &payload.symbol,
         &tf,
@@ -235,7 +237,7 @@ async fn watch_condition(
         // Compute 20-period baseline average volume from QuestDB
         let mut avg_volume = 1.0;
         if let Some(pool) = app_clone.try_state::<sqlx::PgPool>() {
-            if let Ok(c) = crate::commands::deep_quant::load_candles_from_db(pool.inner(), &watcher.symbol, &watcher.timeframe, 20).await {
+            if let Ok(c) = crate::commands::deep_quant::load_candles_from_db(Some(&app_clone), pool.inner(), &watcher.symbol, &watcher.timeframe, 20).await {
                 if !c.is_empty() {
                     let total_vol: f64 = c.iter().map(|item| item.volume).sum();
                     avg_volume = total_vol / c.len() as f64;
@@ -398,13 +400,13 @@ async fn get_multi_tf_trend_handler(
     let symbol = &payload.symbol;
 
     // Run three queries in series
-    let candles_1h = crate::commands::deep_quant::load_candles_from_db(pool.inner(), symbol, "1h", 200)
+    let candles_1h = crate::commands::deep_quant::load_candles_from_db(Some(&state.app), pool.inner(), symbol, "1h", 200)
         .await
         .unwrap_or_default();
-    let candles_4h = crate::commands::deep_quant::load_candles_from_db(pool.inner(), symbol, "4h", 200)
+    let candles_4h = crate::commands::deep_quant::load_candles_from_db(Some(&state.app), pool.inner(), symbol, "4h", 200)
         .await
         .unwrap_or_default();
-    let candles_1d = crate::commands::deep_quant::load_candles_from_db(pool.inner(), symbol, "1d", 200)
+    let candles_1d = crate::commands::deep_quant::load_candles_from_db(Some(&state.app), pool.inner(), symbol, "1d", 200)
         .await
         .unwrap_or_default();
 

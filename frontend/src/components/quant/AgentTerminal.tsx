@@ -18,6 +18,93 @@ const WatchingIndicator = () => (
   </div>
 );
 
+// Premium Markdown inline bold parser helper
+function parseInlineMarkdown(text: string) {
+  const parts = text.split(/\*\*([\s\S]*?)\*\*/g);
+  return parts.map((part, i) => {
+    if (i % 2 === 1) {
+      return (
+        <strong key={i} className="font-bold text-teal-300">
+          {part}
+        </strong>
+      );
+    }
+    return part;
+  });
+}
+
+// Custom-styled beautiful markdown renderer for agent terminal
+const MarkdownRenderer = ({ content }: { content: string }) => {
+  const lines = content.split('\n');
+  return (
+    <div className="space-y-1.5 text-[10.5px] font-sans leading-relaxed tracking-wide text-slate-100/90">
+      {lines.map((line, idx) => {
+        const trimmed = line.trim();
+        if (!trimmed) return <div key={idx} className="h-1" />;
+
+        // Header 3 (### Header)
+        if (line.startsWith('### ')) {
+          return (
+            <h3
+              key={idx}
+              className="text-[11px] font-black text-emerald-400 border-b border-slate-800/40 pb-1 mt-3 mb-1.5 uppercase tracking-widest flex items-center gap-1.5 select-none"
+            >
+              <Target size={11} className="text-emerald-400" />
+              {line.replace('### ', '')}
+            </h3>
+          );
+        }
+
+        // Header 2 (## Header)
+        if (line.startsWith('## ')) {
+          return (
+            <h2
+              key={idx}
+              className="text-xs font-black text-teal-300 border-b border-teal-500/10 pb-1 mt-4 mb-2 tracking-widest uppercase flex items-center gap-1.5 select-none"
+            >
+              <Cpu size={12} className="text-teal-400" />
+              {line.replace('## ', '')}
+            </h2>
+          );
+        }
+
+        // Bullet lists (- item or * item)
+        if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+          const listContent = trimmed.substring(2);
+          return (
+            <div key={idx} className="flex items-start gap-2 pl-2 my-0.5 text-slate-200">
+              <span className="text-emerald-500/80 font-bold select-none mt-0.5">•</span>
+              <span className="flex-1">{parseInlineMarkdown(listContent)}</span>
+            </div>
+          );
+        }
+
+        // Numbered lists (1. item, etc.)
+        const numMatch = trimmed.match(/^(\d+)\.\s+(.*)$/);
+        if (numMatch) {
+          const num = numMatch[1];
+          const listContent = numMatch[2];
+          return (
+            <div key={idx} className="flex items-start gap-2.5 pl-2 my-1.5 text-slate-200">
+              <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded bg-emerald-500/15 text-emerald-400 text-[8.5px] font-black font-mono border border-emerald-500/20 mt-0.5 select-none">
+                {num}
+              </span>
+              <span className="flex-1">{parseInlineMarkdown(listContent)}</span>
+            </div>
+          );
+        }
+
+        // Standard line
+        return (
+          <p key={idx} className="text-slate-300">
+            {parseInlineMarkdown(line)}
+          </p>
+        );
+      })}
+    </div>
+  );
+};
+
 export default function AgentTerminal() {
   const reasoningSteps = useQuantStore((s) => s.reasoningSteps);
   const sessionStatus = useQuantStore((s) => s.sessionStatus);
@@ -151,22 +238,74 @@ export default function AgentTerminal() {
       <div className="flex-1 overflow-y-auto p-4 space-y-3.5 scrollbar-thin scrollbar-track-slate-950/20 scrollbar-thumb-slate-800">
         {reasoningSteps.map((step) => {
           if (step.type === 'message') {
+            // Strip raw JSON objects from display but show all reasoning text progressively
             const cleanContent = step.content.replace(/\{[\s\S]*\}/g, '').trim();
             if (!cleanContent) return null;
 
             return (
-              <div key={step.id} className="flex justify-start animate-fade-in font-sans">
-                <div className="max-w-[95%] bg-slate-900/40 text-slate-100 border border-slate-800/40 rounded-xl px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap shadow-sm">
+              <div key={step.id} className="flex justify-start animate-fade-in font-sans w-full">
+                <div className="max-w-[95%] bg-slate-900/40 text-slate-100 border border-slate-800/40 rounded-xl px-3 py-2 text-[11px] leading-relaxed shadow-sm w-full">
                   <div className="flex items-center gap-1.5 text-[9px] text-emerald-400 font-bold uppercase tracking-wider mb-1 select-none">
                     <Cpu size={10} className="animate-pulse" />
                     Agent Reasoning
                   </div>
-                  {cleanContent}
+                  <MarkdownRenderer content={cleanContent} />
                 </div>
               </div>
             );
+          } else if (step.type === 'tool_start') {
+            // Check if a matching tool_end exists for this tool call
+            const isCompleted = reasoningSteps.some(
+              (s) => s.type === 'tool_end' && s.toolName === step.toolName && s.timestamp > step.timestamp
+            );
+
+            return (
+              <div key={step.id} className="flex justify-start animate-fade-in font-mono pl-1 w-full my-1.5">
+                <div className={`rounded-xl px-3 py-2 text-[10px] leading-relaxed shadow-sm w-full max-w-[95%] ${
+                  isCompleted
+                    ? 'bg-slate-900/20 border border-emerald-500/15'
+                    : 'bg-slate-950/60 border border-teal-500/20'
+                }`}>
+                  <div className={`flex items-center gap-2 font-bold uppercase tracking-wider mb-1.5 select-none ${
+                    isCompleted ? 'text-emerald-400' : 'text-teal-400'
+                  }`}>
+                    {isCompleted ? (
+                      <CheckCircle2 size={10} className="text-emerald-400 shrink-0" />
+                    ) : (
+                      <Loader2 size={10} className="animate-spin text-teal-400 shrink-0" />
+                    )}
+                    <span>{isCompleted ? 'Tool Completed' : 'Executing Tool'}</span>
+                    <span className={`ml-auto text-[8px] font-mono px-1.5 py-0.5 rounded ${
+                      isCompleted
+                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/25'
+                        : 'bg-teal-500/10 text-teal-400 border border-teal-500/20'
+                    }`}>
+                      {isCompleted ? 'SUCCESS' : 'ACTIVE'}
+                    </span>
+                  </div>
+                  <div className={`text-[11px] font-extrabold font-mono tracking-wide ${
+                    isCompleted ? 'text-emerald-300' : 'text-teal-300'
+                  }`}>
+                    {step.toolName}
+                  </div>
+                  {step.args && Object.keys(step.args).length > 0 && (
+                    <div className="mt-1.5 bg-black/40 border border-slate-800/60 rounded px-2 py-1 text-[8.5px] text-slate-400 leading-normal font-sans space-y-0.5">
+                      {Object.entries(step.args).map(([k, v]) => (
+                        <div key={k} className="flex gap-1.5">
+                          <span className="text-slate-500 font-semibold">{k}:</span>
+                          <span className="text-teal-300/80 font-mono">{JSON.stringify(v)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          } else if (step.type === 'tool_end') {
+            // Skip rendering — the tool_start card already shows completed state
+            return null;
           } else {
-            // step.type === 'tool'
+            // Legacy / fallback 'tool'
             return (
               <div key={step.id} className="flex justify-start animate-fade-in font-mono pl-2">
                 <div className="text-[10px] text-teal-400/80 font-semibold select-none flex items-center gap-1.5 py-0.5">
@@ -227,7 +366,6 @@ export default function AgentTerminal() {
             "{finalTrade.setup_validation}"
           </div>
 
-          {/* Parameters grid */}
           <div className="grid grid-cols-3 gap-2 mb-3">
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-2 flex flex-col justify-center">
               <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider select-none">Entry ({parsedPlan.side})</span>
@@ -243,7 +381,6 @@ export default function AgentTerminal() {
             </div>
           </div>
 
-          {/* Interactive Handoff Button */}
           <button
             type="button"
             disabled={executed || isExecuting}

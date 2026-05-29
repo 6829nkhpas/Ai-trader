@@ -126,15 +126,15 @@ async fn main() {
             if let (Some(rsi), Some(vwap)) = (rsi_opt, vwap_opt) {
                 let signal = evaluate_signal(&symbol, rsi, vwap, price, ts_ms);
 
-                log::info!(
-                    "[signal] symbol={:<20} rsi={:>6.2}  vwap={:>10.2}  \
-                     price={:>10.2}  score={:>3}",
-                    signal.symbol,
-                    signal.rsi_value,
-                    vwap,
-                    price,
-                    signal.technical_conviction_score,
-                );
+                // log::debug!(
+                //     "[signal] symbol={:<20} rsi={:>6.2}  vwap={:>10.2}  \
+                //      price={:>10.2}  score={:>3}",
+                //     signal.symbol,
+                //     signal.rsi_value,
+                //     vwap,
+                //     price,
+                //     signal.technical_conviction_score,
+                // );
 
                 // Clone producer + topic + signal into a fire-and-forget task.
                 // This prevents publish latency from blocking the consume loop.

@@ -161,22 +161,22 @@ pub mod consumer {
                                             Err(_) => "UNKNOWN",
                                         };
 
-                                    println!(
-                                        "[DECISION] symbol={:<20} action={:<4}  \
-                                         final_score={:>3}  tech_w={:.2}  sent_w={:.2}  \
-                                         sentiment={}  ts={}",
-                                        decision.symbol,
-                                        action_label,
-                                        decision.final_conviction_score,
-                                        decision.technical_weight_used,
-                                        decision.sentiment_weight_used,
-                                        if latest_sentiment.is_some() {
-                                            "CACHED"
-                                        } else {
-                                            "NONE"
-                                        },
-                                        decision.timestamp_ms,
-                                    );
+                                    // log::debug!(
+                                    //     "[DECISION] symbol={:<20} action={:<4}  \
+                                    //      final_score={:>3}  tech_w={:.2}  sent_w={:.2}  \
+                                    //      sentiment={}  ts={}",
+                                    //     decision.symbol,
+                                    //     action_label,
+                                    //     decision.final_conviction_score,
+                                    //     decision.technical_weight_used,
+                                    //     decision.sentiment_weight_used,
+                                    //     if latest_sentiment.is_some() {
+                                    //         "CACHED"
+                                    //     } else {
+                                    //         "NONE"
+                                    //     },
+                                    //     decision.timestamp_ms,
+                                    // );
 
                                     // ── SP43: Kafka Publish (fire-and-forget) ────
                                     // Spawn so slow Kafka delivery doesn't block

@@ -40,6 +40,8 @@ You must follow this exact loop until a perfect setup is found or registered:
 1. MACRO ALIGNMENT: Call `get_multi_tf_trend` to establish the 1H, 4H, and 1D bias.
 2. MICROSTRUCTURE: Call `get_consensus_report` dynamically on different timeframes (e.g., '5m', '15m') to find confluence.
 3. KEY LEVELS: Call `get_support_resistance` to identify exact liquidity zones.
+
+CRITICAL: You must execute at least one tool call (e.g., `get_multi_tf_trend`) on your very first turn. Do not output text reasoning without calling a tool in the same turn.
 </order_of_operations>
 
 <self_verification_protocol>
@@ -77,6 +79,8 @@ Your job is to verify this trade using the EXACT same <self_verification_protoco
 2. Check the R:R ratio. Check if the SL is placed safely beyond live volatility bands. Check macro alignment.
 3. Do not invent red flags if the trade is genuinely an A+ setup. If it fits the protocol, approve it and defend it.
 4. If it fails the protocol, explain exactly why, and suggest a better entry using `watch_price_condition`.
+
+CRITICAL: You must execute at least one tool call (e.g., `get_multi_tf_trend`) on your very first turn. Do not output text reasoning without calling a tool in the same turn.
 
 <json_format>
 Once you have stress-tested the setup and formed your final verdict (after calling declare_trade or if waiting), you MUST return a JSON object EXACTLY matching this structure:
@@ -137,16 +141,115 @@ llm_with_tools = llm.bind_tools(tools)
 
 # ── Nodes & Routing ─────────────────────────────────────────────────────────
 
+import re
+import json
+
+def parse_deepseek_custom_tool_calls(content: str) -> list:
+    """
+    Parses DeepSeek/HuggingFace custom token tool call representations from raw text content.
+    Example: <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_multi_tf_trend ```json {"symbol":"HDFCBANK"} ```<｜tool▁call▁end｜><｜tool▁calls▁end｜>
+    """
+    if not content:
+        return []
+        
+    tool_calls = []
+    
+    # 1. Look for tool names in the list
+    valid_tools = [
+        "get_candles", "get_consensus_report", "get_multi_tf_trend",
+        "get_support_resistance", "get_news_context", "watch_price_condition", "declare_trade"
+    ]
+    
+    # Find all occurrences of valid tools
+    for tool_name in valid_tools:
+        # Search for tool name, optionally some whitespace/markdown, then a JSON object
+        pattern = re.compile(rf"{tool_name}\s*(?:```json\s*)?(\{{\s*[\s\S]*?\}})(?:\s*```)?")
+        matches = pattern.finditer(content)
+        for match in matches:
+            args_str = match.group(1)
+            try:
+                args = json.loads(args_str)
+                tool_calls.append({
+                    "name": tool_name,
+                    "args": args,
+                    "id": f"call_{tool_name}_{len(tool_calls)}"
+                })
+            except Exception as e:
+                # Fallback: clean some weird characters and try again
+                cleaned_args = re.sub(r'[\u200b-\u200d\uFEFF]', '', args_str) # strip zero-width spaces
+                try:
+                    args = json.loads(cleaned_args)
+                    tool_calls.append({
+                        "name": tool_name,
+                        "args": args,
+                        "id": f"call_{tool_name}_{len(tool_calls)}"
+                    })
+                except:
+                    pass
+                
+    # 2. Fallback to general JSON extraction if no tool calls matched but tags are present
+    if not tool_calls and ("tool" in content or "call" in content or "func" in content):
+        for tool_name in valid_tools:
+            if tool_name in content:
+                # Find the nearest JSON block after the tool name
+                idx = content.find(tool_name)
+                after_tool = content[idx + len(tool_name):]
+                json_match = re.search(r"(\{\s*[\s\S]*?\})", after_tool)
+                if json_match:
+                    args_str = json_match.group(1)
+                    try:
+                        args = json.loads(args_str)
+                        tool_calls.append({
+                            "name": tool_name,
+                            "args": args,
+                            "id": f"call_{tool_name}_{len(tool_calls)}"
+                        })
+                    except:
+                        pass
+                        
+    return tool_calls
+
 def call_model(state: AgentState):
     messages = state["messages"]
+    symbol = state.get("symbol", "N/A")
+    mode = state.get("mode", "FIND")
+    print(f"\n[Deep Quant Agent] === Model Invocation Started (Symbol: {symbol}, Mode: {mode}) ===")
     
     # Check if a SystemMessage is already present. If not, prepend one.
     has_system = any(isinstance(m, SystemMessage) or (hasattr(m, "role") and m.role == "system") for m in messages)
     if not has_system:
+        print("[Deep Quant Agent] Prepending system instruction based on mode...")
         system_instruction = format_system_prompt(state)
         messages = [SystemMessage(content=system_instruction)] + list(messages)
+    else:
+        print("[Deep Quant Agent] Existing system instruction detected.")
         
+    print(f"[Deep Quant Agent] Calling model: {model_name} with {len(messages)} messages...")
     response = llm_with_tools.invoke(messages)
+    
+    print(f"[Deep Quant Agent] Model responded. Content length: {len(response.content or '')}")
+    
+    # If the model returned raw DeepSeek token tool calls inside the content string,
+    # parse them manually and assign them to response.tool_calls.
+    if not response.tool_calls and response.content:
+        parsed_calls = parse_deepseek_custom_tool_calls(response.content)
+        if parsed_calls:
+            print(f"[Deep Quant Agent] Natively parsed custom DeepSeek tool call(s) from content: {[tc.get('name') for tc in parsed_calls]}")
+            response.tool_calls = parsed_calls
+            
+    if response.tool_calls:
+        # Robustly clean tool names by stripping trailing/leading whitespace and newlines
+        for tc in response.tool_calls:
+            if "name" in tc:
+                cleaned_name = tc["name"].strip()
+                if cleaned_name != tc["name"]:
+                    print(f"[Deep Quant Agent] Cleaned tool name from '{tc['name']}' to '{cleaned_name}'")
+                    tc["name"] = cleaned_name
+        print(f"[Deep Quant Agent] Model requested tool call(s): {[tc.get('name') for tc in response.tool_calls]}")
+    else:
+        snippet = (response.content or "").strip().replace('\n', ' ')
+        print(f"[Deep Quant Agent] Model output snippet: {snippet[:200]}...")
+        
     return {"messages": [response]}
 
 tool_node = ToolNode(tools)
@@ -154,9 +257,46 @@ tool_node = ToolNode(tools)
 def should_continue(state: AgentState) -> str:
     messages = state["messages"]
     last_message = messages[-1]
-    if not last_message.tool_calls:
+    
+    print("\n[Deep Quant Routing] === Checking Routing Decision ===")
+    print(f"[Deep Quant Routing] Last message type: {type(last_message).__name__}")
+    
+    # If the model has output a tool call, we go to tools
+    if last_message.tool_calls:
+        print(f"[Deep Quant Routing] Model requested tool call(s): {[tc.get('name') for tc in last_message.tool_calls]}. Routing to -> tools")
+        return "continue"
+        
+    # If no tool calls, check if the model has finalized its JSON response or text plan
+    content = last_message.content or ""
+    has_final_json = "{" in content and "}" in content and (
+        "conviction_score" in content or "conviction" in content
+    )
+    has_text_plan = "entry" in content.lower() and ("stop" in content.lower() or "sl" in content.lower() or "target" in content.lower() or "tp" in content.lower())
+    
+    print(f"[Deep Quant Routing] Has final JSON: {has_final_json} | Has text plan: {has_text_plan}")
+    if has_final_json or has_text_plan:
+        print("[Deep Quant Routing] Target or decision finalized. Routing to -> end")
         return "end"
-    return "continue"
+        
+    # If it hasn't finalized and has no tool calls, check how many consecutive AIMessages there are
+    consecutive_ai = 0
+    for m in reversed(messages):
+        msg_type = type(m).__name__
+        is_ai = "AIMessage" in msg_type or (hasattr(m, "role") and m.role == "assistant")
+        is_user_or_tool = "ToolMessage" in msg_type or "SystemMessage" in msg_type or (hasattr(m, "role") and m.role in ["user", "tool", "system"])
+        if is_ai:
+            consecutive_ai += 1
+        elif is_user_or_tool:
+            break
+            
+    print(f"[Deep Quant Routing] Consecutive AI responses: {consecutive_ai}")
+    # Give the agent up to 2 consecutive monologue/thoughts turns to finalize or invoke a tool
+    if consecutive_ai < 2:
+        print("[Deep Quant Routing] Monologue count < 2. Routing to -> loop_agent")
+        return "loop_agent"
+        
+    print("[Deep Quant Routing] Monologue count limit reached. Routing to -> end")
+    return "end"
 
 # ── Graph Assembly ──────────────────────────────────────────────────────────
 
@@ -169,12 +309,13 @@ workflow.add_node("tools", tool_node)
 # Set starting point
 workflow.set_entry_point("agent")
 
-# Define conditional route from agent to either tools or end
+# Define conditional route from agent to either tools, loop back, or end
 workflow.add_conditional_edges(
     "agent",
     should_continue,
     {
         "continue": "tools",
+        "loop_agent": "agent",
         "end": "__end__",
     }
 )
