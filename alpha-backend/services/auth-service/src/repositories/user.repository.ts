@@ -3,7 +3,8 @@ import { prisma } from '../db';
 export class UserRepository {
   async findByEmail(email: string) {
     return prisma.user.findUnique({
-      where: { email }
+      where: { email },
+      include: { brokerConnection: true }
     });
   }
 
@@ -25,7 +26,8 @@ export class UserRepository {
         password: data.password,
         name: data.name,
         tier: data.tier || 'FREE'
-      }
+      },
+      include: { brokerConnection: true }
     });
   }
 

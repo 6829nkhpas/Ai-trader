@@ -375,13 +375,27 @@ pub async fn fetch_symbol_sentiment(symbol: String) -> Result<SentimentPayload, 
 
     // Step 2: Analyze via LLM
     let t_llm = Instant::now();
-    let payload = analyze_sentiment_via_llm(&symbol, &news_text, headlines).await.map_err(|e| {
-        error!(
-            "[sentiment] ✘ LLM analysis failed for {} elapsed_ms={}: {}",
-            symbol, t_llm.elapsed().as_millis(), e
-        );
-        e
-    })?;
+    let payload = match analyze_sentiment_via_llm(&symbol, &news_text, headlines.clone()).await {
+        Ok(p) => p,
+        Err(e) => {
+            warn!(
+                "[sentiment] ⚠ LLM analysis failed for {} elapsed_ms={}: {}. Falling back to neutral sentiment.",
+                symbol,
+                t_llm.elapsed().as_millis(),
+                e
+            );
+            let top_headline = headlines.first().cloned()
+                .unwrap_or_else(|| format!("No notable headline for {}.", symbol));
+            SentimentPayload {
+                symbol: symbol.clone(),
+                score: 0,
+                label: "Neutral".to_string(),
+                top_headline,
+                impact: "neutral".to_string(),
+                headlines,
+            }
+        }
+    };
 
     info!(
         "[sentiment] ✔ Done symbol={} score={} label={} impact={} total_ms={}",

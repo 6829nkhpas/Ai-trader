@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle, AlertTriangle, Layers, Loader2, ArrowRight } from 'lucide-react';
+import { CheckCircle, AlertTriangle, Layers, Loader2, ArrowRight, Info } from 'lucide-react';
 
 interface BrokerTabProps {
   broker: any;
@@ -83,6 +83,13 @@ export default function BrokerTab({
               <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Session Auth Time</span>
               <span className="text-sm font-bold text-white block mt-1">{formatDate(broker.loginTime)}</span>
             </div>
+            {/* Daily Reconnection Tip */}
+            <div className="col-span-2 flex items-start gap-2.5 rounded-lg bg-elevated/40 border border-border-default/30 p-3.5 text-[10px] text-text-secondary leading-relaxed">
+              <Info size={14} className="shrink-0 text-blue-400 mt-0.5" />
+              <span>
+                <strong>Daily Reconnection Required:</strong> Zerodha Kite API requires you to refresh your access token by reconnecting your broker account every day after <strong>6:00 AM IST</strong>.
+              </span>
+            </div>
           </div>
 
           {/* Permissions & Capabilities */}
@@ -139,7 +146,14 @@ export default function BrokerTab({
             Authorize your Zerodha Kite broker connection to enable live institutional market feed ingestion and portfolio execution.
           </p>
 
-          <div className="mt-6 flex justify-center">
+          <div className="mt-6 flex flex-col items-center gap-4">
+            <div className="max-w-sm mx-auto flex items-start gap-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 p-3.5 text-[10px] text-amber-400 text-left leading-relaxed">
+              <Info size={14} className="shrink-0 mt-0.5" />
+              <span>
+                <strong>Daily Reconnection Required:</strong> Zerodha access tokens expire daily. Please connect your Zerodha account every day after <strong>6:00 AM IST</strong> to start a new active session.
+              </span>
+            </div>
+
             {!connectingBroker ? (
               <button
                 onClick={handleBrokerConnect}

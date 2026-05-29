@@ -24,6 +24,7 @@ export default function AgentTerminal() {
   const finalTrade = useQuantStore((s) => s.finalTrade);
   const handleStreamEvent = useQuantStore((s) => s.handleStreamEvent);
   const resetTerminal = useQuantStore((s) => s.resetTerminal);
+  const analysisError = useQuantStore((s) => s.analysisError);
 
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
   
@@ -185,6 +186,24 @@ export default function AgentTerminal() {
           <div className="flex items-center gap-2 pl-3 py-2 text-[10px] text-emerald-500/60 animate-pulse">
             <Loader2 size={11} className="animate-spin text-emerald-500" />
             <span>Agent evaluating microstructure signals...</span>
+          </div>
+        )}
+
+        {/* Error message display */}
+        {sessionStatus === 'error' && (
+          <div className="flex items-start gap-3 p-3.5 bg-rose-500/10 border border-rose-500/25 rounded-xl mt-2 select-text font-sans shadow-lg shadow-rose-950/20">
+            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-rose-500/20 text-rose-400 text-[10px] font-bold select-none mt-0.5">
+              ⚠
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[11px] font-bold text-rose-400">Deep Quant Analysis Error</span>
+              <span className="text-[10px] text-rose-300/80 mt-1 leading-relaxed">
+                The LangGraph agent loop returned a pipeline error. This usually occurs if your third-party LLM key (e.g. HuggingFace, Groq, or OpenAI) is expired, rate-limited, or unpaid.
+              </span>
+              <span className="text-[9px] font-mono text-rose-400 bg-rose-950/30 rounded border border-rose-500/10 px-2 py-1 mt-2 leading-normal">
+                {analysisError || "Connection refused: Python service port :8086 unreachable."}
+              </span>
+            </div>
           </div>
         )}
 

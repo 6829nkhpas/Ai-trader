@@ -46,6 +46,14 @@ export default function BrokerConnectCard() {
 
         {!loading ? (
           <div className="space-y-4">
+            {/* Daily Reconnection Reminder */}
+            <div className="flex items-start gap-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 p-3.5 text-[10px] text-amber-400 leading-relaxed">
+              <Info size={14} className="shrink-0 text-amber-400 mt-0.5" />
+              <span>
+                <strong>Daily Reconnection Required:</strong> Zerodha access tokens expire daily. Please connect your Zerodha account every day after <strong>6:00 AM IST</strong> to start a new active session.
+              </span>
+            </div>
+
             <button
               onClick={handleConnect}
               className="flex w-full items-center justify-between gap-3 rounded-xl bg-[#10b981] hover:bg-[#059669] p-4 text-xs font-bold text-white shadow-lg shadow-[#10b981]/10 hover:shadow-[#10b981]/20 active:scale-[0.98] transition-all"

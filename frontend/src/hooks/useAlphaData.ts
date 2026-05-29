@@ -52,6 +52,9 @@ export function useMargins() {
       console.error('[useMargins] failed to fetch margins:', err);
       const errMsg = err.response?.data?.error || err.message || 'Failed to fetch margins';
       setError(errMsg);
+      if (err.response?.status === 403) {
+        useAuthStore.getState().setBrokerConnected(false);
+      }
     } finally {
       setLoading(false);
     }
@@ -118,6 +121,9 @@ export function usePositions() {
       console.error('[usePositions] failed to fetch positions:', err);
       const errMsg = err.response?.data?.error || err.message || 'Failed to fetch positions';
       setError(errMsg);
+      if (err.response?.status === 403) {
+        useAuthStore.getState().setBrokerConnected(false);
+      }
     } finally {
       setLoading(false);
     }
@@ -170,6 +176,9 @@ export function useOrderBook() {
       console.error('[useOrderBook] failed to fetch orders:', err);
       const errMsg = err.response?.data?.error || err.message || 'Failed to fetch order book';
       setError(errMsg);
+      if (err.response?.status === 403) {
+        useAuthStore.getState().setBrokerConnected(false);
+      }
     } finally {
       setLoading(false);
     }

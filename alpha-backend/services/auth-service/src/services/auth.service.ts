@@ -43,6 +43,10 @@ export class AuthService {
       }
     }
 
+    if (!user) {
+      throw new Error('User authentication failed to initialize');
+    }
+
     const effectiveTier = this.getEffectiveTier(user);
     const token = this.generateToken(user.id, effectiveTier);
 
@@ -53,7 +57,8 @@ export class AuthService {
         email: user.email,
         name: user.name,
         tier: effectiveTier,
-        walletBalance: user.walletBalance
+        walletBalance: user.walletBalance,
+        brokerConnection: (user as any).brokerConnection || null
       }
     };
   }
@@ -78,7 +83,8 @@ export class AuthService {
         email: user.email,
         name: user.name,
         tier: effectiveTier,
-        walletBalance: user.walletBalance
+        walletBalance: user.walletBalance,
+        brokerConnection: (user as any).brokerConnection || null
       }
     };
   }
