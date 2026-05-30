@@ -3,7 +3,9 @@
 // Serves endpoints on localhost:8084 to interface with Python LangGraph service:
 //   - POST /tools/get_candles
 //   - POST /tools/get_consensus
+//   - POST /tools/get_multi_tf_trend
 //   - POST /tools/watch_condition
+//   - POST /tools/declare_trade
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -375,6 +377,58 @@ pub struct MultiTfRequest {
     pub symbol: String,
 }
 
+// ── Declare Trade (final decision persistence) ──────────────────────────────
+
+#[derive(serde::Deserialize)]
+pub struct DeclareTradeRequest {
+    pub symbol: Option<String>,
+    pub action: String,
+    pub conviction_score: i32,
+    pub setup_validation: String,
+    pub execution_plan: String,
+}
+
+/// POST /tools/declare_trade
+/// Commits the agent's final decision. Emits a `final_analysis_ready` event
+/// (the same event the Glass-Box loop uses) plus an `agent-declared-trade`
+/// event carrying the full decision, so the UI records a real, structured
+/// plan instead of relying on the model's prose being re-parsed downstream.
+async fn declare_trade(
+    State(state): State<ServerState>,
+    Json(payload): Json<DeclareTradeRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let conviction = payload.conviction_score.clamp(0, 100);
+
+    let plan = crate::quant::AiExecutionPlan {
+        conviction_score: conviction,
+        setup_validation: payload.setup_validation.clone(),
+        execution_plan: payload.execution_plan.clone(),
+    };
+
+    info!(
+        "[tool_server] declare_trade: symbol={:?} action={} conviction={}",
+        payload.symbol, payload.action, conviction
+    );
+
+    // Surface the structured plan to the React UI (same channel the Glass-Box
+    // loop uses) so the committed decision is rendered consistently.
+    let _ = state.app.emit("final_analysis_ready", plan.clone());
+    let _ = state.app.emit(
+        "agent-declared-trade",
+        serde_json::json!({
+            "symbol": payload.symbol,
+            "action": payload.action,
+            "plan": plan,
+        }),
+    );
+
+    Ok(Json(serde_json::json!({
+        "status": "trade_declared",
+        "action": payload.action,
+        "conviction_score": conviction,
+    })))
+}
+
 #[derive(serde::Serialize)]
 pub struct MultiTfResponse {
     pub symbol: String,
@@ -458,6 +512,13 @@ async fn get_multi_tf_trend_handler(
 // ── Server Run Function ──────────────────────────────────────────────────────
 
 pub async fn run_tool_server(app: AppHandle) {
+    // Ensure the live WS→broadcast bridges are running. `watch_price_condition`
+    // subscribes to the live-candle broadcast channel fed by these bridges; if
+    // they haven't been bootstrapped yet (e.g. the agent runs before the user
+    // touches a chart), registered watchers would never receive ticks. This is
+    // idempotent — a no-op if the UI already triggered bootstrap.
+    crate::services::live_bridges::ensure_bootstrapped(&app);
+
     let watchers = Arc::new(RwLock::new(HashMap::new()));
     let state = ServerState { app, watchers };
 
@@ -466,6 +527,7 @@ pub async fn run_tool_server(app: AppHandle) {
         .route("/tools/get_consensus", post(get_consensus))
         .route("/tools/watch_condition", post(watch_condition))
         .route("/tools/get_multi_tf_trend", post(get_multi_tf_trend_handler))
+        .route("/tools/declare_trade", post(declare_trade))
         .with_state(state);
 
     let addr = "127.0.0.1:8084";

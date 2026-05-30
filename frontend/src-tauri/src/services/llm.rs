@@ -110,6 +110,67 @@ impl AppHandleExt for tauri::AppHandle {
     }
 }
 
+// ── Shared Deep-Quant Tool Schema ───────────────────────────────────────────
+
+/// Single source of truth for the Deep-Quant agent tool schemas.
+///
+/// Both the agentic loop in `generate_deep_quant_plan_with_url` and the
+/// Glass-Box loop in `commands::deep_quant::run_glass_box_loop` consume this
+/// so the advertised tools can never drift apart. Every tool that is
+/// advertised here MUST have a matching dispatch arm in BOTH loops.
+pub fn deep_quant_tool_schema() -> serde_json::Value {
+    serde_json::json!([
+        {
+            "type": "function",
+            "function": {
+                "name": "fetch_higher_timeframe",
+                "description": "Get the macro trend context from a higher timeframe.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "timeframe": { "type": "string", "description": "e.g., '1H', '1D'" }
+                    },
+                    "required": ["timeframe"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "fetch_news_context",
+                "description": "Fetch latest news headlines for the symbol to check for catalysts.",
+                // Empty-but-present parameters object: required by strict providers
+                // (OpenAI new API, HuggingFace strict-schema mode) which reject a
+                // function declaration that omits `parameters` entirely.
+                "parameters": { "type": "object", "properties": {} }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "wait_for_next_candle",
+                "description": "Wait for the next candle to close to confirm a breakout or rejection.",
+                "parameters": { "type": "object", "properties": { "timeframe": { "type": "string" } }, "required": ["timeframe"] }
+            }
+        }
+    ])
+}
+
+/// Format the Order Flow Imbalance value for prompt injection.
+///
+/// OFI is only computable when a live order-book depth feed (best bid/ask)
+/// is available. When it is not (e.g. market closed, no Full-mode depth),
+/// the caller passes `f64::NAN` and we render an explicit "unavailable"
+/// string rather than a misleading `0.00` that the model would weight as
+/// genuine neutral order flow.
+pub fn format_ofi(ofi_val: f64) -> String {
+    if ofi_val.is_nan() {
+        "N/A — live order-book depth feed unavailable (do not weight order flow)".to_string()
+    } else {
+        format!("{:.2} (-1.0 heavy Ask pressure, +1.0 heavy Bid pressure)", ofi_val)
+    }
+}
+
 // ── System Prompt Builder (V3 Phase 6: Microstructure — God Patch) ─────────
 
 /// Build the high-conviction institutional system prompt.
@@ -152,7 +213,7 @@ pub fn build_system_prompt(
         - Last Close: {:.2} | VWAP: {:.2}\n\
         \n\
         MICROSTRUCTURE & VOLUME (Compare against historical breakout thresholds):\n\
-        - Order Flow Imbalance (OFI): {:.2} (-1.0 heavy Ask pressure, +1.0 heavy Bid pressure)\n\
+        - Order Flow Imbalance (OFI): {}\n\
         - Volume Spike: {:.2}x above 20-period average\n\
         \n\
         VOLATILITY & ANOMALIES:\n\
@@ -177,7 +238,7 @@ pub fn build_system_prompt(
             \"setup_validation\": \"<2-sentence aggressive synthesis of historical similarities, current signals, and order flow>\",\n\
             \"execution_plan\": \"<Actionable Buy/Sell/Hold plan with precise entry/SL/TP levels, or explicit wait instructions if holding>\"\n\
         }}",
-        symbol, timeframe, macro_context, latest_close, vwap_val, ofi_val, vol_multiplier, atr_val, bb_upper, bb_mid, bb_lower, rsi_val, macd_val, macd_signal, ema9_val, ema21_val, acceleration_coeff, detected_patterns
+        symbol, timeframe, macro_context, latest_close, vwap_val, format_ofi(ofi_val), vol_multiplier, atr_val, bb_upper, bb_mid, bb_lower, rsi_val, macd_val, macd_signal, ema9_val, ema21_val, acceleration_coeff, detected_patterns
     );
     system_prompt
 }
@@ -446,38 +507,8 @@ pub async fn generate_deep_quant_plan_with_url(
     }
     // ═══════════════════════════════════════════════════════════════════
 
-    // Task 1: Define the Tool Schemas
-    let tools = serde_json::json!([
-        {
-            "type": "function",
-            "function": {
-                "name": "fetch_higher_timeframe",
-                "description": "Get the macro trend context from a higher timeframe.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "timeframe": { "type": "string", "description": "e.g., '1H', '1D'" }
-                    },
-                    "required": ["timeframe"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "fetch_news_context",
-                "description": "Fetch latest news headlines for the symbol to check for catalysts."
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "wait_for_next_candle",
-                "description": "Wait for the next candle to close to confirm a breakout or rejection.",
-                "parameters": { "type": "object", "properties": { "timeframe": { "type": "string" } }, "required": ["timeframe"] }
-            }
-        }
-    ]);
+    // Task 1: Define the Tool Schemas (shared single source of truth)
+    let tools = deep_quant_tool_schema();
 
     // ── HTTP client ─────────────────────────────────────────────────────
     let client = reqwest::Client::builder()
@@ -618,6 +649,12 @@ pub async fn generate_deep_quant_plan_with_url(
                         }
                         "fetch_news_context" => {
                             execute_news_tool(symbol).await
+                        }
+                        "wait_for_next_candle" => {
+                            let tf = args.get("timeframe")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or(timeframe);
+                            execute_wait_for_next_candle_tool(symbol, tf, app).await
                         }
                         _ => {
                             format!("Error: Unknown tool name: {}", tool_name)
@@ -876,6 +913,94 @@ async fn execute_news_tool(symbol: &str) -> String {
         return "No recent news context available for catalysts check.".to_string();
     }
     result
+}
+
+/// Real implementation of the `wait_for_next_candle` tool for the
+/// non-Glass-Box agentic path. Sleeps until the next candle boundary (with a
+/// short ingestion buffer), then re-reads the freshest close from QuestDB so
+/// the model receives genuine post-wait market data instead of a stub.
+///
+/// Honors `DEEP_QUANT_SIMULATE_WAIT=true` to cap the sleep at 30s for tests
+/// and sandbox runs. Never sleeps longer than one candle interval.
+pub async fn execute_wait_for_next_candle_tool(
+    symbol: &str,
+    timeframe: &str,
+    app: Option<&tauri::AppHandle>,
+) -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let interval_sec: u64 = match timeframe.trim().to_lowercase().as_str() {
+        "1m" | "1min" => 60,
+        "3m" | "3min" => 180,
+        "5m" | "5min" => 300,
+        "10m" | "10min" => 600,
+        "15m" | "15min" => 900,
+        "30m" | "30min" => 1_800,
+        "60m" | "1h" | "1hour" => 3_600,
+        "1d" | "day" => 86_400,
+        _ => 600,
+    };
+
+    let is_sandbox = std::env::var("DEEP_QUANT_SIMULATE_WAIT")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let current_boundary = (now_secs / interval_sec) * interval_sec;
+    let next_boundary = current_boundary + interval_sec;
+    let mut remaining = next_boundary.saturating_sub(now_secs).max(1);
+    if is_sandbox {
+        remaining = remaining.min(30);
+    }
+    remaining += 5; // ingestion buffer
+
+    info!(
+        "[llm] wait_for_next_candle: symbol={} timeframe={} sleeping={}s sandbox={}",
+        symbol, timeframe, remaining, is_sandbox
+    );
+
+    tokio::time::sleep(std::time::Duration::from_secs(remaining)).await;
+
+    // Re-read the freshest candle from QuestDB so the model sees a real close.
+    use tauri::Manager;
+    let pool = match app.and_then(|handle| handle.try_state::<sqlx::PgPool>()) {
+        Some(p) => p,
+        None => {
+            return format!(
+                "Waited {}s for the next {} candle on {}. (QuestDB pool unavailable — re-evaluate with existing data.)",
+                remaining, timeframe, symbol
+            );
+        }
+    };
+
+    match crate::commands::deep_quant::load_candles_from_db(app, pool.inner(), symbol, timeframe, 60).await {
+        Ok(candles) if !candles.is_empty() => {
+            let indicators = crate::quant::IndicatorState::from_candles_basic(&candles);
+            let consensus = crate::quant::ConsensusEngine::compile_consensus(symbol, &candles, &indicators, timeframe);
+            if let Some(handle) = app {
+                let _ = handle.emit_all("quant-consensus", consensus.clone());
+            }
+            let close = candles.last().map(|c| c.close).unwrap_or(0.0);
+            let rsi = if indicators.rsi_14.is_finite() { indicators.rsi_14 } else { 50.0 };
+            let macd = if indicators.macd_line.is_finite() { indicators.macd_line } else { 0.0 };
+            let macd_sig = if indicators.macd_signal.is_finite() { indicators.macd_signal } else { 0.0 };
+            format!(
+                "LIVE MARKET UPDATE — next {} candle observed for {}.\n\
+                 - New Close: {:.2}\n\
+                 - RSI(14): {:.2} | MACD: {:.4} / Signal: {:.4}\n\
+                 - Consensus Trend Score: {} | Momentum: {} | Volume Flow: {}",
+                timeframe, symbol, close, rsi, macd, macd_sig,
+                consensus.trend_score, consensus.momentum_state, consensus.volume_flow_state
+            )
+        }
+        _ => format!(
+            "Waited {}s for the next {} candle on {}, but no fresh candle could be read from the database yet.",
+            remaining, timeframe, symbol
+        ),
+    }
 }
 
 fn compute_ema_helper(candles: &[crate::quant::patterns::Candle], period: usize) -> f64 {

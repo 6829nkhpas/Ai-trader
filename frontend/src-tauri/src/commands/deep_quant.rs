@@ -60,9 +60,10 @@ pub fn get_kite_credentials() -> (String, String) {
 /// Fetch recent news headlines for a symbol.
 ///
 /// Strategy:
-///   1. Try the local NEWS_API_URL aggregator (fast, curated).
-///   2. If 404 / failure → fall back to Google News RSS (same approach as
-///      the sentiment system in `commands/sentiment.rs`).
+///   1. If `NEWS_API_URL` is explicitly configured, try that aggregator first.
+///      (There is no local news service shipped in this repo, so by default
+///      this step is skipped entirely — we do NOT probe a phantom endpoint.)
+///   2. Otherwise / on failure → Google News RSS (no API key required).
 ///
 /// Returns a human-readable news block for the LLM prompt. Never returns
 /// an empty "No news" string if Google News is reachable.
@@ -80,55 +81,52 @@ pub(crate) async fn fetch_news_context(symbol: &str) -> String {
         }
     };
 
-    // ── Primary: Local NEWS_API_URL ──────────────────────────────────────
-    let news_api_url = std::env::var("NEWS_API_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8084".to_string());
-    let url = format!("{}/api/news?symbol={}", news_api_url, symbol);
-    let req_json = serde_json::json!({ "method": "GET", "url": &url, "symbol": symbol });
+    // ── Optional primary: explicitly-configured NEWS_API_URL ─────────────
+    // Only attempted when the operator has set NEWS_API_URL. We no longer
+    // default to a non-existent local endpoint (which always 404'd and just
+    // wasted a round-trip before falling through to RSS).
+    if let Ok(news_api_url) = std::env::var("NEWS_API_URL") {
+        let news_api_url = news_api_url.trim().trim_end_matches('/').to_string();
+        if !news_api_url.is_empty() {
+            let url = format!("{}/api/news?symbol={}", news_api_url, symbol);
+            let req_json = serde_json::json!({ "method": "GET", "url": &url, "symbol": symbol });
 
-    let local_ok = match client.get(&url).send().await {
-        Ok(resp) => {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            let res_json: serde_json::Value = serde_json::from_str(&body)
-                .unwrap_or_else(|_| serde_json::Value::String(body.clone()));
-            audit_logger::log_api_transaction(
-                &format!("GET {}", url),
-                &req_json,
-                &res_json,
-                status.as_u16(),
-            );
-            if status.is_success() && !body.trim().is_empty() && !body.contains("No recent news") {
-                info!("[news] Local API returned {} chars for {}", body.len(), symbol);
-                Some(body)
-            } else {
-                if !status.is_success() {
-                    warn!("[news] Local API returned HTTP {} for {} — trying RSS fallback", status, symbol);
+            match client.get(&url).send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    let res_json: serde_json::Value = serde_json::from_str(&body)
+                        .unwrap_or_else(|_| serde_json::Value::String(body.clone()));
+                    audit_logger::log_api_transaction(
+                        &format!("GET {}", url),
+                        &req_json,
+                        &res_json,
+                        status.as_u16(),
+                    );
+                    if status.is_success() && !body.trim().is_empty() && !body.contains("No recent news") {
+                        info!("[news] NEWS_API_URL returned {} chars for {}", body.len(), symbol);
+                        return body;
+                    }
+                    warn!("[news] NEWS_API_URL returned HTTP {} for {} — falling back to RSS", status, symbol);
                 }
-                None
+                Err(e) => {
+                    warn!("[news] NEWS_API_URL unreachable for {}: {} — falling back to RSS", symbol, e);
+                    audit_logger::log_api_error(
+                        &format!("GET {}", url),
+                        &req_json,
+                        &format!("transport error: {}", e),
+                    );
+                }
             }
         }
-        Err(e) => {
-            warn!("[news] Local API unreachable for {}: {} — trying RSS fallback", symbol, e);
-            audit_logger::log_api_error(
-                &format!("GET {}", url),
-                &req_json,
-                &format!("transport error: {}", e),
-            );
-            None
-        }
-    };
-
-    if let Some(body) = local_ok {
-        return body;
     }
 
-    // ── Fallback: Google News RSS (same as sentiment.rs) ─────────────────
-    info!("[news] Falling back to Google News RSS for {}", symbol);
+    // ── Google News RSS (default source) ─────────────────────────────────
+    info!("[news] Fetching Google News RSS for {}", symbol);
     let headlines = fetch_google_news_rss_for_context(&client, symbol).await;
 
     if headlines.is_empty() {
-        warn!("[news] Google News RSS also returned 0 headlines for {}", symbol);
+        warn!("[news] Google News RSS returned 0 headlines for {}", symbol);
         return format!("No recent news available for {}.", symbol);
     }
 
@@ -562,6 +560,109 @@ pub(crate) async fn load_candles_from_db(
 }
 
 
+/// Compute a real Order Flow Imbalance (OFI) proxy from the live tick stream.
+///
+/// True L2-depth OFI requires per-tick best-bid/ask size deltas. As an
+/// honest, fully-dynamic proxy we use the **tick rule** over the most recent
+/// `live_ticks`: each tick's traded volume delta is signed by the direction of
+/// the price change (uptick = buy pressure, downtick = sell pressure). The
+/// imbalance is the net signed volume normalised by total volume, giving a
+/// value in [-1.0, +1.0].
+///
+/// Returns `f64::NAN` when there is not enough live tick data to compute a
+/// trustworthy value — callers must render that as "unavailable" rather than
+/// fabricating a neutral `0.0`.
+pub(crate) async fn compute_order_flow_imbalance(pool: &sqlx::PgPool, symbol: &str) -> f64 {
+    use sqlx::Row;
+
+    let rows = match sqlx::query(
+        "SELECT last_traded_price, volume, best_bid, best_ask \
+         FROM live_ticks \
+         WHERE symbol = $1 \
+         ORDER BY timestamp DESC \
+         LIMIT 200",
+    )
+    .bind(symbol)
+    .fetch_all(pool)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("[deep_quant] OFI query failed for {}: {} — OFI unavailable", symbol, e);
+            return f64::NAN;
+        }
+    };
+
+    // Need a meaningful sample of ticks to derive a stable imbalance.
+    if rows.len() < 10 {
+        return f64::NAN;
+    }
+
+    // Rows are DESC (newest first); reverse to chronological order.
+    struct Tick { ltp: f64, vol: f64, bid: f64, ask: f64 }
+    let ticks: Vec<Tick> = rows
+        .iter()
+        .rev()
+        .map(|row| Tick {
+            ltp: row.try_get::<f64, _>("last_traded_price").unwrap_or(0.0),
+            vol: row
+                .try_get::<i64, _>("volume")
+                .or_else(|_| row.try_get::<i32, _>("volume").map(|v| v as i64))
+                .unwrap_or(0) as f64,
+            bid: row.try_get::<f64, _>("best_bid").unwrap_or(0.0),
+            ask: row.try_get::<f64, _>("best_ask").unwrap_or(0.0),
+        })
+        .collect();
+
+    // ── Tick-rule on cumulative-volume deltas, refined by quote location ──
+    // live_ticks.volume is the day's cumulative traded volume, so the
+    // per-tick traded size is the positive delta between consecutive ticks.
+    // Each delta is signed by price direction (uptick = buy, downtick = sell);
+    // when a live best-bid/ask quote is present we refine the sign using the
+    // trade's location relative to the mid-price (Lee-Ready style).
+    let mut signed_vol = 0.0_f64;
+    let mut total_vol = 0.0_f64;
+    let mut last_sign = 1.0_f64;
+    for i in 1..ticks.len() {
+        let dv = ticks[i].vol - ticks[i - 1].vol;
+        // Guard against cumulative-counter resets (new session) → skip negatives.
+        if dv <= 0.0 {
+            continue;
+        }
+        let dp = ticks[i].ltp - ticks[i - 1].ltp;
+        let tick_sign = if dp > 0.0 {
+            1.0
+        } else if dp < 0.0 {
+            -1.0
+        } else {
+            last_sign // zero-tick inherits previous direction (tick rule)
+        };
+        last_sign = tick_sign;
+
+        let refined_sign = if ticks[i].bid > 0.0 && ticks[i].ask > 0.0 && ticks[i].ask >= ticks[i].bid {
+            let mid = (ticks[i].bid + ticks[i].ask) / 2.0;
+            if ticks[i].ltp > mid {
+                1.0
+            } else if ticks[i].ltp < mid {
+                -1.0
+            } else {
+                tick_sign
+            }
+        } else {
+            tick_sign
+        };
+
+        signed_vol += refined_sign * dv;
+        total_vol += dv;
+    }
+
+    if total_vol < 1e-6 {
+        return f64::NAN;
+    }
+
+    (signed_vol / total_vol).clamp(-1.0, 1.0)
+}
+
 /// Fetch latest daily close and percentage change of a core index (e.g. NIFTY 50)
 /// from QuestDB's `historical_candles` to evaluate broader market direction.
 pub(crate) async fn fetch_macro_context(pool: &sqlx::PgPool) -> String {
@@ -839,7 +940,8 @@ async fn run_glass_box_loop(
         interval_sec,
     );
     let acceleration_coeff = if acceleration_coeff.is_finite() { acceleration_coeff } else { 0.0 };
-    let ofi_val: f64 = 0.0;
+    // Real Order Flow Imbalance from the live tick stream (NaN when unavailable).
+    let ofi_val: f64 = compute_order_flow_imbalance(pool.inner(), &symbol).await;
 
     let detected_patterns: String = {
         use crate::quant::patterns::PatternEngine;
@@ -910,7 +1012,7 @@ async fn run_glass_box_loop(
             - Last Close: {:.2} | VWAP: {:.2}\n\
             \n\
             MICROSTRUCTURE & VOLUME:\n\
-            - Order Flow Imbalance (OFI): {:.2} (-1.0 heavy Ask pressure, +1.0 heavy Bid pressure)\n\
+            - Order Flow Imbalance (OFI): {}\n\
             - Volume Spike: {:.2}x above 20-period average\n\
             \n\
             VOLATILITY & ANOMALIES:\n\
@@ -933,7 +1035,7 @@ async fn run_glass_box_loop(
                 \"setup_validation\": \"<2-sentence aggressive critique/defense of entry, stop loss, take profit, and any RED FLAGS or confirmations>\",\n\
                 \"execution_plan\": \"<Your final recommendation: entry adjustment, recommended SL/TP placement, or explicit wait instructions if holding>\"\n\
             }}",
-            symbol, timeframe, macro_context, latest_close, vwap_val, ofi_val, vol_multiplier, atr_val,
+            symbol, timeframe, macro_context, latest_close, vwap_val, llm::format_ofi(ofi_val), vol_multiplier, atr_val,
             bb_upper, bb_mid, bb_lower, rsi_val, macd_val, macd_signal, ema9_val, ema21_val,
             acceleration_coeff, detected_patterns, trade_info
         )
@@ -982,37 +1084,7 @@ async fn run_glass_box_loop(
         },
     ];
 
-    let tools = serde_json::json!([
-        {
-            "type": "function",
-            "function": {
-                "name": "fetch_higher_timeframe",
-                "description": "Get the macro trend context from a higher timeframe.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "timeframe": { "type": "string", "description": "e.g., '1H', '1D'" }
-                    },
-                    "required": ["timeframe"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "fetch_news_context",
-                "description": "Fetch latest news headlines for the symbol to check for catalysts."
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "wait_for_next_candle",
-                "description": "Wait for the next candle to close to confirm a breakout or rejection.",
-                "parameters": { "type": "object", "properties": { "timeframe": { "type": "string" } }, "required": ["timeframe"] }
-            }
-        }
-    ]);
+    let tools = llm::deep_quant_tool_schema();
 
     let mut turn = 0;
     let max_turns = 10;
@@ -1327,23 +1399,52 @@ fn parse_agent_response(content: &str, latest_close: f64) -> AiExecutionPlan {
     let start = cleaned.find('{');
     let end = cleaned.rfind('}');
 
+    // Honest fallback: when the model returns prose we could not parse into a
+    // structured plan, we surface a LOW-conviction HOLD with a diagnostic
+    // message that includes the model's own words. We MUST NOT fabricate a
+    // high-conviction "winning" result — doing so would feed a fake trading
+    // signal to the UI that is indistinguishable from a real analysis.
+    let diagnostic_fallback = |raw: &str| {
+        let snippet: String = raw.chars().take(280).collect();
+        let detail = if snippet.trim().is_empty() {
+            "the model returned an empty response".to_string()
+        } else {
+            format!("the model returned unstructured text: \"{}\"", snippet.trim())
+        };
+        AiExecutionPlan {
+            conviction_score: 1,
+            setup_validation: format!(
+                "No actionable plan — analysis could not be parsed into a structured decision because {}.",
+                detail
+            ),
+            execution_plan: format!(
+                "HOLD / NO TRADE. The agent did not produce a valid execution plan; re-run the analysis. \
+                 (Reference close: ₹{:.2}.)",
+                latest_close
+            ),
+        }
+    };
+
     match (start, end) {
         (Some(s), Some(e)) if e >= s => {
             let extracted = &cleaned[s..=e];
-            serde_json::from_str(extracted).unwrap_or_else(|_| {
-                AiExecutionPlan {
-                    conviction_score: 100,
-                    setup_validation: "Autonomous Agent completed successfully with a winning position!".to_string(),
-                    execution_plan: format!("Victory! Realized Profit finalized on active trades. Current Close: ₹{:.2}", latest_close),
+            match serde_json::from_str::<AiExecutionPlan>(extracted) {
+                Ok(mut plan) => {
+                    // Clamp out-of-range scores to the valid 1..=100 band.
+                    if plan.conviction_score < 1 || plan.conviction_score > 100 {
+                        plan.conviction_score = plan.conviction_score.clamp(1, 100);
+                    }
+                    plan
                 }
-            })
+                Err(e) => {
+                    warn!("[deep_quant] parse_agent_response: JSON parse failed ({}). Returning HOLD diagnostic.", e);
+                    diagnostic_fallback(content)
+                }
+            }
         }
         _ => {
-            AiExecutionPlan {
-                conviction_score: 100,
-                setup_validation: "Autonomous Agent completed successfully with a winning position!".to_string(),
-                execution_plan: format!("Victory! Realized Profit finalized on active trades. Current Close: ₹{:.2}", latest_close),
-            }
+            warn!("[deep_quant] parse_agent_response: no JSON object in model output. Returning HOLD diagnostic.");
+            diagnostic_fallback(content)
         }
     }
 }

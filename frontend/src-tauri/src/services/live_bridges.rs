@@ -58,55 +58,62 @@ pub fn ensure_bootstrapped(app: &AppHandle) {
 /// The bridge connects to `ws://127.0.0.1:<port>`, parses each text frame
 /// as JSON, and re-emits it on `<event_name>` for the React layer.
 ///
-/// On connection failure the task logs a warning and exits — the user
-/// can re-trigger bootstrap by changing symbols once the upstream
-/// service comes online (the OnceCell guard is reset only on process
-/// restart, so reconnect is best-effort here; full resilience is a
-/// separate concern).
+/// The task runs a resilient reconnect loop: if the connection cannot be
+/// established or the stream closes, it waits with a capped backoff and
+/// retries indefinitely. This keeps live data (and the tool-server price
+/// watchers fed by the OHLC bridge) flowing across transient upstream
+/// restarts without requiring a full app restart.
 fn spawn_bridge(app: AppHandle, port: u16, event_name: &'static str) {
     tauri::async_runtime::spawn(async move {
         let url = format!("ws://127.0.0.1:{}", port);
-        match connect_async(&url).await {
-            Ok((ws_stream, _)) => {
-                info!("[live_bridges] Connected → {} (event '{}')", url, event_name);
-                let (_, mut read) = ws_stream.split();
-                while let Some(message) = read.next().await {
-                    let Ok(msg) = message else { continue };
-                    let Ok(text) = msg.into_text() else { continue };
-                    let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
-                        continue;
-                    };
-                    let _ = app.emit(event_name, json.clone());
+        let mut backoff_secs = 1u64;
+        const MAX_BACKOFF_SECS: u64 = 30;
 
-                    if event_name == "ohlc-tick" {
-                        if let (Some(symbol), Some(close)) = (
-                            json.get("symbol").and_then(|s| s.as_str()),
-                            json.get("close").and_then(|c| c.as_f64()),
-                        ) {
-                            crate::execution::paper::process_tick_for_positions(&app, symbol, close);
-                        }
+        loop {
+            match connect_async(&url).await {
+                Ok((ws_stream, _)) => {
+                    info!("[live_bridges] Connected → {} (event '{}')", url, event_name);
+                    backoff_secs = 1; // reset backoff on a successful connect
+                    let (_, mut read) = ws_stream.split();
+                    while let Some(message) = read.next().await {
+                        let Ok(msg) = message else { continue };
+                        let Ok(text) = msg.into_text() else { continue };
+                        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+                            continue;
+                        };
+                        let _ = app.emit(event_name, json.clone());
 
-                        // Broadcast to the local tool server watchers
-                        if let Some((symbol, candle)) = crate::quant::tool_server::parse_ohlc_tick(&json) {
-                            if let Some(tx) = app.try_state::<tokio::sync::broadcast::Sender<(String, crate::quant::vwepr::OhlcCandle)>>() {
-                                let _ = tx.send((symbol, candle));
+                        if event_name == "ohlc-tick" {
+                            if let (Some(symbol), Some(close)) = (
+                                json.get("symbol").and_then(|s| s.as_str()),
+                                json.get("close").and_then(|c| c.as_f64()),
+                            ) {
+                                crate::execution::paper::process_tick_for_positions(&app, symbol, close);
+                            }
+
+                            // Broadcast to the local tool server watchers
+                            if let Some((symbol, candle)) = crate::quant::tool_server::parse_ohlc_tick(&json) {
+                                if let Some(tx) = app.try_state::<tokio::sync::broadcast::Sender<(String, crate::quant::vwepr::OhlcCandle)>>() {
+                                    let _ = tx.send((symbol, candle));
+                                }
                             }
                         }
                     }
+                    warn!(
+                        "[live_bridges] Stream closed for {} — reconnecting in {}s.",
+                        url, backoff_secs
+                    );
                 }
-                warn!(
-                    "[live_bridges] Stream closed for {} — '{}' events will stop \
-                     until the next process restart.",
-                    url, event_name
-                );
+                Err(e) => {
+                    warn!(
+                        "[live_bridges] Could not connect to {} ({}). Retrying in {}s.",
+                        url, e, backoff_secs
+                    );
+                }
             }
-            Err(e) => {
-                warn!(
-                    "[live_bridges] Could not connect to {} ({}). Frontend will not \
-                     receive '{}' events from this bridge.",
-                    url, e, event_name
-                );
-            }
+
+            tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
+            backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF_SECS);
         }
     });
 }

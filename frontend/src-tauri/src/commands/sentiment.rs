@@ -59,21 +59,26 @@ async fn fetch_news_headlines(symbol: &str) -> Vec<String> {
         return google_news;
     }
 
-    // ── Fallback: Local NEWS_API_URL ────────────────────────────────────
-    let news_api_url = std::env::var("NEWS_API_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8084".to_string());
-    let url = format!("{}/api/news?symbol={}", news_api_url, symbol);
-
-    match client.get(&url).send().await {
-        Ok(resp) if resp.status().is_success() => {
-            let body = resp.text().await.unwrap_or_default();
-            if !body.trim().is_empty() && !body.contains("No recent news") {
-                info!("[sentiment] Local news API returned data for {}", symbol);
-                return body.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+    // ── Fallback: Local NEWS_API_URL (only if explicitly configured) ─────
+    // There is no local news service shipped in this repo, so we only probe
+    // an aggregator when the operator has explicitly set NEWS_API_URL. This
+    // avoids a guaranteed-404 round-trip against a phantom default endpoint.
+    if let Ok(news_api_url) = std::env::var("NEWS_API_URL") {
+        let news_api_url = news_api_url.trim().trim_end_matches('/').to_string();
+        if !news_api_url.is_empty() {
+            let url = format!("{}/api/news?symbol={}", news_api_url, symbol);
+            match client.get(&url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    let body = resp.text().await.unwrap_or_default();
+                    if !body.trim().is_empty() && !body.contains("No recent news") {
+                        info!("[sentiment] NEWS_API_URL returned data for {}", symbol);
+                        return body.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+                    }
+                }
+                _ => {
+                    warn!("[sentiment] NEWS_API_URL unavailable for {}", symbol);
+                }
             }
-        }
-        _ => {
-            warn!("[sentiment] Local news API unavailable for {}", symbol);
         }
     }
 

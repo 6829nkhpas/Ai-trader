@@ -29,6 +29,21 @@ export interface AiExecutionPlan {
   execution_plan: string;
 }
 
+// ── Deep Quant SSE stream event payload ─────────────────────────────────
+// Shape emitted by the Rust `deep-quant-stream` Tauri event bridge.
+export interface StreamEventPayload {
+  event: string;
+  data?: {
+    content?: string;
+    tool?: string;
+    args?: Record<string, unknown>;
+    status?: string;
+    error?: string;
+    thread_id?: string;
+    [key: string]: unknown;
+  };
+}
+
 // ── Decoupled Sentiment Payload (independent of Kafka/WS ticks) ─────────
 
 export interface SentimentPayload {
@@ -92,7 +107,7 @@ interface QuantStore {
     content: string;
     timestamp: number;
     toolName?: string;
-    args?: Record<string, any>;
+    args?: Record<string, unknown>;
   }>;
   finalTrade: AiExecutionPlan | null;
   /** Number of tool calls that have started but not yet completed */
@@ -119,7 +134,7 @@ interface QuantStore {
   clearAiPlan: () => void;
   openPosition: (symbol: string, plan: AiExecutionPlan) => void;
   closePosition: (id: string, exitPrice: number) => void;
-  handleStreamEvent: (payload: any) => void;
+  handleStreamEvent: (payload: StreamEventPayload) => void;
   resetTerminal: () => void;
 }
 
@@ -172,8 +187,21 @@ function parseExecutionPlan(text: string): { entry: number; sl: number; tp: numb
 function extractFinalTrade(text: string): AiExecutionPlan | null {
   if (!text) return null;
 
+  // Loosely-typed view of a parsed JSON object — the model may emit any of
+  // several key spellings, so every field is optional and read defensively.
+  type ParsedPlan = {
+    conviction_score?: unknown;
+    conviction?: unknown;
+    setup_validation?: unknown;
+    validation?: unknown;
+    setup?: unknown;
+    execution_plan?: unknown;
+    plan?: unknown;
+    [key: string]: unknown;
+  };
+
   interface JsonCandidate {
-    parsed: any;
+    parsed: ParsedPlan;
     startIdx: number;
     endIdx: number;
     length: number;
@@ -200,7 +228,7 @@ function extractFinalTrade(text: string): AiExecutionPlan | null {
         if (braceCount === 0) {
           const candidateStr = text.substring(startIdx, j + 1);
           try {
-            const parsed = JSON.parse(candidateStr);
+            const parsed = JSON.parse(candidateStr) as ParsedPlan;
             if (parsed && typeof parsed === 'object') {
               candidates.push({
                 parsed,
@@ -230,6 +258,15 @@ function extractFinalTrade(text: string): AiExecutionPlan | null {
     );
   });
 
+  // Coerce an unknown JSON value to a string, defaulting to empty.
+  const asString = (v: unknown): string => (typeof v === 'string' ? v : '');
+  const asScore = (...vals: unknown[]): number => {
+    for (const v of vals) {
+      if (typeof v === 'number' && Number.isFinite(v)) return v;
+    }
+    return 75;
+  };
+
   if (validCandidates.length === 0) {
     // Fallback: search for any valid JSON object at the top level
     const anyValid = candidates.filter(c => c.parsed && typeof c.parsed === 'object');
@@ -241,11 +278,9 @@ function extractFinalTrade(text: string): AiExecutionPlan | null {
         topLevel.sort((a, b) => b.startIdx - a.startIdx);
         const parsed = topLevel[0].parsed;
         return {
-          conviction_score: typeof parsed.conviction_score === 'number'
-            ? parsed.conviction_score
-            : (typeof parsed.conviction === 'number' ? parsed.conviction : 75),
-          setup_validation: parsed.setup_validation || parsed.validation || parsed.setup || '',
-          execution_plan: parsed.execution_plan || parsed.plan || ''
+          conviction_score: asScore(parsed.conviction_score, parsed.conviction),
+          setup_validation: asString(parsed.setup_validation) || asString(parsed.validation) || asString(parsed.setup),
+          execution_plan: asString(parsed.execution_plan) || asString(parsed.plan)
         };
       }
     }
@@ -269,11 +304,9 @@ function extractFinalTrade(text: string): AiExecutionPlan | null {
 
   const best = nonNested[0].parsed;
   return {
-    conviction_score: typeof best.conviction_score === 'number'
-      ? best.conviction_score
-      : (typeof best.conviction === 'number' ? best.conviction : 75),
-    setup_validation: best.setup_validation || best.validation || best.setup || '',
-    execution_plan: best.execution_plan || best.plan || ''
+    conviction_score: asScore(best.conviction_score, best.conviction),
+    setup_validation: asString(best.setup_validation) || asString(best.validation) || asString(best.setup),
+    execution_plan: asString(best.execution_plan) || asString(best.plan)
   };
 }
 
@@ -529,7 +562,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     _runFinishedProcessed: false,
   }),
 
-  handleStreamEvent: (payload: any) => {
+  handleStreamEvent: (payload: StreamEventPayload) => {
     if (!payload || !payload.event) return;
 
     const event = payload.event;
@@ -622,22 +655,12 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
           .map(s => s.content)
           .join('');
 
-        let tradePlan = extractFinalTrade(accumulatedText);
-
-        // Fallback: if no JSON plan could be extracted, parse plain text parameters
-        if (!tradePlan) {
-          const parsed = parseExecutionPlan(accumulatedText);
-          if (parsed.entry > 0) {
-            const planLower = accumulatedText.toLowerCase();
-            const isShort = planLower.includes('short') || planLower.includes('sell') || planLower.includes('bearish');
-            const action = isShort ? 'SELL' : 'BUY';
-            tradePlan = {
-              conviction_score: 75,
-              setup_validation: "Quantitative indicators and support/resistance confluence parsed from reasoning monologue.",
-              execution_plan: `Action: ${action} | Entry: ₹${parsed.entry.toFixed(2)} | Stop Loss: ₹${parsed.sl.toFixed(2)} | Target: ₹${parsed.tp.toFixed(2)}`
-            };
-          }
-        }
+        // Only accept a structured plan that the model actually emitted.
+        // We do NOT synthesize a plan (no fabricated conviction score) when the
+        // model failed to return one — the terminal relies exclusively on real
+        // model output. If nothing parseable was produced, finalTrade stays null
+        // and the reasoning transcript is what the user sees.
+        const tradePlan = extractFinalTrade(accumulatedText);
 
         // Handle paused (watching) status from Python agent
         const runStatus = data?.status;

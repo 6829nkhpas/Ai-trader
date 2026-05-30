@@ -20,7 +20,7 @@ def calculate_ema(prices: list, period: int) -> float:
 @tool
 def get_candles(symbol: str, timeframe: str, limit: int) -> list:
     """
-    實Raw OHLCV data. Valid timeframes: '1m', '5m', '15m', '1h', '4h', '1d'.
+    Fetch raw OHLCV candle data. Valid timeframes: '1m', '5m', '15m', '1h', '4h', '1d'.
     
     Args:
         symbol (str): The trading symbol to fetch (e.g. "RELIANCE").
@@ -120,7 +120,7 @@ def get_support_resistance(symbol: str) -> dict:
     try:
         response = httpx.post(
             f"{RUST_SERVER_URL}/tools/get_candles",
-            json={"symbol": symbol, "limit": 50},
+            json={"symbol": symbol, "timeframe": "1d", "limit": 50},
             timeout=10.0
         )
         response.raise_for_status()
@@ -211,15 +211,16 @@ def get_news_context(symbol: str) -> dict:
         print(f"[Tool Success] <<< get_news_context: symbol={symbol}, sentiment={sentiment}")
         return res
     except Exception as e:
-        print(f"[Tool Warning] <<< get_news_context Google RSS fail, trying local fallback: {str(e)}")
-        try:
-            fallback_response = httpx.get(f"http://localhost:8087/api/news?symbol={symbol}", timeout=5.0)
-            if fallback_response.is_success:
-                print(f"[Tool Success] <<< get_news_context: symbol={symbol}, retrieved from local aggregator.")
-                return {"symbol": symbol, "news": fallback_response.text, "sentiment_summary": "Retrieved from local aggregator"}
-        except Exception as fe:
-            print(f"[Tool Error] <<< get_news_context local fallback also failed: {str(fe)}")
-        return {"error": f"Failed to fetch news context: {str(e)}"}
+        print(f"[Tool Warning] <<< get_news_context Google RSS failed: {str(e)}")
+        # No local news aggregator service exists in this stack, so there is no
+        # secondary endpoint to fall back to. Return a structured, honest error
+        # instead of probing a phantom URL.
+        return {
+            "symbol": symbol,
+            "headlines": [],
+            "sentiment_summary": "Unavailable",
+            "error": f"Failed to fetch news context from Google News RSS: {str(e)}"
+        }
 
 @tool
 def watch_price_condition(
@@ -306,4 +307,26 @@ def declare_trade(
     print(f"\n[Tool Call] >>> declare_trade: action={action}, conviction={conviction_score}%")
     print(f"[Tool Detail] Setup Validation: {setup_validation}")
     print(f"[Tool Detail] Execution Plan: {execution_plan}")
+
+    # Persist the final decision to the Rust tool server so the desktop UI
+    # records a real, structured plan (emits `final_analysis_ready`). Without
+    # this the declaration was a no-op and nothing was committed anywhere.
+    try:
+        response = httpx.post(
+            f"{RUST_SERVER_URL}/tools/declare_trade",
+            json={
+                "action": action,
+                "conviction_score": int(conviction_score),
+                "setup_validation": setup_validation,
+                "execution_plan": execution_plan,
+            },
+            timeout=10.0
+        )
+        response.raise_for_status()
+        print(f"[Tool Success] <<< declare_trade committed to Rust server: {response.json()}")
+    except Exception as e:
+        # Don't fail the agent run if persistence fails — the JSON is still
+        # surfaced via the SSE stream — but make the failure visible.
+        print(f"[Tool Warning] <<< declare_trade could not be persisted to Rust server: {str(e)}")
+
     return f"Trade declared successfully: {action} with {conviction_score}% conviction."
