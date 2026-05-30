@@ -1,0 +1,32 @@
+Release Version,Feature Name,Development Status,QA Status,UAT Status,Production Ready,Owner,Notes
+v1.0,Live Trading Chart,Complete,Pending,Pending,No,Unassigned,Core charting stable; needs QA pass on fullscreen regression
+v1.0,Chart Fullscreen Mode,Complete,Pending,Pending,No,Unassigned,Recent layout-overflow fix needs verification (BUG-FIX-007)
+v1.0,Drawing Tools & Workspace Persistence,Complete,Pending,Pending,No,Unassigned,SQLite persistence works in Tauri; verify cross-symbol reload
+v1.0,Predictive Ghost Curve Overlay,Complete,Pending,Pending,No,Unassigned,VWEPR/OLS engines unit-tested
+v1.0,Watchlist & Instrument Search,Complete,Pending,Pending,No,Unassigned,Backed by instrument master sync
+v1.0,Deep Quant AI Analysis (Glass-Box),Complete,Pending,Pending,No,Unassigned,Fallback fabrication removed; verify HOLD diagnostic (BUG-FIX-001)
+v1.0,Deep Quant LangGraph Agent,Complete,Pending,Pending,No,Unassigned,Rule-based fallback removed; LLM-only (BUG-FIX-003/004)
+v1.0,Order Flow Imbalance,Complete,Pending,Pending,No,Unassigned,Real tick-rule OFI; verify N/A path (BUG-FIX-002)
+v1.0,AI Sentinel Watchdog,Complete,Pending,Pending,No,Unassigned,Review silent indicator fallbacks (BUG-009)
+v1.0,Paper Trading Simulation,Complete,Pending,Pending,No,Unassigned,Hardcoded starting balance to address (BUG-001)
+v1.0,Sentiment Analysis,Complete,Pending,Pending,No,Unassigned,Google RSS primary; phantom endpoint removed (BUG-FIX-011)
+v1.0,Live Tick Ingestion,Complete,Pending,Pending,No,Unassigned,No automated tests yet (BUG-014)
+v1.0,OHLC Aggregation,Complete,Pending,Pending,No,Unassigned,Feeds chart and bridges
+v1.0,Technical Signal Agent,Complete,Pending,Pending,No,Unassigned,No automated tests yet (BUG-014)
+v1.0,Predictive OLS Agent,Complete,Pending,Pending,No,Unassigned,Pure math agent
+v1.0,Quant-RAG Insight Agent,Complete,Pending,Pending,No,Unassigned,LLM-dependent anomaly insights
+v1.0,Aggregator Decision Engine,Complete,Pending,Pending,No,Unassigned,Weighted fusion active
+v1.0,Historical Data Backfill,Complete,Pending,Pending,No,Unassigned,Lazy load + dynamic SAMPLE BY
+v1.0,Live WS-IPC Bridges,Complete,Pending,Pending,No,Unassigned,Reconnect backoff added (BUG-FIX-008)
+v1.0,Local Tool Server,Complete,Pending,Pending,No,Unassigned,declare_trade persistence added (BUG-FIX-010)
+v1.0,JWT Authentication,Complete,Pending,Pending,No,Unassigned,401 expiry semantics fixed (BUG-FIX-005)
+v1.0,Zerodha Broker OAuth,Complete,Pending,Pending,No,Unassigned,Deep link + back button
+v1.0,Portfolio Proxy API,Complete,Pending,Pending,No,Unassigned,Broker session code distinct (BUG-FIX-006)
+v1.0,Subscription & Payments,Complete,Pending,Pending,No,Unassigned,PhonePe integration; needs UAT
+v1.0,Security Vault,Complete,Pending,Pending,No,Unassigned,Stronghold argon2id
+v1.0,Trade Journaling,Complete,Pending,Pending,No,Unassigned,Local SQLite
+v1.0,Quant Radar Live Scanner,Complete,Pending,Pending,No,Unassigned,50 F&O symbols
+v1.1,Aggregator ConsensusEngine Wiring,In Progress,Not Started,Not Started,No,Unassigned,Implemented but unwired into ohlc_server (BUG-005)
+v1.1,Backend/Pipeline Test Coverage,Not Started,Not Started,Not Started,No,Unassigned,Zero coverage for backend/pipeline (BUG-014)
+v1.1,Port Configuration Consolidation,Not Started,Not Started,Not Started,No,Unassigned,Resolve KITE_API_PORT 8084 vs 8087 (BUG-012)
+v1.1,Test Mode Gating Hardening,Not Started,Not Started,Not Started,No,Unassigned,Standardize is_test_mode interpretation (BUG-002/003)
