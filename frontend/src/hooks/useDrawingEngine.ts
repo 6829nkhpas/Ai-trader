@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import type { IChartApi, ISeriesApi, Time } from 'lightweight-charts';
 import { LineSeries } from 'lightweight-charts';
 import { useChartUIStore, type Point } from '../store/useChartUIStore';
+import type { ChartCandle } from '../utils/chartTypes';
 
 // All 2-click / drag drawing tools
 const TWO_POINT_TOOLS = new Set([
@@ -43,6 +44,44 @@ const FREEHAND_TOOLS = new Set([
 
 const UNSUPPORTED_TOOLS = new Set<string>();
 
+const snapToGrid = (time: number, candles: ChartCandle[], intervalSec: number): number => {
+  if (!candles || candles.length === 0) return time;
+  const firstTime = candles[0].time;
+  const lastTime = candles[candles.length - 1].time;
+
+  if (time < firstTime) {
+    const diff = firstTime - time;
+    const steps = Math.round(diff / intervalSec);
+    return firstTime - steps * intervalSec;
+  }
+
+  if (time > lastTime) {
+    const diff = time - lastTime;
+    const steps = Math.round(diff / intervalSec);
+    return lastTime + steps * intervalSec;
+  }
+
+  let low = 0;
+  let high = candles.length - 1;
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const midTime = candles[mid].time;
+    if (midTime === time) return time;
+    if (midTime < time) {
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  const timeLow = low < candles.length ? candles[low].time : Infinity;
+  const timeHigh = high >= 0 ? candles[high].time : -Infinity;
+  if (Math.abs(timeLow - time) < Math.abs(time - timeHigh)) {
+    return timeLow;
+  }
+  return timeHigh;
+};
+
 /**
  * useDrawingEngine — Drag-to-Draw Physics Bridge (v2)
  *
@@ -53,17 +92,32 @@ export function useDrawingEngine(
   chartRef: React.RefObject<IChartApi | null>,
   candleSeriesRef: React.RefObject<ISeriesApi<'Candlestick'> | null>,
   containerRef: React.RefObject<HTMLDivElement | null>,
+  chartData: ChartCandle[] = [],
 ) {
   const activeDrawingTool = useChartUIStore((s) => s.activeDrawingTool);
   const addDrawing = useChartUIStore((s) => s.addDrawing);
   const setActiveDrawingTool = useChartUIStore((s) => s.setActiveDrawingTool);
   const drawingColor = useChartUIStore((s) => s.drawingColor);
 
+  // Maintain refs to chartData to keep pixelToPoint hook reference stable
+  const chartDataRef = useRef(chartData);
+  chartDataRef.current = chartData;
+
+  const intervalSec = chartData.length >= 2
+    ? chartData[1].time - chartData[0].time
+    : 600;
+  const intervalSecRef = useRef(intervalSec);
+  if (chartData.length >= 2) {
+    intervalSecRef.current = chartData[1].time - chartData[0].time;
+  }
+
   // Drag state refs (avoid re-renders during drag)
   const isDragging = useRef(false);
   const anchorPoint = useRef<Point | null>(null);
   const freehandPoints = useRef<Point[]>([]);
   const previewSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const freehandRafRef = useRef<number>(0);
+  const freehandDirtyRef = useRef(false);
 
   // ── Pixel → Logical coordinate conversion ──────────────────────────
   const pixelToPoint = useCallback(
@@ -72,19 +126,62 @@ export function useDrawingEngine(
       const series = candleSeriesRef.current;
       if (!chart || !series) return null;
 
-      // Time from pixel X
-      let time: number | null = null;
       const converted = chart.timeScale().coordinateToTime(x);
-      if (converted !== null && converted !== undefined) {
-        time = converted as number;
+      if (converted === null || converted === undefined) return null;
+
+      let timeNum: number;
+      if (typeof converted === 'number') {
+        timeNum = converted;
+      } else if (typeof converted === 'string') {
+        timeNum = Math.floor(Date.parse(converted) / 1000);
+      } else if (converted && typeof converted === 'object' && 'year' in converted) {
+        timeNum = Math.floor(Date.UTC(converted.year, converted.month - 1, converted.day) / 1000);
+      } else {
+        return null;
       }
-      if (time === null) return null;
+
+      if (isNaN(timeNum)) return null;
+
+      // Snap the timestamp to the timeframe grid to prevent LWC timescale corruption
+      const snappedTime = snapToGrid(timeNum, chartDataRef.current, intervalSecRef.current);
 
       // Price from pixel Y
       const price = series.coordinateToPrice(y);
       if (price === null || price === undefined) return null;
 
-      return { time, price: +price.toFixed(2) };
+      return { time: snappedTime, price: +price.toFixed(2) };
+    },
+    [chartRef, candleSeriesRef],
+  );
+
+  // ── Pixel → Logical (raw, unsnapped) — for freehand brush tools ────
+  const pixelToPointRaw = useCallback(
+    (x: number, y: number): Point | null => {
+      const chart = chartRef.current;
+      const series = candleSeriesRef.current;
+      if (!chart || !series) return null;
+
+      const converted = chart.timeScale().coordinateToTime(x);
+      if (converted === null || converted === undefined) return null;
+
+      let timeNum: number;
+      if (typeof converted === 'number') {
+        timeNum = converted;
+      } else if (typeof converted === 'string') {
+        timeNum = Math.floor(Date.parse(converted) / 1000);
+      } else if (converted && typeof converted === 'object' && 'year' in converted) {
+        timeNum = Math.floor(Date.UTC(converted.year, converted.month - 1, converted.day) / 1000);
+      } else {
+        return null;
+      }
+
+      if (isNaN(timeNum)) return null;
+
+      // NO grid snapping — preserve raw fractional position for smooth brush strokes
+      const price = series.coordinateToPrice(y);
+      if (price === null || price === undefined) return null;
+
+      return { time: Math.round(timeNum), price: +price.toFixed(4) };
     },
     [chartRef, candleSeriesRef],
   );
@@ -95,37 +192,120 @@ export function useDrawingEngine(
       const chart = chartRef.current;
       if (!chart) return;
 
-      // Remove old preview
-      if (previewSeriesRef.current) {
-        try { chart.removeSeries(previewSeriesRef.current); } catch {}
-        previewSeriesRef.current = null;
-      }
-
       const sorted = [p1, p2].sort((a, b) => a.time - b.time);
-      const preview = chart.addSeries(LineSeries, {
-        color,
-        lineWidth: 2,
-        lineStyle: 2, // Dashed for preview
-        crosshairMarkerVisible: true,
-        crosshairMarkerRadius: 6,
-        crosshairMarkerBackgroundColor: '#FFFFFF',
-        crosshairMarkerBorderColor: color,
-        priceLineVisible: false,
-        lastValueVisible: false,
-      });
-
       // LWC requires strictly ascending time — offset if equal
       const t0 = sorted[0].time;
       const t1 = sorted[1].time <= t0 ? t0 + 1 : sorted[1].time;
-
-      preview.setData([
+      const previewData = [
         { time: t0 as Time, value: sorted[0].price },
         { time: t1 as Time, value: sorted[1].price },
-      ]);
+      ];
 
-      previewSeriesRef.current = preview;
+      if (previewSeriesRef.current) {
+        // Reuse existing preview series — just update data & options
+        try {
+          previewSeriesRef.current.applyOptions({ color });
+          previewSeriesRef.current.setData(previewData);
+        } catch {
+          // Series may have been invalidated — recreate
+          try { chart.removeSeries(previewSeriesRef.current); } catch {}
+          previewSeriesRef.current = null;
+        }
+      }
+
+      if (!previewSeriesRef.current) {
+        const preview = chart.addSeries(LineSeries, {
+          color,
+          lineWidth: 2,
+          lineStyle: 2, // Dashed for preview
+          crosshairMarkerVisible: true,
+          crosshairMarkerRadius: 6,
+          crosshairMarkerBackgroundColor: '#FFFFFF',
+          crosshairMarkerBorderColor: color,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+        try {
+          preview.setData(previewData);
+        } catch {}
+        previewSeriesRef.current = preview;
+      }
     },
     [chartRef],
+  );
+
+  // ── Update freehand preview via canvas overlay (supports U-turns) ───
+  const freehandCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  const updateFreehandPreview = useCallback(
+    (points: Point[], color: string) => {
+      const chart = chartRef.current;
+      const series = candleSeriesRef.current;
+      const container = containerRef.current;
+      if (!chart || !series || !container || points.length < 2) return;
+
+      // Create or reuse canvas
+      if (!freehandCanvasRef.current) {
+        const canvas = document.createElement('canvas');
+        canvas.style.position = 'absolute';
+        canvas.style.top = '0';
+        canvas.style.left = '0';
+        canvas.style.width = '100%';
+        canvas.style.height = '100%';
+        canvas.style.pointerEvents = 'none';
+        canvas.style.zIndex = '16';
+        container.style.position = 'relative';
+        container.appendChild(canvas);
+        freehandCanvasRef.current = canvas;
+      }
+
+      const canvas = freehandCanvasRef.current;
+      const rect = container.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.round(rect.width);
+      const h = Math.round(rect.height);
+
+      if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
+        canvas.width = w * dpr;
+        canvas.height = h * dpr;
+        canvas.style.width = `${w}px`;
+        canvas.style.height = `${h}px`;
+      }
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.globalAlpha = 0.9;
+      ctx.beginPath();
+
+      let started = false;
+      for (const pt of points) {
+        try {
+          const x = chart.timeScale().timeToCoordinate(pt.time as unknown as Time);
+          const y = series.priceToCoordinate(pt.price);
+          if (x === null || y === null) continue;
+
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else {
+            ctx.lineTo(x, y);
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      if (started) ctx.stroke();
+    },
+    [chartRef, candleSeriesRef, containerRef],
   );
 
   // ── Remove preview series ──────────────────────────────────────────
@@ -135,6 +315,13 @@ export function useDrawingEngine(
       try { chart.removeSeries(previewSeriesRef.current); } catch {}
       previewSeriesRef.current = null;
     }
+    // Remove freehand canvas preview
+    if (freehandCanvasRef.current) {
+      freehandCanvasRef.current.remove();
+      freehandCanvasRef.current = null;
+    }
+    cancelAnimationFrame(freehandRafRef.current);
+    freehandDirtyRef.current = false;
   }, [chartRef]);
 
   // ── Tool color helper ──────────────────────────────────────────────
@@ -203,9 +390,9 @@ export function useDrawingEngine(
       console.log(`[DRAW ENGINE] ${activeDrawingTool} complete:`, id);
       isDragging.current = false;
       anchorPoint.current = null;
-      setActiveDrawingTool(null);
+      // Tool stays active so user can draw multiple instances
     },
-    [activeDrawingTool, addDrawing, setActiveDrawingTool, clearPreview, drawingColor],
+    [activeDrawingTool, addDrawing, clearPreview, drawingColor],
   );
 
   // ── Mouse event handlers ───────────────────────────────────────────
@@ -234,7 +421,8 @@ export function useDrawingEngine(
     const onMouseDown = (e: MouseEvent) => {
       if (e.button !== 0) return; // left click only
       const { x, y } = getLocalCoords(e);
-      const point = pixelToPoint(x, y);
+      // Freehand tools use raw (unsnapped) coordinates for smooth strokes
+      const point = isFreehand ? pixelToPointRaw(x, y) : pixelToPoint(x, y);
       if (!point) return;
 
       isDragging.current = true;
@@ -248,16 +436,20 @@ export function useDrawingEngine(
     const onMouseMove = (e: MouseEvent) => {
       if (!isDragging.current || !anchorPoint.current) return;
       const { x, y } = getLocalCoords(e);
-      const point = pixelToPoint(x, y);
+      // Freehand tools use raw coordinates for smooth strokes
+      const point = isFreehand ? pixelToPointRaw(x, y) : pixelToPoint(x, y);
       if (!point) return;
 
       if (isFreehand) {
         // Collect every point for freehand brush
         freehandPoints.current.push(point);
-        // Show live preview of the freehand path
-        if (freehandPoints.current.length >= 2) {
-          const pts = freehandPoints.current;
-          updatePreview(pts[pts.length - 2], pts[pts.length - 1], drawingColor);
+        // Throttle preview updates to one per animation frame
+        if (!freehandDirtyRef.current) {
+          freehandDirtyRef.current = true;
+          freehandRafRef.current = requestAnimationFrame(() => {
+            freehandDirtyRef.current = false;
+            updateFreehandPreview(freehandPoints.current, drawingColor);
+          });
         }
       } else {
         // Show live dashed preview line
@@ -280,7 +472,7 @@ export function useDrawingEngine(
         isDragging.current = false;
         anchorPoint.current = null;
         freehandPoints.current = [];
-        setActiveDrawingTool(null);
+        // Tool stays active so user can draw multiple strokes
         return;
       }
 
@@ -347,6 +539,6 @@ export function useDrawingEngine(
       freehandPoints.current = [];
     };
   }, [activeDrawingTool, chartRef, candleSeriesRef, containerRef, 
-      pixelToPoint, updatePreview, clearPreview, finalizeDraw, 
+      pixelToPoint, updatePreview, updateFreehandPreview, clearPreview, finalizeDraw, 
       getToolColor, setActiveDrawingTool]);
 }

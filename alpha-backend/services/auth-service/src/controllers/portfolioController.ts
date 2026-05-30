@@ -71,7 +71,7 @@ export class PortfolioController {
         return res.status(400).json({ error: 'No active broker connection. Please connect your Zerodha account.' });
       }
       if (error.message === 'UNAUTHORIZED_BROKER') {
-        return res.status(403).json({ error: 'Broker session expired. Please reconnect your account.' });
+        return res.status(403).json({ error: 'Broker session expired. Please reconnect your account.', code: 'BROKER_SESSION_EXPIRED' });
       }
       return res.status(500).json({ error: 'Internal server error', details: error.message });
     }
@@ -123,7 +123,7 @@ export class PortfolioController {
         return res.status(400).json({ error: 'No active broker connection. Please connect your Zerodha account.' });
       }
       if (error.message === 'UNAUTHORIZED_BROKER') {
-        return res.status(403).json({ error: 'Broker session expired. Please reconnect your account.' });
+        return res.status(403).json({ error: 'Broker session expired. Please reconnect your account.', code: 'BROKER_SESSION_EXPIRED' });
       }
       return res.status(500).json({ error: 'Internal server error', details: error.message });
     }
@@ -151,7 +151,7 @@ export class PortfolioController {
         return res.status(400).json({ error: 'No active broker connection. Please connect your Zerodha account.' });
       }
       if (error.message === 'UNAUTHORIZED_BROKER') {
-        return res.status(403).json({ error: 'Broker session expired. Please reconnect your account.' });
+        return res.status(403).json({ error: 'Broker session expired. Please reconnect your account.', code: 'BROKER_SESSION_EXPIRED' });
       }
       return res.status(500).json({ error: 'Internal server error', details: error.message });
     }
@@ -179,7 +179,7 @@ export class PortfolioController {
         return res.status(400).json({ error: 'No active broker connection. Please connect your Zerodha account.' });
       }
       if (error.message === 'UNAUTHORIZED_BROKER') {
-        return res.status(403).json({ error: 'Broker session expired. Please reconnect your account.' });
+        return res.status(403).json({ error: 'Broker session expired. Please reconnect your account.', code: 'BROKER_SESSION_EXPIRED' });
       }
       return res.status(500).json({ error: 'Internal server error', details: error.message });
     }
@@ -207,7 +207,7 @@ export class PortfolioController {
         return res.status(400).json({ error: 'No active broker connection. Please connect your Zerodha account.' });
       }
       if (error.message === 'UNAUTHORIZED_BROKER') {
-        return res.status(403).json({ error: 'Broker session expired. Please reconnect your account.' });
+        return res.status(403).json({ error: 'Broker session expired. Please reconnect your account.', code: 'BROKER_SESSION_EXPIRED' });
       }
       return res.status(500).json({ error: 'Internal server error', details: error.message });
     }

@@ -1,10 +1,20 @@
 import React, { useState } from 'react';
 import { useAuthStore } from '../../store/useAuthStore';
-import { Landmark, ArrowRight, Loader2, Info } from 'lucide-react';
+import { Landmark, ArrowRight, Loader2, Info, ArrowLeft } from 'lucide-react';
 
 export default function BrokerConnectCard() {
   const user = useAuthStore((s) => s.user);
+  const logout = useAuthStore((s) => s.logout);
   const [loading, setLoading] = useState(false);
+
+  // "Back" here means: drop the current session and return to the auth
+  // overlay (login / sign-up). The overlay is rendered automatically by
+  // page.tsx whenever `isAuthenticated` is false, so calling logout is
+  // all that's needed — no router navigation required.
+  const handleBack = () => {
+    if (loading) return;
+    logout();
+  };
 
   const handleConnect = async () => {
     setLoading(true);
@@ -33,6 +43,18 @@ export default function BrokerConnectCard() {
 
       <div className="relative w-full max-w-md rounded-2xl border border-border-default bg-surface/30 backdrop-blur-xl p-8 shadow-2xl transition-all duration-300">
         <div className="absolute -top-12 -left-12 -z-10 h-40 w-40 rounded-full bg-emerald-500/5 blur-3xl"></div>
+
+        {/* Back to login/signup */}
+        <button
+          type="button"
+          onClick={handleBack}
+          disabled={loading}
+          className="absolute left-3 top-3 flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-text-muted hover:text-text-primary hover:bg-elevated/60 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Back to login"
+        >
+          <ArrowLeft size={12} />
+          Back
+        </button>
 
         <div className="mb-6 text-center">
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-400">

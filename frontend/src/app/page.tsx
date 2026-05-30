@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight, ChevronDown, ChevronUp, TrendingUp, TrendingDown } from 'lucide-react';
+import { PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Maximize2, Minimize2 } from 'lucide-react';
 import TradingChart from '../components/TradingChart';
+import ChartToolsBar from '../components/chart/ChartToolsBar';
 import TerminalLayout from '../components/layout/TerminalLayout';
 import LeftPanel from '../components/panels/LeftPanel';
 import OrderExecutionPanel from '../components/panels/OrderExecutionPanel';
@@ -19,6 +20,7 @@ import PortfolioDashboard from '../components/quant/PortfolioDashboard';
 import TerminalDashboard from '../components/TerminalDashboard';
 import { useTradeStore, TradeProfile, ChartTimeframe, hydratePaperPortfolio } from '../store/useTradeStore';
 import { useQuantStore } from '../store/useQuantStore';
+import { useChartUIStore } from '../store/useChartUIStore';
 import type { ConsensusReport } from '../store/useQuantStore';
 import type { DataRange } from '../utils/chartTypes';
 import { TIMEFRAME_GROUPS } from '../utils/chartTypes';
@@ -54,8 +56,28 @@ export default function Home() {
 
   const [indicatorsEnabled, setIndicatorsEnabled] = useState(true);
   const [aiEnabled, setAiEnabled] = useState(true);
+  const isFullscreen = useChartUIStore((s) => s.isFullscreen);
+  const setIsFullscreen = useChartUIStore((s) => s.setIsFullscreen);
+  const toggleFullscreen = useChartUIStore((s) => s.toggleFullscreen);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('profile');
+
+  // Listen for Escape key to exit fullscreen mode
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsFullscreen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFullscreen, setIsFullscreen]);
+
+  // Reset fullscreen state when this page unmounts so a stale `true` in the
+  // shared store can never leak into a fresh mount.
+  useEffect(() => {
+    return () => setIsFullscreen(false);
+  }, [setIsFullscreen]);
+
   const [paperPortfolioOpen, setPaperPortfolioOpen] = useState(false);
   const [tfDropdownOpen, setTfDropdownOpen] = useState(false);
   const tfDropdownRef = useRef<HTMLDivElement>(null);
@@ -297,9 +319,15 @@ export default function Home() {
       {/* ── Profile-Driven Terminal ────────────────────────── */}
       <div className="min-h-0 flex-1">
         <TerminalLayout leftPanel={<LeftPanel />}>
-          <div className="flex h-full min-h-0 w-full gap-0">
+          <div className="flex h-full min-h-0 min-w-0 w-full gap-0">
             {/* ── Left: Chart + Order Execution ──────────────── */}
-            <div className={`flex min-h-0 min-w-0 flex-col rounded-lg border border-border-default bg-surface panel-shadow-lg transition-all duration-300 ease-out ${sidebarOpen ? 'flex-1' : 'w-full'}`}>
+            <div className={
+              isFullscreen
+                ? "fixed inset-0 z-[150] flex flex-col bg-background p-4"
+                : `flex min-h-0 min-w-0 flex-col rounded-lg border border-border-default bg-surface panel-shadow-lg ${
+                    sidebarOpen ? 'flex-1' : 'w-full'
+                  }`
+            }>
               <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-border-default px-3 bg-surface rounded-t-lg">
                 <div className="flex min-w-0 items-center gap-3">
                   <div className="truncate text-sm font-semibold text-text-primary">{symbol}</div>
@@ -371,86 +399,111 @@ export default function Home() {
                   </div>
 
                   {/* Sidebar toggle button */}
+                  {!isFullscreen && (
+                    <button
+                      type="button"
+                      onClick={() => setSidebarOpen(!sidebarOpen)}
+                      className={`rounded-md p-1.5 text-xs font-semibold transition-colors ${sidebarOpen
+                          ? 'bg-emerald-500/15 text-emerald-400'
+                          : 'bg-surface text-text-secondary hover:bg-elevated'
+                        }`}
+                      title={sidebarOpen ? `Hide ${sidebarCfg.label}` : `Show ${sidebarCfg.label}`}
+                    >
+                      {sidebarOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
+                    </button>
+                  )}
+
+                  {/* Fullscreen Toggle Button */}
                   <button
                     type="button"
-                    onClick={() => setSidebarOpen(!sidebarOpen)}
-                    className={`rounded-md p-1.5 text-xs font-semibold transition-colors ${sidebarOpen
-                        ? 'bg-emerald-500/15 text-emerald-400'
-                        : 'bg-surface text-text-secondary hover:bg-elevated'
+                    onClick={toggleFullscreen}
+                    className={`rounded-md p-1.5 text-xs font-semibold transition-colors ${isFullscreen
+                        ? 'bg-emerald-500/15 text-emerald-400 font-bold border border-emerald-500/30'
+                        : 'bg-surface text-text-secondary hover:bg-elevated border border-border-default'
                       }`}
-                    title={sidebarOpen ? `Hide ${sidebarCfg.label}` : `Show ${sidebarCfg.label}`}
+                    title={isFullscreen ? "Exit Fullscreen (Esc)" : "Fullscreen Chart"}
                   >
-                    {sidebarOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
+                    {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
                   </button>
                 </div>
               </div>
 
               {/* Chart area - takes full width */}
-              <div className="min-h-0 flex-1 bg-surface relative flex flex-col p-1.5 overflow-visible">
-                {renderProfileContent()}
+              <div className="flex flex-1 min-h-0 w-full overflow-hidden">
+                {isFullscreen && (
+                  <ChartToolsBar className="border-r border-border-default/50 mr-1.5 py-2 bg-surface" />
+                )}
+                <div className="min-h-0 flex-1 bg-surface relative flex flex-col p-1.5 overflow-hidden">
+                  {renderProfileContent()}
+                </div>
               </div>
 
               {/* Live PNL Positions Drawer */}
-              <ActivePositions />
+              {!isFullscreen && <ActivePositions />}
 
               {/* Simulated Paper Trading Dashboard */}
-              {paperPortfolioOpen ? (
-                <div className="p-3 border-t border-border-default bg-surface/30">
-                  <PortfolioDashboard onCollapse={() => setPaperPortfolioOpen(false)} />
-                </div>
-              ) : (
-                <div className="px-4 py-2 border-t border-border-default bg-surface/40 backdrop-blur-sm flex items-center justify-between transition-all duration-300">
-                  <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
-                    {/* Live indicator and Title */}
-                    <div className="flex items-center gap-2">
-                      <span className="relative flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-                      </span>
-                      <span className="text-[10px] font-black uppercase tracking-wider text-text-primary">
-                        Simulated Portfolio
-                      </span>
+              {/* Simulated Paper Trading Dashboard */}
+              {!isFullscreen && (
+                paperPortfolioOpen ? (
+                  <div className="p-3 border-t border-border-default bg-surface/30">
+                    <PortfolioDashboard onCollapse={() => setPaperPortfolioOpen(false)} />
+                  </div>
+                ) : (
+                  <div className="px-4 py-2 border-t border-border-default bg-surface/40 backdrop-blur-sm flex items-center justify-between transition-all duration-300">
+                    <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
+                      {/* Live indicator and Title */}
+                      <div className="flex items-center gap-2">
+                        <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                        </span>
+                        <span className="text-[10px] font-black uppercase tracking-wider text-text-primary">
+                          Simulated Portfolio
+                        </span>
+                      </div>
+
+                      {/* Stats summary */}
+                      {paperPortfolio && (
+                        <div className="flex items-center gap-4 text-xs font-mono">
+                          <div className="flex items-center gap-1.5 border-r border-border-default/50 pr-4">
+                            <span className="text-[9px] uppercase font-bold text-text-muted font-sans">Equity:</span>
+                            <span className="font-bold text-white">
+                              ₹{paperPortfolio.balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 border-r border-border-default/50 pr-4">
+                            <span className="text-[9px] uppercase font-bold text-text-muted font-sans">PnL:</span>
+                            <span className={`font-black flex items-center gap-0.5 ${totalPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {totalPnL >= 0 ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
+                              {totalPnL >= 0 ? '+' : ''}₹{totalPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[9px] uppercase font-bold text-text-muted font-sans">Positions:</span>
+                            <span className="font-bold text-white">{paperPortfolio.active_positions.length} Active</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
-                    {/* Stats summary */}
-                    {paperPortfolio && (
-                      <div className="flex items-center gap-4 text-xs font-mono">
-                        <div className="flex items-center gap-1.5 border-r border-border-default/50 pr-4">
-                          <span className="text-[9px] uppercase font-bold text-text-muted font-sans">Equity:</span>
-                          <span className="font-bold text-white">
-                            ₹{paperPortfolio.balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1.5 border-r border-border-default/50 pr-4">
-                          <span className="text-[9px] uppercase font-bold text-text-muted font-sans">PnL:</span>
-                          <span className={`font-black flex items-center gap-0.5 ${totalPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {totalPnL >= 0 ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
-                            {totalPnL >= 0 ? '+' : ''}₹{totalPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[9px] uppercase font-bold text-text-muted font-sans">Positions:</span>
-                          <span className="font-bold text-white">{paperPortfolio.active_positions.length} Active</span>
-                        </div>
-                      </div>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => setPaperPortfolioOpen(true)}
+                      className="flex items-center gap-1 rounded bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 text-[9px] font-bold text-emerald-400 uppercase tracking-wider hover:bg-emerald-500/20 transition-all duration-150"
+                    >
+                      <ChevronUp size={10} />
+                      Expand Portfolio
+                    </button>
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setPaperPortfolioOpen(true)}
-                    className="flex items-center gap-1 rounded bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 text-[9px] font-bold text-emerald-400 uppercase tracking-wider hover:bg-emerald-500/20 transition-all duration-150"
-                  >
-                    <ChevronUp size={10} />
-                    Expand Portfolio
-                  </button>
-                </div>
+                )
               )}
 
               {/* Buy/Sell Panel */}
-              <div className="shrink-0 border-t border-border-default bg-surface rounded-b-lg">
-                <OrderExecutionPanel />
-              </div>
+              {!isFullscreen && (
+                <div className="shrink-0 border-t border-border-default bg-surface rounded-b-lg">
+                  <OrderExecutionPanel />
+                </div>
+              )}
             </div>
 
             {/* ── Right: Collapsible Profile Sidebar ─────────── */}

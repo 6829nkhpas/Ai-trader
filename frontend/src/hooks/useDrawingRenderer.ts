@@ -1,8 +1,30 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import type { Time } from 'lightweight-charts';
 import { LineSeries } from 'lightweight-charts';
 import type { ChartRefs, ChartCandle } from '../utils/chartTypes';
 import { useChartUIStore } from '../store/useChartUIStore';
+
+// Pending setData calls are batched and flushed via rAF to avoid
+// corrupting LWC's internal timescale when multiple series are updated
+// in the same synchronous tick.
+type PendingSetData = {
+  series: any;
+  data: { time: Time; value: number }[];
+  options: Record<string, any>;
+};
+
+const getTimeNum = (t: any): number => {
+  if (typeof t === 'number') return t;
+  if (t instanceof Date) return Math.floor(t.getTime() / 1000);
+  if (typeof t === 'string') {  
+    const parsed = Date.parse(t);
+    return isNaN(parsed) ? 0 : Math.floor(parsed / 1000);
+  }
+  if (t && typeof t === 'object' && 'year' in t) {
+    return Math.floor(Date.UTC(t.year, t.month - 1, t.day) / 1000);
+  }
+  return 0;
+};
 
 export function useDrawingRenderer(
   refs: ChartRefs,
@@ -12,22 +34,73 @@ export function useDrawingRenderer(
   const drawings = useChartUIStore((s) => s.drawings);
   const drawingsVisible = useChartUIStore((s) => s.drawingsVisible);
 
+  const drawingSeriesMapRef = useRef<Map<string, any[]>>(new Map());
+  const drawingPriceLinesMapRef = useRef<Map<string, any[]>>(new Map());
+  const prevChartRef = useRef<any>(null);
+  const lastDrawnStateRef = useRef<Map<string, string>>(new Map());
+  const rafIdRef = useRef<number>(0);
+
+  // Keep chartData in a ref so the effect doesn't re-fire on every tick
+  const chartDataRef = useRef<ChartCandle[]>(chartData);
+  chartDataRef.current = chartData;
+
   useEffect(() => {
     const chart = chartRef.current;
     const mainSeries = candleSeriesRef.current;
     if (!chart) return;
 
-    // Remove previous drawing series from chart
-    for (const series of drawingSeriesRef.current) {
-      try {
-        chart.removeSeries(series);
-      } catch {
-        // series may already be removed if chart was re-created
+    // If the chart instance has changed, clear the reconciliation maps completely
+    if (prevChartRef.current !== chart) {
+      prevChartRef.current = chart;
+      drawingSeriesMapRef.current.clear();
+      drawingPriceLinesMapRef.current.clear();
+      lastDrawnStateRef.current.clear();
+    }
+
+    const activeMap = drawingSeriesMapRef.current;
+    const activePriceLinesMap = drawingPriceLinesMapRef.current;
+
+    // 1. Identify deleted drawings and clean them up
+    const currentDrawingIds = new Set(drawings.map(d => d.id));
+    for (const [id, seriesList] of activeMap.entries()) {
+      if (!currentDrawingIds.has(id)) {
+        for (const series of seriesList) {
+          try { chart.removeSeries(series); } catch {}
+        }
+        activeMap.delete(id);
+        lastDrawnStateRef.current.delete(id);
       }
     }
-    drawingSeriesRef.current = [];
+    for (const [id, plList] of activePriceLinesMap.entries()) {
+      if (!currentDrawingIds.has(id)) {
+        if (mainSeries) {
+          for (const pl of plList) {
+            try { mainSeries.removePriceLine(pl); } catch {}
+          }
+        }
+        activePriceLinesMap.delete(id);
+      }
+    }
 
-    if (!drawingsVisible) return;
+    if (!drawingsVisible) {
+      // Clear everything
+      for (const [id, seriesList] of activeMap.entries()) {
+        for (const series of seriesList) {
+          try { chart.removeSeries(series); } catch {}
+        }
+      }
+      activeMap.clear();
+      if (mainSeries) {
+        for (const [id, plList] of activePriceLinesMap.entries()) {
+          for (const pl of plList) {
+            try { mainSeries.removePriceLine(pl); } catch {}
+          }
+        }
+      }
+      activePriceLinesMap.clear();
+      lastDrawnStateRef.current.clear();
+      return;
+    }
 
     const TOOL_COLORS: Record<string, string> = {
       'trendline': '#2962FF',
@@ -104,9 +177,19 @@ export function useDrawingRenderer(
       'disjoint-channel': 0,
     };
 
-    const intervalSec = chartData.length >= 2
-      ? chartData[1].time - chartData[0].time
+    const cData = chartDataRef.current;
+    const intervalSec = cData.length >= 2
+      ? cData[1].time - cData[0].time
       : 600;
+
+    // We keep track of how many lines and price lines we create for the current drawing
+    let currentSeriesList: any[] = [];
+    let currentPriceLinesList: any[] = [];
+    let lineIdx = 0;
+    let plIdx = 0;
+
+    // Batch: collect all setData calls, flush them in one rAF
+    const pendingBatch: PendingSetData[] = [];
 
     const createLine = (
       data: { time: Time; value: number }[],
@@ -115,40 +198,139 @@ export function useDrawingRenderer(
       lineStyle: number = 0,
       title?: string,
     ) => {
-      if (data.length < 2) return;
+      if (!data) return;
+
+      // Filter out any invalid items (null, undefined, or NaN)
+      const validData = data.filter(d => 
+        d && 
+        d.time !== null && 
+        d.time !== undefined && 
+        d.value !== null && 
+        d.value !== undefined && 
+        !isNaN(d.value) &&
+        !isNaN(getTimeNum(d.time))
+      );
+
+      if (validData.length < 2) return;
+
+      // Normalize all timestamps to numeric seconds (UTCTimestamp) to match chart scale.
+      const normalized = validData.map(d => ({
+        ...d,
+        time: getTimeNum(d.time) as Time,
+      }));
 
       // LWC requires strictly ascending time — sort then deduplicate
-      const sorted = [...data].sort((a, b) => (a.time as number) - (b.time as number));
+      const sorted = [...normalized].sort((a, b) => (a.time as number) - (b.time as number));
       for (let i = 1; i < sorted.length; i++) {
-        if ((sorted[i].time as number) <= (sorted[i - 1].time as number)) {
-          sorted[i] = { ...sorted[i], time: ((sorted[i - 1].time as number) + 1) as Time };
+        const tPrev = sorted[i - 1].time as number;
+        const tCurr = sorted[i].time as number;
+        if (tCurr <= tPrev) {
+          sorted[i] = { ...sorted[i], time: (tPrev + 1) as Time };
         }
       }
 
-      const line = chart.addSeries(LineSeries, {
+      const opts = {
         color,
         lineWidth,
         lineStyle,
-        crosshairMarkerVisible: true,
-        crosshairMarkerRadius: 6,
-        crosshairMarkerBackgroundColor: '#FFFFFF',
-        crosshairMarkerBorderColor: color,
-        priceLineVisible: false,
-        lastValueVisible: false,
-        ...(title ? { title } : {}),
-      });
-      line.setData(sorted);
-      drawingSeriesRef.current.push(line);
-      return line;
+        title: title || '',
+      };
+
+      let series: any;
+
+      if (lineIdx < currentSeriesList.length && currentSeriesList[lineIdx]) {
+        // Reuse existing series — only apply visual options now
+        series = currentSeriesList[lineIdx];
+        try {
+          series.applyOptions(opts);
+        } catch {}
+      } else {
+        // Create new series (no data yet)
+        series = chart.addSeries(LineSeries, {
+          ...opts,
+          crosshairMarkerVisible: true,
+          crosshairMarkerRadius: 6,
+          crosshairMarkerBackgroundColor: '#FFFFFF',
+          crosshairMarkerBorderColor: color,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+        if (lineIdx < currentSeriesList.length) {
+          currentSeriesList[lineIdx] = series;
+        } else {
+          currentSeriesList.push(series);
+        }
+      }
+
+      // Defer the setData call to the batch
+      pendingBatch.push({ series, data: sorted, options: opts });
+      lineIdx++;
+      return series;
+    };
+
+    const drawPriceLine = (price: number, color: string) => {
+      if (!mainSeries) return;
+      if (plIdx < currentPriceLinesList.length) {
+        // Reuse existing price line
+        const existingPl = currentPriceLinesList[plIdx];
+        existingPl.applyOptions({ price, color });
+        plIdx++;
+      } else {
+        // Create new price line
+        const pl = mainSeries.createPriceLine({
+          price,
+          color,
+          lineWidth: 1,
+          lineStyle: 2,
+          axisLabelVisible: true,
+        });
+        currentPriceLinesList.push(pl);
+        plIdx++;
+      }
     };
 
     for (const drawing of drawings) {
       if (drawing.points.length < 2) continue;
+
       const color = drawing.color || TOOL_COLORS[drawing.tool] || '#2962FF';
+
+      // ── Caching logic ──────────────────────────────────────────────────
+      const stateStr = JSON.stringify({
+        points: drawing.points,
+        color,
+        tool: drawing.tool,
+        text: drawing.text,
+      });
+
+      const lastState = lastDrawnStateRef.current.get(drawing.id);
+      if (lastState === stateStr) {
+        // Cache hit! The drawing hasn't changed. Skip redrawing its series.
+        continue;
+      }
+
+      // Update cache
+      lastDrawnStateRef.current.set(drawing.id, stateStr);
+
+      // Load or initialize series and price line lists for this drawing
+      if (!activeMap.has(drawing.id)) {
+        activeMap.set(drawing.id, []);
+      }
+      currentSeriesList = activeMap.get(drawing.id)!;
+      lineIdx = 0;
+
+      if (!activePriceLinesMap.has(drawing.id)) {
+        activePriceLinesMap.set(drawing.id, []);
+      }
+      currentPriceLinesList = activePriceLinesMap.get(drawing.id)!;
+      plIdx = 0;
+
       const lineStyle = TOOL_LINE_STYLES[drawing.tool] ?? 0;
       const p1 = drawing.points[0];
       const p2 = drawing.points[1];
       const sorted = [p1, p2].sort((a, b) => a.time - b.time);
+
+      // Brush/highlighter are rendered via canvas overlay (useBrushCanvas) — skip LWC
+      if (drawing.tool === 'brush' || drawing.tool === 'highlighter') continue;
 
       switch (drawing.tool) {
         case 'trendline':
@@ -234,15 +416,7 @@ export function useDrawingRenderer(
         }
 
         case 'horizontal-line': {
-          if (mainSeries) {
-            mainSeries.createPriceLine({
-              price: p1.price,
-              color,
-              lineWidth: 1,
-              lineStyle: 2,
-              axisLabelVisible: true,
-            });
-          }
+          drawPriceLine(p1.price, color);
           break;
         }
 
@@ -1755,9 +1929,47 @@ export function useDrawingRenderer(
             ],
             color, 2, 0,
           );
-          break;
+        }
+
+        // Remove excess series
+        while (currentSeriesList.length > lineIdx) {
+          const excess = currentSeriesList.pop();
+          if (excess) {
+            try { chart.removeSeries(excess); } catch {}
+          }
+        }
+
+        // Remove excess price lines
+        if (mainSeries) {
+          while (currentPriceLinesList.length > plIdx) {
+            const excessPl = currentPriceLinesList.pop();
+            if (excessPl) {
+              try { mainSeries.removePriceLine(excessPl); } catch {}
+            }
+          }
         }
       }
     }
-  }, [drawings, drawingsVisible, chartData, chartRef, candleSeriesRef, drawingSeriesRef]);
+
+    // ── Flush all batched setData calls in a single rAF ────────────────
+    // This prevents LWC's internal timescale from being corrupted when
+    // multiple series are updated in the same synchronous JS tick.
+    if (pendingBatch.length > 0) {
+      cancelAnimationFrame(rafIdRef.current);
+      const batch = [...pendingBatch];
+      rafIdRef.current = requestAnimationFrame(() => {
+        for (const item of batch) {
+          try {
+            item.series.setData(item.data);
+          } catch {
+            // Silently skip — the series will be retried on next render
+          }
+        }
+      });
+    }
+
+    return () => {
+      cancelAnimationFrame(rafIdRef.current);
+    };
+  }, [drawings, drawingsVisible, chartRef, candleSeriesRef, drawingSeriesRef]);
 }

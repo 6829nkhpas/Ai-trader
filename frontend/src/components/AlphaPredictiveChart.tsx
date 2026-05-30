@@ -17,6 +17,7 @@ import { useDrawingInteraction } from '../hooks/useDrawingInteraction';
 import { DrawingOverlays } from './chart/DrawingOverlays';
 import { useDrawingRenderer } from '../hooks/useDrawingRenderer';
 import { useFibZoneOverlay } from '../hooks/useFibZoneOverlay';
+import { useBrushCanvas } from '../hooks/useBrushCanvas';
 import { useTauriLiveData } from '../hooks/useTauriLiveData';
 import type { GhostLineMode } from '../store/useChartUIStore';
 
@@ -215,13 +216,17 @@ export default function AlphaPredictiveChart({
 
   // ── Sub-systems / Hooks ──────────────────────────────────────────────
   useChartDataSync(refs, chartData, volumeData, ema9Data, ema21Data, effectiveTimeframe, activeSymbol, predictiveSignals, isExpanded);
-  useDrawingEngine(refs.chartRef, refs.candleSeriesRef, containerRef);
-  useDrawingInteraction(refs.chartRef, refs.candleSeriesRef, containerRef);
+  useDrawingEngine(refs.chartRef, refs.candleSeriesRef, containerRef, chartData);
+  useDrawingInteraction(refs.chartRef, refs.candleSeriesRef, containerRef, chartData);
   useDrawingRenderer(refs, chartData);
   useFibZoneOverlay(refs, chartData);
+  useBrushCanvas(refs.chartRef, refs.candleSeriesRef, containerRef);
 
   // ── Hovered Candle OHLC State ─────────────────────────────────────────
   const [hoveredCandle, setHoveredCandle] = useState<{ open: number; high: number; low: number; close: number } | null>(null);
+
+  const chartDataRef = useRef(chartData);
+  chartDataRef.current = chartData;
 
   useEffect(() => {
     let activeChart: any = null;
@@ -240,15 +245,27 @@ export default function AlphaPredictiveChart({
           }
           
           const hoveredTime = param.time;
-          // Find the exact candle in chartData matching the hovered crosshair timestamp
-          const matchedCandle = chartData.find((c) => c.time === hoveredTime);
+          // Find the exact candle in chartData matching the hovered crosshair timestamp using ref
+          const currentChartData = chartDataRef.current;
+          const matchedCandle = currentChartData.find((c) => c.time === hoveredTime);
           
           if (matchedCandle) {
-            setHoveredCandle({
-              open: matchedCandle.open,
-              high: matchedCandle.high,
-              low: matchedCandle.low,
-              close: matchedCandle.close,
+            setHoveredCandle((prev) => {
+              if (
+                prev &&
+                prev.open === matchedCandle.open &&
+                prev.high === matchedCandle.high &&
+                prev.low === matchedCandle.low &&
+                prev.close === matchedCandle.close
+              ) {
+                return prev; // No change, skip update
+              }
+              return {
+                open: matchedCandle.open,
+                high: matchedCandle.high,
+                low: matchedCandle.low,
+                close: matchedCandle.close,
+              };
             });
           } else {
             setHoveredCandle(null);
@@ -269,7 +286,7 @@ export default function AlphaPredictiveChart({
         }
       }
     };
-  }, [activeSymbol, chartData]);
+  }, [activeSymbol]);
 
   // ── Workspace Persistence: Auto-Load on Symbol Change ─────────────
   useEffect(() => {
@@ -332,7 +349,7 @@ export default function AlphaPredictiveChart({
   return (
     <div className={`relative flex h-full w-full flex-col outline-none ${cursorClass}`}>
       {/* ── Chart Canvas ─────────────────────────────────────────── */}
-      <div ref={containerRef} className="flex-1 min-h-0 w-full" />
+      <div ref={containerRef} className="flex-1 min-h-0 w-full overflow-hidden" />
 
       {/* ── Fibonacci Colored Zone Overlay (ref-based, no re-renders) ─ */}
       <div ref={refs.fibOverlayRef} className="pointer-events-none absolute inset-0" />

@@ -4,6 +4,36 @@ import { useAuthStore } from '../store/useAuthStore';
 
 const BASE_URL = 'http://localhost:3001/api';
 
+/**
+ * Centralised handler for protected-endpoint errors.
+ *
+ * - 401 (`TOKEN_EXPIRED` / `INVALID_TOKEN` / `NO_TOKEN`) → JWT problem, log
+ *   the user out so the auth overlay re-appears instead of looping requests.
+ * - 403 with the explicit broker error code → the *broker* session is dead,
+ *   not the JWT, so flip `isBrokerConnected` to surface the reconnect card.
+ * - Any other 403 is a real authorization issue and is left untouched.
+ */
+function handleProtectedError(err: any): void {
+  const status = err?.response?.status;
+  const code = err?.response?.data?.code;
+  const message = err?.response?.data?.error || '';
+
+  if (status === 401) {
+    console.warn('[useAlphaData] 401 from auth service — clearing session.');
+    useAuthStore.getState().logout();
+    return;
+  }
+
+  if (status === 403) {
+    // The portfolio controller signals broker-session expiry with this
+    // exact phrasing (or a future explicit code). Anything else (e.g. a
+    // permission denial) should NOT silently disconnect the broker.
+    if (code === 'BROKER_SESSION_EXPIRED' || /broker session/i.test(message)) {
+      useAuthStore.getState().setBrokerConnected(false);
+    }
+  }
+}
+
 interface MarginData {
   equity?: {
     enabled: boolean;
@@ -52,9 +82,7 @@ export function useMargins() {
       console.error('[useMargins] failed to fetch margins:', err);
       const errMsg = err.response?.data?.error || err.message || 'Failed to fetch margins';
       setError(errMsg);
-      if (err.response?.status === 403) {
-        useAuthStore.getState().setBrokerConnected(false);
-      }
+      handleProtectedError(err);
     } finally {
       setLoading(false);
     }
@@ -121,9 +149,7 @@ export function usePositions() {
       console.error('[usePositions] failed to fetch positions:', err);
       const errMsg = err.response?.data?.error || err.message || 'Failed to fetch positions';
       setError(errMsg);
-      if (err.response?.status === 403) {
-        useAuthStore.getState().setBrokerConnected(false);
-      }
+      handleProtectedError(err);
     } finally {
       setLoading(false);
     }
@@ -176,9 +202,7 @@ export function useOrderBook() {
       console.error('[useOrderBook] failed to fetch orders:', err);
       const errMsg = err.response?.data?.error || err.message || 'Failed to fetch order book';
       setError(errMsg);
-      if (err.response?.status === 403) {
-        useAuthStore.getState().setBrokerConnected(false);
-      }
+      handleProtectedError(err);
     } finally {
       setLoading(false);
     }

@@ -35,6 +35,12 @@ interface ChartUIState {
   selectedDrawingId: string | null;
   drawingColor: string;
 
+  /** Whether the chart card is rendered as a viewport-filling overlay.
+   *  Lifted to the store so peripheral components (e.g. the global
+   *  drawing toolbar in TerminalLayout) can hide themselves to avoid
+   *  duplicate DOM IDs and unreachable controls underneath the overlay. */
+  isFullscreen: boolean;
+
   // ── Ghost Line Dual-Engine ────────────────────────────────────────
   /** Which regression engine to render: 'linear' (OLS) or 'curved' (VWEPR). */
   ghostLineMode: GhostLineMode;
@@ -56,6 +62,8 @@ interface ChartUIState {
   setDrawingColor: (color: string) => void;
   setGhostLineMode: (mode: GhostLineMode) => void;
   setAccelerationCoefficient: (value: number) => void;
+  setIsFullscreen: (value: boolean) => void;
+  toggleFullscreen: () => void;
 
   // ── Workspace Persistence ──────────────────────────────────────────
   loadWorkspaceFromDB: (symbol: string) => Promise<void>;
@@ -73,6 +81,7 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
   drawingColor: '#FF5722',
   ghostLineMode: 'curved',
   accelerationCoefficient: 0.0,
+  isFullscreen: false,
 
   setActiveCursor: (cursor) => set({ activeCursor: cursor, activeDrawingTool: null }),
   setActiveDrawingTool: (tool) => set({ activeDrawingTool: tool, selectedDrawingId: null }),
@@ -98,6 +107,8 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
   setDrawingColor: (color) => set({ drawingColor: color }),
   setGhostLineMode: (mode) => set({ ghostLineMode: mode }),
   setAccelerationCoefficient: (value) => set({ accelerationCoefficient: value }),
+  setIsFullscreen: (value) => set({ isFullscreen: value }),
+  toggleFullscreen: () => set((s) => ({ isFullscreen: !s.isFullscreen })),
 
   // ── Workspace Persistence Actions ──────────────────────────────────
 

@@ -13,10 +13,46 @@ interface AuthState {
   fetchUserProfile: () => Promise<void>;
 }
 
+/**
+ * Decode the `exp` claim from a JWT without verifying its signature.
+ * Returns true if the token has expired (or is malformed). Used at boot to
+ * clear stale localStorage tokens so the user is sent to the login screen
+ * instead of getting hammered with 401s on every protected fetch.
+ */
+function isJwtExpired(token: string): boolean {
+  try {
+    const [, payload] = token.split('.');
+    if (!payload) return true;
+    // base64url → base64
+    const b64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const json = typeof atob === 'function'
+      ? atob(b64)
+      : Buffer.from(b64, 'base64').toString('utf-8');
+    const claims = JSON.parse(json);
+    if (typeof claims.exp !== 'number') return false;
+    // exp is seconds since epoch; add 5s skew tolerance
+    return Date.now() / 1000 >= claims.exp - 5;
+  } catch {
+    return true;
+  }
+}
+
 export const useAuthStore = create<AuthState>((set) => {
   // Safe initial values retrieval from local storage (safe for browser env check)
-  const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-  const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || 'null') : null;
+  let token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+  let user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || 'null') : null;
+
+  // If the stored JWT is already expired, clear it now so protected fetches
+  // never even fire and the UI lands on the auth overlay cleanly.
+  if (token && isJwtExpired(token)) {
+    console.warn('[Auth Store] Stored JWT is expired, clearing session.');
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+    }
+    token = null;
+    user = null;
+  }
 
   return {
     isAuthenticated: !!token,
@@ -127,6 +163,11 @@ export const useAuthStore = create<AuthState>((set) => {
             'Authorization': `Bearer ${token}`
           }
         });
+        if (response.status === 401) {
+          console.warn('[Auth Store] /me returned 401 — session expired, logging out.');
+          useAuthStore.getState().logout();
+          return;
+        }
         if (response.ok) {
           const data = await response.json();
           set({ 
@@ -152,6 +193,11 @@ export const useAuthStore = create<AuthState>((set) => {
             'Authorization': `Bearer ${token}`
           }
         });
+        if (response.status === 401) {
+          console.warn('[Auth Store] /me returned 401 — session expired, logging out.');
+          useAuthStore.getState().logout();
+          return;
+        }
         if (response.ok) {
           const data = await response.json();
           set({ 

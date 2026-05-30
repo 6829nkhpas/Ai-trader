@@ -34,13 +34,19 @@ function Cleanup {
             taskkill /T /F /PID $p.Id 2>$null
         }
     }
-    Write-Host "Stopping Docker infrastructure..." -ForegroundColor Yellow
-    docker-compose down
-    if (Test-Path alpha-backend) {
-        Write-Host "Stopping PostgreSQL infrastructure..." -ForegroundColor Yellow
-        Push-Location alpha-backend
+    
+    & docker info >$null 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Stopping Docker infrastructure..." -ForegroundColor Yellow
         docker-compose down
-        Pop-Location
+        if (Test-Path alpha-backend) {
+            Write-Host "Stopping PostgreSQL infrastructure..." -ForegroundColor Yellow
+            Push-Location alpha-backend
+            docker-compose down
+            Pop-Location
+        }
+    } else {
+        Write-Host "Docker daemon not reachable, skipping container cleanup." -ForegroundColor Yellow
     }
     Write-Host "System shutdown complete." -ForegroundColor Green
 }
@@ -50,7 +56,9 @@ try {
     #        8086=Python Agent, 8087=Kite REST API, 9000/9009=QuestDB, 5432=PG (QuestDB/Default), 5433=Postgres DB (Auth/Payment), 6379=Redis, 19092=Kafka
     Write-Host "==> Cleaning up stale processes and ports..." -ForegroundColor Magenta
 
-    $portsToKill = @(3000, 3001, 3002, 8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 9000, 9009, 5432, 5433, 6379, 19092)
+    # Exclude Docker-managed ports (5432, 5433, 6379, 9000, 9009, 19092) from direct taskkill, 
+    # as killing those PIDs terminates the Docker/WSL daemon on the host.
+    $portsToKill = @(3000, 3001, 3002, 8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087)
     $netstatOut = netstat -ano
     foreach ($port in $portsToKill) {
         $matched = $netstatOut | Select-String (":$port\s")
@@ -58,6 +66,15 @@ try {
             $parts = ("$line".Trim() -split "\s+")
             $procId = $parts[-1]
             if ($procId -match "^\d+$" -and [int]$procId -gt 4) {
+                # Safety check: do not kill Docker backend, WSL, Hyper-V or System processes
+                $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
+                if ($proc) {
+                    $procName = $proc.ProcessName
+                    if ($procName -match "docker|vpnkit|wsl|hyperv|vmmem|system") {
+                        Write-Host "  [skipped] System/Docker process ($procName, PID $procId) on port $port" -ForegroundColor Yellow
+                        continue
+                    }
+                }
                 taskkill /PID $procId /T /F 2>$null | Out-Null
                 Write-Host "  [killed] PID $procId on port $port" -ForegroundColor DarkGray
             }
@@ -66,6 +83,23 @@ try {
 
     Write-Host "  Pre-flight cleanup done." -ForegroundColor Green
     Start-Sleep -Seconds 2
+
+    # ── Verify Docker is running and clean up old containers gracefully ──────
+    Write-Host "Verifying Docker daemon..." -ForegroundColor Cyan
+    & docker info >$null 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: Docker is not running or unreachable." -ForegroundColor Red
+        Write-Host "Please start Docker Desktop and ensure the daemon is running before launching the system." -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host "Stopping any stale Docker containers from previous runs..." -ForegroundColor Cyan
+    docker-compose down 2>$null | Out-Null
+    if (Test-Path alpha-backend) {
+        Push-Location alpha-backend
+        docker-compose down 2>$null | Out-Null
+        Pop-Location
+    }
 
     # ── Load environment variables ───────────────────────────────────────────
     Write-Host "Loading environment variables from .env..." -ForegroundColor Cyan
