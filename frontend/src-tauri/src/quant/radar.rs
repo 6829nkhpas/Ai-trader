@@ -1,43 +1,80 @@
-// quant/radar.rs — Quant Radar: Live Market Scanner (Background Worker).
+// quant/radar.rs — Quant Radar: User-Driven Live Market Scanner (FEAT-037).
 //
-// Spawns a tokio task that continuously evaluates the ConsensusEngine
-// across a configurable list of F&O instruments.  When an institutional
-// strategy fires (Golden Cross, ORB Breakout, etc.) or the trend score
-// exceeds the alert threshold, a `radar-alert` Tauri event is emitted
-// to the React frontend in real time.
+// Refactored from the original fixed 50-symbol background loop into a
+// **user-driven** scanner. The set of symbols tracked is owned by a shared
+// `RadarRegistry` that the React UI mutates via `set_radar_symbols`, so the
+// radar follows exactly the instruments the user adds to their Quant Radar.
+//
+// When a pattern or institutional strategy fires on a tracked symbol, a
+// `radar-alert` Tauri event is emitted. Unlike the old text-only alert, the
+// payload now carries the **located** detections (timeframe, candle index,
+// timestamp and price geometry) so the front-end can route the chart to the
+// symbol *and* draw the pattern / strategy where it formed.
 //
 // ── Architecture ──────────────────────────────────────────────────────────
-//   • Runs on a dedicated tokio task — never blocks the main Tauri thread.
-//   • Fetches candle data from the Kite REST proxy for each symbol.
-//   • Computes indicators via IndicatorState::from_candles_basic() and
-//     runs the full ConsensusEngine pipeline.
-//   • Deduplicates alerts: the same (symbol, strategy) pair won't fire
-//     again until the scan interval resets.
+//   • Shared `RadarRegistry` (RwLock<Vec<String>>) holds the user's symbols.
+//   • A single tokio task loops over the registry every `interval` seconds.
+//   • Per symbol it loads candles from QuestDB via the in-process Postgres
+//     pool (the same near-native path Deep Quant uses — no HTTP/browser),
+//     runs the located `scanner`, and emits enriched `radar-alert` events.
+//   • Deduplicates: the same (symbol, detection) pair won't re-fire within
+//     the dedup window.
 //   • Configurable via environment variables:
+//       RADAR_ENABLED         — opt-in master switch (default off)
 //       RADAR_INTERVAL_SECS   — scan interval (default 60)
-//       RADAR_TREND_THRESHOLD — trend_score threshold (default 50)
-//       RADAR_SYMBOLS         — comma-separated override list
+//       RADAR_TREND_THRESHOLD — trend_score threshold for trend alerts
+//       RADAR_TIMEFRAME       — timeframe to scan (default "10m")
 
-use log::{info, warn, error, debug};
+use std::collections::HashMap;
+use std::sync::RwLock;
+
+use log::{debug, error, info, warn};
 use serde::Serialize;
+use tauri::Manager;
 
-use crate::quant::{ConsensusEngine, IndicatorState};
-use crate::quant::patterns::Candle;
+use crate::quant::scanner::{self, LocatedPattern, LocatedStrategy, TimedCandle};
 
-// ── Default F&O symbol universe ─────────────────────────────────────────
-/// Top NSE F&O instruments — scanned every cycle.
-const DEFAULT_SYMBOLS: &[&str] = &[
-    "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
-    "HINDUNILVR", "ITC", "SBIN", "BHARTIARTL", "KOTAKBANK",
-    "LT", "AXISBANK", "BAJFINANCE", "MARUTI", "ASIANPAINT",
-    "HCLTECH", "SUNPHARMA", "TITAN", "WIPRO", "ULTRACEMCO",
-    "NESTLEIND", "TECHM", "TATAMOTORS", "POWERGRID", "NTPC",
-    "ONGC", "JSWSTEEL", "TATASTEEL", "ADANIENT", "ADANIPORTS",
-    "BAJAJFINSV", "COALINDIA", "GRASIM", "M&M", "DRREDDY",
-    "CIPLA", "BRITANNIA", "DIVISLAB", "EICHERMOT", "APOLLOHOSP",
-    "BPCL", "HEROMOTOCO", "TATACONSUM", "SBILIFE", "INDUSINDBK",
-    "DABUR", "HAVELLS", "PIDILITIND", "GODREJCP", "BIOCON",
-];
+// ── Shared Symbol Registry ──────────────────────────────────────────────
+
+/// Thread-safe set of symbols the radar background worker tracks.
+///
+/// Registered as Tauri managed state so the `set_radar_symbols` /
+/// `get_radar_symbols` commands and the background loop all share one
+/// source of truth. Seeded empty — the UI hydrates it from the user's
+/// persisted radar list on boot.
+#[derive(Default)]
+pub struct RadarRegistry {
+    symbols: RwLock<Vec<String>>,
+}
+
+impl RadarRegistry {
+    pub fn new() -> Self {
+        Self { symbols: RwLock::new(Vec::new()) }
+    }
+
+    /// Replace the tracked set. Upper-cases + de-duplicates, preserving order.
+    /// Returns the cleaned list that was stored.
+    pub fn set_symbols(&self, incoming: Vec<String>) -> Vec<String> {
+        let mut cleaned: Vec<String> = Vec::with_capacity(incoming.len());
+        for s in incoming {
+            let up = s.trim().to_uppercase();
+            if !up.is_empty() && !cleaned.contains(&up) {
+                cleaned.push(up);
+            }
+        }
+        if let Ok(mut guard) = self.symbols.write() {
+            *guard = cleaned.clone();
+        }
+        cleaned
+    }
+
+    /// Snapshot the current tracked set.
+    pub fn symbols(&self) -> Vec<String> {
+        self.symbols.read().map(|g| g.clone()).unwrap_or_default()
+    }
+}
+
+// ── Tuning Constants ────────────────────────────────────────────────────
 
 /// Alert threshold for trend_score (absolute value).
 const DEFAULT_TREND_THRESHOLD: i32 = 50;
@@ -45,20 +82,33 @@ const DEFAULT_TREND_THRESHOLD: i32 = 50;
 /// Default scan interval in seconds.
 const DEFAULT_INTERVAL_SECS: u64 = 60;
 
-/// Minimum number of candles required to run consensus analysis.
+/// Default timeframe scanned by the background worker.
+const DEFAULT_TIMEFRAME: &str = "10m";
+
+/// Minimum number of candles required to run a scan.
 const MIN_CANDLES: usize = 20;
+
+/// How long (ms) before the same (symbol, detection) alert may re-fire.
+const DEDUP_WINDOW_MS: i64 = 15 * 60 * 1_000;
 
 // ── Alert Payload ───────────────────────────────────────────────────────
 
+/// Enriched, located radar alert emitted to the React frontend.
+///
+/// Carries everything the UI needs to (a) list the alert, (b) route the
+/// chart to the symbol/timeframe, and (c) draw the located patterns and
+/// strategies on the chart.
 #[derive(Debug, Clone, Serialize)]
 pub struct RadarAlert {
     pub symbol: String,
+    pub timeframe: String,
     pub trigger_reason: String,
     pub trend_score: i32,
     pub momentum: String,
     pub volatility: String,
-    pub active_strategies: Vec<String>,
-    pub active_patterns: Vec<String>,
+    pub volume_flow: String,
+    pub patterns: Vec<LocatedPattern>,
+    pub strategies: Vec<LocatedStrategy>,
     pub timestamp_ms: i64,
     pub severity: String, // "HIGH" | "MEDIUM" | "LOW"
 }
@@ -67,20 +117,17 @@ pub struct RadarAlert {
 
 /// Spawns the Radar background worker on a dedicated tokio task.
 ///
-/// This function returns immediately — the scan loop runs asynchronously
-/// and emits `radar-alert` events via the Tauri AppHandle.
+/// Returns immediately — the scan loop runs asynchronously and emits
+/// `radar-alert` events via the Tauri AppHandle. The worker reads its
+/// symbol set live from the shared `RadarRegistry`, so the user adding /
+/// removing symbols in the UI takes effect on the next cycle without a
+/// restart.
 ///
 /// ── Lazy-loading guard ────────────────────────────────────────────────
-/// The radar is **disabled by default** (Strat Ai lazy-loading
-/// directive). It iterates 50+ F&O symbols every 60s, hitting the Kite
-/// REST proxy and the consensus engine for each — exactly the kind of
-/// pre-emptive global analysis we no longer want to run on cold start.
-///
-/// To opt in, set the env var `RADAR_ENABLED=true`. When unset (or any
-/// value other than `true` / `1`), this function logs and returns
-/// immediately, leaving zero background work behind.
+/// Disabled by default (`RADAR_ENABLED=true` to opt in). Even when enabled,
+/// the worker does zero work until the user has added symbols to their
+/// radar, so cold start stays cheap.
 pub fn spawn_radar_worker(app_handle: tauri::AppHandle) {
-    // ── Opt-in switch ────────────────────────────────────────────────
     let enabled = std::env::var("RADAR_ENABLED")
         .ok()
         .map(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "1" | "yes" | "on"))
@@ -88,15 +135,13 @@ pub fn spawn_radar_worker(app_handle: tauri::AppHandle) {
 
     if !enabled {
         info!(
-            "[Radar] Disabled (set RADAR_ENABLED=true to opt in). \
-             Background F&O scanner will not start — analysis runs lazily \
-             per-symbol on subscribe_ticker."
+            "[Radar] Background worker disabled (set RADAR_ENABLED=true to opt in). \
+             On-demand scanning via scan_quant_radar still works."
         );
-        let _ = app_handle; // explicit consume; no work to do.
+        let _ = app_handle;
         return;
     }
 
-    // ── Read configuration from environment ──────────────────────────
     let interval_secs = std::env::var("RADAR_INTERVAL_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
@@ -107,227 +152,201 @@ pub fn spawn_radar_worker(app_handle: tauri::AppHandle) {
         .and_then(|v| v.parse::<i32>().ok())
         .unwrap_or(DEFAULT_TREND_THRESHOLD);
 
-    let symbols: Vec<String> = std::env::var("RADAR_SYMBOLS")
-        .ok()
-        .map(|s| s.split(',').map(|sym| sym.trim().to_uppercase()).collect())
-        .unwrap_or_else(|| DEFAULT_SYMBOLS.iter().map(|s| s.to_string()).collect());
+    let timeframe = std::env::var("RADAR_TIMEFRAME").unwrap_or_else(|_| DEFAULT_TIMEFRAME.to_string());
 
     info!("╔══════════════════════════════════════════════════╗");
-    info!("║  📡 Quant Radar — Live Market Scanner Starting   ║");
+    info!("║  📡 Quant Radar — User-Driven Scanner Starting   ║");
     info!("╚══════════════════════════════════════════════════╝");
-    info!("Radar config: {} symbols | {}s interval | trend_threshold={}",
-          symbols.len(), interval_secs, trend_threshold);
+    info!(
+        "[Radar] config: {}s interval | trend_threshold={} | timeframe={}",
+        interval_secs, trend_threshold, timeframe
+    );
 
     tauri::async_runtime::spawn(async move {
-        // Initial delay to let Kite instruments cache warm up (avoids 429 storm)
+        // Initial delay to let the QuestDB pool register + instrument cache warm.
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-        info!("[Radar] Background scan loop started.");
+        info!("[Radar] Background scan loop started (native QuestDB path).");
 
         let kite_api_key = std::env::var("KITE_API_KEY").unwrap_or_default();
         let kite_access_token = std::env::var("KITE_ACCESS_TOKEN").unwrap_or_default();
-        let has_kite = !kite_api_key.is_empty() && !kite_access_token.is_empty();
-
-        if !has_kite {
-            warn!("[Radar] KITE_API_KEY or KITE_ACCESS_TOKEN not set. Radar will use cached/fallback data only.");
+        if kite_api_key.is_empty() || kite_access_token.is_empty() {
+            warn!("[Radar] KITE credentials not set — relying on QuestDB cache only.");
         }
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        // (symbol, detection_name) -> last emit time, for dedup.
+        let mut last_fired: HashMap<(String, String), i64> = HashMap::new();
 
         loop {
+            let registry = app_handle.state::<RadarRegistry>();
+            let symbols = registry.symbols();
+
+            if symbols.is_empty() {
+                debug!("[Radar] No symbols in registry — idle this cycle.");
+                tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
+                continue;
+            }
+
+            // The QuestDB pool is registered asynchronously in lib.rs; it may
+            // not be ready on the first cycles. Skip gracefully until it is.
+            let pool = match app_handle.try_state::<sqlx::PgPool>() {
+                Some(p) => p,
+                None => {
+                    debug!("[Radar] QuestDB pool not ready — waiting.");
+                    tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
+                    continue;
+                }
+            };
+
             let scan_start = std::time::Instant::now();
-            let mut alerts_this_cycle: Vec<RadarAlert> = Vec::new();
-            let mut scanned = 0_usize;
-            let mut failed = 0_usize;
+            let mut scanned = 0usize;
+            let mut emitted = 0usize;
 
             for symbol in &symbols {
-                match fetch_candles_for_symbol(&client, symbol, &kite_api_key, &kite_access_token).await {
+                match fetch_candles_for_symbol(&app_handle, pool.inner(), symbol, &timeframe).await {
                     Ok(candles) if candles.len() >= MIN_CANDLES => {
-                        let indicators = IndicatorState::from_candles_basic(&candles);
-                        let report = ConsensusEngine::compile_consensus(symbol, &candles, &indicators, "10m");
+                        let report = scanner::scan(symbol, &candles, &timeframe, scanner::DEFAULT_LOOKBACK);
+                        scanned += 1;
 
-                        let has_strategies = !report.active_strategies.is_empty();
+                        let has_detections =
+                            !report.patterns.is_empty() || !report.strategies.is_empty();
                         let strong_trend = report.trend_score.abs() >= trend_threshold;
-
-                        if has_strategies || strong_trend {
-                            let mut reasons: Vec<String> = Vec::new();
-
-                            for strategy in &report.active_strategies {
-                                reasons.push(strategy.clone());
-                            }
-
-                            if strong_trend && !has_strategies {
-                                let direction = if report.trend_score > 0 { "Bullish" } else { "Bearish" };
-                                reasons.push(format!("Strong {} Trend (score: {})", direction, report.trend_score));
-                            }
-
-                            let severity = if report.active_strategies.iter().any(|s|
-                                s.contains("Golden Cross") || s.contains("ORB Breakout")
-                            ) {
-                                "HIGH"
-                            } else if report.trend_score.abs() >= 75 || has_strategies {
-                                "MEDIUM"
-                            } else {
-                                "LOW"
-                            };
-
-                            let alert = RadarAlert {
-                                symbol: symbol.clone(),
-                                trigger_reason: reasons.join(" | "),
-                                trend_score: report.trend_score,
-                                momentum: report.momentum_state,
-                                volatility: report.volatility_state,
-                                active_strategies: report.active_strategies,
-                                active_patterns: report.active_patterns,
-                                timestamp_ms: chrono::Utc::now().timestamp_millis(),
-                                severity: severity.to_string(),
-                            };
-
-                            alerts_this_cycle.push(alert);
+                        if !has_detections && !strong_trend {
+                            continue;
                         }
 
-                        scanned += 1;
+                        // Build a stable dedup key from the freshest detection names.
+                        let now_ms = chrono::Utc::now().timestamp_millis();
+                        let mut reasons: Vec<String> = Vec::new();
+                        let mut fresh = false;
+
+                        for s in &report.strategies {
+                            let key = (symbol.clone(), format!("S:{}", s.name));
+                            if now_ms - *last_fired.get(&key).unwrap_or(&0) >= DEDUP_WINDOW_MS {
+                                last_fired.insert(key, now_ms);
+                                reasons.push(s.name.clone());
+                                fresh = true;
+                            }
+                        }
+                        for p in &report.patterns {
+                            let key = (symbol.clone(), format!("P:{}", p.name));
+                            if now_ms - *last_fired.get(&key).unwrap_or(&0) >= DEDUP_WINDOW_MS {
+                                last_fired.insert(key, now_ms);
+                                reasons.push(p.name.clone());
+                                fresh = true;
+                            }
+                        }
+                        if strong_trend && reasons.is_empty() {
+                            let key = (symbol.clone(), "T:trend".to_string());
+                            if now_ms - *last_fired.get(&key).unwrap_or(&0) >= DEDUP_WINDOW_MS {
+                                last_fired.insert(key, now_ms);
+                                let dir = if report.trend_score > 0 { "Bullish" } else { "Bearish" };
+                                reasons.push(format!("Strong {} Trend ({})", dir, report.trend_score));
+                                fresh = true;
+                            }
+                        }
+
+                        if !fresh {
+                            continue;
+                        }
+
+                        let severity = severity_for(&report.strategies, report.trend_score);
+                        let alert = RadarAlert {
+                            symbol: symbol.clone(),
+                            timeframe: timeframe.clone(),
+                            trigger_reason: reasons.join(" | "),
+                            trend_score: report.trend_score,
+                            momentum: report.momentum_state,
+                            volatility: report.volatility_state,
+                            volume_flow: report.volume_flow_state,
+                            patterns: report.patterns,
+                            strategies: report.strategies,
+                            timestamp_ms: now_ms,
+                            severity,
+                        };
+
+                        use tauri::Emitter;
+                        match app_handle.emit("radar-alert", &alert) {
+                            Ok(_) => {
+                                emitted += 1;
+                                info!(
+                                    "[Radar] 🚨 {} [{}] — {} (trend={}, sev={})",
+                                    alert.symbol, alert.timeframe, alert.trigger_reason,
+                                    alert.trend_score, alert.severity
+                                );
+                            }
+                            Err(e) => error!("[Radar] emit failed for {}: {}", symbol, e),
+                        }
                     }
                     Ok(candles) => {
-                        debug!("[Radar] {} — insufficient data ({} candles, need {})", symbol, candles.len(), MIN_CANDLES);
+                        debug!("[Radar] {} — insufficient data ({} candles)", symbol, candles.len());
                         scanned += 1;
                     }
-                    Err(e) => {
-                        debug!("[Radar] {} — fetch failed: {}", symbol, e);
-                        failed += 1;
-                    }
+                    Err(e) => debug!("[Radar] {} — fetch failed: {}", symbol, e),
                 }
 
-                // Rate-limit: 500ms between symbols to respect Kite's 3 req/sec limit
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                // Small gap between symbols to keep proactive Kite backfill
+                // within the broker's rate limits.
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
             }
 
-            let elapsed = scan_start.elapsed();
+            debug!(
+                "[Radar] cycle done: {}/{} scanned | {} alerts | {:.1}s",
+                scanned, symbols.len(), emitted, scan_start.elapsed().as_secs_f64()
+            );
 
-            // Emit all alerts for this cycle
-            if !alerts_this_cycle.is_empty() {
-                info!(
-                    "[Radar] Scan complete: {}/{} symbols | {} alerts | {:.1}s",
-                    scanned, symbols.len(), alerts_this_cycle.len(), elapsed.as_secs_f64()
-                );
-
-                for alert in &alerts_this_cycle {
-                    use tauri::Emitter;
-                    match app_handle.emit("radar-alert", alert) {
-                        Ok(_) => {
-                            info!(
-                                "[Radar] 🚨 ALERT: {} — {} (trend={}, severity={})",
-                                alert.symbol, alert.trigger_reason, alert.trend_score, alert.severity
-                            );
-                        }
-                        Err(e) => {
-                            error!("[Radar] Failed to emit alert for {}: {}", alert.symbol, e);
-                        }
-                    }
-                }
-            } else {
-                debug!(
-                    "[Radar] Scan complete: {}/{} symbols | no alerts | {:.1}s",
-                    scanned, symbols.len(), elapsed.as_secs_f64()
-                );
-            }
-
-            if failed > 0 {
-                debug!("[Radar] {} symbol(s) failed to fetch this cycle.", failed);
-            }
-
-            // Sleep until next scan cycle
             tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
         }
     });
 }
 
-// ── Candle Fetcher ──────────────────────────────────────────────────────
-
-/// Fetches recent OHLCV candles for a symbol via the Kite REST proxy
-/// running on the aggregator at localhost:3000.
-///
-/// Falls back to QuestDB REST API if Kite proxy is unavailable.
-async fn fetch_candles_for_symbol(
-    client: &reqwest::Client,
-    symbol: &str,
-    _api_key: &str,
-    _access_token: &str,
-) -> Result<Vec<Candle>, String> {
-    // ── Path 1: Kite Historical API via aggregator proxy ─────────────
-    let kite_port = std::env::var("KITE_API_PORT").unwrap_or_else(|_| "8084".to_string());
-    let kite_url = format!(
-        "http://127.0.0.1:{}/api/kite/historical?symbol={}&interval=day&from={}&to={}",
-        kite_port,
-        urlencoding::encode(symbol),
-        (chrono::Utc::now() - chrono::Duration::days(300)).format("%Y-%m-%d"),
-        chrono::Utc::now().format("%Y-%m-%d"),
-    );
-
-    if let Ok(response) = client.get(&kite_url).send().await {
-        if response.status().is_success() {
-            if let Ok(body) = response.json::<serde_json::Value>().await {
-                if let Some(candles_arr) = body.get("candles").and_then(|c| c.as_array()) {
-                    let candles: Vec<Candle> = candles_arr.iter().filter_map(|c| {
-                        Some(Candle {
-                            open:   c.get("open")?.as_f64()?,
-                            high:   c.get("high")?.as_f64()?,
-                            low:    c.get("low")?.as_f64()?,
-                            close:  c.get("close")?.as_f64()?,
-                            volume: c.get("volume")?.as_f64().unwrap_or(0.0),
-                        })
-                    }).collect();
-
-                    if !candles.is_empty() {
-                        return Ok(candles);
-                    }
-                }
-            }
-        }
+/// Severity ranking for an alert based on its strategies / trend strength.
+fn severity_for(strategies: &[LocatedStrategy], trend_score: i32) -> String {
+    let high = strategies.iter().any(|s| {
+        let n = s.name.to_ascii_lowercase();
+        n.contains("golden") || n.contains("death") || n.contains("orb breakout") || n.contains("orb breakdown")
+    });
+    if high {
+        "HIGH".into()
+    } else if trend_score.abs() >= 75 || !strategies.is_empty() {
+        "MEDIUM".into()
+    } else {
+        "LOW".into()
     }
-
-    // ── Path 2: QuestDB REST API ─────────────────────────────────────
-    let questdb_url = std::env::var("QUESTDB_HTTP_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9000".to_string());
-
-    let query = format!(
-        "SELECT open, high, low, close, volume FROM historical_candles \
-         WHERE symbol = '{}' ORDER BY ts DESC LIMIT 300",
-        symbol
-    );
-
-    let url = format!("{}/exec?query={}&fmt=json", questdb_url, urlencoding::encode(&query));
-
-    let response = client.get(&url).send().await
-        .map_err(|e| format!("QuestDB fetch failed: {}", e))?;
-
-    if !response.status().is_success() {
-        return Err(format!("QuestDB returned HTTP {}", response.status()));
-    }
-
-    let body: serde_json::Value = response.json().await
-        .map_err(|e| format!("QuestDB JSON parse failed: {}", e))?;
-
-    let dataset = body.get("dataset")
-        .and_then(|d| d.as_array())
-        .ok_or_else(|| "No dataset in QuestDB response".to_string())?;
-
-    let mut candles: Vec<Candle> = dataset.iter().filter_map(|row| {
-        let arr = row.as_array()?;
-        if arr.len() < 5 { return None; }
-        Some(Candle {
-            open:   arr[0].as_f64()?,
-            high:   arr[1].as_f64()?,
-            low:    arr[2].as_f64()?,
-            close:  arr[3].as_f64()?,
-            volume: arr[4].as_f64().unwrap_or(0.0),
-        })
-    }).collect();
-
-    // QuestDB query is DESC — reverse to chronological order
-    candles.reverse();
-
-    Ok(candles)
 }
+
+// ── Candle Fetcher (native QuestDB path) ────────────────────────────────
+
+/// Fetch recent OHLCV candles (with timestamps) for a symbol straight from
+/// QuestDB via the in-process Postgres-wire pool — the same near-native path
+/// Deep Quant uses. No HTTP, no browser, no reqwest. When Kite credentials
+/// are present, `load_candles_with_ts` also proactively backfills the symbol.
+async fn fetch_candles_for_symbol(
+    app: &tauri::AppHandle,
+    pool: &sqlx::PgPool,
+    symbol: &str,
+    timeframe: &str,
+) -> Result<Vec<TimedCandle>, String> {
+    let rows = crate::commands::deep_quant::load_candles_with_ts(
+        Some(app),
+        pool,
+        symbol,
+        timeframe,
+        300,
+        0, // radar floor: scan whatever exists; errors only on zero data
+    )
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(ts_millis, c)| TimedCandle {
+            time: ts_millis / 1000, // ms → seconds
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+            volume: c.volume,
+        })
+        .collect())
+}
+
+// Removed: legacy plain-candle alias (no longer used after FEAT-037 refactor).

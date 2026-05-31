@@ -17,6 +17,7 @@ import { useDrawingInteraction } from '../hooks/useDrawingInteraction';
 import { DrawingOverlays } from './chart/DrawingOverlays';
 import { useDrawingRenderer } from '../hooks/useDrawingRenderer';
 import { useFibZoneOverlay } from '../hooks/useFibZoneOverlay';
+import { useRadarOverlay } from '../hooks/useRadarOverlay';
 import { useBrushCanvas } from '../hooks/useBrushCanvas';
 import { useTauriLiveData } from '../hooks/useTauriLiveData';
 import type { GhostLineMode } from '../store/useChartUIStore';
@@ -220,6 +221,7 @@ export default function AlphaPredictiveChart({
   useDrawingInteraction(refs.chartRef, refs.candleSeriesRef, containerRef, chartData);
   useDrawingRenderer(refs, chartData);
   useFibZoneOverlay(refs, chartData);
+  useRadarOverlay(refs, chartData);
   useBrushCanvas(refs.chartRef, refs.candleSeriesRef, containerRef);
 
   // ── Hovered Candle OHLC State ─────────────────────────────────────────

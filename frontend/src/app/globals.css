@@ -649,10 +649,20 @@ body {
 }
 
 /* ── Hide scrollbar entirely ────────────────────────────────────────── */
-.scrollbar-none {
-  scrollbar-width: none; /* Firefox */
-  -ms-overflow-style: none;  /* IE and Edge */
+.scrollbar-none,
+.dropdown-menu,
+[class*="Dropdown"],
+[class*="dropdown"],
+.panel-shadow.overflow-y-auto,
+.shadow-lg.overflow-y-auto {
+  scrollbar-width: none !important; /* Firefox */
+  -ms-overflow-style: none !important;  /* IE and Edge */
 }
-.scrollbar-none::-webkit-scrollbar {
-  display: none; /* Chrome, Safari and Opera */
+.scrollbar-none::-webkit-scrollbar,
+.dropdown-menu::-webkit-scrollbar,
+[class*="Dropdown"]::-webkit-scrollbar,
+[class*="dropdown"]::-webkit-scrollbar,
+.panel-shadow.overflow-y-auto::-webkit-scrollbar,
+.shadow-lg.overflow-y-auto::-webkit-scrollbar {
+  display: none !important; /* Chrome, Safari and Opera */
 }

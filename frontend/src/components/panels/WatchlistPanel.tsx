@@ -203,7 +203,7 @@ export default function WatchlistPanel() {
 
           {/* ── Search Dropdown ──────────────────────────────── */}
           {showDropdown && (
-            <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-y-auto rounded-lg border border-border-default bg-surface shadow-lg panel-shadow">
+            <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-y-auto scrollbar-none rounded-lg border border-border-default bg-surface shadow-lg panel-shadow">
               {isSearching ? (
                 <div className="flex items-center justify-center gap-2 px-3 py-4">
                   <Loader2 size={14} className="animate-spin text-primary" />

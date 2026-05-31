@@ -240,12 +240,64 @@ pub(crate) async fn load_candles_from_db(
     timeframe: &str,
     limit: i64,
 ) -> Result<Vec<Candle>, String> {
+    // AI / consensus callers need a meaningful indicator window — keep the
+    // historical 30-candle floor for them.
+    let timed = load_candles_with_ts(app, pool, symbol, timeframe, limit, 30).await?;
+    Ok(timed.into_iter().map(|(_, c)| c).collect())
+}
+
+/// Timestamp-preserving variant of [`load_candles_from_db`].
+///
+/// Returns `(ts_millis, Candle)` pairs in ascending chronological order. The
+/// Quant Radar's located scanner needs each candle's UNIX timestamp to place
+/// pattern / strategy markers on the correct bar, so it consumes this variant
+/// directly. [`load_candles_from_db`] is now a thin wrapper that drops the
+/// timestamps for callers (AI / consensus) that only need the OHLCV series.
+///
+/// `min_candles` is the floor below which the function errors with
+/// "insufficient data". The AI path uses 30 (enough for indicators); the
+/// radar passes a low value so it can still locate candle patterns on
+/// timeframes that have only just begun caching.
+pub(crate) async fn load_candles_with_ts(
+    app: Option<&AppHandle>,
+    pool: &PgPool,
+    symbol: &str,
+    timeframe: &str,
+    limit: i64,
+    min_candles: usize,
+) -> Result<Vec<(i64, Candle)>, String> {
     use sqlx::Row;
 
     // Hardcode minimum fetch limit to 100 candles
     let limit = limit.max(100);
 
-    let is_daily = timeframe.eq_ignore_ascii_case("1d") || timeframe.eq_ignore_ascii_case("day");
+    // ── Timeframe family classification ─────────────────────────────────
+    // Case matters here: "1M" = 1 month (daily family), "1m" = 1 minute
+    // (intraday family). Lowercasing first — as the intraday branches do —
+    // would collide month with minute, so daily-family detection is done on
+    // the raw string with case-sensitive checks for the W / M suffixes.
+    let is_weekly = timeframe == "1W"
+        || timeframe.eq_ignore_ascii_case("1week")
+        || timeframe.eq_ignore_ascii_case("week");
+    let is_monthly = timeframe == "1M"
+        || timeframe.eq_ignore_ascii_case("1month")
+        || timeframe.eq_ignore_ascii_case("1mon")
+        || timeframe.eq_ignore_ascii_case("month");
+    let is_plain_daily = timeframe.eq_ignore_ascii_case("1d")
+        || timeframe.eq_ignore_ascii_case("day");
+    // Anything resolving to the daily archive (day / week / month).
+    let is_daily = is_plain_daily || is_weekly || is_monthly;
+
+    // QuestDB SAMPLE BY unit for daily-family aggregation from the daily
+    // archive. Daily needs no resampling; week = 7d; month = 30d (matching
+    // the convention already used by get_historical_view in charts.rs).
+    let daily_sample: Option<&str> = if is_weekly {
+        Some("7d")
+    } else if is_monthly {
+        Some("30d")
+    } else {
+        None
+    };
 
     // ── Proactive Zerodha Kite loading if AppHandle is provided ──────────────────
     if let Some(app) = app {
@@ -350,17 +402,41 @@ pub(crate) async fn load_candles_from_db(
 
     if is_daily {
         // ── Source 1: historical_candles (daily archive) ─────────────────────
-        let daily_result = sqlx::query(
-            "SELECT ts, open, high, low, close, volume \
-             FROM historical_candles \
-             WHERE symbol = $1 \
-             ORDER BY ts DESC \
-             LIMIT $2",
-        )
-        .bind(symbol)
-        .bind(limit)
-        .fetch_all(pool)
-        .await;
+        // Plain daily reads rows as-is; weekly/monthly aggregate the daily
+        // archive via QuestDB SAMPLE BY so the scanner sees true W/M candles.
+        let daily_result = if let Some(unit) = daily_sample {
+            let agg_query = format!(
+                "SELECT ts, \
+                        first(open) AS open, \
+                        max(high) AS high, \
+                        min(low) AS low, \
+                        last(close) AS close, \
+                        sum(volume) AS volume \
+                 FROM historical_candles \
+                 WHERE symbol = $1 \
+                 SAMPLE BY {} ALIGN TO CALENDAR \
+                 ORDER BY ts DESC \
+                 LIMIT $2",
+                unit
+            );
+            sqlx::query(&agg_query)
+                .bind(symbol)
+                .bind(limit)
+                .fetch_all(pool)
+                .await
+        } else {
+            sqlx::query(
+                "SELECT ts, open, high, low, close, volume \
+                 FROM historical_candles \
+                 WHERE symbol = $1 \
+                 ORDER BY ts DESC \
+                 LIMIT $2",
+            )
+            .bind(symbol)
+            .bind(limit)
+            .fetch_all(pool)
+            .await
+        };
 
         match &daily_result {
             Ok(rows) if !rows.is_empty() => {
@@ -457,6 +533,10 @@ pub(crate) async fn load_candles_from_db(
     }
 
     // ── Source 3: live_ticks (dynamically sampled by timeframe) ──────────
+    // Only for intraday + plain-daily timeframes. Weekly/monthly aggregate
+    // the daily archive exclusively — mixing in current-session live ticks
+    // sampled at a finer unit would corrupt the W/M candle series.
+    if !is_weekly && !is_monthly {
     let sample_interval = match timeframe.to_lowercase().as_str() {
         "1m" | "1min" => "1m",
         "3m" | "3min" => "3m",
@@ -506,6 +586,7 @@ pub(crate) async fn load_candles_from_db(
             warn!("[deep_quant] live_ticks query failed for sample={}: {}", sample_interval, e);
         }
     }
+    }
 
     if all_candles.is_empty() {
         info!("[deep_quant] merge_result: ALL sources empty for {}", symbol);
@@ -536,17 +617,20 @@ pub(crate) async fn load_candles_from_db(
     // ── Slice to the most recent `limit` candles ────────────────────────
     let total = deduped.len();
     let start = if total > limit as usize { total - limit as usize } else { 0 };
-    let final_candles: Vec<Candle> = deduped[start..]
+    let final_candles: Vec<(i64, Candle)> = deduped[start..]
         .iter()
-        .map(|pc| pc.candle.clone())
+        .map(|pc| (pc.ts_millis, pc.candle.clone()))
         .collect();
 
-    if final_candles.len() < 30 {
-        return Err("Insufficient historical data to compute technical indicators.".to_string());
+    if final_candles.len() < min_candles {
+        return Err(format!(
+            "Insufficient data for {} [{}]: {} candle(s) available, need {}.",
+            symbol, timeframe, final_candles.len(), min_candles
+        ));
     }
 
-    let first_close = final_candles.first().map(|c| c.close).unwrap_or(0.0);
-    let last_close = final_candles.last().map(|c| c.close).unwrap_or(0.0);
+    let first_close = final_candles.first().map(|(_, c)| c.close).unwrap_or(0.0);
+    let last_close = final_candles.last().map(|(_, c)| c.close).unwrap_or(0.0);
     info!(
         "[deep_quant] merge_result: symbol={} timeframe={} total_before_dedup={} after_dedup={} final_slice={} first_close={:.2} last_close={:.2}",
         symbol, timeframe, total, deduped.len(), final_candles.len(), first_close, last_close

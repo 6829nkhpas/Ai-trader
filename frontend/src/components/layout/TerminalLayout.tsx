@@ -63,7 +63,7 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
   return (
     <div className="flex h-screen flex-col bg-background font-sans text-text-primary">
       {/* Header */}
-      <header className="z-10 flex shrink-0 items-center gap-3 border-b border-border-default bg-surface px-3 py-1.5 panel-shadow-sm">
+      <header className="z-30 flex shrink-0 items-center gap-3 border-b border-border-default bg-surface px-3 py-1.5 panel-shadow-sm">
         <div className="flex flex-1 items-center gap-3">
           <img src="/strat.svg" alt="Strat Ai Logo" className="h-[22px] w-[22px] object-contain" />
           <div>

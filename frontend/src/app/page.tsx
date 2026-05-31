@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Maximize2, Minimize2 } from 'lucide-react';
+import { PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Maximize2, Minimize2, Clock } from 'lucide-react';
 import TradingChart from '../components/TradingChart';
 import ChartToolsBar from '../components/chart/ChartToolsBar';
 import TerminalLayout from '../components/layout/TerminalLayout';
@@ -358,42 +358,52 @@ export default function Home() {
                     <button
                       type="button"
                       onClick={() => setTfDropdownOpen(!tfDropdownOpen)}
-                      className={`flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors border ${
+                      className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-all border ${
                         tfDropdownOpen
-                          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                          : 'bg-surface text-text-secondary hover:bg-elevated border-border-default'
+                          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40 shadow-[0_0_12px_rgba(16,185,129,0.15)]'
+                          : 'bg-surface text-text-secondary hover:bg-elevated border-border-default hover:text-text-primary'
                       }`}
                     >
-                      {activeTimeframe}
-                      <ChevronDown size={12} className={`transition-transform duration-200 ${tfDropdownOpen ? 'rotate-180' : ''}`} />
+                      <Clock size={11} className={tfDropdownOpen ? 'text-emerald-400' : 'text-text-muted'} />
+                      <span>{activeTimeframe}</span>
+                      <ChevronDown size={11} className={`transition-transform duration-200 ${tfDropdownOpen ? 'rotate-180' : ''}`} />
                     </button>
 
                     {tfDropdownOpen && (
-                      <div className="absolute right-0 top-full z-50 mt-1 w-44 max-h-80 overflow-y-auto rounded-lg border border-border-default bg-surface shadow-lg panel-shadow py-1">
-                        {TIMEFRAME_GROUPS.map((group) => (
-                          <div key={group.label}>
-                            <div className="px-3 pt-2 pb-1 text-[9px] font-bold uppercase tracking-widest text-text-muted/60">
-                              {group.label}
+                      <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-xl border border-border-default bg-surface/90 backdrop-blur-xl shadow-2xl p-3 scrollbar-none animate-in fade-in slide-in-from-top-2 duration-200">
+                        {TIMEFRAME_GROUPS.map((group) => {
+                          const isDays = group.label === 'Days';
+                          return (
+                            <div key={group.label} className="mb-3 last:mb-0">
+                              <div className="px-1 pb-1 text-[10px] font-bold uppercase tracking-wider text-text-muted/80 mb-1.5 border-b border-border-default/20">
+                                {group.label}
+                              </div>
+                              <div className={`grid ${isDays ? 'grid-cols-3' : 'grid-cols-2'} gap-1`}>
+                                {group.items.map((item) => {
+                                  const isActive = activeTimeframe === item.tf;
+                                  return (
+                                    <button
+                                      key={item.tf}
+                                      type="button"
+                                      onClick={() => {
+                                        setActiveTimeframe(item.tf as ChartTimeframe);
+                                        setTfDropdownOpen(false);
+                                      }}
+                                      className={`flex items-center justify-between rounded-md px-2 py-1.5 text-[11px] transition-all duration-150 border ${
+                                        isActive
+                                          ? 'bg-emerald-500/10 text-emerald-400 font-bold border-emerald-500/30 shadow-[0_0_8px_rgba(16,185,129,0.08)]'
+                                          : 'bg-card/40 text-text-secondary hover:bg-elevated hover:text-text-primary border-transparent hover:border-border-default'
+                                      }`}
+                                    >
+                                      <span>{item.display}</span>
+                                      {isActive && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_6px_rgba(52,211,153,0.8)]" />}
+                                    </button>
+                                  );
+                                })}
+                              </div>
                             </div>
-                            {group.items.map((item) => (
-                              <button
-                                key={item.tf}
-                                type="button"
-                                onClick={() => {
-                                  setActiveTimeframe(item.tf as ChartTimeframe);
-                                  setTfDropdownOpen(false);
-                                }}
-                                className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors ${
-                                  activeTimeframe === item.tf
-                                    ? 'bg-emerald-500/10 text-emerald-400 font-semibold'
-                                    : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
-                                }`}
-                              >
-                                {item.display}
-                              </button>
-                            ))}
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>

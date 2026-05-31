@@ -6,6 +6,7 @@
 pub mod patterns;
 pub mod strategies;
 pub mod radar;
+pub mod scanner;
 pub mod vwepr;
 pub mod predictive;
 pub mod tool_server;

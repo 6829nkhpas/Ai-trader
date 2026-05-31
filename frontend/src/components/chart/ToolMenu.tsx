@@ -227,7 +227,7 @@ export function ToolMenu({ icon: Icon, isActive, options, onSelect }: ToolMenuPr
       {isOpen && (
         <div className="absolute left-full top-0 z-50 ml-1.5 flex gap-1.5 items-start">
           {/* Submenu Options List */}
-          <div className="w-56 max-h-[70vh] overflow-y-auto overscroll-contain rounded-md border border-border-default bg-surface shadow-lg panel-shadow py-1 scrollbar-thin">
+          <div className="w-56 max-h-[70vh] overflow-y-auto overscroll-contain rounded-md border border-border-default bg-surface shadow-lg panel-shadow py-1 scrollbar-none">
             {options.map((entry, idx) => {
               if (isSection(entry)) {
                 return (

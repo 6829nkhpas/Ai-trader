@@ -172,6 +172,7 @@ pub fn run() {
     .manage(active_symbol_state)
     .manage(tx.clone())
     .manage(SecureKeyStore::new())
+    .manage(quant::radar::RadarRegistry::new())
     .manage(std::sync::Mutex::new(execution::paper::VirtualPortfolio {
         balance: 1000000.0,
         active_positions: vec![],
@@ -221,11 +222,13 @@ pub fn run() {
           }
       }
 
-      // ── Quant Radar: Live Market Scanner ──────────────────────────
-      // Spawns an async background worker that continuously evaluates
-      // ConsensusEngine across 50 F&O symbols and emits `radar-alert`
-      // events when institutional strategies fire.  Runs on a dedicated
-      // tokio task — never blocks the UI thread.
+      // ── Quant Radar: User-Driven Live Market Scanner (FEAT-037) ────
+      // Spawns an async background worker that evaluates the located
+      // pattern/strategy scanner across the user's chosen radar symbols
+      // (held in the shared RadarRegistry) and emits enriched
+      // `radar-alert` events carrying located detections for on-chart
+      // visualization.  Runs on a dedicated tokio task — never blocks UI.
+      // Opt-in via RADAR_ENABLED=true; on-demand scan_quant_radar always on.
       quant::radar::spawn_radar_worker(app.handle().clone());
 
       // ── Local Tool Server (port 8084) ─────────────────────────────
@@ -299,6 +302,10 @@ pub fn run() {
         execution::paper::get_paper_portfolio,
         commands::sentiment::fetch_symbol_sentiment,
         commands::quant::compute_ghost_curve,
+        commands::radar::scan_radar_symbol,
+        commands::radar::scan_quant_radar,
+        commands::radar::set_radar_symbols,
+        commands::radar::get_radar_symbols,
         commands::security::save_api_key,
         commands::security::check_api_key_exists,
         commands::security::hydrate_key_cache,
