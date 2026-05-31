@@ -214,6 +214,8 @@ export function useChartDataSync(
   useEffect(() => {
     if (!ghostLineRef.current) return;
 
+    let active = true;
+
     // Need enough bars for the VWEPR engine (Rust enforces min 20).
     if (chartData.length < 20) {
       ghostLineRef.current.setData([]);
@@ -290,6 +292,8 @@ export function useChartDataSync(
           projectionLength: GHOST_CANDLES,
         });
 
+        if (!active) return;
+
         // ── Persist acceleration coefficient for AI analysis ───────────
         useChartUIStore.getState().setAccelerationCoefficient(
           payload.acceleration_coefficient
@@ -313,9 +317,15 @@ export function useChartDataSync(
         }
       } catch (error) {
         console.error('👻 [GHOST ENGINE ERROR] Failed to compute projection:', error);
-        ghostSeries.setData([]);
+        if (active) {
+          ghostSeries.setData([]);
+        }
       }
     })();
+
+    return () => {
+      active = false;
+    };
   }, [predictiveSignals, activeSymbol, chartData, effectiveTimeframe, ghostLineRef]);
 
   // ── Update time scale on timeframe change ───────────────────────────
