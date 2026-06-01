@@ -21,7 +21,7 @@ use tauri::{AppHandle, Manager, Emitter};
 use log::{info, error};
 
 use crate::quant::{
-    patterns::Candle, IndicatorState, ConsensusEngine,
+    IndicatorState, ConsensusEngine,
 };
 use crate::quant::vwepr::OhlcCandle;
 
