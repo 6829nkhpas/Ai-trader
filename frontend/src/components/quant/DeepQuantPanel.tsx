@@ -145,8 +145,6 @@ export default function DeepQuantPanel() {
   const historicalCache = useTradeStore((s) => s.historicalCache);
   const activeTimeframe = useTradeStore((s) => s.activeTimeframe);
   const paperPortfolio = useTradeStore((s) => s.paperPortfolio);
-  const agentChatLog = useTradeStore((s) => s.agentChatLog);
-  const clearAgentChatLog = useTradeStore((s) => s.clearAgentChatLog);
   const symbol = selectedSymbol || 'RELIANCE';
   const activeSymbol = symbol;
 
@@ -287,7 +285,8 @@ export default function DeepQuantPanel() {
       );
     }
 
-    clearAgentChatLog();
+    // Reset terminal state from previous run before starting new analysis
+    useQuantStore.getState().resetTerminal();
     fetchDeepAnalysis(activeSymbol);
   };
 
@@ -304,7 +303,8 @@ export default function DeepQuantPanel() {
     console.log(`🧠 [AI HANDOFF] Requesting VERIFY Mode analysis for Symbol: ${activeSymbol}`);
     console.log(`🧠 [AI HANDOFF] Proposed Trade: ${side} Entry:${entryNum} SL:${slNum} TP:${tpNum}`);
 
-    clearAgentChatLog();
+    // Reset terminal state from previous run before starting verification
+    useQuantStore.getState().resetTerminal();
     fetchDeepAnalysis(activeSymbol, 'VERIFY', {
       side,
       entry: entryNum,

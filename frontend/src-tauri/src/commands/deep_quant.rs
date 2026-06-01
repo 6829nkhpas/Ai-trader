@@ -1759,6 +1759,7 @@ pub async fn run_deep_quant_agent(
     tokio::spawn(async move {
         let client = reqwest::Client::new();
         let url = "http://localhost:8086/run";
+        let mut saw_run_finished = false;
         
         match client.post(url).json(&payload).send().await {
             Ok(response) => {
@@ -1777,18 +1778,28 @@ pub async fn run_deep_quant_agent(
                                 let event_block = buffer.drain(..pos + 2).collect::<String>();
                                 
                                 let mut event_type = None;
-                                let mut event_data = None;
+                                // Bug 8 fix: Accumulate ALL data: lines per SSE spec.
+                                // The SSE spec says multiple `data:` lines in a single
+                                // event block should be joined with newlines.
+                                let mut data_lines: Vec<String> = Vec::new();
                                 
                                 for line in event_block.lines() {
                                     if line.starts_with("event: ") {
                                         event_type = Some(line["event: ".len()..].trim().to_string());
                                     } else if line.starts_with("data: ") {
-                                        event_data = Some(line["data: ".len()..].trim().to_string());
+                                        data_lines.push(line["data: ".len()..].trim().to_string());
                                     }
                                 }
                                 
-                                if let (Some(ev_type), Some(ev_data)) = (event_type, event_data) {
-                                    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&ev_data) {
+                                if let Some(ref ev_type) = event_type {
+                                    if ev_type == "RUN_FINISHED" {
+                                        saw_run_finished = true;
+                                    }
+                                }
+                                
+                                if let (Some(ev_type), false) = (event_type, data_lines.is_empty()) {
+                                    let joined_data = data_lines.join("\n");
+                                    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&joined_data) {
                                         let outbound = serde_json::json!({
                                             "event": ev_type,
                                             "data": json_val
@@ -1807,6 +1818,18 @@ pub async fn run_deep_quant_agent(
                             break;
                         }
                     }
+                }
+                
+                // Bug 10 fix: If the stream ended without a RUN_FINISHED event
+                // (e.g. Python server crashed mid-stream or connection dropped cleanly),
+                // emit a synthetic RUN_FINISHED so the frontend always transitions
+                // out of the 'running' state.
+                if !saw_run_finished {
+                    warn!("[deep_quant_agent] Stream ended without RUN_FINISHED — emitting synthetic completion.");
+                    let _ = app.emit("deep-quant-stream", serde_json::json!({
+                        "event": "RUN_FINISHED",
+                        "data": { "thread_id": thread_id, "status": "completed" }
+                    }));
                 }
             }
             Err(e) => {

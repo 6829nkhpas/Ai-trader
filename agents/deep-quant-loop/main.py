@@ -41,15 +41,19 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None)
                 if "messages" in node_data:
                     for msg in node_data["messages"]:
                         # 1. Check for tool calls (TOOL_CALL_START)
-                        if hasattr(msg, "tool_calls") and msg.tool_calls:
+                        has_tool_calls = hasattr(msg, "tool_calls") and msg.tool_calls
+                        if has_tool_calls:
                             for tc in msg.tool_calls:
                                 tool_name = tc.get("name")
                                 yield f"event: TOOL_CALL_START\ndata: {json.dumps({'tool': tool_name, 'args': tc.get('args')})}\n\n"
                         
                         # 2. Check for text message / reasoning (TEXT_MESSAGE)
-                        # We only want reasoning text from AIMessages, NOT raw JSON outputs from ToolMessages
+                        # Bug 6 fix: Skip TEXT_MESSAGE for AIMessages that have tool_calls.
+                        # The content often contains raw tool call markup (function names,
+                        # JSON args) which clutters the terminal with unreadable garbage.
+                        # The TOOL_CALL_START events already carry the tool information.
                         msg_type = type(msg).__name__
-                        if "AIMessage" in msg_type and hasattr(msg, "content") and msg.content:
+                        if "AIMessage" in msg_type and hasattr(msg, "content") and msg.content and not has_tool_calls:
                             yield f"event: TEXT_MESSAGE\ndata: {json.dumps({'content': msg.content})}\n\n"
                         elif "ToolMessage" in msg_type:
                             tool_name = getattr(msg, "name", "tool")

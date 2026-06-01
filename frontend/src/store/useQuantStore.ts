@@ -541,6 +541,20 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
         `[QuantStore] ✔ Deep analysis triggered symbol=${symbol} ` +
         `ipc_ms=${Math.round(tDone - tInvoke)} total_ms=${Math.round(tDone - t0)}`
       );
+
+      // Bug 2 fix: Safety timeout — if isAnalyzing is still true after 120s,
+      // the SSE stream silently failed. Auto-reset to prevent infinite spinner.
+      setTimeout(() => {
+        const state = get();
+        if (state.isAnalyzing && state.sessionStatus === 'running') {
+          console.warn('[QuantStore] ⚠ Safety timeout: isAnalyzing stuck for 120s. Auto-resetting.');
+          set({
+            isAnalyzing: false,
+            sessionStatus: 'error',
+            analysisError: 'Analysis timed out after 120 seconds. The Python agent server may be unreachable or the LLM request stalled. Please retry.',
+          });
+        }
+      }, 120_000);
     } catch (err) {
       const tDone = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       const message = err instanceof Error ? err.message : String(err);
@@ -643,10 +657,12 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
           break;
         }
 
-        // Guard: if there are still pending tool calls, defer completion
+        // Bug 3 fix: If there are pending tool calls but the server says
+        // the run is finished, those tool calls are done — the TOOL_CALL_END
+        // events were lost or never emitted. Force-reset and process normally.
         if (get()._pendingToolCalls > 0) {
-          console.log(`[QuantStore] ⚠ RUN_FINISHED received but ${get()._pendingToolCalls} tool(s) still pending — deferring.`);
-          break;
+          console.warn(`[QuantStore] ⚠ RUN_FINISHED received with ${get()._pendingToolCalls} pending tool(s) — force-resetting (server confirmed completion).`);
+          set({ _pendingToolCalls: 0 });
         }
 
         // Concatenate all text messages to parse final plan

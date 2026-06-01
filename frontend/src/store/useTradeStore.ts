@@ -271,12 +271,12 @@ export async function hydratePaperPortfolio() {
     await listen<any>('final_analysis_ready', async (event) => {
       console.log('[TradeStore] final_analysis_ready event received:', event.payload);
       useTradeStore.setState({ finalTradePlan: event.payload });
-      try {
-        const { useQuantStore } = await import('./useQuantStore');
-        useQuantStore.setState({ isAnalyzing: false });
-      } catch (err) {
-        console.warn('[TradeStore] Failed to update isAnalyzing in useQuantStore:', err);
-      }
+      // Bug 7 fix: Removed premature `isAnalyzing: false` reset here.
+      // When the Python LangGraph agent calls `declare_trade`, the Rust tool server
+      // emits `final_analysis_ready` BEFORE the SSE `RUN_FINISHED` event arrives.
+      // Setting isAnalyzing=false here causes a race condition where the UI thinks
+      // the analysis is done while the agent is still producing final reasoning.
+      // The SSE `RUN_FINISHED` handler in useQuantStore handles this correctly.
     });
   } catch (e) {
     console.warn('[TradeStore] Failed to setup paper portfolio subscription:', e);

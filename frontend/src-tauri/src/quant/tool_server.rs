@@ -322,18 +322,20 @@ async fn watch_condition(
                                             let event_block = buffer.drain(..pos + 2).collect::<String>();
                                             
                                             let mut event_type = None;
-                                            let mut event_data = None;
+                                            // Bug 8 fix: Accumulate ALL data: lines per SSE spec
+                                            let mut data_lines: Vec<String> = Vec::new();
                                             
                                             for line in event_block.lines() {
                                                 if line.starts_with("event: ") {
                                                     event_type = Some(line["event: ".len()..].trim().to_string());
                                                 } else if line.starts_with("data: ") {
-                                                    event_data = Some(line["data: ".len()..].trim().to_string());
+                                                    data_lines.push(line["data: ".len()..].trim().to_string());
                                                 }
                                             }
                                             
-                                            if let (Some(ev_type), Some(ev_data)) = (event_type, event_data) {
-                                                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&ev_data) {
+                                            if let (Some(ev_type), false) = (event_type, data_lines.is_empty()) {
+                                                let joined_data = data_lines.join("\n");
+                                                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&joined_data) {
                                                     let outbound = serde_json::json!({
                                                         "event": ev_type,
                                                         "data": json_val

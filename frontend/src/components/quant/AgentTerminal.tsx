@@ -109,7 +109,6 @@ export default function AgentTerminal() {
   const reasoningSteps = useQuantStore((s) => s.reasoningSteps);
   const sessionStatus = useQuantStore((s) => s.sessionStatus);
   const finalTrade = useQuantStore((s) => s.finalTrade);
-  const handleStreamEvent = useQuantStore((s) => s.handleStreamEvent);
   const resetTerminal = useQuantStore((s) => s.resetTerminal);
   const analysisError = useQuantStore((s) => s.analysisError);
 
@@ -119,29 +118,40 @@ export default function AgentTerminal() {
   const [executed, setExecuted] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
 
-  // Dynamic listen/unlisten to "deep-quant-stream"
+  // Register the deep-quant-stream listener ONCE on mount.
+  // Uses `cancelled` flag to handle React Strict Mode double-mount:
+  // In dev, React mounts→unmounts→remounts. The async `listen()` call
+  // may resolve AFTER the cleanup runs, leaving a leaked listener.
+  // With `cancelled`, we immediately unregister if cleanup already ran.
   useEffect(() => {
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
     
-    async function setupListener() {
+    (async () => {
       try {
         const { listen } = await import('@tauri-apps/api/event');
-        unlisten = await listen<any>('deep-quant-stream', (event) => {
-          handleStreamEvent(event.payload);
+        if (cancelled) return; // Component unmounted during import
+        const unlistenFn = await listen<any>('deep-quant-stream', (event) => {
+          if (!cancelled) {
+            useQuantStore.getState().handleStreamEvent(event.payload);
+          }
         });
+        if (cancelled) {
+          // Component unmounted while we were awaiting listen() — clean up immediately
+          unlistenFn();
+        } else {
+          unlisten = unlistenFn;
+        }
       } catch (err) {
         console.error('Failed to register deep-quant-stream listener:', err);
       }
-    }
-    
-    setupListener();
+    })();
     
     return () => {
-      if (unlisten) {
-        unlisten();
-      }
+      cancelled = true;
+      unlisten?.();
     };
-  }, [handleStreamEvent]);
+  }, []);
 
   // Auto-scroll to bottom of terminal when reasoningSteps changes
   useEffect(() => {
@@ -238,9 +248,52 @@ export default function AgentTerminal() {
       <div className="flex-1 overflow-y-auto p-4 space-y-3.5 scrollbar-thin scrollbar-track-slate-950/20 scrollbar-thumb-slate-800">
         {reasoningSteps.map((step) => {
           if (step.type === 'message') {
-            // Strip raw JSON objects from display but show all reasoning text progressively
+            // Strip raw JSON objects from display but show all reasoning text progressively.
+            // Bug 5 fix: If stripping JSON leaves the content empty (i.e. the entire
+            // message IS a JSON trade plan), render a readable summary instead of hiding it.
             const cleanContent = step.content.replace(/\{[\s\S]*\}/g, '').trim();
-            if (!cleanContent) return null;
+            
+            if (!cleanContent) {
+              // Entire content was JSON — try to parse and display as a trade plan summary
+              try {
+                const jsonMatch = step.content.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                  const parsed = JSON.parse(jsonMatch[0]);
+                  const conviction = parsed.conviction_score ?? parsed.conviction;
+                  const validation = parsed.setup_validation ?? parsed.validation ?? parsed.setup;
+                  const plan = parsed.execution_plan ?? parsed.plan;
+                  
+                  if (conviction !== undefined || validation || plan) {
+                    return (
+                      <div key={step.id} className="flex justify-start animate-fade-in font-sans w-full">
+                        <div className="max-w-[95%] bg-emerald-950/30 text-slate-100 border border-emerald-500/25 rounded-xl px-3 py-2 text-[11px] leading-relaxed shadow-sm w-full">
+                          <div className="flex items-center gap-1.5 text-[9px] text-emerald-400 font-bold uppercase tracking-wider mb-1.5 select-none">
+                            <Target size={10} />
+                            Final Trade Decision
+                            {conviction !== undefined && (
+                              <span className="ml-auto rounded-md px-1.5 py-0.5 text-[8px] font-black bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
+                                {conviction}% CONVICTION
+                              </span>
+                            )}
+                          </div>
+                          {validation && (
+                            <p className="text-slate-300 mb-1">{parseInlineMarkdown(String(validation))}</p>
+                          )}
+                          {plan && (
+                            <p className="text-teal-300/90 text-[10px] font-mono mt-1 border-t border-slate-800/40 pt-1">
+                              {parseInlineMarkdown(String(plan))}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }
+                }
+              } catch {
+                // JSON parse failed — skip this empty message
+              }
+              return null;
+            }
 
             return (
               <div key={step.id} className="flex justify-start animate-fade-in font-sans w-full">
@@ -254,10 +307,18 @@ export default function AgentTerminal() {
               </div>
             );
           } else if (step.type === 'tool_start') {
-            // Check if a matching tool_end exists for this tool call
-            const isCompleted = reasoningSteps.some(
-              (s) => s.type === 'tool_end' && s.toolName === step.toolName && s.timestamp > step.timestamp
-            );
+            // Bug 11 fix: Match tool_start → tool_end by sequential counting
+            // instead of timestamp comparison (which breaks with simultaneous calls).
+            // Count how many starts for this toolName appear before/at this index,
+            // then check if an equal number of ends exist.
+            const stepIdx = reasoningSteps.indexOf(step);
+            const startsUpToHere = reasoningSteps.slice(0, stepIdx + 1).filter(
+              (s) => s.type === 'tool_start' && s.toolName === step.toolName
+            ).length;
+            const endsAfterHere = reasoningSteps.slice(stepIdx + 1).filter(
+              (s) => s.type === 'tool_end' && s.toolName === step.toolName
+            ).length;
+            const isCompleted = endsAfterHere >= startsUpToHere;
 
             return (
               <div key={step.id} className="flex justify-start animate-fade-in font-mono pl-1 w-full my-1.5">
