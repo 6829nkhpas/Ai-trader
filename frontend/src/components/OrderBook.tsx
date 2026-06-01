@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useTradeStore } from '../store/useTradeStore';
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -37,6 +37,14 @@ function depthPercent(size: number, maxSize: number): number {
   return Math.min((size / maxSize) * 100, 100);
 }
 
+// ── Format size for NSE stocks (integer lots, comma separated) ─────────
+function formatSize(size: number): string {
+  if (size >= 1000) {
+    return size.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+  }
+  return size >= 100 ? Math.round(size).toString() : size.toFixed(1);
+}
+
 // ── Build order book from market depth data ────────────────────────────
 // This function constructs book state from real market depth arrays
 // received via IPC/WebSocket from the backend.
@@ -56,7 +64,7 @@ function buildBookFromDepth(
     const price = askPrices[i];
     const size = askSizes[i] || 0;
     askRunningTotal += size;
-    asks.push({ price, size, total: parseFloat(askRunningTotal.toFixed(4)) });
+    asks.push({ price, size, total: parseFloat(askRunningTotal.toFixed(2)) });
   }
   asks.reverse(); // highest at top, lowest near spread
 
@@ -67,7 +75,7 @@ function buildBookFromDepth(
     const price = bidPrices[i];
     const size = bidSizes[i] || 0;
     bidRunningTotal += size;
-    bids.push({ price, size, total: parseFloat(bidRunningTotal.toFixed(4)) });
+    bids.push({ price, size, total: parseFloat(bidRunningTotal.toFixed(2)) });
   }
 
   const bestAsk = asks.length > 0 ? asks[asks.length - 1].price : 0;
@@ -85,6 +93,7 @@ export default function OrderBook() {
 
   const [book, setBook] = useState<OrderBookState>(() => createEmptyBook());
   const [isLive, setIsLive] = useState(false);
+  const updateCountRef = useRef(0);
 
   // ── Load cached order book data when symbol changes ──────────────────
   useEffect(() => {
@@ -124,11 +133,14 @@ export default function OrderBook() {
           const newBook = buildBookFromDepth(bid_prices, bid_sizes, ask_prices, ask_sizes);
           setBook(newBook);
           setIsLive(true);
+          updateCountRef.current += 1;
 
-          // Cache the latest book details for this symbol
-          const currentSymbol = useTradeStore.getState().selectedSymbol;
-          if (typeof window !== 'undefined') {
-            localStorage.setItem(`ai-trader-orderbook-${currentSymbol.toUpperCase()}`, JSON.stringify(newBook));
+          // Cache the latest book details for this symbol (throttle to every 5th update)
+          if (updateCountRef.current % 5 === 0) {
+            const currentSymbol = useTradeStore.getState().selectedSymbol;
+            if (typeof window !== 'undefined') {
+              localStorage.setItem(`ai-trader-orderbook-${currentSymbol.toUpperCase()}`, JSON.stringify(newBook));
+            }
           }
         });
         cleanup = unlisten;
@@ -184,27 +196,27 @@ export default function OrderBook() {
         </div>
       )}
 
-      {/* ── Ask Levels (Red) ────────────────────────────────── */}
+      {/* ── Ask Levels (Red) — compact, no flex-grow ─────────── */}
       {book.asks.length > 0 && (
         <div className="flex flex-col justify-end flex-1 min-h-0 overflow-hidden">
           {book.asks.map((level, i) => (
             <div
               key={`ask-${i}`}
-              className="group relative grid grid-cols-3 gap-0 px-3 py-[3px] transition-colors duration-75 hover:bg-red-500/5"
+              className="group relative grid grid-cols-3 gap-0 px-3 py-[2px] hover:bg-red-500/5"
             >
               {/* Depth bar background */}
               <div
-                className="pointer-events-none absolute inset-y-0 right-0 bg-red-500/8 transition-[width] duration-100"
+                className="pointer-events-none absolute inset-y-0 right-0 bg-red-500/8"
                 style={{ width: `${depthPercent(level.size, globalMaxSize)}%` }}
               />
               <span className="relative z-10 tabular-nums text-[#ef4444]">
-                {level.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {level.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
               <span className="relative z-10 tabular-nums text-right text-red-400/80">
-                {level.size.toFixed(4)}
+                {formatSize(level.size)}
               </span>
               <span className="relative z-10 tabular-nums text-right text-slate-500">
-                {level.total.toFixed(4)}
+                {formatSize(level.total)}
               </span>
             </div>
           ))}
@@ -216,7 +228,7 @@ export default function OrderBook() {
         <div className="flex shrink-0 items-center justify-between border-y border-border-default bg-elevated/20 px-3 py-1.5">
           <div className="flex items-center gap-2">
             <span className="text-[11px] font-bold tabular-nums text-text-primary">
-              {book.midPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {book.midPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
             <span className="text-[9px] text-slate-500 font-medium">MID</span>
           </div>
@@ -231,27 +243,27 @@ export default function OrderBook() {
         </div>
       )}
 
-      {/* ── Bid Levels (Green) ──────────────────────────────── */}
+      {/* ── Bid Levels (Green) — compact, no flex-grow ────────── */}
       {book.bids.length > 0 && (
         <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
           {book.bids.map((level, i) => (
             <div
               key={`bid-${i}`}
-              className="group relative grid grid-cols-3 gap-0 px-3 py-[3px] transition-colors duration-75 hover:bg-emerald-500/5"
+              className="group relative grid grid-cols-3 gap-0 px-3 py-[2px] hover:bg-emerald-500/5"
             >
               {/* Depth bar background */}
               <div
-                className="pointer-events-none absolute inset-y-0 right-0 bg-emerald-500/8 transition-[width] duration-100"
+                className="pointer-events-none absolute inset-y-0 right-0 bg-emerald-500/8"
                 style={{ width: `${depthPercent(level.size, globalMaxSize)}%` }}
               />
               <span className="relative z-10 tabular-nums text-[#22c55e]">
-                {level.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {level.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
               <span className="relative z-10 tabular-nums text-right text-emerald-400/80">
-                {level.size.toFixed(4)}
+                {formatSize(level.size)}
               </span>
               <span className="relative z-10 tabular-nums text-right text-slate-500">
-                {level.total.toFixed(4)}
+                {formatSize(level.total)}
               </span>
             </div>
           ))}

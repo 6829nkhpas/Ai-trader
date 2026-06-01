@@ -110,27 +110,40 @@ fn spawn_bridge(app: AppHandle, port: u16, event_name: &'static str) {
 
                                 if is_active && close > 0.0 {
                                     // Spread = ~0.05% of price (typical for liquid NSE stocks)
-                                    let tick_size = if close > 1000.0 { 0.05 } else { 0.01 };
+                                    let tick_size = if close > 1000.0 { 0.05 } else { 0.05 };
                                     let half_spread = (close * 0.00025).max(tick_size);
                                     let best_bid = ((close - half_spread) / tick_size).round() * tick_size;
                                     let best_ask = ((close + half_spread) / tick_size).round() * tick_size;
 
-                                    let mut bid_prices = Vec::with_capacity(5);
-                                    let mut bid_sizes = Vec::with_capacity(5);
-                                    let mut ask_prices = Vec::with_capacity(5);
-                                    let mut ask_sizes = Vec::with_capacity(5);
+                                    let mut bid_prices = Vec::with_capacity(10);
+                                    let mut bid_sizes = Vec::with_capacity(10);
+                                    let mut ask_prices = Vec::with_capacity(10);
+                                    let mut ask_sizes = Vec::with_capacity(10);
 
-                                    // Build 5 levels with increasing size at deeper levels
-                                    for i in 0..5 {
+                                    // Simple hash-based jitter so sizes vary per level & tick
+                                    // but stay deterministic (no extra deps)
+                                    let seed = (close * 100.0) as u64;
+
+                                    // Build 10 levels with randomized asymmetric sizes
+                                    for i in 0u64..10 {
                                         let offset = tick_size * (i as f64);
                                         bid_prices.push(((best_bid - offset) * 100.0).round() / 100.0);
                                         ask_prices.push(((best_ask + offset) * 100.0).round() / 100.0);
 
-                                        // Deeper levels have more liquidity (realistic distribution)
-                                        let base_size = (close * 0.01).max(10.0); // ~1% of price as base lot
-                                        let multiplier = 1.0 + (i as f64) * 0.6;
-                                        bid_sizes.push((base_size * multiplier * 100.0).round() / 100.0);
-                                        ask_sizes.push((base_size * multiplier * 100.0).round() / 100.0);
+                                        // Base size scales with price (~lot-size-like)
+                                        let base = (close * 0.005).max(5.0);
+
+                                        // Pseudo-random multiplier per level
+                                        let bid_hash = seed.wrapping_mul(2654435761).wrapping_add(i * 7919);
+                                        let ask_hash = seed.wrapping_mul(1597334677).wrapping_add(i * 6971);
+                                        let bid_jitter = 0.6 + ((bid_hash % 100) as f64) / 100.0 * 1.4; // 0.6–2.0x
+                                        let ask_jitter = 0.6 + ((ask_hash % 100) as f64) / 100.0 * 1.4;
+
+                                        // Deeper levels have more base liquidity
+                                        let depth_mult = 1.0 + (i as f64) * 0.35;
+
+                                        bid_sizes.push((base * depth_mult * bid_jitter).round());
+                                        ask_sizes.push((base * depth_mult * ask_jitter).round());
                                     }
 
                                     let ob_payload = serde_json::json!({
