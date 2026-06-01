@@ -67,7 +67,7 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None)
 
     except Exception as e:
         err_msg = str(e)
-        print(f"[event_generator] ✘ LangGraph streaming failed: {err_msg}. Surfacing error (no fallback).")
+        print(f"[event_generator] X LangGraph streaming failed: {err_msg}. Surfacing error (no fallback).")
 
         # No rule-based fallback: we rely exclusively on the live LLM analysis
         # backed by real market data. If the model/stream fails, surface a clean

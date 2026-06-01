@@ -610,16 +610,38 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
 
     switch (event) {
       case 'RUN_STARTED': {
-        set({
-          sessionStatus: 'running',
-          reasoningSteps: [],
-          finalTrade: null,
-          aiPlan: null,
-          isAnalyzing: true,
-          analysisError: null,
-          _pendingToolCalls: 0,
-          _runFinishedProcessed: false,
-        });
+        // If we're resuming from a 'watching' state, DON'T clear the existing
+        // reasoning steps — the user needs the full analysis context from the
+        // original run. Only reset the guard flag so the resumed RUN_FINISHED
+        // will be processed.
+        const currentStatus = get().sessionStatus;
+        if (currentStatus === 'watching') {
+          const resumeStep = {
+            id: `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            type: 'message',
+            content: '\n---\n### Condition Triggered — Resuming Analysis\nThe price condition has been met. Continuing with fresh market data...\n---\n',
+            timestamp: Date.now()
+          };
+          set((state) => ({
+            sessionStatus: 'running',
+            isAnalyzing: true,
+            analysisError: null,
+            _pendingToolCalls: 0,
+            _runFinishedProcessed: false,
+            reasoningSteps: [...state.reasoningSteps, resumeStep],
+          }));
+        } else {
+          set({
+            sessionStatus: 'running',
+            reasoningSteps: [],
+            finalTrade: null,
+            aiPlan: null,
+            isAnalyzing: true,
+            analysisError: null,
+            _pendingToolCalls: 0,
+            _runFinishedProcessed: false,
+          });
+        }
         break;
       }
       case 'TEXT_MESSAGE': {

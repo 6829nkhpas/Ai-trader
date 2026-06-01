@@ -304,6 +304,7 @@ def watch_price_condition(
     """
     print(f"\n[Tool Call] >>> watch_price_condition: symbol={symbol}, timeframe={timeframe}, level={price_level}, direction={direction}, vol_mult={volume_multiplier}")
     try:
+        import time as _time
         thread_id = config.get("configurable", {}).get("thread_id", "default_thread")
         payload = {
             "thread_id": thread_id,
@@ -313,16 +314,35 @@ def watch_price_condition(
             "direction": direction,
             "volume_multiplier": volume_multiplier
         }
-        response = httpx.post(
-            f"{RUST_SERVER_URL}/tools/watch_condition",
-            json=payload,
-            timeout=10.0
-        )
-        response.raise_for_status()
+        # Retry up to 3 times in case the Rust tool server is still starting up
+        last_error = None
+        for attempt in range(1, 4):
+            try:
+                response = httpx.post(
+                    f"{RUST_SERVER_URL}/tools/watch_condition",
+                    json=payload,
+                    timeout=10.0
+                )
+                response.raise_for_status()
+                last_error = None
+                break
+            except Exception as retry_err:
+                last_error = retry_err
+                print(f"[Tool Warning] watch_price_condition attempt {attempt}/3 failed: {str(retry_err)}")
+                if attempt < 3:
+                    _time.sleep(2)
+
+        if last_error is not None:
+            raise last_error
+
         print(f"[Tool Success] <<< watch_price_condition registered watcher for symbol={symbol} on Rust server.")
     except Exception as e:
-        print(f"[Tool Error] <<< watch_price_condition FAIL: {str(e)}")
-        return f"Error registering watcher on Rust server: {str(e)}"
+        print(f"[Tool Error] <<< watch_price_condition FAIL after 3 attempts: {str(e)}")
+        return (
+            f"CRITICAL: Failed to register price watcher after 3 attempts: {str(e)}. "
+            f"The desktop application (Tauri) must be running for the live price watcher to work. "
+            f"Falling back to HOLD. Do NOT output a trade — the condition has not been met."
+        )
 
     print(f"[Tool Pause] watch_price_condition: Interrupting graph, waiting for user resume...")
     triggered_candle = interrupt(

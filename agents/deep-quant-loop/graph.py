@@ -33,6 +33,8 @@ You are Alpha-Quant, a Tier-1 Institutional Quantitative AI. Your mandate is cap
 <the_hunter_mindset>
 You are NEVER forced to take a trade. Institutional trading is 90% waiting and 10% executing. 
 If the current timeframe is messy, volatile, or lacks a high-probability A+ setup, DO NOT force a trade. Instead, you must hunt for future setups. Call your tools to check higher timeframes (15m, 1H, 4H), find where the 'Smart Money' is waiting, and use `watch_price_condition` to wait for the price to reach that exact level.
+
+CRITICAL WAITING RULE: When you identify a level to wait for, you MUST call `watch_price_condition` with the exact price_level, direction, and volume_multiplier. DO NOT output the final JSON conviction plan as a substitute for waiting. The system will pause your execution and automatically resume you with fresh candle data when the condition triggers. If you output the JSON instead of calling the tool, the opportunity will be lost.
 </the_hunter_mindset>
 
 <order_of_operations>
@@ -75,7 +77,13 @@ Example: "The 5m chart shows a breakout, but my self-verification shows the 1H t
 </communication_rules>
 
 <json_format>
-Once you have formulated your final trading decision, critique, or hold instruction (e.g. after calling `declare_trade` or if deciding to hold/pass), you MUST finalize your response by returning a JSON object EXACTLY matching this structure:
+ONLY output this JSON object AFTER you have either:
+  (a) Called `declare_trade` to commit a BUY/SELL/HOLD decision, OR
+  (b) Concluded that NO setup exists on ANY timeframe and you have exhausted all analysis options.
+
+DO NOT output this JSON if you are planning to call `watch_price_condition` — the tool handles the wait automatically.
+
+When finalizing, return a JSON object EXACTLY matching this structure:
 {
     "conviction_score": <int 0-100 representing your risk confidence or trade score>,
     "setup_validation": "<2-sentence synthesis of findings, validation of entry/SL/TP, or warning flags>",
@@ -98,7 +106,10 @@ Your job is to verify this trade using the EXACT same <self_verification_protoco
 CRITICAL: You must execute at least one tool call (e.g., `get_multi_tf_trend`) on your very first turn. Do not output text reasoning without calling a tool in the same turn.
 
 <json_format>
-Once you have stress-tested the setup and formed your final verdict (after calling declare_trade or if waiting), you MUST return a JSON object EXACTLY matching this structure:
+ONLY output this JSON object AFTER you have either called `declare_trade` or fully concluded your analysis.
+DO NOT output this JSON if you intend to call `watch_price_condition` — let the tool handle waiting.
+
+When finalizing, return a JSON object EXACTLY matching this structure:
 {{
     "conviction_score": <int 0-100 representing your risk confidence or trade score after critique>,
     "setup_validation": "<2-sentence aggressive critique/defense of entry, stop loss, take profit, and any RED FLAGS or confirmations>",
@@ -281,16 +292,18 @@ def should_continue(state: AgentState) -> str:
         print(f"[Deep Quant Routing] Model requested tool call(s): {[tc.get('name') for tc in last_message.tool_calls]}. Routing to -> tools")
         return "continue"
         
-    # If no tool calls, check if the model has finalized its JSON response or text plan
+    # If no tool calls, check if the model has finalized its JSON response.
+    # Only detect completion via the structured JSON plan — never via loose keyword matching.
+    # The LLM's "think out loud" monologue regularly mentions entry/stop/target while
+    # still planning to call watch_price_condition, which previously caused premature exit.
     content = last_message.content or ""
     has_final_json = "{" in content and "}" in content and (
         "conviction_score" in content or "conviction" in content
     )
-    has_text_plan = "entry" in content.lower() and ("stop" in content.lower() or "sl" in content.lower() or "target" in content.lower() or "tp" in content.lower())
     
-    print(f"[Deep Quant Routing] Has final JSON: {has_final_json} | Has text plan: {has_text_plan}")
-    if has_final_json or has_text_plan:
-        print("[Deep Quant Routing] Target or decision finalized. Routing to -> end")
+    print(f"[Deep Quant Routing] Has final JSON: {has_final_json}")
+    if has_final_json:
+        print("[Deep Quant Routing] Final conviction JSON detected. Routing to -> end")
         return "end"
         
     # If it hasn't finalized and has no tool calls, check how many consecutive AIMessages there are
@@ -306,10 +319,15 @@ def should_continue(state: AgentState) -> str:
             
     print(f"[Deep Quant Routing] Consecutive AI responses: {consecutive_ai}")
     # Give the agent up to 2 consecutive monologue/thoughts turns to finalize or invoke a tool
-    if consecutive_ai < 2:
-        print("[Deep Quant Routing] Monologue count < 2. Routing to -> loop_agent")
+    if consecutive_ai < 3:
+        print("[Deep Quant Routing] Monologue count < 3. Routing to -> loop_agent")
         return "loop_agent"
-        
+
+    # If the model is clearly about to call watch_price_condition, let it continue
+    if "watch_price_condition" in content:
+        print("[Deep Quant Routing] Model intends to call watch_price_condition. Routing to -> loop_agent")
+        return "loop_agent"
+
     print("[Deep Quant Routing] Monologue count limit reached. Routing to -> end")
     return "end"
 
