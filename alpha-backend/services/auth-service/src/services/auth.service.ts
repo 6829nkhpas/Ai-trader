@@ -61,7 +61,16 @@ export class AuthService {
         name: user.name,
         tier: effectiveTier,
         walletBalance: user.walletBalance,
-        brokerConnection: (user as any).brokerConnection || null
+        brokerConnection: (user as any).brokerConnection || (process.env.MOCK_BROKER === 'true' ? {
+          id: 'mock-broker-conn-id',
+          broker: 'ZERODHA',
+          brokerUserId: 'DEV123',
+          userName: 'Mock Developer Account',
+          userShortname: 'MockDev',
+          apiKey: 'mock_api_key',
+          accessToken: 'mock_access_token',
+          avatarUrl: null
+        } : null)
       }
     };
   }
@@ -87,7 +96,16 @@ export class AuthService {
         name: user.name,
         tier: effectiveTier,
         walletBalance: user.walletBalance,
-        brokerConnection: (user as any).brokerConnection || null
+        brokerConnection: (user as any).brokerConnection || (process.env.MOCK_BROKER === 'true' ? {
+          id: 'mock-broker-conn-id',
+          broker: 'ZERODHA',
+          brokerUserId: 'DEV123',
+          userName: 'Mock Developer Account',
+          userShortname: 'MockDev',
+          apiKey: 'mock_api_key',
+          accessToken: 'mock_access_token',
+          avatarUrl: null
+        } : null)
       }
     };
   }
@@ -117,14 +135,16 @@ export class AuthService {
 
   // 3. Save Broker credentials via real Zerodha token exchange
   async saveBrokerAccessToken(userId: string | undefined, requestToken: string) {
-    let targetUserId = userId;
-    if (!targetUserId) {
+    let targetUserId: string;
+    if (!userId) {
       console.log('[Auth Service] userId missing from Zerodha callback state. Falling back to first user...');
       const firstUser = await userRepository.findFirstUser();
       if (!firstUser) {
         throw new Error('No user profile available to link Zerodha account');
       }
       targetUserId = firstUser.id;
+    } else {
+      targetUserId = userId;
     }
 
     const user = await userRepository.findById(targetUserId);
@@ -317,9 +337,45 @@ export class AuthService {
     }
 
     console.log(`[Auth Service Caching] Cache Miss. Fetching profile from database...`);
-    const user = await userRepository.findById(userId);
+    let user = await userRepository.findById(userId);
     if (!user) {
-      throw new Error('User not found');
+      if (process.env.MOCK_BROKER === 'true') {
+        console.log(`[Auth Service Caching] Mock developer user not found in database. Auto-creating...`);
+        user = await userRepository.createUser({
+          id: userId,
+          email: 'dev@alphasuite.app',
+          password: 'dev-password',
+          name: 'Mock Developer Account',
+          tier: 'PREMIUM'
+        });
+      } else {
+        throw new Error('User not found');
+      }
+    }
+
+    // Auto-inject mock broker connection for development
+    if (process.env.MOCK_BROKER === 'true' && !user.brokerConnection) {
+      user.brokerConnection = {
+        id: 'mock-broker-conn-id',
+        userId: user.id,
+        broker: 'ZERODHA',
+        brokerUserId: 'DEV123',
+        userName: 'Mock Developer Account',
+        userShortname: 'MockDev',
+        apiKey: 'mock_api_key',
+        accessToken: 'mock_access_token',
+        avatarUrl: null,
+        publicToken: 'mock_public_token',
+        refreshToken: 'mock_refresh_token',
+        userType: 'individual',
+        email: user.email,
+        loginTime: new Date(),
+        exchanges: ['NSE', 'BSE'],
+        products: ['CNC', 'MIS'],
+        orderTypes: ['LIMIT', 'MARKET'],
+        createdAt: new Date(),
+        updatedAt: new Date()
+      } as any;
     }
 
     // Self-healing: if user name is null or default, but broker userName exists, set it
