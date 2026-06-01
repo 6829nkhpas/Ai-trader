@@ -11,6 +11,15 @@ export interface AuthenticatedRequest extends Request {
 }
 
 export const authenticateJWT = (req: AuthenticatedRequest, res: Response, next: NextFunction): any => {
+  // Bypass JWT authentication in development mode when MOCK_BROKER is enabled
+  if (process.env.MOCK_BROKER === 'true') {
+    req.user = {
+      userId: '1014418d-08a1-4372-800b-f4a21d2cbfe3', // Match user profile in database
+      tier: 'PREMIUM'
+    };
+    return next();
+  }
+
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {

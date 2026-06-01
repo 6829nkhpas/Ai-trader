@@ -19,9 +19,10 @@ export class UserRepository {
     return prisma.user.findFirst();
   }
 
-  async createUser(data: { email: string; password: string; name?: string; tier?: string }) {
+  async createUser(data: { id?: string; email: string; password: string; name?: string; tier?: string }) {
     return prisma.user.create({
       data: {
+        id: data.id,
         email: data.email,
         password: data.password,
         name: data.name,

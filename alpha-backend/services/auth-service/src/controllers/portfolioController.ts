@@ -11,6 +11,13 @@ const HOLDINGS_CACHE_TTL = 60; // 60 seconds
 export class PortfolioController {
   // Helpers to resolve user API key and access token
   private async getBrokerCredentials(userId: string) {
+    if (process.env.MOCK_BROKER === 'true') {
+      return {
+        apiKey: 'mock_api_key',
+        accessToken: 'mock_access_token'
+      };
+    }
+
     const connection = await prisma.brokerConnection.findUnique({
       where: { userId }
     });

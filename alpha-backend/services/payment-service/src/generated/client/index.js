@@ -132,7 +132,7 @@ const config = {
       "value": "prisma-client-js"
     },
     "output": {
-      "value": "C:\\Users\\Naman Kumar\\Desktop\\ai-terminal\\Ai-trader\\alpha-backend\\services\\payment-service\\src\\generated\\client",
+      "value": "D:\\projects\\Ai-trader\\alpha-backend\\services\\payment-service\\src\\generated\\client",
       "fromEnvVar": null
     },
     "config": {
@@ -146,11 +146,11 @@ const config = {
       }
     ],
     "previewFeatures": [],
-    "sourceFilePath": "C:\\Users\\Naman Kumar\\Desktop\\ai-terminal\\Ai-trader\\alpha-backend\\services\\payment-service\\prisma\\schema.prisma",
+    "sourceFilePath": "D:\\projects\\Ai-trader\\alpha-backend\\services\\payment-service\\prisma\\schema.prisma",
     "isCustomOutput": true
   },
   "relativeEnvPaths": {
-    "rootEnvPath": null,
+    "rootEnvPath": "../../../.env",
     "schemaEnvPath": "../../../.env"
   },
   "relativePath": "../../../prisma",
