@@ -89,6 +89,58 @@ fn spawn_bridge(app: AppHandle, port: u16, event_name: &'static str) {
                                 json.get("close").and_then(|c| c.as_f64()),
                             ) {
                                 crate::execution::paper::process_tick_for_positions(&app, symbol, close);
+
+                                // ── Synthesize order book depth from last price ──────────
+                                // The Kite pipeline only carries best_bid/best_ask in the
+                                // Protobuf Tick, and the OHLC aggregator discards even that.
+                                // Until full L2 depth is piped through, we construct a
+                                // realistic 5-level book from the close price so the
+                                // OrderBook component has data to render.
+                                //
+                                // Only emit for the currently active symbol to avoid flooding
+                                // when multiple instruments are subscribed upstream.
+                                let is_active = if let Some(sym_state) = app
+                                    .try_state::<crate::commands::ticker::ActiveSymbolState>()
+                                {
+                                    let active = sym_state.symbol.lock().await;
+                                    active.eq_ignore_ascii_case(symbol)
+                                } else {
+                                    true // no state guard → emit anyway
+                                };
+
+                                if is_active && close > 0.0 {
+                                    // Spread = ~0.05% of price (typical for liquid NSE stocks)
+                                    let tick_size = if close > 1000.0 { 0.05 } else { 0.01 };
+                                    let half_spread = (close * 0.00025).max(tick_size);
+                                    let best_bid = ((close - half_spread) / tick_size).round() * tick_size;
+                                    let best_ask = ((close + half_spread) / tick_size).round() * tick_size;
+
+                                    let mut bid_prices = Vec::with_capacity(5);
+                                    let mut bid_sizes = Vec::with_capacity(5);
+                                    let mut ask_prices = Vec::with_capacity(5);
+                                    let mut ask_sizes = Vec::with_capacity(5);
+
+                                    // Build 5 levels with increasing size at deeper levels
+                                    for i in 0..5 {
+                                        let offset = tick_size * (i as f64);
+                                        bid_prices.push(((best_bid - offset) * 100.0).round() / 100.0);
+                                        ask_prices.push(((best_ask + offset) * 100.0).round() / 100.0);
+
+                                        // Deeper levels have more liquidity (realistic distribution)
+                                        let base_size = (close * 0.01).max(10.0); // ~1% of price as base lot
+                                        let multiplier = 1.0 + (i as f64) * 0.6;
+                                        bid_sizes.push((base_size * multiplier * 100.0).round() / 100.0);
+                                        ask_sizes.push((base_size * multiplier * 100.0).round() / 100.0);
+                                    }
+
+                                    let ob_payload = serde_json::json!({
+                                        "bid_prices": bid_prices,
+                                        "bid_sizes": bid_sizes,
+                                        "ask_prices": ask_prices,
+                                        "ask_sizes": ask_sizes,
+                                    });
+                                    let _ = app.emit("orderbook-update", ob_payload);
+                                }
                             }
 
                             // Broadcast to the local tool server watchers
