@@ -92,12 +92,23 @@ pub fn parse_ohlc_tick(json: &serde_json::Value) -> Option<(String, OhlcCandle)>
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
+/// Candle response with timestamp for the LLM to reason about time.
+#[derive(serde::Serialize)]
+struct CandleWithTs {
+    pub timestamp_ms: i64,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub volume: f64,
+}
+
 /// POST /tools/get_candles
-/// Fetches candles from QuestDB and returns them as JSON.
+/// Fetches candles from QuestDB and returns them as JSON with timestamps.
 async fn get_candles(
     State(state): State<ServerState>,
     Json(payload): Json<GetCandlesRequest>,
-) -> Result<Json<Vec<Candle>>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<Vec<CandleWithTs>>, (StatusCode, Json<serde_json::Value>)> {
     let pool = state.app.try_state::<sqlx::PgPool>().ok_or_else(|| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -107,12 +118,13 @@ async fn get_candles(
 
     let limit = payload.limit.unwrap_or(200);
     let tf = payload.timeframe.unwrap_or_else(|| "10m".to_string());
-    let candles = crate::commands::deep_quant::load_candles_from_db(
+    let timed_candles = crate::commands::deep_quant::load_candles_with_ts(
         Some(&state.app),
         pool.inner(),
         &payload.symbol,
         &tf,
         limit,
+        30,
     )
     .await
     .map_err(|e| {
@@ -122,7 +134,19 @@ async fn get_candles(
         )
     })?;
 
-    Ok(Json(candles))
+    let result: Vec<CandleWithTs> = timed_candles
+        .into_iter()
+        .map(|(ts, c)| CandleWithTs {
+            timestamp_ms: ts,
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+            volume: c.volume,
+        })
+        .collect();
+
+    Ok(Json(result))
 }
 
 /// POST /tools/get_consensus

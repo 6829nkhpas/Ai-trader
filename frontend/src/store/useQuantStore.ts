@@ -15,6 +15,30 @@ export interface ConsensusReport {
   volume_flow_state: string; // "ACCUMULATION" | "DISTRIBUTION" | "NEUTRAL"
   active_patterns: string[];
   active_strategies: string[];
+  // Raw indicator values (new — from enriched ConsensusReport)
+  current_price?: number | null;
+  rsi_14?: number | null;
+  stoch_k?: number | null;
+  ema_9?: number | null;
+  ema_21?: number | null;
+  sma_50?: number | null;
+  sma_200?: number | null;
+  macd_line?: number | null;
+  macd_signal?: number | null;
+  macd_histogram?: number | null;
+  bb_upper?: number | null;
+  bb_mid?: number | null;
+  bb_lower?: number | null;
+  atr_14?: number | null;
+  vwap?: number | null;
+  obv?: number | null;
+  cmf?: number | null;
+  parabolic_sar?: number | null;
+  // Projection curves
+  vwepr_value?: number | null;
+  vwepr_slope?: number | null;
+  ols_value?: number | null;
+  ols_slope?: number | null;
   sentiment?: {
     score: number;           // -100 to +100
     label: string;           // "Bullish", "Bearish", "Neutral"

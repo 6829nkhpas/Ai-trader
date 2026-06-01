@@ -392,6 +392,11 @@ impl IndicatorState {
 
 // ── Consensus Report ────────────────────────────────────────────────────────
 
+/// Helper: convert f64 to Option, turning NaN/Inf into None for clean JSON.
+fn finite_opt(v: f64) -> Option<f64> {
+    if v.is_finite() { Some((v * 100.0).round() / 100.0) } else { None }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ConsensusReport {
     pub symbol: String,
@@ -405,6 +410,25 @@ pub struct ConsensusReport {
     pub vwepr_slope: Option<f64>,
     pub ols_value: Option<f64>,
     pub ols_slope: Option<f64>,
+    // ── Raw indicator values (exposed so the LLM can reason precisely) ────
+    pub current_price: Option<f64>,
+    pub rsi_14: Option<f64>,
+    pub stoch_k: Option<f64>,
+    pub ema_9: Option<f64>,
+    pub ema_21: Option<f64>,
+    pub sma_50: Option<f64>,
+    pub sma_200: Option<f64>,
+    pub macd_line: Option<f64>,
+    pub macd_signal: Option<f64>,
+    pub macd_histogram: Option<f64>,
+    pub bb_upper: Option<f64>,
+    pub bb_mid: Option<f64>,
+    pub bb_lower: Option<f64>,
+    pub atr_14: Option<f64>,
+    pub vwap: Option<f64>,
+    pub obv: Option<f64>,
+    pub cmf: Option<f64>,
+    pub parabolic_sar: Option<f64>,
 }
 
 // ── AI Execution Plan ───────────────────────────────────────────────────────
@@ -550,6 +574,25 @@ impl ConsensusEngine {
             vwepr_slope,
             ols_value,
             ols_slope,
+            // Raw indicator values for LLM reasoning
+            current_price: if close > 0.0 { Some((close * 100.0).round() / 100.0) } else { None },
+            rsi_14: finite_opt(indicators.rsi_14),
+            stoch_k: finite_opt(indicators.stoch_k),
+            ema_9: finite_opt(indicators.ema_9),
+            ema_21: finite_opt(indicators.ema_21),
+            sma_50: finite_opt(indicators.sma_50),
+            sma_200: finite_opt(indicators.sma_200),
+            macd_line: finite_opt(indicators.macd_line),
+            macd_signal: finite_opt(indicators.macd_signal),
+            macd_histogram: finite_opt(indicators.macd_histogram),
+            bb_upper: finite_opt(indicators.bb_upper),
+            bb_mid: finite_opt(indicators.bb_mid),
+            bb_lower: finite_opt(indicators.bb_lower),
+            atr_14: finite_opt(indicators.atr_14),
+            vwap: finite_opt(indicators.vwap),
+            obv: finite_opt(indicators.obv_current),
+            cmf: finite_opt(indicators.cmf),
+            parabolic_sar: finite_opt(indicators.parabolic_sar),
         }
     }
 

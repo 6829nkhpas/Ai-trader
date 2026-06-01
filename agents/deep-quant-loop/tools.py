@@ -20,7 +20,7 @@ def calculate_ema(prices: list, period: int) -> float:
 @tool
 def get_candles(symbol: str, timeframe: str, limit: int) -> list:
     """
-    Fetch raw OHLCV candle data. Valid timeframes: '1m', '5m', '15m', '1h', '4h', '1d'.
+    Fetch raw OHLCV candle data with timestamps. Valid timeframes: '1m', '5m', '10m', '15m', '1h', '4h', '1d'.
     
     Args:
         symbol (str): The trading symbol to fetch (e.g. "RELIANCE").
@@ -28,7 +28,10 @@ def get_candles(symbol: str, timeframe: str, limit: int) -> list:
         limit (int): The number of recent candles to retrieve.
         
     Returns:
-        list: A list of candles, where each candle is a dictionary containing open, high, low, close, and volume.
+        list: A list of candles in ascending chronological order. Each candle is a dictionary with:
+              - timestamp_ms (int): UNIX timestamp in milliseconds
+              - open, high, low, close (float): OHLC prices
+              - volume (float): Trade volume
     """
     print(f"\n[Tool Call] >>> get_candles: symbol={symbol}, timeframe={timeframe}, limit={limit}")
     try:
@@ -50,14 +53,20 @@ def get_candles(symbol: str, timeframe: str, limit: int) -> list:
 @tool
 def get_consensus_report(symbol: str, timeframe: str) -> dict:
     """
-    Calculates live technical consensus (Trend, Momentum, Volatility, VWEPR/OLS curves) for a specific timeframe.
+    Calculates live technical consensus with full raw indicator values for a specific timeframe.
     
     Args:
         symbol (str): The trading symbol (e.g., "RELIANCE").
-        timeframe (str): The timeframe to analyze (e.g., "1m", "5m", "15m", "1h", "4h", "1d").
+        timeframe (str): The timeframe to analyze (e.g., "1m", "5m", "10m","15m", "1h", "4h", "1d").
         
     Returns:
-        dict: The compiled consensus report with trend score, momentum state, active patterns, and curve parameters.
+        dict: Comprehensive consensus report containing:
+              - Aggregate states: trend_score (-100 to +100), momentum_state, volatility_state, volume_flow_state
+              - Pattern recognition: active_patterns (e.g. Doji, Engulfing), active_strategies
+              - Raw indicators: current_price, rsi_14, stoch_k, ema_9, ema_21, sma_50, sma_200,
+                macd_line, macd_signal, macd_histogram, bb_upper, bb_mid, bb_lower,
+                atr_14, vwap, obv, cmf, parabolic_sar
+              - Projections: vwepr_value, vwepr_slope, ols_value, ols_slope
     """
     print(f"\n[Tool Call] >>> get_consensus_report: symbol={symbol}, timeframe={timeframe}")
     try:
@@ -103,24 +112,31 @@ def get_multi_tf_trend(symbol: str) -> dict:
         return {"error": f"Failed to compute multi-tf trend: {str(e)}"}
 
 @tool
-def get_support_resistance(symbol: str) -> dict:
+def get_support_resistance(symbol: str, timeframe: str = "1d") -> dict:
     """
     Identifies exact support and resistance liquidity zones for the specified trading symbol.
-    Calculates Pivot Points, support levels (S1, S2), and resistance levels (R1, R2) 
+    Calculates Pivot Points, support levels (S1, S2, S3), and resistance levels (R1, R2, R3) 
     using recent candle high, low, and close levels. Use this to determine valid placement for 
     entry price, stop loss, and take profit targets.
     
+    For intraday timeframes (5m, 10m, 15m, 1h), also computes the Opening Range high/low
+    from the first 3 candles — a key micro-level for day traders.
+    
     Args:
         symbol (str): The trading symbol (e.g., "RELIANCE").
+        timeframe (str): Timeframe for pivot calculation (e.g., "5m", "15m", "1h", "1d"). 
+                         Default "1d" for macro levels. Use shorter timeframes for intraday S/R.
         
     Returns:
-        dict: Key support and resistance levels (Pivot, S1, S2, R1, R2, high, low).
+        dict: Key support and resistance levels (Pivot, S1, S2, S3, R1, R2, R3, high, low),
+              plus daily macro levels and intraday Opening Range when applicable.
     """
-    print(f"\n[Tool Call] >>> get_support_resistance: symbol={symbol}")
+    print(f"\n[Tool Call] >>> get_support_resistance: symbol={symbol}, timeframe={timeframe}")
     try:
+        # Fetch candles at the requested timeframe for precise S/R
         response = httpx.post(
             f"{RUST_SERVER_URL}/tools/get_candles",
-            json={"symbol": symbol, "timeframe": "1d", "limit": 50},
+            json={"symbol": symbol, "timeframe": timeframe, "limit": 50},
             timeout=10.0
         )
         response.raise_for_status()
@@ -143,18 +159,60 @@ def get_support_resistance(symbol: str) -> dict:
         s1 = 2 * pivot - h
         r2 = pivot + (h - l)
         s2 = pivot - (h - l)
+        r3 = h + 2 * (pivot - l)
+        s3 = l - 2 * (h - pivot)
         
         res = {
             "symbol": symbol,
+            "timeframe": timeframe,
             "pivot_point": round(pivot, 2),
             "resistance_1": round(r1, 2),
-            "support_1": round(s1, 2),
             "resistance_2": round(r2, 2),
+            "resistance_3": round(r3, 2),
+            "support_1": round(s1, 2),
             "support_2": round(s2, 2),
+            "support_3": round(s3, 2),
             "recent_high": round(h, 2),
-            "recent_low": round(l, 2)
+            "recent_low": round(l, 2),
+            "current_close": round(c, 2),
         }
-        print(f"[Tool Success] <<< get_support_resistance: symbol={symbol}, pivot={res['pivot_point']}, S1={res['support_1']}, R1={res['resistance_1']}")
+        
+        # For intraday timeframes, add Opening Range (first 3 candles) as micro-levels
+        is_intraday = timeframe in ("1m", "3m", "5m", "10m", "15m", "30m", "1h")
+        if is_intraday and len(candles) >= 3:
+            or_highs = [cd["high"] for cd in candles[:3] if "high" in cd]
+            or_lows = [cd["low"] for cd in candles[:3] if "low" in cd]
+            if or_highs and or_lows:
+                res["opening_range_high"] = round(max(or_highs), 2)
+                res["opening_range_low"] = round(min(or_lows), 2)
+        
+        # Always include daily macro levels as secondary reference when using intraday TF
+        if is_intraday:
+            try:
+                daily_resp = httpx.post(
+                    f"{RUST_SERVER_URL}/tools/get_candles",
+                    json={"symbol": symbol, "timeframe": "1d", "limit": 20},
+                    timeout=10.0
+                )
+                daily_resp.raise_for_status()
+                daily_candles = daily_resp.json()
+                dh = [dc["high"] for dc in daily_candles if "high" in dc]
+                dl = [dc["low"] for dc in daily_candles if "low" in dc]
+                dc_closes = [dc["close"] for dc in daily_candles if "close" in dc]
+                if dh and dl and dc_closes:
+                    daily_h = max(dh[-10:])
+                    daily_l = min(dl[-10:])
+                    daily_c = dc_closes[-1]
+                    daily_pivot = (daily_h + daily_l + daily_c) / 3.0
+                    res["daily_pivot"] = round(daily_pivot, 2)
+                    res["daily_resistance_1"] = round(2 * daily_pivot - daily_l, 2)
+                    res["daily_support_1"] = round(2 * daily_pivot - daily_h, 2)
+                    res["daily_high"] = round(daily_h, 2)
+                    res["daily_low"] = round(daily_l, 2)
+            except Exception:
+                pass  # Daily macro levels are best-effort
+        
+        print(f"[Tool Success] <<< get_support_resistance: symbol={symbol}, timeframe={timeframe}, pivot={res['pivot_point']}, S1={res['support_1']}, R1={res['resistance_1']}")
         return res
     except Exception as e:
         print(f"[Tool Error] <<< get_support_resistance FAIL: {str(e)}")
