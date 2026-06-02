@@ -18,30 +18,57 @@ export default function VolumeProfileOverlay({
 }: VolumeProfileOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  useEffect(() => {
-    const chart = chartRef.current;
-    const series = candleSeriesRef.current;
-    const canvas = canvasRef.current;
-    if (!canvas || !chart || !series || chartData.length === 0) return;
+  const drawVolumeProfileRef = useRef<() => void>(undefined);
 
-    const drawVolumeProfile = () => {
+  const drawVolumeProfile = () => {
+    try {
+      const canvas = canvasRef.current;
+      const currentChart = chartRef.current;
+      const currentSeries = candleSeriesRef.current;
+      if (!canvas || !currentChart || !currentSeries || chartData.length === 0) return;
+
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
       const rect = canvas.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
-      ctx.scale(dpr, dpr);
+      if (rect.width === 0 || rect.height === 0) return;
 
-      const logicalRange = chart.timeScale().getVisibleLogicalRange();
+      const dpr = window.devicePixelRatio || 1;
+      const expectedWidth = Math.floor(rect.width * dpr);
+      const expectedHeight = Math.floor(rect.height * dpr);
+
+      if (canvas.width !== expectedWidth || canvas.height !== expectedHeight) {
+        canvas.width = expectedWidth;
+        canvas.height = expectedHeight;
+        ctx.scale(dpr, dpr);
+      } else {
+        ctx.clearRect(0, 0, rect.width, rect.height);
+      }
+
+      const logicalRange = currentChart.timeScale().getVisibleLogicalRange();
       if (!logicalRange) {
+        ctx.clearRect(0, 0, rect.width, rect.height);
+        return;
+      }
+
+      if (
+        logicalRange.from === null ||
+        logicalRange.to === null ||
+        isNaN(logicalRange.from) ||
+        isNaN(logicalRange.to)
+      ) {
         ctx.clearRect(0, 0, rect.width, rect.height);
         return;
       }
 
       const fromIndex = Math.max(0, Math.floor(logicalRange.from));
       const toIndex = Math.min(chartData.length - 1, Math.ceil(logicalRange.to));
+
+      if (isNaN(fromIndex) || isNaN(toIndex) || fromIndex > toIndex) {
+        ctx.clearRect(0, 0, rect.width, rect.height);
+        return;
+      }
+
       const visibleCandles = chartData.slice(fromIndex, toIndex + 1);
 
       if (visibleCandles.length === 0) {
@@ -124,16 +151,15 @@ export default function VolumeProfileOverlay({
       }
 
       const maxWidth = rect.width * 0.35; // Profile takes max 35% of chart width
-      ctx.clearRect(0, 0, rect.width, rect.height);
 
       // Draw horizontal profile bars on the left Y-axis
       for (let i = 0; i < binCount; i++) {
         const binPriceLow = minPrice + i * binSize;
         const binPriceHigh = minPrice + (i + 1) * binSize;
 
-        const yHigh = series.priceToCoordinate(binPriceHigh);
-        const yLow = series.priceToCoordinate(binPriceLow);
-        if (yHigh === null || yLow === null) continue;
+        const yHigh = currentSeries.priceToCoordinate(binPriceHigh);
+        const yLow = currentSeries.priceToCoordinate(binPriceLow);
+        if (yHigh === null || yLow === null || isNaN(yHigh) || isNaN(yLow)) continue;
 
         const barHeight = Math.abs(yLow - yHigh);
         const barWidth = maxVol > 0 ? (bins[i] / maxVol) * maxWidth : 0;
@@ -155,8 +181,8 @@ export default function VolumeProfileOverlay({
       // Draw a bright solid red POC line spanning the width of the profile
       if (pocIndex !== -1) {
         const pocPrice = minPrice + (pocIndex + 0.5) * binSize;
-        const yPoc = series.priceToCoordinate(pocPrice);
-        if (yPoc !== null) {
+        const yPoc = currentSeries.priceToCoordinate(pocPrice);
+        if (yPoc !== null && !isNaN(yPoc)) {
           ctx.strokeStyle = '#ef4444'; // Bright red
           ctx.lineWidth = 1.5;
           ctx.beginPath();
@@ -170,22 +196,47 @@ export default function VolumeProfileOverlay({
           ctx.fillText(`POC ${pocPrice.toFixed(2)}`, maxWidth + 8, yPoc + 3);
         }
       }
+    } catch (err) {
+      console.warn('[VolumeProfileOverlay] Draw error ignored:', err);
+    }
+  };
+
+  drawVolumeProfileRef.current = drawVolumeProfile;
+
+  // ── Stable event listener setup ──────────────────────────────────────────
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    const onVisibleRangeChange = () => {
+      drawVolumeProfileRef.current?.();
     };
 
-    // Subscriptions
-    const sub = chart.timeScale().subscribeVisibleLogicalRangeChange(drawVolumeProfile);
-    drawVolumeProfile();
+    chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleRangeChange);
 
-    const resizeHandler = () => drawVolumeProfile();
+    const resizeHandler = () => {
+      drawVolumeProfileRef.current?.();
+    };
     window.addEventListener('resize', resizeHandler);
 
+    // Initial draw trigger (slight delay to let parent render references finish)
+    const timer = setTimeout(() => {
+      drawVolumeProfileRef.current?.();
+    }, 50);
+
     return () => {
+      clearTimeout(timer);
       try {
-        chart.timeScale().unsubscribeVisibleLogicalRangeChange(drawVolumeProfile);
+        chart.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleRangeChange);
       } catch (e) {}
       window.removeEventListener('resize', resizeHandler);
     };
-  }, [chartData, volumeData, chartRef, candleSeriesRef]);
+  }, [chartRef]);
+
+  // ── Redraw trigger on data changes ───────────────────────────────────────
+  useEffect(() => {
+    drawVolumeProfileRef.current?.();
+  }, [chartData, volumeData]);
 
   return (
     <canvas

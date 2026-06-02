@@ -211,10 +211,16 @@ export default function FootprintChart({
         dimensions: dims,
       } = stateRef.current;
 
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = dims.width * dpr;
-      canvas.height = dims.height * dpr;
-      ctx.scale(dpr, dpr);
+      // Supersample by 2x the standard DPR to deliver 4K crystal-clear rendering
+      const dpr = (window.devicePixelRatio || 1) * 2;
+      const expectedWidth = Math.floor(dims.width * dpr);
+      const expectedHeight = Math.floor(dims.height * dpr);
+
+      if (canvas.width !== expectedWidth || canvas.height !== expectedHeight) {
+        canvas.width = expectedWidth;
+        canvas.height = expectedHeight;
+        ctx.scale(dpr, dpr);
+      }
 
       const width = dims.width;
       const height = dims.height;
@@ -249,7 +255,8 @@ export default function FootprintChart({
 
       const priceToY = (price: number) => {
         const priceDiff = sY - price;
-        return chartHeight / 2 + (priceDiff / tickSize) * zY;
+        // Round to nearest integer to align perfectly with physical screen pixels
+        return Math.round(chartHeight / 2 + (priceDiff / tickSize) * zY);
       };
 
       const yToPrice = (y: number) => {
@@ -285,11 +292,11 @@ export default function FootprintChart({
       }
 
       // Draw columns representing time periods from right to left
-      let currentX = chartWidth - sX;
+      let currentX = Math.round(chartWidth - sX);
 
       for (let i = cData.length - 1; i >= 0; i--) {
         const candle = cData[i];
-        const nextX = currentX - zX;
+        const nextX = Math.round(currentX - zX);
 
         if (currentX < 0) break;
         if (nextX > chartWidth) {
@@ -492,7 +499,8 @@ export default function FootprintChart({
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
         onWheel={handleWheel}
-        className="h-full w-full cursor-grab active:cursor-grabbing"
+        style={{ width: dimensions.width, height: dimensions.height }}
+        className="cursor-grab active:cursor-grabbing"
       />
     </div>
   );
