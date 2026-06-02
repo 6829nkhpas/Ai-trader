@@ -112,6 +112,49 @@ def get_multi_tf_trend(symbol: str) -> dict:
         return {"error": f"Failed to compute multi-tf trend: {str(e)}"}
 
 @tool
+def get_chart_patterns(symbol: str, timeframe: str, limit: int = 200) -> dict:
+    """
+    Identifies structural chart patterns (e.g. Head & Shoulders, Double Top/Bottom, 
+    Triangles, Flags, Wedges, Cup & Handle) from historical candle data using the 
+    high-performance Rust pattern detection engine.
+    
+    Use this tool to gain a structural edge by detecting formation-level setups across
+    any timeframe. The engine detects 19 distinct patterns categorized as:
+      - Reversal (8): Head & Shoulders, Inverse H&S, Double Top/Bottom, Triple Top/Bottom, Rising/Falling Wedge
+      - Continuation (6): Bullish/Bearish Flag, Bullish/Bearish Pennant, Cup & Handle, Inverse Cup & Handle
+      - Bilateral (4): Symmetrical Triangle, Ascending Triangle, Descending Triangle, Rectangle
+    
+    Args:
+        symbol (str): The trading symbol (e.g. "RELIANCE").
+        timeframe (str): The candle timeframe (e.g. "1m", "5m", "10m", "15m", "1h", "4h", "1d").
+        limit (int): Number of recent candles to analyze (default 200, more candles = longer patterns detected).
+        
+    Returns:
+        dict: Contains 'symbol', 'timeframe', and 'patterns' — a list of detected patterns,
+              each with pattern_type, sentiment (Bullish/Bearish/Neutral), confidence (0.0-1.0),
+              start_idx, end_idx, and a human-readable description.
+    """
+    print(f"\n[Tool Call] >>> get_chart_patterns: symbol={symbol}, timeframe={timeframe}, limit={limit}")
+    try:
+        response = httpx.post(
+            f"{RUST_SERVER_URL}/tools/get_chart_patterns",
+            json={"symbol": symbol, "timeframe": timeframe, "limit": limit},
+            timeout=15.0
+        )
+        if response.status_code != 200:
+            print(f"[Tool Error] Server returned {response.status_code}: {response.text}")
+        response.raise_for_status()
+        res = response.json()
+        patterns = res.get("patterns", [])
+        print(f"[Tool Success] <<< get_chart_patterns: symbol={symbol}, timeframe={timeframe}, detected {len(patterns)} patterns")
+        for p in patterns:
+            print(f"  → {p.get('pattern_type')} ({p.get('sentiment')}, confidence={p.get('confidence', 0):.2f})")
+        return res
+    except Exception as e:
+        print(f"[Tool Error] <<< get_chart_patterns FAIL: {str(e)}")
+        return {"error": f"Failed to detect chart patterns: {str(e)}"}
+
+@tool
 def get_support_resistance(symbol: str, timeframe: str = "1d") -> dict:
     """
     Identifies exact support and resistance liquidity zones for the specified trading symbol.

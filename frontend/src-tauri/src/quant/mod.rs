@@ -4,6 +4,7 @@
 // Mirrors aggregator/src/quant/mod.rs for in-process Tauri execution.
 
 pub mod patterns;
+pub mod chart_patterns;
 pub mod strategies;
 pub mod radar;
 pub mod scanner;

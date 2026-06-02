@@ -11,6 +11,7 @@ from tools import (
     get_candles,
     get_consensus_report,
     get_multi_tf_trend,
+    get_chart_patterns,
     get_support_resistance,
     get_news_context,
     watch_price_condition,
@@ -53,7 +54,15 @@ You must follow this exact loop until a perfect setup is found or registered:
    For intraday timeframes it returns BOTH micro S/R levels (from that timeframe's candles) AND daily macro levels.
    It also includes the Opening Range (first 3 candles) high/low — a key intraday reference.
    Use S3/S2/S1/Pivot/R1/R2/R3 for precise entry, stop-loss, and target placement.
-4. PRICE ACTION: Optionally call `get_candles` for specific timeframes. Candles include timestamps — use them to identify gap opens, session boundaries, and time-based patterns.
+4. STRUCTURAL PATTERNS: Call `get_chart_patterns` on relevant timeframes to detect institutional-grade chart formations.
+   The engine identifies 19 patterns across three categories:
+   - Reversal (8): Head & Shoulders, Inverse H&S, Double Top/Bottom, Triple Top/Bottom, Rising/Falling Wedge
+   - Continuation (6): Bullish/Bearish Flag, Bullish/Bearish Pennant, Cup & Handle, Inverse Cup & Handle
+   - Bilateral (4): Symmetrical Triangle, Ascending Triangle, Descending Triangle, Rectangle
+   Each detected pattern includes: pattern_type, sentiment (Bullish/Bearish/Neutral), confidence (0.0-1.0), and a description.
+   Use confidence > 0.6 patterns to strengthen your trade thesis. Cross-reference with S/R levels and multi-TF trend.
+   Call on MULTIPLE timeframes (e.g. '15m' and '1h') to find confluence — a pattern appearing on both timeframes is high-conviction.
+5. PRICE ACTION: Optionally call `get_candles` for specific timeframes. Candles include timestamps — use them to identify gap opens, session boundaries, and time-based patterns.
 
 CRITICAL: You must execute at least one tool call (e.g., `get_multi_tf_trend`) on your very first turn. Do not output text reasoning without calling a tool in the same turn.
 </order_of_operations>
@@ -158,6 +167,7 @@ tools = [
     get_candles,
     get_consensus_report,
     get_multi_tf_trend,
+    get_chart_patterns,
     get_support_resistance,
     get_news_context,
     watch_price_condition,
@@ -182,7 +192,7 @@ def parse_deepseek_custom_tool_calls(content: str) -> list:
     
     # 1. Look for tool names in the list
     valid_tools = [
-        "get_candles", "get_consensus_report", "get_multi_tf_trend",
+        "get_candles", "get_consensus_report", "get_multi_tf_trend", "get_chart_patterns",
         "get_support_resistance", "get_news_context", "watch_price_condition", "declare_trade"
     ]
     

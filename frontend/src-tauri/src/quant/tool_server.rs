@@ -24,6 +24,7 @@ use crate::quant::{
     IndicatorState, ConsensusEngine,
 };
 use crate::quant::vwepr::OhlcCandle;
+use crate::quant::chart_patterns::ChartPatternEngine;
 
 // ── Types & Payload Contracts ──────────────────────────────────────────────
 
@@ -398,6 +399,67 @@ async fn watch_condition(
     Ok(Json(serde_json::json!({ "status": "watching_registered" })))
 }
 
+// ── Chart Patterns Endpoint ──────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+pub struct GetChartPatternsRequest {
+    pub symbol: String,
+    pub timeframe: Option<String>,
+    pub limit: Option<i64>,
+}
+
+#[derive(serde::Serialize)]
+pub struct ChartPatternResponse {
+    pub symbol: String,
+    pub timeframe: String,
+    pub patterns: Vec<crate::quant::chart_patterns::ChartPattern>,
+}
+
+/// POST /tools/get_chart_patterns
+/// Identifies structural chart patterns (H&S, Double Top/Bottom, Triangles, Flags, etc.)
+/// from the candle history stored in QuestDB.
+async fn get_chart_patterns_handler(
+    State(state): State<ServerState>,
+    Json(payload): Json<GetChartPatternsRequest>,
+) -> Result<Json<ChartPatternResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let pool = state.app.try_state::<sqlx::PgPool>().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "QuestDB PG pool not available" })),
+        )
+    })?;
+
+    let limit = payload.limit.unwrap_or(200);
+    let tf = payload.timeframe.unwrap_or_else(|| "10m".to_string());
+    let candles = crate::commands::deep_quant::load_candles_from_db(
+        Some(&state.app),
+        pool.inner(),
+        &payload.symbol,
+        &tf,
+        limit,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
+    })?;
+
+    let patterns = ChartPatternEngine::analyze(&candles);
+
+    info!(
+        "[tool_server] get_chart_patterns: symbol={}, tf={}, detected {} patterns",
+        payload.symbol, tf, patterns.len()
+    );
+
+    Ok(Json(ChartPatternResponse {
+        symbol: payload.symbol,
+        timeframe: tf,
+        patterns,
+    }))
+}
+
 #[derive(serde::Deserialize)]
 pub struct MultiTfRequest {
     pub symbol: String,
@@ -554,6 +616,7 @@ pub async fn run_tool_server(app: AppHandle) {
         .route("/tools/watch_condition", post(watch_condition))
         .route("/tools/get_multi_tf_trend", post(get_multi_tf_trend_handler))
         .route("/tools/declare_trade", post(declare_trade))
+        .route("/tools/get_chart_patterns", post(get_chart_patterns_handler))
         .with_state(state);
 
     let addr = "127.0.0.1:8084";
