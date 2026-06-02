@@ -51,6 +51,32 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
 
+  const [leftPanelWidth, setLeftPanelWidth] = useState(224);
+  const [isResizing, setIsResizing] = useState(false);
+
+  const startResizing = (mouseDownEvent: React.MouseEvent) => {
+    mouseDownEvent.preventDefault();
+    setIsResizing(true);
+
+    const startWidth = leftPanelWidth;
+    const startX = mouseDownEvent.clientX;
+
+    const doDrag = (mouseMoveEvent: MouseEvent) => {
+      const deltaX = mouseMoveEvent.clientX - startX;
+      const newWidth = Math.max(180, Math.min(500, startWidth + deltaX));
+      setLeftPanelWidth(newWidth);
+    };
+
+    const stopDrag = () => {
+      setIsResizing(false);
+      document.removeEventListener('mousemove', doDrag);
+      document.removeEventListener('mouseup', stopDrag);
+    };
+
+    document.addEventListener('mousemove', doDrag);
+    document.addEventListener('mouseup', stopDrag);
+  };
+
   const broker = user?.brokerConnection;
 
   const getInitials = (name: string | null | undefined) => {
@@ -144,8 +170,28 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
       {/* Main Content */}
       <div className="flex flex-1 min-h-0 min-w-0 overflow-visible bg-background p-2 gap-2">
         {/* Watchlist */}
-        <aside className="flex w-56 shrink-0 min-h-0 flex-col overflow-visible border border-border-default rounded-lg bg-surface panel-shadow">
+        <aside 
+          className="relative flex shrink-0 min-h-0 flex-col overflow-visible border border-border-default rounded-lg bg-surface panel-shadow"
+          style={{ width: `${leftPanelWidth}px` }}
+        >
           {leftPanel}
+
+          {/* Resize Handle */}
+          <div
+            onMouseDown={startResizing}
+            className={`
+              absolute top-0 bottom-0 -right-1.5 w-3 cursor-col-resize z-20 hover:bg-emerald-500/10 transition-colors duration-150 rounded-r-md
+              flex items-center justify-center group
+              ${isResizing ? 'bg-emerald-500/20' : 'bg-transparent'}
+            `}
+            title="Drag to resize panel"
+          >
+            {/* Visual handle bar */}
+            <div className={`
+              w-0.5 h-6 bg-border-default rounded group-hover:bg-emerald-400 transition-colors
+              ${isResizing ? 'bg-emerald-400' : ''}
+            `} />
+          </div>
         </aside>
 
         {/* Tools Bar — hidden in fullscreen so the chart card can mount its own

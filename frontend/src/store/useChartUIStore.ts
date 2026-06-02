@@ -150,9 +150,11 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
       if (!invoke) return; // Not running in Tauri
 
       const { drawings } = get();
-      const stateJson = JSON.stringify({ drawings });
+      // Filter out temporary radar/system visualization drawings before saving
+      const userDrawings = drawings.filter((d) => !d.id.startsWith('radar-'));
+      const stateJson = JSON.stringify({ drawings: userDrawings });
       await invoke('save_workspace', { symbol, stateJson });
-      console.log(`[Workspace] Saved ${drawings.length} drawings for ${symbol}`);
+      console.log(`[Workspace] Saved ${userDrawings.length} drawings for ${symbol}`);
     } catch (err) {
       console.warn(`[Workspace] Failed to save workspace for ${symbol}:`, err);
     }
