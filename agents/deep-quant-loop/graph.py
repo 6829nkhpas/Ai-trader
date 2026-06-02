@@ -282,13 +282,25 @@ def call_model(state: AgentState):
             response.tool_calls = parsed_calls
             
     if response.tool_calls:
-        # Robustly clean tool names by stripping trailing/leading whitespace and newlines
+        fixed_calls = []
         for tc in response.tool_calls:
-            if "name" in tc:
-                cleaned_name = tc["name"].strip()
-                if cleaned_name != tc["name"]:
-                    print(f"[Deep Quant Agent] Cleaned tool name from '{tc['name']}' to '{cleaned_name}'")
-                    tc["name"] = cleaned_name
+            cleaned_tc = dict(tc)
+            # Clean tool name
+            if "name" in cleaned_tc:
+                cleaned_name = cleaned_tc["name"].strip()
+                if cleaned_name != cleaned_tc["name"]:
+                    print(f"[Deep Quant Agent] Cleaned tool name from '{cleaned_tc['name']}' to '{cleaned_name}'")
+                    cleaned_tc["name"] = cleaned_name
+            # Fix string args to dict
+            if "args" in cleaned_tc and isinstance(cleaned_tc["args"], str):
+                try:
+                    cleaned_tc["args"] = json.loads(cleaned_tc["args"])
+                    print(f"[Deep Quant Agent] Natively deserialized tool call '{cleaned_tc.get('name')}' string args to dict: {cleaned_tc['args']}")
+                except Exception as parse_err:
+                    print(f"[Deep Quant Agent] Failed to parse tool call '{cleaned_tc.get('name')}' args string: {parse_err}")
+            fixed_calls.append(cleaned_tc)
+        
+        response.tool_calls = fixed_calls
         print(f"[Deep Quant Agent] Model requested tool call(s): {[tc.get('name') for tc in response.tool_calls]}")
     else:
         snippet = (response.content or "").strip().replace('\n', ' ')
