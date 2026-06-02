@@ -430,10 +430,9 @@ pub(crate) async fn load_candles_with_ts(
                  FROM historical_candles \
                  WHERE symbol = $1 \
                  ORDER BY ts DESC \
-                 LIMIT $2",
+                 LIMIT 5000",
             )
             .bind(symbol)
-            .bind(limit)
             .fetch_all(pool)
             .await
         };
@@ -505,11 +504,10 @@ pub(crate) async fn load_candles_with_ts(
                  FROM historical_intraday \
                  WHERE symbol = $1 AND timeframe = $2 \
                  ORDER BY ts DESC \
-                 LIMIT $3",
+                 LIMIT 5000",
             )
             .bind(symbol)
             .bind(timeframe)
-            .bind(limit)
             .fetch_all(pool)
             .await
         };

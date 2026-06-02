@@ -1,6 +1,29 @@
 import os
 from typing import Annotated, Sequence, TypedDict, Optional
-from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.messages import SystemMessage, AIMessage, HumanMessage, BaseMessage
+import json
+
+# ── AIMessage Monkeypatch to robustly fix string args in tool calls ──────────
+original_init = AIMessage.__init__
+
+def patched_init(self, *args, **kwargs):
+    if "tool_calls" in kwargs and kwargs["tool_calls"]:
+        fixed_calls = []
+        for tc in kwargs["tool_calls"]:
+            cleaned_tc = dict(tc)
+            if "name" in cleaned_tc and isinstance(cleaned_tc["name"], str):
+                cleaned_tc["name"] = cleaned_tc["name"].strip()
+            if "args" in cleaned_tc and isinstance(cleaned_tc["args"], str):
+                try:
+                    cleaned_tc["args"] = json.loads(cleaned_tc["args"])
+                except Exception as e:
+                    print(f"[AIMessage Patch] Failed to parse JSON args: {e}")
+            fixed_calls.append(cleaned_tc)
+        kwargs["tool_calls"] = fixed_calls
+    original_init(self, *args, **kwargs)
+
+AIMessage.__init__ = patched_init
+
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, add_messages
 from langgraph.prebuilt import ToolNode

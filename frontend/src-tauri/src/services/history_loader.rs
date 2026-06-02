@@ -236,6 +236,16 @@ pub async fn load_historical_data(
 
     // ── 2. Build chunk windows (365-day slices) ─────────────────────────
     let mut chunk_start = five_years_ago;
+    if let Some(max) = existing.max_ts {
+        let max_start = max - chrono::Duration::days(1);
+        if max_start > chunk_start {
+            chunk_start = max_start;
+            info!(
+                "Optimizing historical load for {}: starting from existing max ({}) - 1 day",
+                symbol, max
+            );
+        }
+    }
     let mut total_inserted: u64 = 0;
     let client = reqwest::Client::new();
 
@@ -346,6 +356,16 @@ pub async fn load_intraday_data(
 
     // ── 2. Build chunk windows ──────────────────────────────────────────
     let mut chunk_start = lookback_start;
+    if let Some(max) = existing.max_ts {
+        let max_start = max - chrono::Duration::days(1);
+        if max_start > chunk_start {
+            chunk_start = max_start;
+            info!(
+                "Optimizing intraday load for {} [{}]: starting from existing max ({}) - 1 day",
+                symbol, timeframe, max
+            );
+        }
+    }
     let mut total_inserted: u64 = 0;
     let client = reqwest::Client::new();
 
