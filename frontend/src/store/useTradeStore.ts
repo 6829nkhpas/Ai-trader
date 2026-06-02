@@ -82,6 +82,7 @@ export interface MarketInsight {
   analysis_text: string;
   sentiment_score: number;
   anomaly_pct: number;
+  pattern?: any;
 }
 
 export interface ExecutedTrade {
@@ -103,6 +104,14 @@ export interface WatchlistItem {
   sector: string;
   lastPrice: number;
   change: number;
+}
+
+export interface OrderFlowTick {
+  timestamp: number;
+  price_level: number;
+  bid_volume: number;
+  ask_volume: number;
+  delta: number;
 }
 
 interface TradeStore {
@@ -130,6 +139,8 @@ interface TradeStore {
   historicalCache: Record<string, OhlcCandle[]>;
   /** Dynamic watchlist — user-curated list of symbols from search. */
   watchlist: WatchlistItem[];
+  chartMode: 'STANDARD' | 'VOLUME_PROFILE' | 'FOOTPRINT';
+  orderFlowData: OrderFlowTick[];
   setActiveProfile: (profile: TradeProfile) => void;
   setActiveTimeframe: (tf: ChartTimeframe) => void;
   setActiveRange: (range: DataRange) => void;
@@ -155,10 +166,13 @@ interface TradeStore {
   reorderWatchlist: (fromIndex: number, toIndex: number) => void;
   /** Replace the entire watchlist (used for hydration from persistence). */
   setWatchlist: (items: WatchlistItem[]) => void;
+  setChartMode: (mode: 'STANDARD' | 'VOLUME_PROFILE' | 'FOOTPRINT') => void;
+  addOrderFlowTick: (tick: OrderFlowTick) => void;
   connectWebSocket: () => void;
   connectAlphaWebSocket: (url: string) => void;
   connectPredictiveWebSocket: (url: string) => void;
   connectInsightWebSocket: (url: string) => void;
+  connectOrderFlowWebSocket: (url: string) => void;
   /** Stop all WebSocket reconnect loops (call on app unmount). */
   destroyWebSockets: () => void;
   executeTrade: (decision: AggregatedDecision, quantity: number) => void;
@@ -174,7 +188,7 @@ interface TradeStore {
 // ── Module-level WS destroy flags (BUG-5) ─────────────────────────────────
 // Using a mutable object instead of `const destroyed = false` inside closures,
 // which could never be set to true and caused infinite reconnect loops on unmount.
-const wsFlags = { alpha: false, predictive: false, insight: false };
+const wsFlags = { alpha: false, predictive: false, insight: false, orderFlow: false };
 
 // ── Watchlist Persistence ─────────────────────────────────────────────────
 // Saves the user's watchlist to the local SQLite workspace DB via Tauri IPC.
@@ -352,6 +366,8 @@ export const useTradeStore = create<TradeStore>((set) => {
     paperPortfolio: null,
     agentChatLog: [],
     finalTradePlan: null,
+    chartMode: 'STANDARD',
+    orderFlowData: [],
     clearAgentChatLog: () => set({ agentChatLog: [], finalTradePlan: null }),
 
     fetchPaperPortfolio: async () => {
@@ -627,11 +643,72 @@ export const useTradeStore = create<TradeStore>((set) => {
       connect();
     },
 
+    setChartMode: (mode: 'STANDARD' | 'VOLUME_PROFILE' | 'FOOTPRINT') => {
+      set({ chartMode: mode });
+    },
+
+    addOrderFlowTick: (tick: OrderFlowTick) => {
+      set((state) => {
+        const updated = [...state.orderFlowData, tick];
+        return {
+          orderFlowData: updated.length > 5000 ? updated.slice(-5000) : updated,
+        };
+      });
+    },
+
+    connectOrderFlowWebSocket: (url: string) => {
+      wsFlags.orderFlow = false;
+
+      const connect = () => {
+        if (wsFlags.orderFlow) return;
+        const orderFlowWs = new WebSocket(url);
+        syslog('INFO', `Order Flow WS connecting → ${url}`);
+
+        orderFlowWs.onopen = () => {
+          syslog('INFO', 'Order Flow WS connected. Streaming L2 tick data.');
+        };
+
+        orderFlowWs.onmessage = (event) => {
+          try {
+            const tick: OrderFlowTick = JSON.parse(event.data);
+            if (
+              typeof tick.timestamp !== 'number' ||
+              typeof tick.price_level !== 'number' ||
+              typeof tick.bid_volume !== 'number' ||
+              typeof tick.ask_volume !== 'number'
+            ) {
+              return;
+            }
+            set((state) => {
+              const updated = [...state.orderFlowData, tick];
+              return {
+                orderFlowData: updated.length > 5000 ? updated.slice(-5000) : updated,
+              };
+            });
+          } catch (e) {
+            syslog('ERROR', `Order flow parse error: ${e}`);
+          }
+        };
+
+        orderFlowWs.onclose = () => {
+          syslog('WARN', 'Order Flow WS disconnected. Reconnecting in 3s...');
+          if (!wsFlags.orderFlow) setTimeout(connect, 3000);
+        };
+
+        orderFlowWs.onerror = () => {
+          syslog('ERROR', `Order Flow WS connection error → ${url}`);
+        };
+      };
+
+      connect();
+    },
+
     destroyWebSockets: () => {
       // BUG-5: Stops all reconnect loops. Call on app unmount.
       wsFlags.alpha = true;
       wsFlags.predictive = true;
       wsFlags.insight = true;
+      wsFlags.orderFlow = true;
     },
 
     executeTrade: (decision: AggregatedDecision, quantity: number) => {

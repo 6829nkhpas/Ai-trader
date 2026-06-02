@@ -209,6 +209,37 @@ export default function MultiTfPatternsView() {
                     {Math.round(p.confidence * 100)}%
                   </span>
                 </div>
+
+                {/* Phase 9.2: Volume Validation & Breakout Status */}
+                <div className="flex items-center gap-1 pl-1 mt-0.5 flex-wrap">
+                  {p.volume_validation && (
+                    <span className={`
+                      inline-flex items-center gap-0.5 px-1 py-[1px] rounded text-[7px] font-bold uppercase tracking-wider border
+                      ${p.volume_validation.includes('Confirmed') 
+                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
+                        : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                      }
+                    `}>
+                      {p.volume_validation.includes('Confirmed') ? '✓' : '○'} Vol
+                    </span>
+                  )}
+                  {p.breakout_status && (
+                    <span className={`
+                      inline-flex items-center gap-0.5 px-1 py-[1px] rounded text-[7px] font-bold tracking-wider border
+                      ${p.breakout_status.includes('Confirmed') 
+                        ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20' 
+                        : 'bg-slate-500/10 text-slate-400 border-slate-500/20'
+                      }
+                    `}>
+                      {p.breakout_status}
+                    </span>
+                  )}
+                  {p.structural_bias && (
+                    <span className="inline-flex items-center px-1 py-[1px] rounded text-[7px] font-bold tracking-wider bg-violet-500/10 text-violet-400 border border-violet-500/20">
+                      {p.structural_bias}
+                    </span>
+                  )}
+                </div>
               </div>
             );
           })

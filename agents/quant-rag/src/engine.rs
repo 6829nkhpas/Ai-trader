@@ -18,6 +18,7 @@ pub mod engine {
     use crate::llm::LlmClient;
     use crate::proto::insight_data::MarketInsight;
     use crate::proto::market_data::OhlcCandle;
+    use crate::patterns::{Candle, ExtremaEngine, PatternClassifier, RollingWindow};
     use futures_util::StreamExt;
     use prost::Message;
     use rdkafka::config::ClientConfig;
@@ -169,6 +170,8 @@ pub mod engine {
         
         let mut last_global_call = Instant::now() - GLOBAL_COOLDOWN;
         let mut last_symbol_calls: std::collections::HashMap<String, Instant> = std::collections::HashMap::new();
+        let mut rolling_windows: std::collections::HashMap<String, RollingWindow> = std::collections::HashMap::new();
+        let mut cached_patterns: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
 
         // ── Event loop ───────────────────────────────────────────────────
         while let Some(message_result) = stream.next().await {
@@ -206,6 +209,47 @@ pub mod engine {
                             candle.close,
                             change_pct,
                         );
+
+                        // ── Update Rolling Window & Detect Patterns ──────
+                        let pcandle = Candle {
+                            time: candle.end_timestamp_ms / 1000,
+                            open: candle.open,
+                            high: candle.high,
+                            low: candle.low,
+                            close: candle.close,
+                            volume: candle.volume as f64,
+                        };
+
+                        let window = rolling_windows
+                            .entry(candle.symbol.clone())
+                            .or_insert_with(|| RollingWindow::new(&candle.symbol));
+                        window.add_candle(pcandle);
+
+                        let swings = ExtremaEngine::find_swings(&window.candles, 5);
+                        let alternated = ExtremaEngine::alternate_swings(&swings);
+                        let detected_patterns = PatternClassifier::analyze(&window.candles, &alternated);
+
+                        let active_pattern = detected_patterns.first().cloned();
+                        if let Some(ref pat) = active_pattern {
+                            if let Ok(val) = serde_json::to_value(pat) {
+                                cached_patterns.insert(candle.symbol.clone(), val);
+                            }
+                        } else {
+                            cached_patterns.remove(&candle.symbol);
+                        }
+
+                        // Broadcast latest pattern-only update to WebSocket so the frontend can visualize it
+                        let current_pattern_val = cached_patterns.get(&candle.symbol).cloned().unwrap_or(serde_json::Value::Null);
+                        let pattern_update_json = serde_json::json!({
+                            "symbol": candle.symbol.clone(),
+                            "timestamp_ms": now_ms(),
+                            "headline": "".to_string(),
+                            "analysis_text": "".to_string(),
+                            "sentiment_score": 50,
+                            "anomaly_pct": change_pct,
+                            "pattern": current_pattern_val,
+                        });
+                        let _ = ws_tx.send(pattern_update_json.to_string());
 
                         if change_pct < ANOMALY_THRESHOLD_PCT {
                             continue;
@@ -251,7 +295,9 @@ pub mod engine {
                             -change_pct
                         };
 
-                        match llm_client.generate_insight(&candle.symbol, signed_change).await {
+                        let active_pattern_str = cached_patterns.get(&candle.symbol).map(|v| v.to_string());
+
+                        match llm_client.generate_insight(&candle.symbol, signed_change, active_pattern_str).await {
                             Ok((headline, analysis, sentiment)) => {
                                 let insight = MarketInsight {
                                     symbol: candle.symbol.clone(),
@@ -270,6 +316,7 @@ pub mod engine {
                                 );
 
                                 // ── Broadcast over WebSocket (port 8083) ─────
+                                let pattern_val = cached_patterns.get(&candle.symbol).cloned().unwrap_or(serde_json::Value::Null);
                                 let json = serde_json::json!({
                                     "symbol": insight.symbol,
                                     "timestamp_ms": insight.timestamp_ms,
@@ -277,6 +324,7 @@ pub mod engine {
                                     "analysis_text": insight.analysis_text,
                                     "sentiment_score": insight.sentiment_score,
                                     "anomaly_pct": insight.anomaly_pct,
+                                    "pattern": pattern_val,
                                 });
 
                                 // Best-effort WS broadcast — receivers may be absent.

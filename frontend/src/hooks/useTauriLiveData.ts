@@ -113,6 +113,37 @@ export function useTauriLiveData(activeSymbol: string) {
         });
         cleanupFns.push(unlistenInsight);
 
+        // ── Order Flow Stream Listener ────────────────────────────────
+        const unlistenOrderFlow = await listen<any>('order_flow_stream', (event) => {
+          if (cancelled) return;
+          const tick = event.payload;
+          if (
+            typeof tick.timestamp !== 'number' ||
+            typeof tick.price_level !== 'number' ||
+            typeof tick.bid_volume !== 'number' ||
+            typeof tick.ask_volume !== 'number'
+          ) {
+            return;
+          }
+          useTradeStore.getState().addOrderFlowTick(tick);
+        });
+        cleanupFns.push(unlistenOrderFlow);
+
+        const unlistenOrderFlowAlt = await listen<any>('order-flow-tick', (event) => {
+          if (cancelled) return;
+          const tick = event.payload;
+          if (
+            typeof tick.timestamp !== 'number' ||
+            typeof tick.price_level !== 'number' ||
+            typeof tick.bid_volume !== 'number' ||
+            typeof tick.ask_volume !== 'number'
+          ) {
+            return;
+          }
+          useTradeStore.getState().addOrderFlowTick(tick);
+        });
+        cleanupFns.push(unlistenOrderFlowAlt);
+
         useTradeStore.getState().addSystemLog('INFO', `Tauri IPC live data bound to ${activeSymbol}`);
       } catch {
         // Not in Tauri context — listeners will be handled by WebSocket fallback

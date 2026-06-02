@@ -11,6 +11,7 @@
 
 mod engine;
 mod llm;
+mod patterns;
 mod proto;
 mod ws_server;
 

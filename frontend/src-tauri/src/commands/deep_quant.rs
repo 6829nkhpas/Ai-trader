@@ -1864,6 +1864,11 @@ pub struct ApiChartPattern {
     pub start_time: Option<i64>,
     pub high: Option<f64>,
     pub low: Option<f64>,
+    // Phase 9.2 fields
+    pub structural_bias: String,
+    pub geometric_strictness: f64,
+    pub volume_validation: String,
+    pub breakout_status: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1941,6 +1946,10 @@ pub async fn get_multi_timeframe_chart_patterns(
                             start_time,
                             high,
                             low,
+                            structural_bias: p.structural_bias,
+                            geometric_strictness: p.geometric_strictness,
+                            volume_validation: p.volume_validation,
+                            breakout_status: p.breakout_status,
                         });
                     }
 

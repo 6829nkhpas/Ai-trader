@@ -74,12 +74,24 @@ pub fn classify_bias(name: &str) -> &'static str {
         || n.contains("golden")
         || n.contains("breakout")
         || n.contains("bounce")
-        || n.contains("accumulation");
+        || n.contains("accumulation")
+        || n.contains("inverse head")
+        || n.contains("falling wedge")
+        || n.contains("double bottom")
+        || n.contains("triple bottom")
+        || n.contains("ascending tri")
+        || n.contains("cup and handle");
     let bearish = n.contains("bear")
         || n.contains("shooting")
         || n.contains("death")
         || n.contains("breakdown")
-        || n.contains("distribution");
+        || n.contains("distribution")
+        || n.contains("head & shoulders top")
+        || n.contains("rising wedge")
+        || n.contains("double top")
+        || n.contains("triple top")
+        || n.contains("descending tri")
+        || n.contains("inverse cup");
 
     if bullish && !bearish {
         BIAS_BULLISH

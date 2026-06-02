@@ -151,7 +151,7 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
 
       const { drawings } = get();
       // Filter out temporary radar/system visualization drawings before saving
-      const userDrawings = drawings.filter((d) => !d.id.startsWith('radar-'));
+      const userDrawings = drawings.filter((d) => !d.id.startsWith('radar-') && !d.id.startsWith('realtime-pattern-'));
       const stateJson = JSON.stringify({ drawings: userDrawings });
       await invoke('save_workspace', { symbol, stateJson });
       console.log(`[Workspace] Saved ${userDrawings.length} drawings for ${symbol}`);

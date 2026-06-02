@@ -51,6 +51,7 @@ pub fn ensure_bootstrapped(app: &AppHandle) {
     spawn_bridge(app.clone(), 8081, "ohlc-tick");
     spawn_bridge(app.clone(), 8082, "predictive-tick");
     spawn_bridge(app.clone(), 8083, "insight-tick");
+    spawn_bridge(app.clone(), 8089, "order_flow_stream");
 }
 
 /// Spawn one WS → Tauri-event forwarding task.

@@ -2,8 +2,8 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
 import { Loader2 } from 'lucide-react';
-import AlphaPredictiveChart from '../AlphaPredictiveChart';
-import type { Timeframe } from '../AlphaPredictiveChart';
+import MainTerminalChart from '../MainTerminalChart';
+import type { Timeframe } from '../../utils/chartTypes';
 import { TradeProfile, MarketInsight, useTradeStore } from '../../store/useTradeStore';
 import { useMacroIndicators } from '../../hooks/useMacroIndicators';
 
@@ -65,7 +65,7 @@ export function MacroSentimentPanel() {
 
   // Sync live WebSocket insights if they match the active selectedSymbol
   useEffect(() => {
-    if (latestInsight && latestInsight.symbol.toUpperCase() === selectedSymbol.toUpperCase()) {
+    if (latestInsight && latestInsight.headline && latestInsight.symbol.toUpperCase() === selectedSymbol.toUpperCase()) {
       setActiveInsight(latestInsight);
     }
   }, [latestInsight, selectedSymbol]);
@@ -167,7 +167,7 @@ export function MacroSentimentPanel() {
 export default function InvestorLayout({ activeProfile = 'INVESTOR', timeframe = '1D', isExpanded = false, onToggleExpand }: InvestorLayoutProps) {
   return (
     <div id="investor-hud" className="flex h-full flex-col min-h-0 rounded-lg border border-border-default bg-surface overflow-hidden">
-      <AlphaPredictiveChart
+      <MainTerminalChart
         activeProfile={activeProfile}
         timeframe={timeframe as Timeframe}
         isExpanded={isExpanded}

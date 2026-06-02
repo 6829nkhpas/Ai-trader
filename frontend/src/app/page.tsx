@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Maximize2, Minimize2, Clock } from 'lucide-react';
 import TradingChart from '../components/TradingChart';
 import ChartToolsBar from '../components/chart/ChartToolsBar';
+import ChartModeToggle from '../components/chart/ChartHeader';
 import TerminalLayout from '../components/layout/TerminalLayout';
 import LeftPanel from '../components/panels/LeftPanel';
 import OrderExecutionPanel from '../components/panels/OrderExecutionPanel';
@@ -38,7 +39,7 @@ const SIDEBAR_CONFIG: Record<TradeProfile, { label: string; badge: string; badge
 };
 
 export default function Home() {
-  const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, setActiveTimeframe, activeRange, setActiveRange, selectedSymbol, paperPortfolio } = useTradeStore();
+  const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, connectOrderFlowWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, setActiveTimeframe, activeRange, setActiveRange, selectedSymbol, paperPortfolio } = useTradeStore();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const isBrokerConnected = useAuthStore((s) => s.isBrokerConnected);
   const setBrokerConnected = useAuthStore((s) => s.setBrokerConnected);
@@ -189,7 +190,8 @@ export default function Home() {
     connectAlphaWebSocket('ws://127.0.0.1:8081');
     connectPredictiveWebSocket('ws://127.0.0.1:8082');
     connectInsightWebSocket('ws://127.0.0.1:8083');
-  }, [connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket]);
+    connectOrderFlowWebSocket('ws://127.0.0.1:8089');
+  }, [connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, connectOrderFlowWebSocket]);
 
   // Derive symbol early so hooks below can reference it unconditionally.
   // selectedSymbol (watchlist click) takes priority over the AI decision symbol.
@@ -353,6 +355,9 @@ export default function Home() {
                 </div>
 
                 <div className="flex items-center gap-2">
+                  {/* Chart Mode Toggle */}
+                  <ChartModeToggle />
+
                   {/* Timeframe dropdown */}
                   <div className="relative" ref={tfDropdownRef}>
                     <button

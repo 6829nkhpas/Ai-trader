@@ -2,8 +2,8 @@
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { ChevronDown, Zap, TrendingUp, TrendingDown, Minus } from 'lucide-react';
-import AlphaPredictiveChart from '../AlphaPredictiveChart';
-import type { Timeframe } from '../AlphaPredictiveChart';
+import MainTerminalChart from '../MainTerminalChart';
+import type { Timeframe } from '../../utils/chartTypes';
 import { TradeProfile, MarketInsight, useTradeStore } from '../../store/useTradeStore';
 import { useMultiTimeframeTrend } from '../../hooks/useMultiTimeframeTrend';
 import type { TrendBias } from '../../hooks/useMultiTimeframeTrend';
@@ -160,7 +160,7 @@ export function SwingConfluencePanel() {
 
   // Handle live ticks from WebSocket
   useEffect(() => {
-    if (!latestInsight) return;
+    if (!latestInsight || !latestInsight.headline) return;
 
     setInsightHistory((prev) => {
       // Skip duplicates (same timestamp + symbol)
@@ -337,7 +337,7 @@ export function SwingConfluencePanel() {
 export default function SwingLayout({ activeProfile = 'SWING', timeframe = '1h', isExpanded = false, onToggleExpand }: SwingLayoutProps) {
   return (
     <div id="swing-hud" className="flex h-full flex-col min-h-0 rounded-lg border border-border-default bg-surface overflow-hidden">
-      <AlphaPredictiveChart
+      <MainTerminalChart
         activeProfile={activeProfile}
         timeframe={timeframe as Timeframe}
         isExpanded={isExpanded}

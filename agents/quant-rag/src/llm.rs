@@ -62,9 +62,10 @@ impl LlmClient {
         &self,
         symbol: &str,
         price_change_pct: f64,
+        active_pattern: Option<String>,
     ) -> Result<(String, String, i32), Box<dyn Error>> {
         // ── Build the request payload ────────────────────────────────────
-        let system_prompt = concat!(
+        let mut system_prompt = String::from(concat!(
             "You are an elite quantitative analyst at a tier-1 hedge fund. ",
             "A market anomaly has been detected. Provide a rapid 2-sentence analysis. ",
             "You MUST return ONLY a valid JSON object with exactly three keys: ",
@@ -74,7 +75,14 @@ impl LlmClient {
             "bearish and 100 is extremely bullish). ",
             "Do NOT wrap the JSON in markdown code fences. Do NOT include any text ",
             "outside the JSON object. Return raw JSON only."
-        );
+        ));
+
+        if let Some(ref pattern_json) = active_pattern {
+            system_prompt.push_str(&format!(
+                "\n\nActive Market Structure Pattern:\n{}\nUse this exact geometric context for your market analysis.",
+                pattern_json
+            ));
+        }
 
         let user_prompt = format!(
             "Generate a rapid analysis for {} which just moved {:.2}%.",

@@ -30,7 +30,11 @@
   - Features the V2 Alpha Predictive Chart, which ingests `OhlcCandle` data directly from the V2 WebSocket on port 8081, operating completely parallel to the V1 Aggregator feed on port 8080.
   - Renders AI forward-projections as dashed Ghost Lines using `PredictiveSignal` data from the Predictive WebSocket on port 8082.
   - **Live Data Only:** All synthetic mock data generators (setInterval random price walks, hardcoded order books) have been purged. UI components only update state when real IPC/WebSocket data arrives from the backend.
-  - **Institutional Charting Canvas** (`AlphaPredictiveChart.tsx`):
+  - **Institutional Charting Canvas** (`MainTerminalChart.tsx` router):
+    - **Standard Mode:** Renders standard candlestick chart with momentum ribbons and ML-based Ghost Line projections.
+    - **Volume Profile Mode:** Overlays a custom HTML5 canvas aggregating price levels and volumes on the visible logical range, highlighting the POC (Point of Control) line in red and shading the Value Area.
+    - **Footprint Mode:** Bypasses lightweight-charts to render a highly optimized, custom grid canvas. Plots Level 2 order flow bid/ask volume text (`[Bid Vol] x [Ask Vol]`) directly at exact tick prices, colored by delta imbalance (green for positive delta, red for negative delta), with interactive scroll/zoom capabilities. Uses a requestAnimationFrame-driven render loop to circumvent DOM text-rendering and canvas layout bottlenecks.
+    - **Tauri Order Flow live bridge (`live_bridges.rs`):** laziness-loaded bridge on port `8089` forwarding JSON payloads of real-time ticks to the frontend via `order_flow_stream`.
     - **Dark-Mode Canvas:** Deep slate-900 (`#0F172A`) background with `#CBD5E1` axis text and subtle `rgba(51,65,85,0.4)` grid lines. Crosshair uses dashed slate lines with dark label backgrounds.
     - **Volume Histogram:** Pinned to the bottom 20% of the chart via `priceScaleId: ''` + `scaleMargins: { top: 0.8, bottom: 0 }`. Volume bars are conditionally colored — green (`#22c55e35`) for bullish candles, red (`#ef444430`) for bearish candles.
     - **EMA 9/21 Momentum Ribbons:** Two line series overlaid on the candlestick chart — EMA 9 (cyan `#38bdf8`, lineWidth 2) and EMA 21 (pink `#f472b6`, lineWidth 2). EMAs are calculated client-side using an Exponential Moving Average engine with SMA-seeded initialization. Values update dynamically as new candles arrive via WebSocket. Current EMA values are displayed as color-coded badges in the chart header.

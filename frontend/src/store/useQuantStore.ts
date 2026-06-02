@@ -64,6 +64,11 @@ export interface ChartPattern {
   start_time?: number;
   high?: number;
   low?: number;
+  // Phase 9.2 fields
+  structural_bias: string;
+  geometric_strictness: number;
+  volume_validation: string;
+  breakout_status: string;
 }
 
 export interface MultiTfChartPatterns {

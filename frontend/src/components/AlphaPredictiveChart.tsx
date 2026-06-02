@@ -18,9 +18,11 @@ import { DrawingOverlays } from './chart/DrawingOverlays';
 import { useDrawingRenderer } from '../hooks/useDrawingRenderer';
 import { useFibZoneOverlay } from '../hooks/useFibZoneOverlay';
 import { useRadarOverlay } from '../hooks/useRadarOverlay';
+import { useRealtimePatternOverlay } from '../hooks/useRealtimePatternOverlay';
 import { useBrushCanvas } from '../hooks/useBrushCanvas';
 import { useTauriLiveData } from '../hooks/useTauriLiveData';
 import type { GhostLineMode } from '../store/useChartUIStore';
+import VolumeProfileOverlay from './chart/VolumeProfileOverlay';
 
 // ── Ghost Line Engine Toggle ──────────────────────────────────────────────
 //
@@ -103,7 +105,8 @@ export default function AlphaPredictiveChart({
   timeframe = '1m',
   isExpanded = false,
   onToggleExpand,
-}: AlphaPredictiveChartProps) {
+  showVolumeProfile = false,
+}: AlphaPredictiveChartProps & { showVolumeProfile?: boolean }) {
   // ── Store Subscriptions ─────────────────────────────────────────────
   const ohlcCandles = useTradeStore((s) => s.ohlcCandles);
   const activeDecision = useTradeStore((s) => s.activeDecision);
@@ -222,6 +225,7 @@ export default function AlphaPredictiveChart({
   useDrawingRenderer(refs, chartData);
   useFibZoneOverlay(refs, chartData);
   useRadarOverlay(refs, chartData);
+  useRealtimePatternOverlay(refs, chartData);
   useBrushCanvas(refs.chartRef, refs.candleSeriesRef, containerRef);
 
   // ── Hovered Candle OHLC State ─────────────────────────────────────────
@@ -331,6 +335,8 @@ export default function AlphaPredictiveChart({
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [activeSymbol]);
 
+  // Volume Profile drawing logic is delegated to the VolumeProfileOverlay component.
+
   // ── Render Helpers ───────────────────────────────────────────────────
   const cursorClass = useMemo(() => {
     if (activeDrawingTool) return 'cursor-crosshair';
@@ -355,6 +361,16 @@ export default function AlphaPredictiveChart({
 
       {/* ── Fibonacci Colored Zone Overlay (ref-based, no re-renders) ─ */}
       <div ref={refs.fibOverlayRef} className="pointer-events-none absolute inset-0" />
+
+      {/* ── Volume Profile Canvas Overlay ─────────────────────────── */}
+      {showVolumeProfile && (
+        <VolumeProfileOverlay
+          chartRef={refs.chartRef}
+          candleSeriesRef={refs.candleSeriesRef}
+          chartData={chartData}
+          volumeData={volumeData}
+        />
+      )}
 
       {/* ── OHLC watermark (top-left overlay) ───────────────────── */}
       {ohlcLabel && (
