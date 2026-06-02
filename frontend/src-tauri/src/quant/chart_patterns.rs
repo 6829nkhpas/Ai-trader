@@ -952,8 +952,8 @@ impl ChartPatternEngine {
             return;
         }
 
-        let (res_slope, res_intercept) = Self::linear_regression(&peaks);
-        let (sup_slope, sup_intercept) = Self::linear_regression(&troughs);
+        let (res_slope, _res_intercept) = Self::linear_regression(&peaks);
+        let (sup_slope, _sup_intercept) = Self::linear_regression(&troughs);
 
         if res_slope.abs() < FLAT_SLOPE_THRESHOLD && sup_slope.abs() < FLAT_SLOPE_THRESHOLD {
             let avg_res = peaks.iter().map(|p| p.1).sum::<f64>() / peaks.len() as f64;
