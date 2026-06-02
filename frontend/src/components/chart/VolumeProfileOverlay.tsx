@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import type { ChartCandle, VolumeBar } from '../../utils/chartTypes';
 
 interface VolumeProfileOverlayProps {
@@ -17,231 +17,317 @@ export default function VolumeProfileOverlay({
   volumeData,
 }: VolumeProfileOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const rafRef = useRef<number>(0);
+  const needsRedrawRef = useRef(true);
 
-  const drawVolumeProfileRef = useRef<() => void>(undefined);
+  // Keep latest data accessible to the rAF loop via a ref (avoids stale closures)
+  const dataRef = useRef({ chartData, volumeData });
+  dataRef.current = { chartData, volumeData };
 
-  const drawVolumeProfile = () => {
+  // ── Core Drawing Function ──────────────────────────────────────────────────
+  const draw = useCallback(() => {
     try {
       const canvas = canvasRef.current;
-      const currentChart = chartRef.current;
-      const currentSeries = candleSeriesRef.current;
-      if (!canvas || !currentChart || !currentSeries || chartData.length === 0) return;
+      const chart = chartRef.current;
+      const series = candleSeriesRef.current;
+      const { chartData: cData, volumeData: vData } = dataRef.current;
+
+      if (!canvas || !chart || !series || cData.length === 0) return;
 
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      const rect = canvas.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) return;
+      const parent = canvas.parentElement;
+      if (!parent) return;
 
-      const dpr = window.devicePixelRatio || 1;
-      const expectedWidth = Math.floor(rect.width * dpr);
-      const expectedHeight = Math.floor(rect.height * dpr);
+      const rect = parent.getBoundingClientRect();
+      if (rect.width < 1 || rect.height < 1) return;
 
-      if (canvas.width !== expectedWidth || canvas.height !== expectedHeight) {
-        canvas.width = expectedWidth;
-        canvas.height = expectedHeight;
-        ctx.scale(dpr, dpr);
-      } else {
-        ctx.clearRect(0, 0, rect.width, rect.height);
+      // ── 4K Supersampling ─────────────────────────────────────────────────
+      const dpr = (window.devicePixelRatio || 1) * 2;
+      const bw = Math.floor(rect.width * dpr);
+      const bh = Math.floor(rect.height * dpr);
+
+      if (canvas.width !== bw || canvas.height !== bh) {
+        canvas.width = bw;
+        canvas.height = bh;
       }
 
-      const logicalRange = currentChart.timeScale().getVisibleLogicalRange();
-      if (!logicalRange) {
-        ctx.clearRect(0, 0, rect.width, rect.height);
+      // Always reset transform before drawing to prevent accumulation
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+
+      const w = rect.width;
+
+      // ── Visible Range ────────────────────────────────────────────────────
+      let logicalRange: any;
+      try {
+        logicalRange = chart.timeScale().getVisibleLogicalRange();
+      } catch {
         return;
       }
-
       if (
-        logicalRange.from === null ||
-        logicalRange.to === null ||
+        !logicalRange ||
+        logicalRange.from == null ||
+        logicalRange.to == null ||
         isNaN(logicalRange.from) ||
         isNaN(logicalRange.to)
-      ) {
-        ctx.clearRect(0, 0, rect.width, rect.height);
+      )
         return;
+
+      const fromIdx = Math.max(0, Math.floor(logicalRange.from));
+      const toIdx = Math.min(cData.length - 1, Math.ceil(logicalRange.to));
+      if (isNaN(fromIdx) || isNaN(toIdx) || fromIdx > toIdx) return;
+
+      const visible = cData.slice(fromIdx, toIdx + 1);
+      if (visible.length === 0) return;
+
+      // ── Price Range ──────────────────────────────────────────────────────
+      let minP = Infinity,
+        maxP = -Infinity;
+      for (const c of visible) {
+        if (c.low < minP) minP = c.low;
+        if (c.high > maxP) maxP = c.high;
       }
+      if (minP >= maxP) return;
 
-      const fromIndex = Math.max(0, Math.floor(logicalRange.from));
-      const toIndex = Math.min(chartData.length - 1, Math.ceil(logicalRange.to));
+      // ── Bin Volume into 50 price levels ──────────────────────────────────
+      const BIN_COUNT = 50;
+      const binSize = (maxP - minP) / BIN_COUNT;
+      const bins = new Float64Array(BIN_COUNT);
 
-      if (isNaN(fromIndex) || isNaN(toIndex) || fromIndex > toIndex) {
-        ctx.clearRect(0, 0, rect.width, rect.height);
-        return;
-      }
+      // O(1) volume lookup map (avoid .find() per candle)
+      const volMap = new Map<any, number>();
+      for (const v of vData) volMap.set(v.time, v.value);
 
-      const visibleCandles = chartData.slice(fromIndex, toIndex + 1);
-
-      if (visibleCandles.length === 0) {
-        ctx.clearRect(0, 0, rect.width, rect.height);
-        return;
-      }
-
-      // Find price range in visible window
-      let minPrice = Infinity;
-      let maxPrice = -Infinity;
-      visibleCandles.forEach((c) => {
-        if (c.low < minPrice) minPrice = c.low;
-        if (c.high > maxPrice) maxPrice = c.high;
-      });
-
-      if (minPrice === Infinity || maxPrice === -Infinity || minPrice === maxPrice) {
-        ctx.clearRect(0, 0, rect.width, rect.height);
-        return;
-      }
-
-      // Group into 40 price bins
-      const binCount = 40;
-      const binSize = (maxPrice - minPrice) / binCount;
-      const bins = Array(binCount).fill(0);
-
-      visibleCandles.forEach((c) => {
-        const volBar = volumeData.find((v) => v.time === c.time);
-        const volumeVal = volBar ? volBar.value : 0;
-
-        const lowBin = Math.floor((c.low - minPrice) / binSize);
-        const highBin = Math.floor((c.high - minPrice) / binSize);
-        if (lowBin === highBin) {
-          const b = Math.min(binCount - 1, Math.max(0, lowBin));
-          bins[b] += volumeVal;
+      for (const c of visible) {
+        const vol = volMap.get(c.time) || 0;
+        const lo = Math.max(0, Math.floor((c.low - minP) / binSize));
+        const hi = Math.min(BIN_COUNT - 1, Math.floor((c.high - minP) / binSize));
+        if (lo === hi) {
+          bins[lo] += vol;
         } else {
-          const share = volumeVal / (highBin - lowBin + 1);
-          for (let i = lowBin; i <= highBin; i++) {
-            if (i >= 0 && i < binCount) bins[i] += share;
-          }
-        }
-      });
-
-      // Find POC (Point of Control)
-      let maxVol = 0;
-      let pocIndex = -1;
-      bins.forEach((v, idx) => {
-        if (v > maxVol) {
-          maxVol = v;
-          pocIndex = idx;
-        }
-      });
-
-      // Institutional Value Area (VA) Calculation (70% of total volume)
-      const totalVolume = bins.reduce((sum, v) => sum + v, 0);
-      const targetVolume = totalVolume * 0.70;
-      const vaBins = new Set<number>();
-
-      if (pocIndex !== -1 && totalVolume > 0) {
-        vaBins.add(pocIndex);
-        let vaVolume = bins[pocIndex];
-        let lowerIdx = pocIndex;
-        let upperIdx = pocIndex;
-
-        while (vaVolume < targetVolume) {
-          const volBelow = lowerIdx > 0 ? bins[lowerIdx - 1] : 0;
-          const volAbove = upperIdx < binCount - 1 ? bins[upperIdx + 1] : 0;
-
-          if (volBelow === 0 && volAbove === 0) break;
-
-          if (volBelow >= volAbove) {
-            lowerIdx--;
-            vaBins.add(lowerIdx);
-            vaVolume += volBelow;
-          } else {
-            upperIdx++;
-            vaBins.add(upperIdx);
-            vaVolume += volAbove;
-          }
+          const share = vol / (hi - lo + 1);
+          for (let i = lo; i <= hi; i++) bins[i] += share;
         }
       }
 
-      const maxWidth = rect.width * 0.35; // Profile takes max 35% of chart width
+      // ── Point of Control (POC) ───────────────────────────────────────────
+      let maxVol = 0,
+        pocIdx = 0;
+      for (let i = 0; i < BIN_COUNT; i++) {
+        if (bins[i] > maxVol) {
+          maxVol = bins[i];
+          pocIdx = i;
+        }
+      }
+      if (maxVol === 0) return;
 
-      // Draw horizontal profile bars on the left Y-axis
-      for (let i = 0; i < binCount; i++) {
-        const binPriceLow = minPrice + i * binSize;
-        const binPriceHigh = minPrice + (i + 1) * binSize;
+      // ── Value Area (70% of total volume, expanding from POC) ─────────────
+      const totalVol = bins.reduce((s, v) => s + v, 0);
+      const vaTarget = totalVol * 0.7;
+      const vaSet = new Set<number>();
+      vaSet.add(pocIdx);
+      let vaVol = bins[pocIdx];
+      let vaLo = pocIdx,
+        vaHi = pocIdx;
+      while (vaVol < vaTarget) {
+        const below = vaLo > 0 ? bins[vaLo - 1] : 0;
+        const above = vaHi < BIN_COUNT - 1 ? bins[vaHi + 1] : 0;
+        if (below === 0 && above === 0) break;
+        if (below >= above) {
+          vaLo--;
+          vaSet.add(vaLo);
+          vaVol += below;
+        } else {
+          vaHi++;
+          vaSet.add(vaHi);
+          vaVol += above;
+        }
+      }
 
-        const yHigh = currentSeries.priceToCoordinate(binPriceHigh);
-        const yLow = currentSeries.priceToCoordinate(binPriceLow);
-        if (yHigh === null || yLow === null || isNaN(yHigh) || isNaN(yLow)) continue;
+      // ── Draw Bars from RIGHT side (professional volume profile layout) ───
+      const rightMargin = 65; // lightweight-charts right price scale
+      const profileMaxW = w * 0.30;
+      const barAnchorX = w - rightMargin;
 
-        const barHeight = Math.abs(yLow - yHigh);
-        const barWidth = maxVol > 0 ? (bins[i] / maxVol) * maxWidth : 0;
+      for (let i = 0; i < BIN_COUNT; i++) {
+        const pLo = minP + i * binSize;
+        const pHi = minP + (i + 1) * binSize;
 
-        const isValueArea = vaBins.has(i);
+        let yHi: number | null, yLo: number | null;
+        try {
+          yHi = series.priceToCoordinate(pHi);
+          yLo = series.priceToCoordinate(pLo);
+        } catch {
+          continue;
+        }
+        if (yHi == null || yLo == null || isNaN(yHi) || isNaN(yLo)) continue;
 
-        // Styling: Solid blue/gray for Value Area, translucent for outside VA
-        ctx.fillStyle = isValueArea
-          ? 'rgba(59, 130, 246, 0.25)' // Solid blue/gray with 25% opacity
-          : 'rgba(148, 163, 184, 0.08)'; // Slate with 8% opacity
+        const barH = Math.max(1, Math.abs(yLo - yHi));
+        const barW = (bins[i] / maxVol) * profileMaxW;
+        const yTop = Math.round(Math.min(yHi, yLo));
+        const xStart = Math.round(barAnchorX - barW);
+        const roundedBarW = Math.round(barW);
+        const roundedBarH = Math.round(barH);
 
-        ctx.fillRect(0, Math.min(yHigh, yLow), barWidth, barHeight);
+        const isVA = vaSet.has(i);
 
-        ctx.strokeStyle = isValueArea ? 'rgba(59, 130, 246, 0.1)' : 'rgba(148, 163, 184, 0.04)';
+        // VA bars: warm amber/orange. Non-VA: cool slate gray
+        ctx.fillStyle = isVA
+          ? 'rgba(245, 158, 11, 0.35)'
+          : 'rgba(148, 163, 184, 0.12)';
+        ctx.fillRect(xStart, yTop, roundedBarW, roundedBarH);
+
+        // Subtle edge border
+        ctx.strokeStyle = isVA
+          ? 'rgba(245, 158, 11, 0.18)'
+          : 'rgba(148, 163, 184, 0.06)';
         ctx.lineWidth = 0.5;
-        ctx.strokeRect(0, Math.min(yHigh, yLow), barWidth, barHeight);
+        ctx.strokeRect(xStart + 0.5, yTop + 0.5, roundedBarW, roundedBarH);
       }
 
-      // Draw a bright solid red POC line spanning the width of the profile
-      if (pocIndex !== -1) {
-        const pocPrice = minPrice + (pocIndex + 0.5) * binSize;
-        const yPoc = currentSeries.priceToCoordinate(pocPrice);
-        if (yPoc !== null && !isNaN(yPoc)) {
-          ctx.strokeStyle = '#ef4444'; // Bright red
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.moveTo(0, yPoc);
-          ctx.lineTo(maxWidth, yPoc);
-          ctx.stroke();
+      // ── POC Line (pink, dashed, full width) ──────────────────────────────
+      const pocPrice = minP + (pocIdx + 0.5) * binSize;
+      let yPoc: number | null;
+      try {
+        yPoc = series.priceToCoordinate(pocPrice);
+      } catch {
+        return;
+      }
+      if (yPoc != null && !isNaN(yPoc)) {
+        const yP = Math.round(yPoc) + 0.5; // +0.5 → crisp 1px line
+        ctx.strokeStyle = '#ec4899'; // pink-500
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 3]);
+        ctx.beginPath();
+        ctx.moveTo(0, yP);
+        ctx.lineTo(barAnchorX, yP);
+        ctx.stroke();
+        ctx.setLineDash([]);
 
-          // Label
-          ctx.fillStyle = '#ef4444';
-          ctx.font = 'bold 9px monospace';
-          ctx.fillText(`POC ${pocPrice.toFixed(2)}`, maxWidth + 8, yPoc + 3);
+        // POC label
+        ctx.fillStyle = '#ec4899';
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`POC ${pocPrice.toFixed(2)}`, 8, yP - 10);
+      }
+
+      // ── VAH / VAL Reference Lines (purple, dashed) ──────────────────────
+      const vahPrice = minP + (vaHi + 1) * binSize;
+      const valPrice = minP + vaLo * binSize;
+
+      for (const { price, label } of [
+        { price: vahPrice, label: 'VAH' },
+        { price: valPrice, label: 'VAL' },
+      ]) {
+        let yLine: number | null;
+        try {
+          yLine = series.priceToCoordinate(price);
+        } catch {
+          continue;
         }
+        if (yLine == null || isNaN(yLine)) continue;
+
+        const yL = Math.round(yLine) + 0.5;
+        ctx.strokeStyle = 'rgba(168, 85, 247, 0.5)'; // purple
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(0, yL);
+        ctx.lineTo(barAnchorX, yL);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.fillStyle = 'rgba(168, 85, 247, 0.7)';
+        ctx.font = '9px monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`${label} ${price.toFixed(2)}`, 8, yL - 8);
       }
-    } catch (err) {
-      console.warn('[VolumeProfileOverlay] Draw error ignored:', err);
+    } catch {
+      // Silently swallow any transient drawing errors
     }
-  };
+  }, [chartRef, candleSeriesRef]);
 
-  drawVolumeProfileRef.current = drawVolumeProfile;
-
-  // ── Stable event listener setup ──────────────────────────────────────────
+  // ── requestAnimationFrame Render Loop ───────────────────────────────────────
+  // Only draws when the dirty flag is set, avoiding wasted GPU cycles.
   useEffect(() => {
-    const chart = chartRef.current;
-    if (!chart) return;
+    let active = true;
 
-    const onVisibleRangeChange = () => {
-      drawVolumeProfileRef.current?.();
+    const loop = () => {
+      if (!active) return;
+      if (needsRedrawRef.current) {
+        needsRedrawRef.current = false;
+        draw();
+      }
+      rafRef.current = requestAnimationFrame(loop);
     };
 
-    chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleRangeChange);
-
-    const resizeHandler = () => {
-      drawVolumeProfileRef.current?.();
-    };
-    window.addEventListener('resize', resizeHandler);
-
-    // Initial draw trigger (slight delay to let parent render references finish)
-    const timer = setTimeout(() => {
-      drawVolumeProfileRef.current?.();
-    }, 50);
+    rafRef.current = requestAnimationFrame(loop);
 
     return () => {
-      clearTimeout(timer);
+      active = false;
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, [draw]);
+
+  // ── Chart Event Subscriptions (only set dirty flag, never draw directly) ───
+  useEffect(() => {
+    let active = true;
+    let unsubFn: (() => void) | null = null;
+
+    const markDirty = () => {
+      needsRedrawRef.current = true;
+    };
+
+    // Retry subscription until chart ref is available
+    const trySubscribe = () => {
+      const chart = chartRef.current;
+      if (!chart) {
+        if (active) setTimeout(trySubscribe, 100);
+        return;
+      }
+
       try {
-        chart.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleRangeChange);
-      } catch (e) {}
-      window.removeEventListener('resize', resizeHandler);
+        chart.timeScale().subscribeVisibleLogicalRangeChange(markDirty);
+        unsubFn = () => {
+          try {
+            chart.timeScale().unsubscribeVisibleLogicalRangeChange(markDirty);
+          } catch {}
+        };
+      } catch {}
+    };
+
+    trySubscribe();
+    window.addEventListener('resize', markDirty);
+
+    return () => {
+      active = false;
+      unsubFn?.();
+      window.removeEventListener('resize', markDirty);
     };
   }, [chartRef]);
 
-  // ── Redraw trigger on data changes ───────────────────────────────────────
+  // ── Mark dirty on data changes ─────────────────────────────────────────────
   useEffect(() => {
-    drawVolumeProfileRef.current?.();
+    needsRedrawRef.current = true;
   }, [chartData, volumeData]);
 
+  // ── Inline styles guarantee pixel-perfect sizing (no CSS class issues) ─────
   return (
     <canvas
       ref={canvasRef}
-      className="absolute inset-0 pointer-events-none z-[5]"
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: '100%',
+        height: '100%',
+        pointerEvents: 'none',
+        zIndex: 5,
+      }}
     />
   );
 }

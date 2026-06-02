@@ -219,8 +219,10 @@ export default function FootprintChart({
       if (canvas.width !== expectedWidth || canvas.height !== expectedHeight) {
         canvas.width = expectedWidth;
         canvas.height = expectedHeight;
-        ctx.scale(dpr, dpr);
       }
+
+      // Always reset transform to prevent accumulation across frames
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
       const width = dims.width;
       const height = dims.height;
