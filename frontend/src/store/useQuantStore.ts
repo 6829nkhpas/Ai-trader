@@ -53,6 +53,21 @@ export interface AiExecutionPlan {
   execution_plan: string;
 }
 
+export interface ChartPattern {
+  pattern_type: string;
+  sentiment: string;
+  confidence: number;
+  start_idx: number;
+  end_idx: number;
+  description: string;
+}
+
+export interface MultiTfChartPatterns {
+  timeframe: string;
+  patterns: ChartPattern[];
+}
+
+
 // ── Deep Quant SSE stream event payload ─────────────────────────────────
 // Shape emitted by the Rust `deep-quant-stream` Tauri event bridge.
 export interface StreamEventPayload {
@@ -160,6 +175,11 @@ interface QuantStore {
   closePosition: (id: string, exitPrice: number) => void;
   handleStreamEvent: (payload: StreamEventPayload) => void;
   resetTerminal: () => void;
+
+  // ── Multi-Timeframe Chart Patterns ──────────────────────────────────
+  multiTfPatterns: MultiTfChartPatterns[] | null;
+  isFetchingPatterns: boolean;
+  fetchMultiTfPatterns: (symbol: string) => Promise<void>;
 }
 
 // ── Module-level in-flight deduplication set ─────────────────────────────
@@ -356,6 +376,11 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
   sentimentError: null,
   sentimentCache: {},
 
+  // ── Multi-Timeframe Chart Patterns State ──
+  multiTfPatterns: null,
+  isFetchingPatterns: false,
+
+
   setConsensusData: (data: ConsensusReport) => {
     const sym = data.symbol?.toUpperCase();
     console.log(`[QuantStore] ✔ Consensus SET symbol=${sym} trend=${data.trend_score} momentum=${data.momentum_state}`);
@@ -527,7 +552,12 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       analysisError: null,
       _pendingToolCalls: 0,
       _runFinishedProcessed: false,
+      multiTfPatterns: null,
+      isFetchingPatterns: true,
     });
+
+    // Trigger multi-timeframe chart patterns fetch in parallel
+    get().fetchMultiTfPatterns(symbol);
 
     // Force-refresh sentiment with latest news before LLM analysis
     try {
@@ -598,6 +628,8 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     reasoningSteps: [],
     _pendingToolCalls: 0,
     _runFinishedProcessed: false,
+    multiTfPatterns: null,
+    isFetchingPatterns: false,
   }),
 
   handleStreamEvent: (payload: StreamEventPayload) => {
@@ -766,7 +798,22 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     analysisError: null,
     _pendingToolCalls: 0,
     _runFinishedProcessed: false,
+    multiTfPatterns: null,
+    isFetchingPatterns: false,
   }),
+
+  fetchMultiTfPatterns: async (symbol: string) => {
+    console.log(`[QuantStore] fetchMultiTfPatterns starting for symbol=${symbol}`);
+    set({ isFetchingPatterns: true, multiTfPatterns: null });
+    try {
+      const data = await tauriInvoke<MultiTfChartPatterns[]>('get_multi_timeframe_chart_patterns', { symbol });
+      console.log(`[QuantStore] fetchMultiTfPatterns completed:`, data);
+      set({ multiTfPatterns: data, isFetchingPatterns: false });
+    } catch (err) {
+      console.error(`[QuantStore] fetchMultiTfPatterns failed:`, err);
+      set({ isFetchingPatterns: false, multiTfPatterns: [] });
+    }
+  },
 
   openPosition: (symbol: string, plan: AiExecutionPlan) => {
     const { entry, sl, tp } = parseExecutionPlan(plan.execution_plan);

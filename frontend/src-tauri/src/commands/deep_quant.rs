@@ -1847,3 +1847,66 @@ pub async fn run_deep_quant_agent(
     Ok(())
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MultiTfChartPatterns {
+    pub timeframe: String,
+    pub patterns: Vec<crate::quant::chart_patterns::ChartPattern>,
+}
+
+#[tauri::command]
+pub async fn get_multi_timeframe_chart_patterns(
+    app: tauri::AppHandle,
+    pool: tauri::State<'_, sqlx::PgPool>,
+    symbol: String,
+) -> Result<Vec<MultiTfChartPatterns>, String> {
+    info!("[deep_quant] get_multi_timeframe_chart_patterns for symbol={}", symbol);
+    let timeframes = vec!["1m", "5m", "10m", "15m", "1h", "4h", "1d"];
+    let mut tasks = vec![];
+
+    for tf in timeframes {
+        let app_clone = app.clone();
+        let pool_clone = pool.inner().clone();
+        let symbol_clone = symbol.clone();
+        let tf_str = tf.to_string();
+
+        tasks.push(tokio::spawn(async move {
+            let candles = load_candles_from_db(
+                Some(&app_clone),
+                &pool_clone,
+                &symbol_clone,
+                &tf_str,
+                200,
+            )
+            .await;
+
+            match candles {
+                Ok(c) => {
+                    let patterns = crate::quant::chart_patterns::ChartPatternEngine::analyze(&c);
+                    MultiTfChartPatterns {
+                        timeframe: tf_str,
+                        patterns,
+                    }
+                }
+                Err(e) => {
+                    warn!("[deep_quant] get_multi_timeframe_chart_patterns failed for {}: {}", tf_str, e);
+                    MultiTfChartPatterns {
+                        timeframe: tf_str,
+                        patterns: vec![],
+                    }
+                }
+            }
+        }));
+    }
+
+    let results = futures_util::future::join_all(tasks).await;
+    let mut output = vec![];
+    for res in results {
+        if let Ok(item) = res {
+            output.push(item);
+        }
+    }
+
+    Ok(output)
+}
+
+

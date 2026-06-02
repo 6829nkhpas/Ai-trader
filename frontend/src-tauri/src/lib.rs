@@ -297,6 +297,7 @@ pub fn run() {
         commands::deep_quant::run_deep_quant_analysis,
         commands::deep_quant::run_ai_analysis,
         commands::deep_quant::run_deep_quant_agent,
+        commands::deep_quant::get_multi_timeframe_chart_patterns,
         commands::deep_quant::deploy_ai_sentinel,
         execution::paper::execute_paper_trade,
         execution::paper::get_paper_portfolio,
