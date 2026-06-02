@@ -88,7 +88,7 @@ export function useRadarOverlay(refs: ChartRefs, chartData: ChartCandle[]) {
       };
       markers.setMarkers([marker]);
 
-      // Highlight box around the candle(s)
+      // Highlight box coordinates
       const xEnd = chart.timeScale().timeToCoordinate(p.time as Time);
       const xStart = p.start_time ? chart.timeScale().timeToCoordinate(p.start_time as Time) : null;
       
@@ -107,12 +107,172 @@ export function useRadarOverlay(refs: ChartRefs, chartData: ChartCandle[]) {
         width = (xEnd - xStart) + 18;
       }
 
-      const box = document.createElement('div');
-      box.style.cssText =
-        `position:absolute;top:${top}px;left:${left}px;width:${width}px;height:${height}px;` +
-        `border:1.5px solid ${color};border-radius:4px;background:${color}0d;` +
-        `box-shadow:0 0 12px ${color}40;pointer-events:none;`;
-      boxLayer.appendChild(box);
+      // Create an SVG element to draw structural elements
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('style', 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible;');
+      boxLayer.appendChild(svg);
+
+      // 1. Draw outer bounding rect
+      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      rect.setAttribute('x', String(left));
+      rect.setAttribute('y', String(top));
+      rect.setAttribute('width', String(width));
+      rect.setAttribute('height', String(height));
+      rect.setAttribute('fill', `${color}06`);
+      rect.setAttribute('stroke', color);
+      rect.setAttribute('stroke-width', '1');
+      rect.setAttribute('stroke-dasharray', '4,4');
+      rect.setAttribute('rx', '4');
+      rect.setAttribute('style', `filter: drop-shadow(0 0 4px ${color}20);`);
+      svg.appendChild(rect);
+
+      // Filter candles in this pattern range
+      if (p.start_time) {
+        const startT = p.start_time;
+        const endT = p.time;
+        const rangeCandles = chartData.filter(c => c.time >= startT && c.time <= endT);
+        
+        if (rangeCandles.length >= 3) {
+          // Detect local swings (peaks and troughs)
+          const swings: { x: number; y: number; isPeak: boolean }[] = [];
+          const n = rangeCandles.length;
+          
+          // Use adaptive window based on range length
+          const window = n > 35 ? 4 : n > 15 ? 2 : 1;
+          
+          for (let i = 0; i < n; i++) {
+            let isPeak = true;
+            let isTrough = true;
+            
+            const startIdx = Math.max(0, i - window);
+            const endIdx = Math.min(n - 1, i + window);
+            
+            for (let j = startIdx; j <= endIdx; j++) {
+              if (j === i) continue;
+              if (rangeCandles[j].high >= rangeCandles[i].high) isPeak = false;
+              if (rangeCandles[j].low <= rangeCandles[i].low) isTrough = false;
+            }
+            
+            const x = chart.timeScale().timeToCoordinate(rangeCandles[i].time as Time);
+            if (x === null) continue;
+            
+            if (isPeak) {
+              const y = series.priceToCoordinate(rangeCandles[i].high);
+              if (y !== null) {
+                swings.push({ x, y, isPeak: true });
+              }
+            } else if (isTrough) {
+              const y = series.priceToCoordinate(rangeCandles[i].low);
+              if (y !== null) {
+                swings.push({ x, y, isPeak: false });
+              }
+            }
+          }
+
+          // Alternating swings (Peak -> Trough -> Peak -> Trough)
+          const alternatingSwings: { x: number; y: number; isPeak: boolean }[] = [];
+          for (const s of swings) {
+            if (alternatingSwings.length === 0) {
+              alternatingSwings.push(s);
+            } else {
+              const last = alternatingSwings[alternatingSwings.length - 1];
+              if (last.isPeak !== s.isPeak) {
+                alternatingSwings.push(s);
+              } else {
+                // Keep the more extreme one
+                if (s.isPeak) {
+                  if (s.y < last.y) { // Y is inverted on screen
+                    alternatingSwings[alternatingSwings.length - 1] = s;
+                  }
+                } else {
+                  if (s.y > last.y) {
+                    alternatingSwings[alternatingSwings.length - 1] = s;
+                  }
+                }
+              }
+            }
+          }
+
+          if (alternatingSwings.length >= 2) {
+            const typeLower = p.name.toLowerCase();
+            const isTriangle = typeLower.includes('triangle') || typeLower.includes('pennant');
+            const isWedge = typeLower.includes('wedge');
+            const isChannel = typeLower.includes('rectangle') || typeLower.includes('flag') || typeLower.includes('channel');
+
+            const peaks = alternatingSwings.filter(s => s.isPeak);
+            const troughs = alternatingSwings.filter(s => !s.isPeak);
+
+            // 2. Draw converging / parallel trendlines + shaded area for structural chart patterns
+            if ((isTriangle || isWedge || isChannel) && peaks.length >= 2 && troughs.length >= 2) {
+              const firstPeak = peaks[0];
+              const lastPeak = peaks[peaks.length - 1];
+              const firstTrough = troughs[0];
+              const lastTrough = troughs[troughs.length - 1];
+
+              // Shaded interior polygon
+              const polyPoints = `${firstPeak.x},${firstPeak.y} ${lastPeak.x},${lastPeak.y} ${lastTrough.x},${lastTrough.y} ${firstTrough.x},${firstTrough.y}`;
+              const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+              polygon.setAttribute('points', polyPoints);
+              polygon.setAttribute('fill', color);
+              polygon.setAttribute('opacity', '0.08');
+              svg.appendChild(polygon);
+
+              // Resistance trendline
+              const resLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+              resLine.setAttribute('x1', String(firstPeak.x));
+              resLine.setAttribute('y1', String(firstPeak.y));
+              resLine.setAttribute('x2', String(lastPeak.x));
+              resLine.setAttribute('y2', String(lastPeak.y));
+              resLine.setAttribute('stroke', color);
+              resLine.setAttribute('stroke-width', '2.5');
+              resLine.setAttribute('style', `filter: drop-shadow(0 0 3px ${color}60);`);
+              svg.appendChild(resLine);
+
+              // Support trendline
+              const supLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+              supLine.setAttribute('x1', String(firstTrough.x));
+              supLine.setAttribute('y1', String(firstTrough.y));
+              supLine.setAttribute('x2', String(lastTrough.x));
+              supLine.setAttribute('y2', String(lastTrough.y));
+              supLine.setAttribute('stroke', color);
+              supLine.setAttribute('stroke-width', '2.5');
+              supLine.setAttribute('style', `filter: drop-shadow(0 0 3px ${color}60);`);
+              svg.appendChild(supLine);
+            } else {
+              // 3. Draw standard zig-zag structural wave path connecting all alternating swings
+              let pathD = '';
+              alternatingSwings.forEach((s, idx) => {
+                if (idx === 0) {
+                  pathD += `M ${s.x} ${s.y}`;
+                } else {
+                  pathD += ` L ${s.x} ${s.y}`;
+                }
+              });
+
+              const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+              path.setAttribute('d', pathD);
+              path.setAttribute('fill', 'none');
+              path.setAttribute('stroke', color);
+              path.setAttribute('stroke-width', '2');
+              path.setAttribute('stroke-dasharray', '3,3');
+              path.setAttribute('opacity', '0.8');
+              svg.appendChild(path);
+
+              // Render vertex nodes
+              alternatingSwings.forEach((s) => {
+                const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                circle.setAttribute('cx', String(s.x));
+                circle.setAttribute('cy', String(s.y));
+                circle.setAttribute('r', '3.5');
+                circle.setAttribute('fill', color);
+                circle.setAttribute('stroke', '#131922');
+                circle.setAttribute('stroke-width', '1.5');
+                svg.appendChild(circle);
+              });
+            }
+          }
+        }
+      }
     };
 
     const drawStrategy = (target: RadarVizTarget) => {
