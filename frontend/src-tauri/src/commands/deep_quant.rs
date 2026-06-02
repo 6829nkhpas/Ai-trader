@@ -1717,6 +1717,7 @@ pub async fn run_deep_quant_agent(
     app: tauri::AppHandle,
     symbol: String,
     mode: Option<String>,
+    timeframe: Option<String>,
     manual_trade: Option<ManualTradeInfo>,
 ) -> Result<(), String> {
     let mode_str = mode.unwrap_or_else(|| "FIND".to_string());
@@ -1752,6 +1753,7 @@ pub async fn run_deep_quant_agent(
         "message": message,
         "mode": mode_str,
         "symbol": symbol,
+        "timeframe": timeframe,
         "manual_trade": manual_trade
     });
     

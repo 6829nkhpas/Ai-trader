@@ -580,6 +580,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
         {
           symbol,
           mode: activeMode,
+          timeframe: activeTimeframe,
           manualTrade: manualTrade ? {
             side: manualTrade.side,
             entry: manualTrade.entry,

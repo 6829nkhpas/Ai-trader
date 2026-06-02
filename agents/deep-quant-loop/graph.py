@@ -25,6 +25,7 @@ class AgentState(TypedDict):
     mode: Optional[str]
     symbol: Optional[str]
     manual_trade: Optional[dict]
+    timeframe: Optional[str]
 
 # ── System Prompts ──────────────────────────────────────────────────────────
 
@@ -129,9 +130,15 @@ When finalizing, return a JSON object EXACTLY matching this structure:
 
 def format_system_prompt(state: AgentState) -> str:
     mode = state.get("mode", "FIND")
+    tf = state.get("timeframe") or "10m"
+    tf_instruction = (
+        f"\n\nCRITICAL TIMEFRAME REQUIREMENT:\n"
+        f"The user's active chart timeframe is '{tf}'. You MUST conduct your deep quant analysis on the '{tf}' timeframe. "
+        f"When calling tools such as `get_consensus_report`, `get_chart_patterns`, and `get_candles`, you MUST use '{tf}' as the timeframe argument."
+    )
     if mode == "VERIFY":
         trade = state.get("manual_trade") or {}
-        return RISK_MANAGER_PROMPT.format(
+        base_prompt = RISK_MANAGER_PROMPT.format(
             side=trade.get("side", "N/A"),
             symbol=state.get("symbol", "N/A"),
             entry=trade.get("entry", 0),
@@ -139,7 +146,8 @@ def format_system_prompt(state: AgentState) -> str:
             take_profit=trade.get("take_profit", 0),
             user_analysis=trade.get("user_analysis", "None")
         )
-    return DEEP_QUANT_SYSTEM_PROMPT
+        return base_prompt + tf_instruction
+    return DEEP_QUANT_SYSTEM_PROMPT + tf_instruction
 
 # ── Model & Tools Binding ───────────────────────────────────────────────────
 

@@ -20,6 +20,7 @@ class RunRequest(BaseModel):
     mode: Optional[str] = "FIND"
     symbol: Optional[str] = "N/A"
     manual_trade: Optional[dict] = None
+    timeframe: Optional[str] = None
 
 class ResumeRequest(BaseModel):
     thread_id: str
@@ -85,7 +86,8 @@ async def run_agent(payload: RunRequest):
         "messages": [("user", payload.message)],
         "mode": payload.mode,
         "symbol": payload.symbol,
-        "manual_trade": payload.manual_trade
+        "manual_trade": payload.manual_trade,
+        "timeframe": payload.timeframe
     }
     return StreamingResponse(
         event_generator(payload.thread_id, graph_input=initial_state),
