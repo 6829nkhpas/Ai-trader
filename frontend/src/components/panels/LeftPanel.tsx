@@ -13,6 +13,7 @@ import { hydrateWatchlist } from '../../store/useTradeStore';
 // ── Subcomponents ──────────────────────────────────────────────────────
 import LiveAssetHUD from './left-panel/LiveAssetHUD';
 import SentimentBlock from './left-panel/SentimentBlock';
+import MultiTfPatternsView from '../quant/deep-quant/MultiTfPatternsView';
 
 const SECTOR_COLORS: Record<string, string> = {
   Energy: 'bg-amber-500/10 text-amber-400',
@@ -70,6 +71,8 @@ export default function LeftPanel() {
   const reorderWatchlist = useTradeStore((s) => s.reorderWatchlist);
   const consensusData = useQuantStore((s) => s.consensusData);
   const loadConsensusForSymbol = useQuantStore((s) => s.loadConsensusForSymbol);
+  const isFetchingPatterns = useQuantStore((s) => s.isFetchingPatterns);
+  const multiTfPatterns = useQuantStore((s) => s.multiTfPatterns);
 
   // ── Hydrate persisted watchlist on mount ───────────────────────────
   useEffect(() => {
@@ -383,6 +386,11 @@ export default function LeftPanel() {
 
           return <LiveAssetHUD data={consensusData} />;
         })()}
+
+        {/* Dynamic Pattern Scanner */}
+        {(isFetchingPatterns || multiTfPatterns) && (
+          <MultiTfPatternsView />
+        )}
       </div>
     </div>
   );

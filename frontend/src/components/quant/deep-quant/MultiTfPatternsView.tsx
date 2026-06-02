@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { useQuantStore } from '../../../store/useQuantStore';
+import { useTradeStore, ChartTimeframe } from '../../../store/useTradeStore';
+import { useRadarStore } from '../../../store/useRadarStore';
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -25,16 +27,55 @@ export default function MultiTfPatternsView() {
     return data?.patterns.length || 0;
   };
 
+  const handlePatternClick = (p: any) => {
+    const symbol = useTradeStore.getState().selectedSymbol || 'RELIANCE';
+    
+    // 1. Shift symbol and timeframe to match the pattern
+    useTradeStore.getState().setSelectedSymbol(symbol);
+    useTradeStore.getState().setActiveTimeframe(selectedTf as ChartTimeframe);
+
+    // 2. Map to LocatedPattern for the chart drawing overlay
+    const isBullish = p.sentiment.toLowerCase() === 'bullish';
+    const isBearish = p.sentiment.toLowerCase() === 'bearish';
+    const bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = isBullish ? 'BULLISH' : isBearish ? 'BEARISH' : 'NEUTRAL';
+
+    const locatedPattern = {
+      name: p.pattern_type,
+      bias: bias,
+      candle_index: p.end_idx,
+      time: p.time ?? 0,
+      start_time: p.start_time,
+      open: 0,
+      close: 0,
+      high: p.high ?? 0,
+      low: p.low ?? 0,
+    };
+
+    // 3. Set the viz target in RadarStore to trigger overlay drawing
+    const target = {
+      symbol,
+      timeframe: selectedTf as any,
+      kind: 'pattern' as const,
+      pattern: locatedPattern,
+    };
+
+    console.log(`[PatternsView] Visualizing pattern:`, target);
+    useRadarStore.getState().setVizTarget(target);
+  };
+
   return (
-    <div className="mx-3 my-2 p-3 rounded-2xl border border-white/5 bg-slate-900/60 backdrop-blur-xl shadow-xl">
-      <div className="flex items-center gap-1.5 mb-2.5">
-        <Sparkles size={13} className="text-emerald-400 animate-pulse" />
-        <span className="text-[11px] font-black uppercase tracking-wider text-slate-200">
-          Live Pattern Scanner
-        </span>
+    <div className="border-b border-border-default px-3 py-2.5 bg-transparent select-none">
+      <div className="flex items-center gap-1.5 mb-2">
+        <Sparkles size={10} className="text-text-muted" />
+        <h3 className="text-[9px] font-bold text-text-secondary uppercase tracking-wider">
+          Dynamic Pattern Scanner
+        </h3>
+        {isFetchingPatterns && (
+          <Loader2 size={9} className="ml-auto animate-spin text-blue-400" />
+        )}
       </div>
 
-      {/* Timeframe Selector */}
+      {/* Timeframe Selector Tabs */}
       <div className="flex gap-1 overflow-x-auto pb-1.5 scrollbar-none">
         {timeframes.map((tf) => {
           const count = getPatternCount(tf);
@@ -45,20 +86,20 @@ export default function MultiTfPatternsView() {
               type="button"
               onClick={() => setSelectedTf(tf)}
               className={`
-                flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all duration-200 shrink-0
+                flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold transition-all duration-150 shrink-0 border
                 ${isActive 
-                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-500/10 scale-[1.02]' 
-                  : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-300'
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 shadow-[0_0_8px_rgba(16,185,129,0.08)] scale-[1.01]' 
+                  : 'bg-elevated/40 text-text-muted hover:bg-elevated/70 hover:text-text-secondary border-border-default/40'
                 }
               `}
             >
               <span>{tf}</span>
               {isFetchingPatterns ? (
-                <Loader2 size={8} className="animate-spin text-slate-500" />
+                <Loader2 size={8} className="animate-spin text-text-muted" />
               ) : count > 0 ? (
                 <span className={`
-                  flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[8px] font-black
-                  ${isActive ? 'bg-white text-emerald-800' : 'bg-emerald-500/20 text-emerald-400'}
+                  flex h-3.5 min-w-[14px] items-center justify-center rounded-full px-0.5 text-[8px] font-black
+                  ${isActive ? 'bg-emerald-400 text-slate-950' : 'bg-emerald-500/10 text-emerald-400'}
                 `}>
                   {count}
                 </span>
@@ -71,27 +112,26 @@ export default function MultiTfPatternsView() {
       </div>
 
       {/* Patterns list */}
-      <div className="mt-2 space-y-2 max-h-[220px] overflow-y-auto scrollbar-thin pr-1">
+      <div className="mt-2 space-y-1.5 max-h-[190px] overflow-y-auto scrollbar-thin pr-0.5">
         {isFetchingPatterns ? (
           // Loading skeletons
-          <div className="space-y-2 py-2">
+          <div className="space-y-1.5 py-1">
             {[1, 2].map((i) => (
-              <div key={i} className="animate-pulse flex flex-col gap-1.5 p-2 rounded-xl bg-white/5 border border-white/5">
+              <div key={i} className="animate-pulse flex flex-col gap-1 p-2 rounded-lg bg-elevated/20 border border-border-default/40">
                 <div className="flex justify-between items-center">
-                  <div className="h-3 w-20 bg-white/10 rounded" />
-                  <div className="h-4 w-12 bg-white/10 rounded-full" />
+                  <div className="h-3 w-16 bg-elevated/60 rounded" />
+                  <div className="h-3 w-10 bg-elevated/60 rounded-full" />
                 </div>
-                <div className="h-2 w-full bg-white/5 rounded" />
-                <div className="h-2 w-3/4 bg-white/5 rounded" />
+                <div className="h-2 w-full bg-elevated/30 rounded" />
               </div>
             ))}
           </div>
         ) : patterns.length === 0 ? (
           // Empty State
-          <div className="flex flex-col items-center justify-center py-6 text-center bg-white/[0.02] border border-white/5 rounded-xl">
-            <Activity size={16} className="text-slate-600 mb-1" />
-            <span className="text-[10px] font-semibold text-slate-400">No active patterns detected</span>
-            <span className="text-[8px] text-slate-600 mt-0.5">Timeframe: {selectedTf}</span>
+          <div className="flex flex-col items-center justify-center py-4 text-center border border-border-default/50 bg-elevated/10 rounded-lg">
+            <Activity size={12} className="text-text-muted mb-0.5" />
+            <span className="text-[9px] font-medium text-text-muted">No patterns detected</span>
+            <span className="text-[8px] text-text-muted/40">Timeframe: {selectedTf}</span>
           </div>
         ) : (
           patterns.map((p, idx) => {
@@ -101,70 +141,71 @@ export default function MultiTfPatternsView() {
             return (
               <div
                 key={idx}
+                onClick={() => handlePatternClick(p)}
                 className={`
-                  group relative flex flex-col gap-1.5 p-2.5 rounded-xl border transition-all duration-300 hover:scale-[1.01] hover:shadow-lg
+                  group relative flex flex-col gap-1 p-2 rounded-lg border transition-all duration-200 cursor-pointer hover:scale-[1.005] active:scale-[0.995]
                   ${isBullish 
-                    ? 'bg-gradient-to-br from-emerald-500/5 to-emerald-500/[0.02] border-emerald-500/10 hover:border-emerald-500/30' 
+                    ? 'bg-emerald-500/[0.03] border-emerald-500/15 hover:border-emerald-500/35' 
                     : isBearish 
-                      ? 'bg-gradient-to-br from-rose-500/5 to-rose-500/[0.02] border-rose-500/10 hover:border-rose-500/30' 
-                      : 'bg-gradient-to-br from-slate-500/5 to-slate-500/[0.02] border-slate-500/10 hover:border-slate-800'
+                      ? 'bg-rose-500/[0.03] border-rose-500/15 hover:border-rose-500/35' 
+                      : 'bg-elevated/10 border-border-default/60 hover:border-border-default'
                   }
                 `}
               >
-                {/* Glowing edge highlight */}
+                {/* Glowing edge indicator */}
                 <div className={`
-                  absolute top-0 bottom-0 left-0 w-0.5 rounded-l-xl opacity-60 group-hover:opacity-100 transition-opacity
-                  ${isBullish ? 'bg-emerald-400' : isBearish ? 'bg-rose-400' : 'bg-slate-400'}
+                  absolute top-0 bottom-0 left-0 w-0.5 rounded-l-lg opacity-40 group-hover:opacity-100 transition-opacity
+                  ${isBullish ? 'bg-emerald-400' : isBearish ? 'bg-rose-400' : 'bg-text-muted'}
                 `} />
 
                 {/* Pattern Header */}
                 <div className="flex justify-between items-start pl-1">
-                  <span className="text-[11px] font-extrabold text-slate-100 tracking-tight">
+                  <span className="text-[10px] font-bold text-text-primary tracking-tight truncate max-w-[160px]">
                     {p.pattern_type}
                   </span>
                   <span className={`
-                    flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider
+                    flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] font-black uppercase tracking-wider border
                     ${isBullish 
-                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
                       : isBearish 
-                        ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' 
-                        : 'bg-slate-500/10 text-slate-300 border border-slate-700'
+                        ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' 
+                        : 'bg-elevated text-text-muted border-border-default'
                     }
                   `}>
                     {isBullish ? (
-                      <TrendingUp size={9} />
+                      <TrendingUp size={8} />
                     ) : isBearish ? (
-                      <TrendingDown size={9} />
+                      <TrendingDown size={8} />
                     ) : (
-                      <Minus size={9} />
+                      <Minus size={8} />
                     )}
                     {p.sentiment}
                   </span>
                 </div>
 
                 {/* Pattern Description */}
-                <p className="text-[9px] text-slate-400 leading-normal pl-1">
+                <p className="text-[9px] text-text-muted leading-relaxed pl-1">
                   {p.description}
                 </p>
 
                 {/* Confidence Bar */}
-                <div className="flex items-center gap-2 pl-1 mt-1">
-                  <span className="text-[8px] text-slate-500 font-bold">Conf:</span>
-                  <div className="flex-grow h-1.5 bg-slate-950 rounded-full overflow-hidden border border-white/5">
+                <div className="flex items-center gap-1.5 pl-1 mt-0.5">
+                  <span className="text-[8px] text-text-muted/60 font-bold">Conf:</span>
+                  <div className="flex-grow h-1 bg-surface border border-border-default/40 rounded-full overflow-hidden">
                     <div 
                       className={`
-                        h-full rounded-full transition-all duration-500
+                        h-full rounded-full transition-all duration-300
                         ${isBullish 
-                          ? 'bg-gradient-to-r from-emerald-600 to-emerald-400' 
+                          ? 'bg-gradient-to-r from-emerald-500 to-emerald-400' 
                           : isBearish 
-                            ? 'bg-gradient-to-r from-rose-600 to-rose-400' 
-                            : 'bg-gradient-to-r from-slate-600 to-slate-400'
+                            ? 'bg-gradient-to-r from-rose-500 to-rose-400' 
+                            : 'bg-text-secondary'
                         }
                       `}
                       style={{ width: `${p.confidence * 100}%` }}
                     />
                   </div>
-                  <span className="text-[9px] font-black text-slate-300">
+                  <span className="text-[8px] font-black text-text-secondary">
                     {Math.round(p.confidence * 100)}%
                   </span>
                 </div>

@@ -60,6 +60,10 @@ export interface ChartPattern {
   start_idx: number;
   end_idx: number;
   description: string;
+  time?: number;
+  start_time?: number;
+  high?: number;
+  low?: number;
 }
 
 export interface MultiTfChartPatterns {

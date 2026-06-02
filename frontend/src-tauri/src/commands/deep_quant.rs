@@ -1850,9 +1850,23 @@ pub async fn run_deep_quant_agent(
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ApiChartPattern {
+    pub pattern_type: String,
+    pub sentiment: String,
+    pub confidence: f64,
+    pub start_idx: usize,
+    pub end_idx: usize,
+    pub description: String,
+    pub time: Option<i64>,
+    pub start_time: Option<i64>,
+    pub high: Option<f64>,
+    pub low: Option<f64>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MultiTfChartPatterns {
     pub timeframe: String,
-    pub patterns: Vec<crate::quant::chart_patterns::ChartPattern>,
+    pub patterns: Vec<ApiChartPattern>,
 }
 
 #[tauri::command]
@@ -1872,18 +1886,61 @@ pub async fn get_multi_timeframe_chart_patterns(
         let tf_str = tf.to_string();
 
         tasks.push(tokio::spawn(async move {
-            let candles = load_candles_from_db(
+            let candles_res = load_candles_with_ts(
                 Some(&app_clone),
                 &pool_clone,
                 &symbol_clone,
                 &tf_str,
                 200,
+                30,
             )
             .await;
 
-            match candles {
-                Ok(c) => {
-                    let patterns = crate::quant::chart_patterns::ChartPatternEngine::analyze(&c);
+            match candles_res {
+                Ok(timed_candles) => {
+                    let candles: Vec<crate::quant::patterns::Candle> = timed_candles.iter().map(|(_, c)| c.clone()).collect();
+                    let raw_patterns = crate::quant::chart_patterns::ChartPatternEngine::analyze(&candles);
+                    
+                    let mut patterns = vec![];
+                    for p in raw_patterns {
+                        let mut time = None;
+                        let mut start_time = None;
+                        let mut high = None;
+                        let mut low = None;
+
+                        if p.start_idx < timed_candles.len() && p.end_idx < timed_candles.len() {
+                            let (ts_start, _) = timed_candles[p.start_idx];
+                            let (ts_end, _) = timed_candles[p.end_idx];
+                            start_time = Some(ts_start / 1000); // ms to sec
+                            time = Some(ts_end / 1000); // ms to sec
+
+                            let mut h_val = f64::MIN;
+                            let mut l_val = f64::MAX;
+                            for i in p.start_idx..=p.end_idx {
+                                if i < timed_candles.len() {
+                                    let (_, candle) = &timed_candles[i];
+                                    if candle.high > h_val { h_val = candle.high; }
+                                    if candle.low < l_val { l_val = candle.low; }
+                                }
+                            }
+                            high = Some(h_val);
+                            low = Some(l_val);
+                        }
+
+                        patterns.push(ApiChartPattern {
+                            pattern_type: p.pattern_type,
+                            sentiment: p.sentiment,
+                            confidence: p.confidence,
+                            start_idx: p.start_idx,
+                            end_idx: p.end_idx,
+                            description: p.description,
+                            time,
+                            start_time,
+                            high,
+                            low,
+                        });
+                    }
+
                     MultiTfChartPatterns {
                         timeframe: tf_str,
                         patterns,

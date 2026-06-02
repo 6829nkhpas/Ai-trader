@@ -22,7 +22,6 @@ import { invoke } from '@tauri-apps/api/core';
 import LoadingState from './deep-quant/LoadingState';
 import VerificationForm from './deep-quant/VerificationForm';
 import AiExecutionPlanView from './deep-quant/AiExecutionPlanView';
-import MultiTfPatternsView from './deep-quant/MultiTfPatternsView';
 
 interface PremiumPaywallProps {
   onUpgradeClick: () => void;
@@ -525,9 +524,6 @@ export default function DeepQuantPanel() {
 
       {/* ── Content Area ──────────────────────────────────── */}
       <div className="flex-grow flex-shrink min-h-0 overflow-y-auto scrollbar-thin">
-        {(isFetchingPatterns || multiTfPatterns) && (
-          <MultiTfPatternsView />
-        )}
 
         {reasoningSteps.length > 0 || sessionStatus !== 'idle' ? (
           <div className="h-full p-2 min-h-[380px]">
