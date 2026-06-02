@@ -88,21 +88,30 @@ export function useRadarOverlay(refs: ChartRefs, chartData: ChartCandle[]) {
       };
       markers.setMarkers([marker]);
 
-      // Highlight box around the candle's high/low at its timestamp.
-      const x = chart.timeScale().timeToCoordinate(p.time as Time);
+      // Highlight box around the candle(s)
+      const xEnd = chart.timeScale().timeToCoordinate(p.time as Time);
+      const xStart = p.start_time ? chart.timeScale().timeToCoordinate(p.start_time as Time) : null;
+      
       const yHigh = series.priceToCoordinate(p.high);
       const yLow = series.priceToCoordinate(p.low);
-      if (x === null || yHigh === null || yLow === null) return;
+      if (xEnd === null || yHigh === null || yLow === null) return;
 
       const top = Math.min(yHigh, yLow) - 6;
       const height = Math.abs(yLow - yHigh) + 12;
-      const half = 9; // half-width of the highlight box in px
+      
+      let left = xEnd - 9;
+      let width = 18;
+      
+      if (xStart !== null && xStart < xEnd) {
+        left = xStart - 9;
+        width = (xEnd - xStart) + 18;
+      }
 
       const box = document.createElement('div');
       box.style.cssText =
-        `position:absolute;top:${top}px;left:${x - half}px;width:${half * 2}px;height:${height}px;` +
-        `border:1.5px solid ${color};border-radius:3px;background:${color}1a;` +
-        `box-shadow:0 0 10px ${color}55;pointer-events:none;`;
+        `position:absolute;top:${top}px;left:${left}px;width:${width}px;height:${height}px;` +
+        `border:1.5px solid ${color};border-radius:4px;background:${color}0d;` +
+        `box-shadow:0 0 12px ${color}40;pointer-events:none;`;
       boxLayer.appendChild(box);
     };
 

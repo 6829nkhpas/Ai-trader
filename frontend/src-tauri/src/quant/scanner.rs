@@ -104,6 +104,8 @@ pub struct LocatedPattern {
     pub high: f64,
     pub low: f64,
     pub close: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_time: Option<i64>,
 }
 
 /// An institutional strategy located at a specific bar.
@@ -199,6 +201,7 @@ pub fn scan(symbol: &str, timed: &[TimedCandle], timeframe: &str, lookback: usiz
                     low: bar.low,
                     close: bar.close,
                     name: name.clone(),
+                    start_time: None,
                 };
                 match pattern_pos.get(&name) {
                     Some(&pos) => patterns[pos] = located,
@@ -225,6 +228,47 @@ pub fn scan(symbol: &str, timed: &[TimedCandle], timeframe: &str, lookback: usiz
                     None => {
                         strategy_pos.insert(name, strategies.len());
                         strategies.push(located);
+                    }
+                }
+            }
+        }
+
+        // ── Structural Chart Patterns located in lookback window ──────────
+        let structural_patterns = crate::quant::chart_patterns::ChartPatternEngine::analyze(&plain);
+        for p in structural_patterns {
+            if p.end_idx >= scan_start && p.end_idx < timed.len() && p.start_idx < timed.len() {
+                let mut max_high = timed[p.start_idx].high;
+                let mut min_low = timed[p.start_idx].low;
+                for j in p.start_idx..=p.end_idx {
+                    if timed[j].high > max_high {
+                        max_high = timed[j].high;
+                    }
+                    if timed[j].low < min_low {
+                        min_low = timed[j].low;
+                    }
+                }
+
+                let located = LocatedPattern {
+                    name: p.pattern_type.clone(),
+                    bias: classify_bias(&p.pattern_type).to_string(),
+                    candle_index: p.end_idx,
+                    time: timed[p.end_idx].time,
+                    open: timed[p.end_idx].open,
+                    high: max_high,
+                    low: min_low,
+                    close: timed[p.end_idx].close,
+                    start_time: Some(timed[p.start_idx].time),
+                };
+
+                match pattern_pos.get(&p.pattern_type) {
+                    Some(&pos) => {
+                        if located.candle_index > patterns[pos].candle_index {
+                            patterns[pos] = located;
+                        }
+                    }
+                    None => {
+                        pattern_pos.insert(p.pattern_type.clone(), patterns.len());
+                        patterns.push(located);
                     }
                 }
             }

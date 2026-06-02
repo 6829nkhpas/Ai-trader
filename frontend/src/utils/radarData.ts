@@ -21,6 +21,7 @@ export interface LocatedPattern {
   high: number;
   low: number;
   close: number;
+  start_time?: number;
 }
 
 export interface LocatedStrategy {
