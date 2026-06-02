@@ -1797,15 +1797,20 @@ pub async fn run_deep_quant_agent(
                                     }
                                 }
                                 
-                                if let (Some(ev_type), false) = (event_type, data_lines.is_empty()) {
-                                    let joined_data = data_lines.join("\n");
-                                    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&joined_data) {
-                                        let outbound = serde_json::json!({
-                                            "event": ev_type,
-                                            "data": json_val
-                                        });
-                                        let _ = app.emit("deep-quant-stream", outbound);
-                                    }
+                                if let Some(ev_type) = event_type {
+                                    let json_val = if !data_lines.is_empty() {
+                                        let joined_data = data_lines.join("\n");
+                                        serde_json::from_str::<serde_json::Value>(&joined_data)
+                                            .unwrap_or(serde_json::Value::Null)
+                                    } else {
+                                        serde_json::Value::Null
+                                    };
+
+                                    let outbound = serde_json::json!({
+                                        "event": ev_type,
+                                        "data": json_val
+                                    });
+                                    let _ = app.emit("deep-quant-stream", outbound);
                                 }
                             }
                         }
