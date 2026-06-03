@@ -38,6 +38,11 @@ pub struct ChartPattern {
     pub geometric_strictness: f64,
     pub volume_validation: String,
     pub breakout_status: String,
+    // Phase 10: Forming pattern fields
+    #[serde(default)]
+    pub is_forming: bool,
+    #[serde(default)]
+    pub formation_progress: f64, // 0.0 to 1.0 — how close to completion
 }
 
 /// A swing point in the price series: either a local high (Peak) or low (Trough).
@@ -257,6 +262,8 @@ impl ChartPatternEngine {
                         geometric_strictness: 0.95,
                         volume_validation: "Confirmed: Reversal Exhaustion".to_string(),
                         breakout_status: "Confirmed".to_string(),
+                    is_forming: false,
+                    formation_progress: 0.0,
                     });
                 }
             }
@@ -354,6 +361,8 @@ impl ChartPatternEngine {
                     geometric_strictness: shoulder_symmetry,
                     volume_validation: volume_val,
                     breakout_status,
+                    is_forming: false,
+                    formation_progress: 0.0,
                 });
             }
         }
@@ -429,6 +438,8 @@ impl ChartPatternEngine {
                     geometric_strictness: shoulder_symmetry,
                     volume_validation: volume_val,
                     breakout_status,
+                    is_forming: false,
+                    formation_progress: 0.0,
                 });
             }
         }
@@ -492,6 +503,8 @@ impl ChartPatternEngine {
                     geometric_strictness: strictness,
                     volume_validation: volume_val,
                     breakout_status,
+                    is_forming: false,
+                    formation_progress: 0.0,
                 });
             }
         }
@@ -554,6 +567,8 @@ impl ChartPatternEngine {
                     geometric_strictness: strictness,
                     volume_validation: volume_val,
                     breakout_status,
+                    is_forming: false,
+                    formation_progress: 0.0,
                 });
             }
         }
@@ -597,6 +612,8 @@ impl ChartPatternEngine {
                     geometric_strictness: 1.0 - max_dev / avg,
                     volume_validation: if vol_valid { "Confirmed: Reversal Exhaustion".to_string() } else { "Unconfirmed".to_string() },
                     breakout_status: "Pending Breakout".to_string(),
+                    is_forming: false,
+                    formation_progress: 0.0,
                 });
             }
         }
@@ -639,6 +656,8 @@ impl ChartPatternEngine {
                     geometric_strictness: 1.0 - max_dev / avg,
                     volume_validation: if vol_valid { "Confirmed: Reversal Exhaustion".to_string() } else { "Unconfirmed".to_string() },
                     breakout_status: "Pending Breakout".to_string(),
+                    is_forming: false,
+                    formation_progress: 0.0,
                 });
             }
         }
@@ -682,6 +701,8 @@ impl ChartPatternEngine {
                             geometric_strictness: 0.90,
                             volume_validation: "Confirmed: Reversal Exhaustion".to_string(),
                             breakout_status: "Pending Neckline Test".to_string(),
+                    is_forming: false,
+                    formation_progress: 0.0,
                         });
                     }
                 }
@@ -711,6 +732,8 @@ impl ChartPatternEngine {
                             geometric_strictness: 0.90,
                             volume_validation: "Confirmed: Reversal Exhaustion".to_string(),
                             breakout_status: "Pending Neckline Test".to_string(),
+                    is_forming: false,
+                    formation_progress: 0.0,
                         });
                     }
                 }
@@ -767,6 +790,8 @@ impl ChartPatternEngine {
                         geometric_strictness: 0.90,
                         volume_validation: "Confirmed: Reversal Exhaustion".to_string(),
                         breakout_status: "Confirmed".to_string(),
+                    is_forming: false,
+                    formation_progress: 0.0,
                     });
                 }
             }
@@ -805,6 +830,8 @@ impl ChartPatternEngine {
                 geometric_strictness: 0.85,
                 volume_validation: if vol_slope < 0.0 { "Confirmed: Consolidation Drying".to_string() } else { "Unconfirmed".to_string() },
                 breakout_status: "Pending Breakout".to_string(),
+                    is_forming: false,
+                    formation_progress: 0.0,
             });
         }
     }
@@ -841,6 +868,8 @@ impl ChartPatternEngine {
                 geometric_strictness: 0.85,
                 volume_validation: if vol_slope < 0.0 { "Confirmed: Consolidation Drying".to_string() } else { "Unconfirmed".to_string() },
                 breakout_status: "Pending Breakout".to_string(),
+                    is_forming: false,
+                    formation_progress: 0.0,
             });
         }
     }
@@ -921,6 +950,8 @@ impl ChartPatternEngine {
                 geometric_strictness: 1.0 - ratio,
                 volume_validation: if vol_drying { "Confirmed: Consolidation Drying".to_string() } else { "Unconfirmed".to_string() },
                 breakout_status: "Pending Breakout".to_string(),
+                    is_forming: false,
+                    formation_progress: 0.0,
             });
         }
 
@@ -944,6 +975,8 @@ impl ChartPatternEngine {
                 geometric_strictness: 1.0 - ratio,
                 volume_validation: if vol_drying { "Confirmed: Consolidation Drying".to_string() } else { "Unconfirmed".to_string() },
                 breakout_status: "Pending Breakout".to_string(),
+                    is_forming: false,
+                    formation_progress: 0.0,
             });
         }
     }
@@ -990,6 +1023,8 @@ impl ChartPatternEngine {
                         geometric_strictness: 0.85,
                         volume_validation: "Geometric Only".to_string(),
                         breakout_status: "Pending Breakout".to_string(),
+                    is_forming: false,
+                    formation_progress: 0.0,
                     });
                 }
             }
@@ -1038,6 +1073,8 @@ impl ChartPatternEngine {
                         geometric_strictness: 0.85,
                         volume_validation: "Geometric Only".to_string(),
                         breakout_status: "Pending Breakout".to_string(),
+                    is_forming: false,
+                    formation_progress: 0.0,
                     });
                 }
             }
@@ -1072,6 +1109,8 @@ impl ChartPatternEngine {
                 geometric_strictness: 0.90,
                 volume_validation: if vol_drying { "Confirmed: Consolidation Drying".to_string() } else { "Unconfirmed".to_string() },
                 breakout_status: "Pending Breakout".to_string(),
+                    is_forming: false,
+                    formation_progress: 0.0,
             });
         }
 
@@ -1088,6 +1127,8 @@ impl ChartPatternEngine {
                 geometric_strictness: 0.90,
                 volume_validation: if vol_drying { "Confirmed: Consolidation Drying".to_string() } else { "Unconfirmed".to_string() },
                 breakout_status: "Pending Breakout".to_string(),
+                    is_forming: false,
+                    formation_progress: 0.0,
             });
         }
 
@@ -1105,6 +1146,8 @@ impl ChartPatternEngine {
                 geometric_strictness: 0.90,
                 volume_validation: if vol_drying { "Confirmed: Consolidation Drying".to_string() } else { "Unconfirmed".to_string() },
                 breakout_status: "Pending Breakout".to_string(),
+                    is_forming: false,
+                    formation_progress: 0.0,
             });
         }
     }
@@ -1149,6 +1192,906 @@ impl ChartPatternEngine {
                 geometric_strictness: tightness,
                 volume_validation: "Geometric Only".to_string(),
                 breakout_status: "Pending Breakout".to_string(),
+                    is_forming: false,
+                    formation_progress: 0.0,
+            });
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Phase 10: FORMING PATTERN ANALYSIS
+    // Focuses on recent candles to detect patterns that are currently forming.
+    // Uses a smaller swing window to catch recent pivots and treats the latest
+    // candle as a provisional (unconfirmed) swing point.
+    // ════════════════════════════════════════════════════════════════════════
+
+    const FORMING_SWING_WINDOW: usize = 2;
+
+    /// Analyze the most recent `window` candles for patterns that are currently
+    /// forming. Unlike `analyze()`, this uses a smaller swing detection window
+    /// (2 instead of 5), includes the latest candle as a provisional swing
+    /// point, and returns patterns tagged with `is_forming = true` and a
+    /// `formation_progress` estimate.
+    pub fn analyze_forming(candles: &[Candle], window: usize) -> Vec<ChartPattern> {
+        if candles.len() < 10 {
+            return Vec::new();
+        }
+
+        // Focus on the recent window of candles (but keep enough lookback for
+        // volume SMA calculations — take max(window, 30) from the end)
+        let lookback = window.max(30).min(candles.len());
+        let focus_start = candles.len().saturating_sub(lookback);
+        let focus = &candles[focus_start..];
+
+        // Use a smaller swing window to detect more recent pivots
+        let mut raw_swings = Self::find_swings_forming(focus);
+
+        // Add the current (latest) candle as a provisional swing point if it
+        // could be a local extremum within a small neighborhood
+        Self::add_provisional_swing(focus, &mut raw_swings);
+
+        if raw_swings.len() < 2 {
+            return Vec::new();
+        }
+
+        let swings = Self::alternate_swings(&raw_swings);
+        if swings.len() < 2 {
+            return Vec::new();
+        }
+
+        let mut patterns: Vec<ChartPattern> = Vec::new();
+
+        // Run forming-aware detection for each pattern archetype
+        Self::detect_forming_double_top(focus, &swings, &mut patterns);
+        Self::detect_forming_double_bottom(focus, &swings, &mut patterns);
+        Self::detect_forming_head_and_shoulders(focus, &swings, &mut patterns);
+        Self::detect_forming_inverse_head_and_shoulders(focus, &swings, &mut patterns);
+        Self::detect_forming_triple_top(focus, &swings, &mut patterns);
+        Self::detect_forming_triple_bottom(focus, &swings, &mut patterns);
+        Self::detect_forming_triangles(focus, &swings, &mut patterns);
+        Self::detect_forming_wedges(focus, &swings, &mut patterns);
+        Self::detect_forming_flags_pennants(focus, &swings, &mut patterns);
+        Self::detect_forming_harmonics(focus, &swings, &mut patterns);
+        Self::detect_forming_rectangle(focus, &swings, &mut patterns);
+
+        // Adjust indices to be relative to the full candle array
+        for p in &mut patterns {
+            p.start_idx += focus_start;
+            p.end_idx += focus_start;
+        }
+
+        // Sort by formation progress descending (most complete first),
+        // then by confidence
+        patterns.sort_by(|a, b| {
+            b.formation_progress
+                .partial_cmp(&a.formation_progress)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(
+                    b.confidence
+                        .partial_cmp(&a.confidence)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                )
+        });
+
+        patterns
+    }
+
+    /// Swing detection with a smaller window (2) for forming-pattern analysis.
+    /// This catches pivots closer to the current bar.
+    fn find_swings_forming(candles: &[Candle]) -> Vec<SwingPoint> {
+        let mut swings = Vec::new();
+        let n = candles.len();
+        let w = Self::FORMING_SWING_WINDOW;
+        if n < w * 2 + 1 {
+            return swings;
+        }
+
+        for i in w..(n - w) {
+            let mut is_high = true;
+            let mut is_low = true;
+
+            for j in (i.saturating_sub(w))..=(i + w).min(n - 1) {
+                if j == i { continue; }
+                if candles[j].high >= candles[i].high { is_high = false; }
+                if candles[j].low <= candles[i].low { is_low = false; }
+            }
+
+            if is_high {
+                swings.push(SwingPoint { idx: i, price: candles[i].high, kind: SwingKind::Peak });
+            }
+            if is_low {
+                swings.push(SwingPoint { idx: i, price: candles[i].low, kind: SwingKind::Trough });
+            }
+        }
+
+        swings.sort_by_key(|s| s.idx);
+        swings
+    }
+
+    /// Add the latest candle as a provisional swing point if it is a local
+    /// extremum compared to the last few candles (only needs left-side
+    /// confirmation, no right-side since it's the current bar).
+    fn add_provisional_swing(candles: &[Candle], swings: &mut Vec<SwingPoint>) {
+        if candles.len() < 3 { return; }
+        let n = candles.len();
+        let last_idx = n - 1;
+        let last = &candles[last_idx];
+
+        // Check against the last 2 candles (left-side only)
+        let lookback = 2.min(last_idx);
+        let mut is_high = true;
+        let mut is_low = true;
+
+        for j in (last_idx - lookback)..last_idx {
+            if candles[j].high >= last.high { is_high = false; }
+            if candles[j].low <= last.low { is_low = false; }
+        }
+
+        if is_high {
+            swings.push(SwingPoint { idx: last_idx, price: last.high, kind: SwingKind::Peak });
+        } else if is_low {
+            swings.push(SwingPoint { idx: last_idx, price: last.low, kind: SwingKind::Trough });
+        }
+    }
+
+    // ── Forming Pattern Detectors ──────────────────────────────────────────
+
+    /// Forming Double Top: Detects when one peak has formed and the current
+    /// price is approaching the same level — potential second peak forming.
+    fn detect_forming_double_top(candles: &[Candle], swings: &[SwingPoint], out: &mut Vec<ChartPattern>) {
+        let peaks: Vec<&SwingPoint> = swings.iter().filter(|s| s.kind == SwingKind::Peak).collect();
+        if peaks.is_empty() { return; }
+
+        let current_price = candles.last().map(|c| c.close).unwrap_or(0.0);
+        let current_high = candles.last().map(|c| c.high).unwrap_or(0.0);
+        let n = candles.len();
+
+        // Check completed double tops (both peaks detected in recent swings)
+        for window in peaks.windows(2) {
+            let (p1, p2) = (window[0], window[1]);
+            if Self::prices_match(p1.price, p2.price, MATCH_TOLERANCE * 2.0) {
+                let trough_between = swings.iter()
+                    .find(|s| s.kind == SwingKind::Trough && s.idx > p1.idx && s.idx < p2.idx);
+                if trough_between.is_none() { continue; }
+                let trough = trough_between.unwrap();
+
+                let avg_peak = (p1.price + p2.price) / 2.0;
+                let depth = (avg_peak - trough.price) / avg_peak;
+                if depth < 0.003 { continue; }
+
+                // Check if price is now moving below the trough (breakout forming)
+                let progress = if current_price < trough.price { 0.95 } else { 0.80 };
+
+                out.push(ChartPattern {
+                    pattern_type: "Double Top".to_string(),
+                    sentiment: "Bearish".to_string(),
+                    confidence: (0.50 + depth.min(0.2)).min(0.85),
+                    start_idx: p1.idx,
+                    end_idx: p2.idx.max(n.saturating_sub(1)),
+                    description: format!(
+                        "Forming Double Top: peaks at {:.2} and {:.2}, trough at {:.2}. {}.",
+                        p1.price, p2.price, trough.price,
+                        if current_price < trough.price { "Neckline breaking down" } else { "Watching for neckline break" }
+                    ),
+                    structural_bias: "Bearish Reversal".to_string(),
+                    geometric_strictness: 1.0 - (p1.price - p2.price).abs() / p1.price.max(1e-9),
+                    volume_validation: "Forming".to_string(),
+                    breakout_status: if current_price < trough.price { "Breaking Down".to_string() } else { "Forming".to_string() },
+                    is_forming: true,
+                    formation_progress: progress,
+                });
+            }
+        }
+
+        // Check for POTENTIAL double top: one peak exists and price is approaching it
+        for peak in &peaks {
+            let price_proximity = (current_high - peak.price).abs() / peak.price.max(1e-9);
+            if price_proximity < 0.02 && current_high > peak.price * 0.97 {
+                // Price is within 2% of a previous peak — potential second top forming
+                let has_trough_after = swings.iter().any(|s|
+                    s.kind == SwingKind::Trough && s.idx > peak.idx
+                );
+                if !has_trough_after { continue; }
+
+                out.push(ChartPattern {
+                    pattern_type: "Double Top".to_string(),
+                    sentiment: "Bearish".to_string(),
+                    confidence: 0.40 + (1.0 - price_proximity) * 0.2,
+                    start_idx: peak.idx,
+                    end_idx: n.saturating_sub(1),
+                    description: format!(
+                        "Potential Double Top forming: first peak at {:.2}, price now at {:.2} (within {:.1}%). Watching for rejection.",
+                        peak.price, current_high, price_proximity * 100.0
+                    ),
+                    structural_bias: "Bearish Reversal".to_string(),
+                    geometric_strictness: 1.0 - price_proximity,
+                    volume_validation: "Forming".to_string(),
+                    breakout_status: "Forming".to_string(),
+                    is_forming: true,
+                    formation_progress: 0.50,
+                });
+            }
+        }
+    }
+
+    /// Forming Double Bottom: One trough exists and price is approaching the same level.
+    fn detect_forming_double_bottom(candles: &[Candle], swings: &[SwingPoint], out: &mut Vec<ChartPattern>) {
+        let troughs: Vec<&SwingPoint> = swings.iter().filter(|s| s.kind == SwingKind::Trough).collect();
+        if troughs.is_empty() { return; }
+
+        let current_price = candles.last().map(|c| c.close).unwrap_or(0.0);
+        let current_low = candles.last().map(|c| c.low).unwrap_or(f64::MAX);
+        let n = candles.len();
+
+        // Check completed double bottoms
+        for window in troughs.windows(2) {
+            let (t1, t2) = (window[0], window[1]);
+            if Self::prices_match(t1.price, t2.price, MATCH_TOLERANCE * 2.0) {
+                let peak_between = swings.iter()
+                    .find(|s| s.kind == SwingKind::Peak && s.idx > t1.idx && s.idx < t2.idx);
+                if peak_between.is_none() { continue; }
+                let peak = peak_between.unwrap();
+
+                let avg_trough = (t1.price + t2.price) / 2.0;
+                let height = (peak.price - avg_trough) / avg_trough;
+                if height < 0.003 { continue; }
+
+                let progress = if current_price > peak.price { 0.95 } else { 0.80 };
+
+                out.push(ChartPattern {
+                    pattern_type: "Double Bottom".to_string(),
+                    sentiment: "Bullish".to_string(),
+                    confidence: (0.50 + height.min(0.2)).min(0.85),
+                    start_idx: t1.idx,
+                    end_idx: t2.idx.max(n.saturating_sub(1)),
+                    description: format!(
+                        "Forming Double Bottom: troughs at {:.2} and {:.2}, peak at {:.2}. {}.",
+                        t1.price, t2.price, peak.price,
+                        if current_price > peak.price { "Neckline breaking up" } else { "Watching for neckline break" }
+                    ),
+                    structural_bias: "Bullish Reversal".to_string(),
+                    geometric_strictness: 1.0 - (t1.price - t2.price).abs() / t1.price.max(1e-9),
+                    volume_validation: "Forming".to_string(),
+                    breakout_status: if current_price > peak.price { "Breaking Up".to_string() } else { "Forming".to_string() },
+                    is_forming: true,
+                    formation_progress: progress,
+                });
+            }
+        }
+
+        // Potential: one trough exists and price approaching it
+        for trough in &troughs {
+            let price_proximity = (current_low - trough.price).abs() / trough.price.max(1e-9);
+            if price_proximity < 0.02 && current_low < trough.price * 1.03 {
+                let has_peak_after = swings.iter().any(|s|
+                    s.kind == SwingKind::Peak && s.idx > trough.idx
+                );
+                if !has_peak_after { continue; }
+
+                out.push(ChartPattern {
+                    pattern_type: "Double Bottom".to_string(),
+                    sentiment: "Bullish".to_string(),
+                    confidence: 0.40 + (1.0 - price_proximity) * 0.2,
+                    start_idx: trough.idx,
+                    end_idx: n.saturating_sub(1),
+                    description: format!(
+                        "Potential Double Bottom forming: first trough at {:.2}, price now at {:.2} (within {:.1}%). Watching for bounce.",
+                        trough.price, current_low, price_proximity * 100.0
+                    ),
+                    structural_bias: "Bullish Reversal".to_string(),
+                    geometric_strictness: 1.0 - price_proximity,
+                    volume_validation: "Forming".to_string(),
+                    breakout_status: "Forming".to_string(),
+                    is_forming: true,
+                    formation_progress: 0.50,
+                });
+            }
+        }
+    }
+
+    /// Forming H&S Top: Detects partial H&S formations (left shoulder + head, waiting for right shoulder).
+    fn detect_forming_head_and_shoulders(candles: &[Candle], swings: &[SwingPoint], out: &mut Vec<ChartPattern>) {
+        let peaks: Vec<&SwingPoint> = swings.iter().filter(|s| s.kind == SwingKind::Peak).collect();
+        let current_price = candles.last().map(|c| c.close).unwrap_or(0.0);
+        let current_high = candles.last().map(|c| c.high).unwrap_or(0.0);
+        let n = candles.len();
+
+        // Full H&S in recent swings (3 peaks)
+        if peaks.len() >= 3 {
+            for window in peaks.windows(3) {
+                let (left, head, right) = (window[0], window[1], window[2]);
+                if head.price <= left.price || head.price <= right.price { continue; }
+                if !Self::prices_match(left.price, right.price, SHOULDER_TOLERANCE * 1.5) { continue; }
+
+                let shoulder_avg = (left.price + right.price) / 2.0;
+                let head_prominence = (head.price - shoulder_avg) / shoulder_avg;
+                let shoulder_symmetry = 1.0 - ((left.price - right.price).abs() / shoulder_avg);
+
+                out.push(ChartPattern {
+                    pattern_type: "Head & Shoulders Top".to_string(),
+                    sentiment: "Bearish".to_string(),
+                    confidence: (0.50 + head_prominence.min(0.25) + shoulder_symmetry * 0.15).min(0.90),
+                    start_idx: left.idx,
+                    end_idx: right.idx.max(n.saturating_sub(1)),
+                    description: format!(
+                        "Forming H&S Top: LS {:.2}, Head {:.2}, RS {:.2}. Watching for neckline break.",
+                        left.price, head.price, right.price
+                    ),
+                    structural_bias: "Bearish Reversal".to_string(),
+                    geometric_strictness: shoulder_symmetry,
+                    volume_validation: "Forming".to_string(),
+                    breakout_status: "Forming".to_string(),
+                    is_forming: true,
+                    formation_progress: 0.85,
+                });
+            }
+        }
+
+        // Partial H&S: Left shoulder + head formed, watching for right shoulder
+        if peaks.len() >= 2 {
+            for window in peaks.windows(2) {
+                let (left, head) = (window[0], window[1]);
+                if head.price <= left.price { continue; }
+
+                // Check if price has pulled back from head and is now near shoulder level
+                let last_trough = swings.iter().rev()
+                    .find(|s| s.kind == SwingKind::Trough && s.idx > head.idx);
+
+                if let Some(trough) = last_trough {
+                    // Price pulled back after head — check if forming right shoulder
+                    let shoulder_target = left.price;
+                    let price_near_shoulder = (current_high - shoulder_target).abs() / shoulder_target.max(1e-9) < 0.05;
+
+                    if price_near_shoulder || current_price > trough.price {
+                        out.push(ChartPattern {
+                            pattern_type: "Head & Shoulders Top".to_string(),
+                            sentiment: "Bearish".to_string(),
+                            confidence: 0.45,
+                            start_idx: left.idx,
+                            end_idx: n.saturating_sub(1),
+                            description: format!(
+                                "Potential H&S Top forming: LS {:.2}, Head {:.2}. Price at {:.2} — watching for right shoulder near {:.2}.",
+                                left.price, head.price, current_price, shoulder_target
+                            ),
+                            structural_bias: "Bearish Reversal".to_string(),
+                            geometric_strictness: 0.70,
+                            volume_validation: "Forming".to_string(),
+                            breakout_status: "Forming".to_string(),
+                            is_forming: true,
+                            formation_progress: 0.55,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    /// Forming Inverse H&S: Partial inverse formations.
+    fn detect_forming_inverse_head_and_shoulders(candles: &[Candle], swings: &[SwingPoint], out: &mut Vec<ChartPattern>) {
+        let troughs: Vec<&SwingPoint> = swings.iter().filter(|s| s.kind == SwingKind::Trough).collect();
+        let current_price = candles.last().map(|c| c.close).unwrap_or(0.0);
+        let current_low = candles.last().map(|c| c.low).unwrap_or(f64::MAX);
+        let n = candles.len();
+
+        // Full inverse H&S
+        if troughs.len() >= 3 {
+            for window in troughs.windows(3) {
+                let (left, head, right) = (window[0], window[1], window[2]);
+                if head.price >= left.price || head.price >= right.price { continue; }
+                if !Self::prices_match(left.price, right.price, SHOULDER_TOLERANCE * 1.5) { continue; }
+
+                let shoulder_avg = (left.price + right.price) / 2.0;
+                let head_depth = (shoulder_avg - head.price) / shoulder_avg;
+                let shoulder_symmetry = 1.0 - ((left.price - right.price).abs() / shoulder_avg);
+
+                out.push(ChartPattern {
+                    pattern_type: "Inverse Head & Shoulders".to_string(),
+                    sentiment: "Bullish".to_string(),
+                    confidence: (0.50 + head_depth.min(0.25) + shoulder_symmetry * 0.15).min(0.90),
+                    start_idx: left.idx,
+                    end_idx: right.idx.max(n.saturating_sub(1)),
+                    description: format!(
+                        "Forming IH&S: LS {:.2}, Head {:.2}, RS {:.2}. Watching for neckline break.",
+                        left.price, head.price, right.price
+                    ),
+                    structural_bias: "Bullish Reversal".to_string(),
+                    geometric_strictness: shoulder_symmetry,
+                    volume_validation: "Forming".to_string(),
+                    breakout_status: "Forming".to_string(),
+                    is_forming: true,
+                    formation_progress: 0.85,
+                });
+            }
+        }
+
+        // Partial: Left shoulder + head, watching for right shoulder
+        if troughs.len() >= 2 {
+            for window in troughs.windows(2) {
+                let (left, head) = (window[0], window[1]);
+                if head.price >= left.price { continue; }
+
+                let last_peak = swings.iter().rev()
+                    .find(|s| s.kind == SwingKind::Peak && s.idx > head.idx);
+
+                if let Some(peak) = last_peak {
+                    let shoulder_target = left.price;
+                    let price_near_shoulder = (current_low - shoulder_target).abs() / shoulder_target.max(1e-9) < 0.05;
+
+                    if price_near_shoulder || current_price < peak.price {
+                        out.push(ChartPattern {
+                            pattern_type: "Inverse Head & Shoulders".to_string(),
+                            sentiment: "Bullish".to_string(),
+                            confidence: 0.45,
+                            start_idx: left.idx,
+                            end_idx: n.saturating_sub(1),
+                            description: format!(
+                                "Potential IH&S forming: LS {:.2}, Head {:.2}. Price at {:.2} — watching for right shoulder near {:.2}.",
+                                left.price, head.price, current_price, shoulder_target
+                            ),
+                            structural_bias: "Bullish Reversal".to_string(),
+                            geometric_strictness: 0.70,
+                            volume_validation: "Forming".to_string(),
+                            breakout_status: "Forming".to_string(),
+                            is_forming: true,
+                            formation_progress: 0.55,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    /// Forming Triple Top: 2 peaks at the same level, watching for 3rd test.
+    fn detect_forming_triple_top(candles: &[Candle], swings: &[SwingPoint], out: &mut Vec<ChartPattern>) {
+        let peaks: Vec<&SwingPoint> = swings.iter().filter(|s| s.kind == SwingKind::Peak).collect();
+        let current_high = candles.last().map(|c| c.high).unwrap_or(0.0);
+        let n = candles.len();
+
+        // Full triple top
+        if peaks.len() >= 3 {
+            for window in peaks.windows(3) {
+                let (p1, p2, p3) = (window[0], window[1], window[2]);
+                let avg = (p1.price + p2.price + p3.price) / 3.0;
+                if !Self::prices_match(p1.price, avg, MATCH_TOLERANCE * 2.0)
+                    || !Self::prices_match(p2.price, avg, MATCH_TOLERANCE * 2.0)
+                    || !Self::prices_match(p3.price, avg, MATCH_TOLERANCE * 2.0)
+                { continue; }
+
+                out.push(ChartPattern {
+                    pattern_type: "Triple Top".to_string(),
+                    sentiment: "Bearish".to_string(),
+                    confidence: 0.75,
+                    start_idx: p1.idx,
+                    end_idx: p3.idx.max(n.saturating_sub(1)),
+                    description: format!(
+                        "Forming Triple Top at {:.2}, {:.2}, {:.2}. Strong resistance being tested.",
+                        p1.price, p2.price, p3.price
+                    ),
+                    structural_bias: "Bearish Reversal".to_string(),
+                    geometric_strictness: 0.85,
+                    volume_validation: "Forming".to_string(),
+                    breakout_status: "Forming".to_string(),
+                    is_forming: true,
+                    formation_progress: 0.90,
+                });
+            }
+        }
+
+        // Partial: 2 peaks at same level, price approaching for 3rd test
+        if peaks.len() >= 2 {
+            for window in peaks.windows(2) {
+                let (p1, p2) = (window[0], window[1]);
+                if !Self::prices_match(p1.price, p2.price, MATCH_TOLERANCE * 2.0) { continue; }
+                let avg = (p1.price + p2.price) / 2.0;
+                let proximity = (current_high - avg).abs() / avg.max(1e-9);
+                if proximity < 0.03 {
+                    out.push(ChartPattern {
+                        pattern_type: "Triple Top".to_string(),
+                        sentiment: "Bearish".to_string(),
+                        confidence: 0.45,
+                        start_idx: p1.idx,
+                        end_idx: n.saturating_sub(1),
+                        description: format!(
+                            "Potential Triple Top: 2 peaks at {:.2} and {:.2}. Price approaching for 3rd test at {:.2}.",
+                            p1.price, p2.price, current_high
+                        ),
+                        structural_bias: "Bearish Reversal".to_string(),
+                        geometric_strictness: 1.0 - proximity,
+                        volume_validation: "Forming".to_string(),
+                        breakout_status: "Forming".to_string(),
+                        is_forming: true,
+                        formation_progress: 0.60,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Forming Triple Bottom: 2 troughs at the same level, watching for 3rd test.
+    fn detect_forming_triple_bottom(candles: &[Candle], swings: &[SwingPoint], out: &mut Vec<ChartPattern>) {
+        let troughs: Vec<&SwingPoint> = swings.iter().filter(|s| s.kind == SwingKind::Trough).collect();
+        let current_low = candles.last().map(|c| c.low).unwrap_or(f64::MAX);
+        let n = candles.len();
+
+        // Full triple bottom
+        if troughs.len() >= 3 {
+            for window in troughs.windows(3) {
+                let (t1, t2, t3) = (window[0], window[1], window[2]);
+                let avg = (t1.price + t2.price + t3.price) / 3.0;
+                if !Self::prices_match(t1.price, avg, MATCH_TOLERANCE * 2.0)
+                    || !Self::prices_match(t2.price, avg, MATCH_TOLERANCE * 2.0)
+                    || !Self::prices_match(t3.price, avg, MATCH_TOLERANCE * 2.0)
+                { continue; }
+
+                out.push(ChartPattern {
+                    pattern_type: "Triple Bottom".to_string(),
+                    sentiment: "Bullish".to_string(),
+                    confidence: 0.75,
+                    start_idx: t1.idx,
+                    end_idx: t3.idx.max(n.saturating_sub(1)),
+                    description: format!(
+                        "Forming Triple Bottom at {:.2}, {:.2}, {:.2}. Strong support being tested.",
+                        t1.price, t2.price, t3.price
+                    ),
+                    structural_bias: "Bullish Reversal".to_string(),
+                    geometric_strictness: 0.85,
+                    volume_validation: "Forming".to_string(),
+                    breakout_status: "Forming".to_string(),
+                    is_forming: true,
+                    formation_progress: 0.90,
+                });
+            }
+        }
+
+        // Partial: 2 troughs at same level, price approaching for 3rd test
+        if troughs.len() >= 2 {
+            for window in troughs.windows(2) {
+                let (t1, t2) = (window[0], window[1]);
+                if !Self::prices_match(t1.price, t2.price, MATCH_TOLERANCE * 2.0) { continue; }
+                let avg = (t1.price + t2.price) / 2.0;
+                let proximity = (current_low - avg).abs() / avg.max(1e-9);
+                if proximity < 0.03 {
+                    out.push(ChartPattern {
+                        pattern_type: "Triple Bottom".to_string(),
+                        sentiment: "Bullish".to_string(),
+                        confidence: 0.45,
+                        start_idx: t1.idx,
+                        end_idx: n.saturating_sub(1),
+                        description: format!(
+                            "Potential Triple Bottom: 2 troughs at {:.2} and {:.2}. Price approaching for 3rd test at {:.2}.",
+                            t1.price, t2.price, current_low
+                        ),
+                        structural_bias: "Bullish Reversal".to_string(),
+                        geometric_strictness: 1.0 - proximity,
+                        volume_validation: "Forming".to_string(),
+                        breakout_status: "Forming".to_string(),
+                        is_forming: true,
+                        formation_progress: 0.60,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Forming triangles: Detect converging/diverging trendlines in recent swings.
+    fn detect_forming_triangles(_candles: &[Candle], swings: &[SwingPoint], out: &mut Vec<ChartPattern>) {
+        let peaks: Vec<(f64, f64)> = swings.iter().filter(|s| s.kind == SwingKind::Peak).map(|s| (s.idx as f64, s.price)).collect();
+        let troughs: Vec<(f64, f64)> = swings.iter().filter(|s| s.kind == SwingKind::Trough).map(|s| (s.idx as f64, s.price)).collect();
+        if peaks.len() < 2 || troughs.len() < 2 { return; }
+
+        let (res_slope, _) = Self::linear_regression(&peaks);
+        let (sup_slope, _) = Self::linear_regression(&troughs);
+
+        let start = swings.first().map(|s| s.idx).unwrap_or(0);
+        let end = swings.last().map(|s| s.idx).unwrap_or(0);
+        let span = (end as f64 - start as f64).max(1.0);
+
+        // Normalize slopes per candle to price range
+        let price_range = peaks.iter().map(|p| p.1).chain(troughs.iter().map(|p| p.1))
+            .fold(f64::MIN, f64::max) - peaks.iter().map(|p| p.1).chain(troughs.iter().map(|p| p.1))
+            .fold(f64::MAX, f64::min);
+        let norm_threshold = (price_range / span * 0.1).max(FLAT_SLOPE_THRESHOLD);
+
+        // Ascending Triangle: flat resistance, rising support
+        if res_slope.abs() < norm_threshold && sup_slope > norm_threshold {
+            let convergence = sup_slope / norm_threshold.max(1e-9);
+            out.push(ChartPattern {
+                pattern_type: "Ascending Triangle".to_string(),
+                sentiment: "Bullish".to_string(),
+                confidence: (0.45 + convergence.min(3.0) * 0.1).min(0.80),
+                start_idx: start,
+                end_idx: end,
+                description: format!("Forming Ascending Triangle: flat resistance with rising support. Bullish breakout likely."),
+                structural_bias: "Bullish Breakout".to_string(),
+                geometric_strictness: 0.85,
+                volume_validation: "Forming".to_string(),
+                breakout_status: "Forming".to_string(),
+                is_forming: true,
+                formation_progress: 0.70,
+            });
+        }
+
+        // Descending Triangle: flat support, falling resistance
+        if sup_slope.abs() < norm_threshold && res_slope < -norm_threshold {
+            let convergence = res_slope.abs() / norm_threshold.max(1e-9);
+            out.push(ChartPattern {
+                pattern_type: "Descending Triangle".to_string(),
+                sentiment: "Bearish".to_string(),
+                confidence: (0.45 + convergence.min(3.0) * 0.1).min(0.80),
+                start_idx: start,
+                end_idx: end,
+                description: format!("Forming Descending Triangle: falling resistance with flat support. Bearish breakdown likely."),
+                structural_bias: "Bearish Breakout".to_string(),
+                geometric_strictness: 0.85,
+                volume_validation: "Forming".to_string(),
+                breakout_status: "Forming".to_string(),
+                is_forming: true,
+                formation_progress: 0.70,
+            });
+        }
+
+        // Symmetrical Triangle: converging trendlines
+        if res_slope < -norm_threshold && sup_slope > norm_threshold {
+            out.push(ChartPattern {
+                pattern_type: "Symmetrical Triangle".to_string(),
+                sentiment: "Neutral".to_string(),
+                confidence: 0.55,
+                start_idx: start,
+                end_idx: end,
+                description: format!("Forming Symmetrical Triangle: converging trendlines. Breakout direction determines bias."),
+                structural_bias: "Bilateral Breakout".to_string(),
+                geometric_strictness: 0.85,
+                volume_validation: "Forming".to_string(),
+                breakout_status: "Forming".to_string(),
+                is_forming: true,
+                formation_progress: 0.65,
+            });
+        }
+    }
+
+    /// Forming wedges: Rising or falling wedge patterns in recent price action.
+    fn detect_forming_wedges(candles: &[Candle], swings: &[SwingPoint], out: &mut Vec<ChartPattern>) {
+        let peaks: Vec<(f64, f64)> = swings.iter().filter(|s| s.kind == SwingKind::Peak).map(|s| (s.idx as f64, s.price)).collect();
+        let troughs: Vec<(f64, f64)> = swings.iter().filter(|s| s.kind == SwingKind::Trough).map(|s| (s.idx as f64, s.price)).collect();
+        if peaks.len() < 2 || troughs.len() < 2 { return; }
+
+        let (res_slope, _) = Self::linear_regression(&peaks);
+        let (sup_slope, _) = Self::linear_regression(&troughs);
+
+        let start = swings.first().map(|s| s.idx).unwrap_or(0);
+        let end = swings.last().map(|s| s.idx).unwrap_or(0);
+        let vol_slope = Self::get_volume_slope(candles, start, end);
+
+        // Rising Wedge: both slopes positive, support steeper than resistance (converging up)
+        if res_slope > 0.0 && sup_slope > 0.0 && sup_slope > res_slope {
+            out.push(ChartPattern {
+                pattern_type: "Rising Wedge".to_string(),
+                sentiment: "Bearish".to_string(),
+                confidence: 0.55,
+                start_idx: start,
+                end_idx: end,
+                description: format!(
+                    "Forming Rising Wedge: converging upward. {} volume. Bearish reversal expected.",
+                    if vol_slope < 0.0 { "Declining" } else { "Steady" }
+                ),
+                structural_bias: "Bearish Reversal".to_string(),
+                geometric_strictness: 0.80,
+                volume_validation: if vol_slope < 0.0 { "Confirmed: Consolidation Drying".to_string() } else { "Forming".to_string() },
+                breakout_status: "Forming".to_string(),
+                is_forming: true,
+                formation_progress: 0.65,
+            });
+        }
+
+        // Falling Wedge: both slopes negative, resistance steeper than support (converging down)
+        if res_slope < 0.0 && sup_slope < 0.0 && res_slope < sup_slope {
+            out.push(ChartPattern {
+                pattern_type: "Falling Wedge".to_string(),
+                sentiment: "Bullish".to_string(),
+                confidence: 0.55,
+                start_idx: start,
+                end_idx: end,
+                description: format!(
+                    "Forming Falling Wedge: converging downward. {} volume. Bullish reversal expected.",
+                    if vol_slope < 0.0 { "Declining" } else { "Steady" }
+                ),
+                structural_bias: "Bullish Reversal".to_string(),
+                geometric_strictness: 0.80,
+                volume_validation: if vol_slope < 0.0 { "Confirmed: Consolidation Drying".to_string() } else { "Forming".to_string() },
+                breakout_status: "Forming".to_string(),
+                is_forming: true,
+                formation_progress: 0.65,
+            });
+        }
+    }
+
+    /// Forming flags and pennants: Detects consolidation after a strong move.
+    fn detect_forming_flags_pennants(candles: &[Candle], swings: &[SwingPoint], out: &mut Vec<ChartPattern>) {
+        let n = candles.len();
+        if n < 10 || swings.len() < 3 { return; }
+
+        // Look for a strong pole in the earlier portion, followed by consolidation
+        let consol_start = n.saturating_sub(10);
+        let pole_end = consol_start;
+        let pole_start = pole_end.saturating_sub(15).max(0);
+        if pole_end <= pole_start + 3 { return; }
+
+        let pole_candles = &candles[pole_start..pole_end];
+        let pole_open = pole_candles.first().map(|c| c.open).unwrap_or(0.0);
+        let pole_close = pole_candles.last().map(|c| c.close).unwrap_or(0.0);
+        let pole_range = (pole_close - pole_open).abs();
+        let avg_price = (pole_open + pole_close) / 2.0;
+
+        if avg_price < 1e-9 || pole_range / avg_price < 0.01 { return; }
+
+        let is_bullish_pole = pole_close > pole_open;
+
+        // Consolidation swings
+        let consol_swings: Vec<&SwingPoint> = swings.iter().filter(|s| s.idx >= consol_start).collect();
+        if consol_swings.len() < 2 { return; }
+
+        let consol_high = consol_swings.iter().filter(|s| s.kind == SwingKind::Peak).map(|s| s.price).fold(f64::MIN, f64::max);
+        let consol_low = consol_swings.iter().filter(|s| s.kind == SwingKind::Trough).map(|s| s.price).fold(f64::MAX, f64::min);
+
+        if consol_high <= consol_low { return; }
+        let consol_range = consol_high - consol_low;
+        let ratio = consol_range / pole_range;
+        if ratio > 0.50 { return; } // Too wide for a flag/pennant
+
+        let (pattern, sentiment, bias) = if is_bullish_pole {
+            ("Bull Flag", "Bullish", "Bullish Continuation")
+        } else {
+            ("Bear Flag", "Bearish", "Bearish Continuation")
+        };
+
+        let vol_slope = Self::get_volume_slope(candles, consol_start, n - 1);
+
+        out.push(ChartPattern {
+            pattern_type: pattern.to_string(),
+            sentiment: sentiment.to_string(),
+            confidence: (0.50 + (1.0 - ratio) * 0.25).min(0.80),
+            start_idx: pole_start,
+            end_idx: n.saturating_sub(1),
+            description: format!(
+                "Forming {}: pole {:.2}→{:.2} ({:.1}% move), now consolidating. {} volume in consolidation.",
+                pattern, pole_open, pole_close, (pole_range / avg_price) * 100.0,
+                if vol_slope < 0.0 { "Declining" } else { "Steady" }
+            ),
+            structural_bias: bias.to_string(),
+            geometric_strictness: 1.0 - ratio,
+            volume_validation: if vol_slope < 0.0 { "Confirmed: Consolidation Drying".to_string() } else { "Forming".to_string() },
+            breakout_status: "Forming".to_string(),
+            is_forming: true,
+            formation_progress: 0.60,
+        });
+    }
+
+    /// Forming harmonics: Detect partial X-A-B-C-D patterns.
+    fn detect_forming_harmonics(candles: &[Candle], swings: &[SwingPoint], out: &mut Vec<ChartPattern>) {
+        let n_swings = swings.len();
+        let n = candles.len();
+
+        // Full 5-point harmonic in recent swings
+        if n_swings >= 5 {
+            let x = swings[n_swings - 5];
+            let a = swings[n_swings - 4];
+            let b = swings[n_swings - 3];
+            let c = swings[n_swings - 2];
+            let d = swings[n_swings - 1];
+
+            if x.kind != a.kind && a.kind != b.kind && b.kind != c.kind && c.kind != d.kind {
+                let is_bullish = x.kind == SwingKind::Trough;
+                let xa = (a.price - x.price).abs();
+                let ab = (b.price - a.price).abs();
+                if xa > 1e-9 && ab > 1e-9 {
+                    let ab_xa = ab / xa;
+                    let ad_xa = (d.price - a.price).abs() / xa;
+                    if let Some((name, _)) = Self::classify_harmonic(ab_xa, ad_xa) {
+                        out.push(ChartPattern {
+                            pattern_type: format!("Harmonic {}", name),
+                            sentiment: if is_bullish { "Bullish".to_string() } else { "Bearish".to_string() },
+                            confidence: 0.80,
+                            start_idx: x.idx,
+                            end_idx: d.idx.max(n.saturating_sub(1)),
+                            description: format!(
+                                "Forming Harmonic {}: X→A→B→C→D structure detected. D at {:.4} retracement of XA.",
+                                name, ad_xa
+                            ),
+                            structural_bias: if is_bullish { "Bullish Reversal".to_string() } else { "Bearish Reversal".to_string() },
+                            geometric_strictness: 0.90,
+                            volume_validation: "Forming".to_string(),
+                            breakout_status: "Forming".to_string(),
+                            is_forming: true,
+                            formation_progress: 0.90,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Partial harmonic: X-A-B-C formed, D forming
+        if n_swings >= 4 {
+            let x = swings[n_swings - 4];
+            let a = swings[n_swings - 3];
+            let b = swings[n_swings - 2];
+            let c = swings[n_swings - 1];
+
+            if x.kind != a.kind && a.kind != b.kind && b.kind != c.kind {
+                let xa = (a.price - x.price).abs();
+                let ab = (b.price - a.price).abs();
+                if xa > 1e-9 && ab > 1e-9 {
+                    let ab_xa = ab / xa;
+                    let current_price = candles.last().map(|c| c.close).unwrap_or(0.0);
+                    let ad_xa_current = (current_price - a.price).abs() / xa;
+                    let is_bullish = x.kind == SwingKind::Trough;
+
+                    // Check if current D leg is approaching any harmonic ratio
+                    let targets = [
+                        (0.786, "Gartley"), (0.886, "Bat"), (1.272, "Butterfly"), (1.618, "Crab"),
+                    ];
+                    for (target, name) in targets {
+                        if (ad_xa_current - target).abs() < 0.15 {
+                            out.push(ChartPattern {
+                                pattern_type: format!("Harmonic {}", name),
+                                sentiment: if is_bullish { "Bullish".to_string() } else { "Bearish".to_string() },
+                                confidence: 0.40,
+                                start_idx: x.idx,
+                                end_idx: n.saturating_sub(1),
+                                description: format!(
+                                    "Potential Harmonic {}: X→A→B→C formed (AB/XA={:.3}). D leg forming — approaching {:.3} retracement (current: {:.3}).",
+                                    name, ab_xa, target, ad_xa_current
+                                ),
+                                structural_bias: if is_bullish { "Bullish Reversal".to_string() } else { "Bearish Reversal".to_string() },
+                                geometric_strictness: 0.70,
+                                volume_validation: "Forming".to_string(),
+                                breakout_status: "Forming".to_string(),
+                                is_forming: true,
+                                formation_progress: 0.65,
+                            });
+                            break; // Only report the closest match
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Forming rectangle: Flat support and resistance in recent action.
+    fn detect_forming_rectangle(_candles: &[Candle], swings: &[SwingPoint], out: &mut Vec<ChartPattern>) {
+        let peaks: Vec<(f64, f64)> = swings.iter().filter(|s| s.kind == SwingKind::Peak).map(|s| (s.idx as f64, s.price)).collect();
+        let troughs: Vec<(f64, f64)> = swings.iter().filter(|s| s.kind == SwingKind::Trough).map(|s| (s.idx as f64, s.price)).collect();
+        if peaks.len() < 2 || troughs.len() < 2 { return; }
+
+        let (res_slope, _) = Self::linear_regression(&peaks);
+        let (sup_slope, _) = Self::linear_regression(&troughs);
+
+        if res_slope.abs() < FLAT_SLOPE_THRESHOLD && sup_slope.abs() < FLAT_SLOPE_THRESHOLD {
+            let avg_res = peaks.iter().map(|p| p.1).sum::<f64>() / peaks.len() as f64;
+            let avg_sup = troughs.iter().map(|p| p.1).sum::<f64>() / troughs.len() as f64;
+            let channel_width = avg_res - avg_sup;
+            let mid = (avg_res + avg_sup) / 2.0;
+
+            if mid.abs() < 1e-9 || channel_width / mid < 0.003 { return; }
+
+            let start = swings.first().map(|s| s.idx).unwrap_or(0);
+            let end = swings.last().map(|s| s.idx).unwrap_or(0);
+
+            out.push(ChartPattern {
+                pattern_type: "Rectangle".to_string(),
+                sentiment: "Neutral".to_string(),
+                confidence: 0.55,
+                start_idx: start,
+                end_idx: end,
+                description: format!(
+                    "Forming Rectangle: support {:.2}, resistance {:.2}. Width {:.2} ({:.1}%). Breakout direction determines bias.",
+                    avg_sup, avg_res, channel_width, (channel_width / mid) * 100.0
+                ),
+                structural_bias: "Bilateral Breakout".to_string(),
+                geometric_strictness: 0.85,
+                volume_validation: "Forming".to_string(),
+                breakout_status: "Forming".to_string(),
+                is_forming: true,
+                formation_progress: 0.60,
             });
         }
     }

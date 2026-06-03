@@ -8,7 +8,8 @@ import {
   Minus, 
   Sparkles, 
   Activity, 
-  Loader2 
+  Loader2,
+  Radio
 } from 'lucide-react';
 
 export default function MultiTfPatternsView() {
@@ -130,13 +131,16 @@ export default function MultiTfPatternsView() {
           // Empty State
           <div className="flex flex-col items-center justify-center py-4 text-center border border-border-default/50 bg-elevated/10 rounded-lg">
             <Activity size={12} className="text-text-muted mb-0.5" />
-            <span className="text-[9px] font-medium text-text-muted">No patterns detected</span>
+            <span className="text-[9px] font-medium text-text-muted">No patterns forming</span>
             <span className="text-[8px] text-text-muted/40">Timeframe: {selectedTf}</span>
           </div>
         ) : (
           patterns.map((p, idx) => {
             const isBullish = p.sentiment.toLowerCase() === 'bullish';
             const isBearish = p.sentiment.toLowerCase() === 'bearish';
+            const isForming = p.is_forming ?? false;
+            const progress = p.formation_progress ?? 0;
+            const progressPct = Math.round(progress * 100);
 
             return (
               <div
@@ -144,6 +148,7 @@ export default function MultiTfPatternsView() {
                 onClick={() => handlePatternClick(p)}
                 className={`
                   group relative flex flex-col gap-1 p-2 rounded-lg border transition-all duration-200 cursor-pointer hover:scale-[1.005] active:scale-[0.995]
+                  ${isForming ? 'animate-[pulse_3s_ease-in-out_infinite]' : ''}
                   ${isBullish 
                     ? 'bg-emerald-500/[0.03] border-emerald-500/15 hover:border-emerald-500/35' 
                     : isBearish 
@@ -152,41 +157,73 @@ export default function MultiTfPatternsView() {
                   }
                 `}
               >
-                {/* Glowing edge indicator */}
+                {/* Glowing edge indicator — pulsing for forming patterns */}
                 <div className={`
-                  absolute top-0 bottom-0 left-0 w-0.5 rounded-l-lg opacity-40 group-hover:opacity-100 transition-opacity
+                  absolute top-0 bottom-0 left-0 w-0.5 rounded-l-lg transition-opacity
+                  ${isForming ? 'opacity-80 animate-pulse' : 'opacity-40 group-hover:opacity-100'}
                   ${isBullish ? 'bg-emerald-400' : isBearish ? 'bg-rose-400' : 'bg-text-muted'}
                 `} />
 
                 {/* Pattern Header */}
                 <div className="flex justify-between items-start pl-1">
-                  <span className="text-[10px] font-bold text-text-primary tracking-tight truncate max-w-[160px]">
-                    {p.pattern_type}
-                  </span>
-                  <span className={`
-                    flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] font-black uppercase tracking-wider border
-                    ${isBullish 
-                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
-                      : isBearish 
-                        ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' 
-                        : 'bg-elevated text-text-muted border-border-default'
-                    }
-                  `}>
-                    {isBullish ? (
-                      <TrendingUp size={8} />
-                    ) : isBearish ? (
-                      <TrendingDown size={8} />
-                    ) : (
-                      <Minus size={8} />
+                  <div className="flex items-center gap-1 truncate max-w-[160px]">
+                    {isForming && (
+                      <Radio size={8} className={`shrink-0 animate-pulse ${
+                        isBullish ? 'text-emerald-400' : isBearish ? 'text-rose-400' : 'text-amber-400'
+                      }`} />
                     )}
-                    {p.sentiment}
-                  </span>
+                    <span className="text-[10px] font-bold text-text-primary tracking-tight truncate">
+                      {p.pattern_type}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {/* FORMING badge */}
+                    {isForming && (
+                      <span className="flex items-center gap-0.5 px-1 py-0.5 rounded text-[7px] font-black uppercase tracking-wider border bg-amber-500/10 text-amber-400 border-amber-500/20 animate-pulse">
+                        FORMING
+                      </span>
+                    )}
+                    <span className={`
+                      flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] font-black uppercase tracking-wider border
+                      ${isBullish 
+                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
+                        : isBearish 
+                          ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' 
+                          : 'bg-elevated text-text-muted border-border-default'
+                      }
+                    `}>
+                      {isBullish ? (
+                        <TrendingUp size={8} />
+                      ) : isBearish ? (
+                        <TrendingDown size={8} />
+                      ) : (
+                        <Minus size={8} />
+                      )}
+                      {p.sentiment}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Pattern Description */}
                 <p className="text-[9px] text-text-muted leading-relaxed pl-1">
                   {p.description}
                 </p>
+
+                {/* Formation Progress Bar (for forming patterns) */}
+                {isForming && progress > 0 && (
+                  <div className="flex items-center gap-1.5 pl-1 mt-0.5">
+                    <span className="text-[8px] text-amber-400/70 font-bold">Progress:</span>
+                    <div className="flex-grow h-1.5 bg-surface border border-amber-500/20 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-amber-600 via-amber-500 to-amber-400"
+                        style={{ width: `${progressPct}%` }}
+                      />
+                    </div>
+                    <span className="text-[8px] font-black text-amber-400">
+                      {progressPct}%
+                    </span>
+                  </div>
+                )}
 
                 {/* Confidence Bar */}
                 <div className="flex items-center gap-1.5 pl-1 mt-0.5">
@@ -210,25 +247,29 @@ export default function MultiTfPatternsView() {
                   </span>
                 </div>
 
-                {/* Phase 9.2: Volume Validation & Breakout Status */}
+                {/* Volume Validation & Breakout Status */}
                 <div className="flex items-center gap-1 pl-1 mt-0.5 flex-wrap">
                   {p.volume_validation && (
                     <span className={`
                       inline-flex items-center gap-0.5 px-1 py-[1px] rounded text-[7px] font-bold uppercase tracking-wider border
                       ${p.volume_validation.includes('Confirmed') 
                         ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
-                        : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                        : p.volume_validation === 'Forming'
+                          ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                          : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
                       }
                     `}>
-                      {p.volume_validation.includes('Confirmed') ? '✓' : '○'} Vol
+                      {p.volume_validation.includes('Confirmed') ? '✓' : p.volume_validation === 'Forming' ? '◎' : '○'} Vol
                     </span>
                   )}
                   {p.breakout_status && (
                     <span className={`
                       inline-flex items-center gap-0.5 px-1 py-[1px] rounded text-[7px] font-bold tracking-wider border
-                      ${p.breakout_status.includes('Confirmed') 
+                      ${p.breakout_status.includes('Confirmed') || p.breakout_status.includes('Breaking')
                         ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20' 
-                        : 'bg-slate-500/10 text-slate-400 border-slate-500/20'
+                        : p.breakout_status === 'Forming'
+                          ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                          : 'bg-slate-500/10 text-slate-400 border-slate-500/20'
                       }
                     `}>
                       {p.breakout_status}

@@ -69,6 +69,9 @@ export interface ChartPattern {
   geometric_strictness: number;
   volume_validation: string;
   breakout_status: string;
+  // Phase 10: Forming pattern fields
+  is_forming?: boolean;
+  formation_progress?: number;
 }
 
 export interface MultiTfChartPatterns {

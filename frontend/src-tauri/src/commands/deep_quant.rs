@@ -1869,6 +1869,11 @@ pub struct ApiChartPattern {
     pub geometric_strictness: f64,
     pub volume_validation: String,
     pub breakout_status: String,
+    // Phase 10: Forming pattern fields
+    #[serde(default)]
+    pub is_forming: bool,
+    #[serde(default)]
+    pub formation_progress: f64,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1907,7 +1912,7 @@ pub async fn get_multi_timeframe_chart_patterns(
             match candles_res {
                 Ok(timed_candles) => {
                     let candles: Vec<crate::quant::patterns::Candle> = timed_candles.iter().map(|(_, c)| c.clone()).collect();
-                    let raw_patterns = crate::quant::chart_patterns::ChartPatternEngine::analyze(&candles);
+                    let raw_patterns = crate::quant::chart_patterns::ChartPatternEngine::analyze_forming(&candles, 30);
                     
                     let mut patterns = vec![];
                     for p in raw_patterns {
@@ -1950,6 +1955,8 @@ pub async fn get_multi_timeframe_chart_patterns(
                             geometric_strictness: p.geometric_strictness,
                             volume_validation: p.volume_validation,
                             breakout_status: p.breakout_status,
+                            is_forming: p.is_forming,
+                            formation_progress: p.formation_progress,
                         });
                     }
 
