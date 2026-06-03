@@ -54,9 +54,35 @@ export default function FootprintChart({
   const isDragging = useRef(false);
   const dragStart = useRef({ x: 0, y: 0, scrollX: 0, scrollY: 0 });
 
+  // ── High-DPI ResizeObserver ──────────────────────────────────────────
+  const [dimensions, setDimensions] = useState({ width: 600, height: 400 });
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      if (!entries || entries.length === 0) return;
+      const { width, height } = entries[0].contentRect;
+      setDimensions({ width, height });
+    });
+
+    resizeObserver.observe(container);
+    return () => resizeObserver.disconnect();
+  }, []);
+
   // ── Fetch Historical and Merge Live Candles ───────────────────────────
   const effectiveTimeframe = (activeTimeframe as Timeframe) ?? timeframe;
-  const rangeDays = RANGE_DAYS[activeRange] ?? 365;
+  
+  // For footprint chart, we only need a few days of history to cover the last 150 candles.
+  // Requesting 365 days is extremely heavy and makes the chart slow/uncontrollable.
+  const rangeDays = useMemo(() => {
+    const tfStr = effectiveTimeframe as string;
+    if (tfStr === '1d') return 60;
+    if (tfStr === '1h' || tfStr === '4h') return 15;
+    return 3; // 3 days for intraday footprint
+  }, [effectiveTimeframe]);
+
   const kiteInterval = KITE_INTERVAL_MAP[effectiveTimeframe] ?? '10minute';
   const { candles: historicalCandles, loading: histLoading } = useHistoricalData(
     activeSymbol, rangeDays, kiteInterval, effectiveTimeframe
@@ -84,10 +110,29 @@ export default function FootprintChart({
     return Array.from(candleMap.values()).sort((a, b) => a.start_timestamp_ms - b.start_timestamp_ms);
   }, [historicalCandles, ohlcCandles, activeSymbol]);
 
-  const { candles: chartData, volumes: volumeData } = useMemo(
+  const { candles: chartDataRaw, volumes: volumeData } = useMemo(
     () => aggregateCandles(mergedCandles, effectiveTimeframe, activeSymbol),
     [mergedCandles, effectiveTimeframe, activeSymbol]
   );
+
+  // Limit footprint chart to display only the most recent 150 candles
+  // This drastically improves performance, keeps panning responsive,
+  // and prevents loading/rendering excessive historical candles.
+  const chartData = useMemo(() => {
+    const limit = 150;
+    if (chartDataRaw.length <= limit) return chartDataRaw;
+    return chartDataRaw.slice(chartDataRaw.length - limit);
+  }, [chartDataRaw]);
+
+  // Clamp scrollX within valid bounds (0 to maxScrollX) whenever zoomX, chartData, or dimensions change
+  useEffect(() => {
+    const rightMargin = 72;
+    const chartWidth = dimensions.width - rightMargin;
+    const maxScrollX = Math.max(0, chartData.length * zoomX - chartWidth);
+    if (scrollX > maxScrollX) {
+      setScrollX(maxScrollX);
+    }
+  }, [zoomX, chartData, dimensions.width, scrollX]);
 
   const intervalMs = useMemo(() => TIMEFRAME_MS[effectiveTimeframe] || 60000, [effectiveTimeframe]);
 
@@ -174,22 +219,7 @@ export default function FootprintChart({
     return grouped;
   }, [orderFlowData, chartData, volMap, intervalMs, tickSize]);
 
-  // ── High-DPI ResizeObserver ──────────────────────────────────────────
-  const [dimensions, setDimensions] = useState({ width: 600, height: 400 });
 
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const resizeObserver = new ResizeObserver((entries) => {
-      if (!entries || entries.length === 0) return;
-      const { width, height } = entries[0].contentRect;
-      setDimensions({ width, height });
-    });
-
-    resizeObserver.observe(container);
-    return () => resizeObserver.disconnect();
-  }, []);
 
   // ── requestAnimationFrame Drawing Loop ────────────────────────────────
   const stateRef = useRef({
@@ -320,118 +350,126 @@ export default function FootprintChart({
         const yHigh = priceToY(candle.high);
         const yLow = priceToY(candle.low);
         const isBullish = candle.close >= candle.open;
-        const bullColor = '#22c55e'; // green-500
-        const bearColor = '#ef4444'; // red-500
 
-        // Wick line
-        ctx.strokeStyle = isBullish
-          ? 'rgba(34, 197, 94, 0.3)'
-          : 'rgba(239, 68, 68, 0.3)';
-        ctx.lineWidth = 1.5;
+        // ── Candle Color Scheme ──────────────────────────────────────────
+        // Bullish green, Bearish purple/magenta
+        const candleColor = isBullish ? '#22c55e' : '#a855f7';
+        
+        // ── Narrow Candlestick Body & Wicks on the Left (approx 10px wide) ─
+        const candleW = 4;
+        const candleLeft = colLeft + 4;
+        const xWick = candleLeft + candleW / 2;
+
+        // Draw Wick
+        ctx.strokeStyle = candleColor;
+        ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(colLeft + colW / 2 + 0.5, yHigh);
-        ctx.lineTo(colLeft + colW / 2 + 0.5, yLow);
+        ctx.moveTo(xWick, yHigh);
+        ctx.lineTo(xWick, yLow);
         ctx.stroke();
 
-        // ── Find Per-Candle POC ─────────────────────────────────────────
-        let maxCandleVol = 0;
-        let candlePocPrice = -1;
-        const startTick = Math.round(candle.low / ts) * ts;
-        const endTick = Math.round(candle.high / ts) * ts;
-        const candleTimeMs = candle.time * 1000;
-
-        for (let pr = startTick; pr <= endTick + ts * 0.01; pr += ts) {
-          const rounded = Math.round(pr / ts) * ts;
-          const key = `${candleTimeMs}_${rounded.toFixed(2)}`;
-          const tv = fpData.get(key);
-          if (tv) {
-            const tot = tv.bid + tv.ask;
-            if (tot > maxCandleVol) { maxCandleVol = tot; candlePocPrice = rounded; }
-          }
-        }
-
-        // ── Draw Footprint Cells ────────────────────────────────────────
-        for (let pr = startTick; pr <= endTick + ts * 0.01; pr += ts) {
-          const rounded = Math.round(pr / ts) * ts;
-          const yTop = priceToY(rounded + ts);
-          const yBot = priceToY(rounded);
-          if (yBot < -zY || yTop > chartHeight + zY) continue;
-
-          const cellH = Math.max(1, Math.abs(yBot - yTop));
-          const key = `${candleTimeMs}_${rounded.toFixed(2)}`;
-          const tv = fpData.get(key);
-
-          if (!tv || (tv.bid === 0 && tv.ask === 0)) continue;
-
-          const { bid, ask, delta } = tv;
-          const totalVol = bid + ask;
-
-          // ── Cell Background ───────────────────────────────────────────
-          const intensity = Math.min(1.0, Math.abs(delta) / Math.max(100, totalVol));
-
-          if (delta > 0) {
-            ctx.fillStyle = `rgba(16, 185, 129, ${0.06 + intensity * 0.35})`;
-          } else if (delta < 0) {
-            ctx.fillStyle = `rgba(239, 68, 68, ${0.06 + intensity * 0.35})`;
-          } else {
-            ctx.fillStyle = 'rgba(51, 65, 85, 0.08)';
-          }
-          ctx.fillRect(colLeft + 1, yTop + 1, colW - 2, cellH - 2);
-
-          // ── POC Highlight ─────────────────────────────────────────────
-          if (rounded === candlePocPrice) {
-            ctx.strokeStyle = '#f59e0b';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(colLeft + 1.5, yTop + 1.5, colW - 3, cellH - 3);
-          }
-
-          // ── Bid x Ask Text ────────────────────────────────────────────
-          if (colW > 50 && cellH >= 12) {
-            const fontSize = Math.round(Math.min(11, Math.max(8, cellH - 6)));
-            ctx.font = `600 ${fontSize}px "JetBrains Mono", "Fira Code", monospace`;
-            ctx.textBaseline = 'middle';
-            const yMid = Math.round(yTop + cellH / 2);
-
-            const bidStr = fmtVol(bid);
-            const askStr = fmtVol(ask);
-            const xMid = Math.round(colLeft + colW / 2);
-
-            // Bid on left side (green tint), Ask on right (red tint)
-            ctx.textAlign = 'right';
-            ctx.fillStyle = delta >= 0
-              ? 'rgba(74, 222, 128, 0.9)'   // green-400
-              : 'rgba(148, 163, 184, 0.65)'; // muted
-            ctx.fillText(bidStr, xMid - 4, yMid);
-
-            ctx.textAlign = 'center';
-            ctx.fillStyle = 'rgba(100, 116, 139, 0.4)';
-            ctx.fillText('×', xMid, yMid);
-
-            ctx.textAlign = 'left';
-            ctx.fillStyle = delta <= 0
-              ? 'rgba(248, 113, 113, 0.9)'   // red-400
-              : 'rgba(148, 163, 184, 0.65)'; // muted
-            ctx.fillText(askStr, xMid + 4, yMid);
-          }
-        }
-
-        // ── Candle Body Outline ─────────────────────────────────────────
-        ctx.strokeStyle = isBullish
-          ? 'rgba(34, 197, 94, 0.6)'
-          : 'rgba(239, 68, 68, 0.6)';
-        ctx.lineWidth = 2;
+        // Draw Body
+        ctx.fillStyle = candleColor;
         const bodyTop = Math.min(yOpen, yClose);
         const bodyH = Math.max(2, Math.abs(yOpen - yClose));
-        ctx.strokeRect(colLeft + 3, bodyTop, colW - 6, bodyH);
+        ctx.fillRect(candleLeft, bodyTop, candleW, bodyH);
 
-        // ── Time Label ──────────────────────────────────────────────────
+        // ── Footprint Area starts to the right of the candle body ─────────
+        const fpLeft = colLeft + 12;
+        const fpW = colW - 14;
+        const fpMid = fpLeft + fpW / 2;
+
+        if (fpW > 10) {
+          // ── Find Per-Candle POC ─────────────────────────────────────────
+          let maxCandleVol = 0;
+          let candlePocPrice = -1;
+          const startTick = Math.round(candle.low / ts) * ts;
+          const endTick = Math.round(candle.high / ts) * ts;
+          const candleTimeMs = candle.time * 1000;
+
+          for (let pr = startTick; pr <= endTick + ts * 0.01; pr += ts) {
+            const rounded = Math.round(pr / ts) * ts;
+            const key = `${candleTimeMs}_${rounded.toFixed(2)}`;
+            const tv = fpData.get(key);
+            if (tv) {
+              const tot = tv.bid + tv.ask;
+              if (tot > maxCandleVol) { maxCandleVol = tot; candlePocPrice = rounded; }
+            }
+          }
+
+          // ── Draw Footprint Cells ────────────────────────────────────────
+          for (let pr = startTick; pr <= endTick + ts * 0.01; pr += ts) {
+            const rounded = Math.round(pr / ts) * ts;
+            const yTop = priceToY(rounded + ts);
+            const yBot = priceToY(rounded);
+            if (yBot < -zY || yTop > chartHeight + zY) continue;
+
+            const cellH = Math.max(1, Math.abs(yBot - yTop));
+            const key = `${candleTimeMs}_${rounded.toFixed(2)}`;
+            const tv = fpData.get(key);
+
+            if (!tv || (tv.bid === 0 && tv.ask === 0)) continue;
+
+            const { bid, ask } = tv;
+
+            // ── Split Bid/Ask Horizontal Volume Profiles ───────────────────
+            // Scale bar widths outward from the middle relative to maxCandleVol
+            const leftBarW = maxCandleVol > 0 ? (bid / maxCandleVol) * (fpW / 2 - 2) : 0;
+            const rightBarW = maxCandleVol > 0 ? (ask / maxCandleVol) * (fpW / 2 - 2) : 0;
+
+            // Left Bar (Bid)
+            ctx.fillStyle = isBullish ? 'rgba(34, 197, 94, 0.35)' : 'rgba(168, 85, 247, 0.35)';
+            ctx.fillRect(fpMid - leftBarW, yTop + 1, leftBarW, cellH - 2);
+
+            // Right Bar (Ask)
+            ctx.fillStyle = isBullish ? 'rgba(34, 197, 94, 0.35)' : 'rgba(168, 85, 247, 0.35)';
+            ctx.fillRect(fpMid, yTop + 1, rightBarW, cellH - 2);
+
+            // Center dividing line for this cell
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(fpMid, yTop);
+            ctx.lineTo(fpMid, yBot);
+            ctx.stroke();
+
+            // ── POC Highlight ─────────────────────────────────────────────
+            if (rounded === candlePocPrice) {
+              ctx.strokeStyle = candleColor;
+              ctx.lineWidth = 1.5;
+              ctx.strokeRect(fpLeft + 0.5, yTop + 0.5, fpW - 1, cellH - 1);
+            }
+
+            // ── Bid / Ask Text ────────────────────────────────────────────
+            if (fpW > 40 && cellH >= 12) {
+              const fontSize = Math.round(Math.min(10, Math.max(7, cellH - 6)));
+              ctx.font = `bold ${fontSize}px "JetBrains Mono", monospace`;
+              ctx.textBaseline = 'middle';
+              const yMid = Math.round(yTop + cellH / 2);
+
+              const bidStr = fmtVol(bid);
+              const askStr = fmtVol(ask);
+
+              // Left aligned to center line for Ask, right aligned for Bid
+              ctx.textAlign = 'right';
+              ctx.fillStyle = '#ffffff';
+              ctx.fillText(bidStr, fpMid - 4, yMid);
+
+              ctx.textAlign = 'left';
+              ctx.fillStyle = '#ffffff';
+              ctx.fillText(askStr, fpMid + 4, yMid);
+            }
+          }
+        }
+
+        // ── Time Label (aligned to footprints center) ──────────────────
         const timeDate = new Date(candle.time * 1000);
         const timeStr = timeDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         ctx.fillStyle = 'rgba(148, 163, 184, 0.45)';
         ctx.font = '9px "JetBrains Mono", "Fira Code", monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
-        ctx.fillText(timeStr, colLeft + colW / 2, chartHeight + 6);
+        ctx.fillText(timeStr, fpMid, chartHeight + 6);
 
         currentX = nextX;
       }
@@ -481,7 +519,6 @@ export default function FootprintChart({
       canvas.removeEventListener('wheel', handleNativeWheel);
     };
   }, [setZoomX, setZoomY]);
-
   // ── Drag to Scroll ────────────────────────────────────────────────────
   const handleMouseDown = (e: React.MouseEvent) => {
     isDragging.current = true;
@@ -492,7 +529,12 @@ export default function FootprintChart({
     if (!isDragging.current) return;
     const deltaX = e.clientX - dragStart.current.x;
     const deltaY = e.clientY - dragStart.current.y;
-    setScrollX(Math.max(0, dragStart.current.scrollX - deltaX));
+
+    const rightMargin = 72;
+    const chartWidth = dimensions.width - rightMargin;
+    const maxScrollX = Math.max(0, chartData.length * zoomX - chartWidth);
+
+    setScrollX(Math.min(maxScrollX, Math.max(0, dragStart.current.scrollX - deltaX)));
     const priceDelta = (deltaY / zoomY) * stateRef.current.tickSize;
     setScrollY(dragStart.current.scrollY + priceDelta);
   };
@@ -505,6 +547,34 @@ export default function FootprintChart({
       className="relative flex h-full w-full select-none overflow-hidden"
       style={{ background: '#0a0f1e' }}
     >
+      <style>{`
+        .fp-control-btn {
+          background-color: rgba(30, 41, 59, 0.85);
+          border: 1px solid rgba(148, 163, 184, 0.2);
+          color: #cbd5e1;
+          border-radius: 4px;
+          padding: 4px 8px;
+          font-size: 11px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 32px;
+          height: 24px;
+          transition: all 0.15s ease-in-out;
+          font-family: "Inter", sans-serif;
+          user-select: none;
+        }
+        .fp-control-btn:hover {
+          background-color: rgba(51, 65, 85, 0.95);
+          border-color: rgba(148, 163, 184, 0.4);
+          color: #ffffff;
+        }
+        .fp-control-btn:active {
+          transform: scale(0.95);
+        }
+      `}</style>
+
       <canvas
         ref={canvasRef}
         onMouseDown={handleMouseDown}
@@ -514,6 +584,76 @@ export default function FootprintChart({
         style={{ width: dimensions.width, height: dimensions.height }}
         className="cursor-grab active:cursor-grabbing"
       />
+
+      {/* Floating Control Panel */}
+      <div style={{
+        position: 'absolute',
+        right: '84px', // aligned left of the right price axis labels
+        top: '12px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px',
+        backgroundColor: 'rgba(10, 15, 30, 0.85)',
+        border: '1px solid rgba(148, 163, 184, 0.2)',
+        borderRadius: '6px',
+        padding: '6px',
+        backdropFilter: 'blur(8px)',
+        zIndex: 10,
+        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.5)',
+      }}>
+        <div style={{ display: 'flex', gap: '4px' }}>
+          <button
+            onClick={() => setZoomX(prev => Math.min(300, prev + 15))}
+            className="fp-control-btn"
+            title="Zoom In Width (Col width)"
+          >
+            ↔ +
+          </button>
+          <button
+            onClick={() => setZoomX(prev => Math.max(60, prev - 15))}
+            className="fp-control-btn"
+            title="Zoom Out Width (Col width)"
+          >
+            ↔ -
+          </button>
+        </div>
+        <div style={{ display: 'flex', gap: '4px' }}>
+          <button
+            onClick={() => setZoomY(prev => Math.min(80, prev + 2))}
+            className="fp-control-btn"
+            title="Zoom In Height (Row height)"
+          >
+            ↕ +
+          </button>
+          <button
+            onClick={() => setZoomY(prev => Math.max(12, prev - 2))}
+            className="fp-control-btn"
+            title="Zoom Out Height (Row height)"
+          >
+            ↕ -
+          </button>
+        </div>
+        <button
+          onClick={() => {
+            if (chartData.length > 0) {
+              const latestPrice = chartData[chartData.length - 1].close;
+              setScrollY(latestPrice);
+              setScrollX(0);
+              setZoomX(120);
+              setZoomY(24);
+            }
+          }}
+          className="fp-control-btn"
+          style={{
+            width: '100%',
+            fontWeight: '600',
+            color: '#38bdf8', // light blue theme color
+          }}
+          title="Reset Zoom & Pan to Latest Price"
+        >
+          Center View
+        </button>
+      </div>
     </div>
   );
 }
