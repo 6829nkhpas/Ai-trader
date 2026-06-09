@@ -58,6 +58,81 @@ pub struct DetectedPattern {
     pub breakout_status: String,
 }
 
+// ── RAG Pattern Boundary Contract ─────────────────────────────────────────────
+//
+// `PatternContract` is the pinned shape every detected pattern takes when it
+// crosses the RAG_Engine boundary toward consumers (the Tool_Server /
+// Deep_Quant_Agent). It guarantees the four contract fields required by the
+// Tool_Result_Contract (R11.1) and that `confidence` is always a finite value
+// within `[0.0, 1.0]` (R11.2), regardless of the raw internal score.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatternContract {
+    /// The kind of structure detected (e.g. "Inverse Head & Shoulders").
+    pub pattern_type: String,
+    /// Directional sentiment label: "Bullish", "Bearish", or "Neutral".
+    pub sentiment: String,
+    /// Human-readable description combining the detected structure, status,
+    /// implied bias, volume validation, and breakout state.
+    pub description: String,
+    /// Confidence in the detection, always clamped to `[0.0, 1.0]`.
+    pub confidence: f64,
+}
+
+impl PatternContract {
+    /// Normalize an internal directional bias string into a directional
+    /// sentiment label. Any bias mentioning "bull" maps to "Bullish", "bear"
+    /// to "Bearish"; everything else (e.g. "Bilateral Breakout") is "Neutral".
+    fn sentiment_from_bias(bias: &str) -> String {
+        let lower = bias.to_lowercase();
+        if lower.contains("bull") {
+            "Bullish".to_string()
+        } else if lower.contains("bear") {
+            "Bearish".to_string()
+        } else {
+            "Neutral".to_string()
+        }
+    }
+
+    /// Map a raw integer confidence score (expected `0..=100`) to a `[0.0, 1.0]`
+    /// confidence. Non-finite or out-of-range inputs are clamped so the contract
+    /// invariant always holds (R11.2).
+    fn normalize_confidence(score: i32) -> f64 {
+        let normalized = score as f64 / 100.0;
+        if normalized.is_finite() {
+            normalized.clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    }
+
+    /// Build the boundary contract from an internally detected pattern,
+    /// guaranteeing the required fields and the clamped confidence range.
+    pub fn from_detected(pattern: &DetectedPattern) -> Self {
+        let description = format!(
+            "{} [{}] — bias: {}; volume: {}; breakout: {}",
+            pattern.detected_pattern,
+            pattern.status,
+            pattern.implied_bias,
+            pattern.volume_validation,
+            pattern.breakout_status,
+        );
+        PatternContract {
+            pattern_type: pattern.detected_pattern.clone(),
+            sentiment: Self::sentiment_from_bias(&pattern.implied_bias),
+            description,
+            confidence: Self::normalize_confidence(pattern.confidence_score),
+        }
+    }
+}
+
+impl DetectedPattern {
+    /// Project this internal pattern onto the pinned RAG boundary contract.
+    pub fn to_contract(&self) -> PatternContract {
+        PatternContract::from_detected(self)
+    }
+}
+
 // ── Rolling Window ───────────────────────────────────────────────────────────
 
 pub struct RollingWindow {
@@ -259,6 +334,16 @@ impl PatternClassifier {
         // Sort by confidence descending
         patterns.sort_by(|a, b| b.confidence_score.cmp(&a.confidence_score));
         patterns
+    }
+
+    /// Scans swing points and current price and returns detected patterns pinned
+    /// to the RAG boundary contract (`pattern_type`, `sentiment`, `description`,
+    /// and `confidence` clamped to `[0.0, 1.0]`). See R11.1 / R11.2.
+    pub fn analyze_contract(candles: &[Candle], swings: &[SwingPoint]) -> Vec<PatternContract> {
+        Self::analyze(candles, swings)
+            .iter()
+            .map(PatternContract::from_detected)
+            .collect()
     }
 
     // ── 1. Harmonic Pattern Detection ──────────────────────────────────────────
@@ -1341,5 +1426,173 @@ mod tests {
         }
         // Note: If the specific N/P window doesn't trigger, the test still passes — 
         // the detection is dependent on exact regression slopes matching the threshold.
+    }
+
+    // ── RAG Pattern Boundary Contract ─────────────────────────────────────────
+
+    fn sample_detected(confidence_score: i32, bias: &str) -> DetectedPattern {
+        DetectedPattern {
+            detected_pattern: "Inverse Head & Shoulders".to_string(),
+            status: "Confirmed".to_string(),
+            fib_ratio_validation: 0.0,
+            implied_bias: bias.to_string(),
+            confidence_score,
+            start_time: 0,
+            end_time: 100,
+            high: 110.0,
+            low: 90.0,
+            points: Vec::new(),
+            structural_bias: bias.to_string(),
+            geometric_strictness: 0.9,
+            volume_validation: "Confirmed: Reversal Exhaustion".to_string(),
+            breakout_status: "Confirmed Breakout".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_contract_carries_required_fields() {
+        let contract = sample_detected(88, "Bullish Reversal").to_contract();
+        assert_eq!(contract.pattern_type, "Inverse Head & Shoulders");
+        assert_eq!(contract.sentiment, "Bullish");
+        assert!(contract.description.contains("Inverse Head & Shoulders"));
+        assert!(contract.description.contains("Bullish Reversal"));
+        assert!((contract.confidence - 0.88).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_contract_sentiment_normalization() {
+        assert_eq!(sample_detected(80, "Bullish Breakout").to_contract().sentiment, "Bullish");
+        assert_eq!(sample_detected(80, "Bearish Reversal").to_contract().sentiment, "Bearish");
+        assert_eq!(sample_detected(85, "Bilateral Breakout").to_contract().sentiment, "Neutral");
+    }
+
+    #[test]
+    fn test_contract_confidence_is_clamped() {
+        // In-range scores map proportionally.
+        assert!((sample_detected(0, "Bullish Reversal").to_contract().confidence - 0.0).abs() < 1e-9);
+        assert!((sample_detected(100, "Bullish Reversal").to_contract().confidence - 1.0).abs() < 1e-9);
+        // Out-of-range scores are clamped to [0.0, 1.0].
+        assert_eq!(sample_detected(150, "Bullish Reversal").to_contract().confidence, 1.0);
+        assert_eq!(sample_detected(-50, "Bearish Reversal").to_contract().confidence, 0.0);
+    }
+}
+
+// ── RAG Pattern Boundary Contract — Property-Based Tests ───────────────────────
+//
+// Feature: deep-quant-analysis-hardening
+// Properties 39 & 40 exercise `PatternContract::from_detected` /
+// `DetectedPattern::to_contract` (task 11.1) across arbitrary internal
+// `DetectedPattern` values, including out-of-range and extreme confidence
+// scores. proptest dev-dependency, cases = 100.
+
+#[cfg(test)]
+mod pattern_contract_proptests {
+    use super::{DetectedPattern, PatternContract, PatternPoint};
+    use proptest::prelude::*;
+
+    /// Strategy that builds a `DetectedPattern` directly from arbitrary fields.
+    ///
+    /// `confidence_score` spans the full `i32` range (including negatives and
+    /// extreme magnitudes) so Property 40 covers out-of-range and extreme
+    /// integers. `detected_pattern` is a non-empty name, mirroring real RAG
+    /// detections which always carry a structural label.
+    fn arb_detected_pattern() -> impl Strategy<Value = DetectedPattern> {
+        (
+            "[A-Za-z0-9 &/-]{1,40}",       // detected_pattern (non-empty)
+            "[A-Za-z ]{0,30}",              // status
+            any::<i32>(),                   // confidence_score (full range)
+            any::<f64>(),                   // fib_ratio_validation
+            "[A-Za-z ]{0,30}",              // implied_bias (arbitrary directional text)
+            "[A-Za-z ]{0,30}",              // volume_validation
+            "[A-Za-z ]{0,30}",              // breakout_status
+            (0u64..1_000_000u64, 0u64..1_000_000u64), // start_time, end_time
+            (any::<f64>(), any::<f64>()),   // high, low
+        )
+            .prop_map(
+                |(
+                    detected_pattern,
+                    status,
+                    confidence_score,
+                    fib_ratio_validation,
+                    implied_bias,
+                    volume_validation,
+                    breakout_status,
+                    (start_time, end_time),
+                    (high, low),
+                )| DetectedPattern {
+                    detected_pattern,
+                    status,
+                    fib_ratio_validation,
+                    implied_bias: implied_bias.clone(),
+                    confidence_score,
+                    start_time,
+                    end_time,
+                    high,
+                    low,
+                    points: Vec::<PatternPoint>::new(),
+                    structural_bias: implied_bias,
+                    geometric_strictness: 0.0,
+                    volume_validation,
+                    breakout_status,
+                },
+            )
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        // Feature: deep-quant-analysis-hardening, Property 39: RAG patterns carry the required fields
+        // Validates: Requirements 11.1
+        #[test]
+        fn prop39_patterns_carry_required_fields(pattern in arb_detected_pattern()) {
+            let contract: PatternContract = pattern.to_contract();
+
+            // Non-empty pattern_type.
+            prop_assert!(
+                !contract.pattern_type.is_empty(),
+                "pattern_type must be non-empty, got {:?}",
+                contract.pattern_type
+            );
+
+            // Sentiment is one of the three permitted directional labels.
+            prop_assert!(
+                matches!(contract.sentiment.as_str(), "Bullish" | "Bearish" | "Neutral"),
+                "sentiment must be Bullish/Bearish/Neutral, got {:?}",
+                contract.sentiment
+            );
+
+            // A description is always present.
+            prop_assert!(
+                !contract.description.is_empty(),
+                "description must be present"
+            );
+
+            // The confidence field is present and finite (a real f64 value).
+            prop_assert!(
+                contract.confidence.is_finite(),
+                "confidence field must be a finite value, got {}",
+                contract.confidence
+            );
+        }
+
+        // Feature: deep-quant-analysis-hardening, Property 40: Pattern confidence stays within [0.0, 1.0]
+        // Validates: Requirements 11.2
+        #[test]
+        fn prop40_confidence_within_unit_interval(pattern in arb_detected_pattern()) {
+            let contract: PatternContract = pattern.to_contract();
+
+            prop_assert!(
+                contract.confidence.is_finite(),
+                "confidence must be finite for score {}, got {}",
+                pattern.confidence_score,
+                contract.confidence
+            );
+            prop_assert!(
+                contract.confidence >= 0.0 && contract.confidence <= 1.0,
+                "confidence {} out of [0.0, 1.0] for score {}",
+                contract.confidence,
+                pattern.confidence_score
+            );
+        }
     }
 }
