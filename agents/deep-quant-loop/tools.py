@@ -1,9 +1,17 @@
+import os
 import httpx
 from langchain_core.tools import tool
 from langgraph.types import interrupt
 from langchain_core.runnables import RunnableConfig
 
 RUST_SERVER_URL = "http://localhost:8084"
+
+# ── Price-watch registration retry policy (Requirement 14.3) ─────────────────
+# How many times watch_price_condition attempts to register a watcher with the
+# Rust Tool_Server before giving up, and the delay between attempts. Both are
+# configurable via the environment so the retry budget is not hardcoded.
+WATCH_REGISTRATION_MAX_ATTEMPTS = int(os.getenv("WATCH_REGISTRATION_MAX_ATTEMPTS", "3"))
+WATCH_REGISTRATION_RETRY_DELAY_S = float(os.getenv("WATCH_REGISTRATION_RETRY_DELAY_S", "2"))
 
 def calculate_ema(prices: list, period: int) -> float:
     """Helper function to calculate Exponential Moving Average (EMA)."""
@@ -16,6 +24,190 @@ def calculate_ema(prices: list, period: int) -> float:
     for price in prices[period:]:
         ema = price * k + ema * (1 - k)
     return ema
+
+
+# ── Consumer-side Tool_Result_Contract revalidation (Requirements 4.1, 5.1) ──
+# The Rust Tool_Server guarantees each tool's Tool_Result_Contract on emit
+# (producer-side); we re-validate the same contract here on receipt
+# (consumer-side, AD-3) so that malformed data never reaches the model. A
+# contract failure is *data*, not an exception: validate_contract NEVER raises —
+# it returns a structured ``{"error", "contract_violation"}`` dict that the
+# ReAct loop treats as a non-fatal tool error (graph._tool_result_is_error),
+# letting the run continue rather than abort.
+
+# Indicator fields the Consensus_Report must carry (numeric-or-null per R4.2/4.3).
+_CONSENSUS_REQUIRED_FIELDS = (
+    "current_price", "rsi_14", "ema_9", "ema_21", "sma_50",
+    "macd_line", "macd_signal", "macd_histogram",
+    "bb_upper", "bb_mid", "bb_lower",
+    "atr_14", "vwap", "obv", "cmf",
+)
+_SR_REQUIRED_FIELDS = ("pivot", "s1", "s2", "s3", "r1", "r2", "r3")
+_MULTI_TF_REQUIRED_FIELDS = ("trend_1h", "trend_4h", "trend_1d")
+_PATTERN_REQUIRED_FIELDS = ("pattern_type", "sentiment", "confidence", "description")
+_VALID_PROJECTION_DIRECTIONS = {"Up", "Down", "Flat"}
+
+
+def _is_number(v) -> bool:
+    """True for a finite-capable real number (bools are excluded)."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _is_number_or_null(v) -> bool:
+    return v is None or _is_number(v)
+
+
+def _has_honest_marker(payload) -> bool:
+    """True when the payload already carries an honest, non-fatal marker.
+
+    An ``error`` key, an ``unavailable: true`` flag, an ``Unavailable``
+    sentiment, or an unavailable/failed ``status`` are legitimate
+    graceful-degradation results (R5/R10/R12), NOT contract violations, so they
+    are passed through validate_contract unchanged.
+    """
+    if isinstance(payload, dict):
+        if "error" in payload:
+            return True
+        if payload.get("unavailable") is True:
+            return True
+        ss = payload.get("sentiment_summary")
+        if isinstance(ss, str) and ss.strip().lower() == "unavailable":
+            return True
+        status = payload.get("status")
+        if isinstance(status, str) and status.strip().lower() in (
+            "unavailable", "watch_registration_failed"
+        ):
+            return True
+        return False
+    if isinstance(payload, list):
+        # get_candles' error path returns ``[{"error": ...}]``.
+        return any(isinstance(item, dict) and "error" in item for item in payload)
+    return False
+
+
+def _contract_error(detail: str) -> dict:
+    """Build the structured contract-violation result returned to the model."""
+    return {
+        "error": f"Tool result failed contract validation: {detail}",
+        "contract_violation": detail,
+    }
+
+
+def validate_contract(tool_name, payload):
+    """Re-validate a tool result against its Tool_Result_Contract on receipt.
+
+    Returns ``payload`` unchanged when it conforms (or already carries an honest
+    error/unavailable marker); otherwise returns a structured
+    ``{"error", "contract_violation"}`` dict. NEVER raises — contract failures
+    are data, not exceptions (AD-3, Requirements 4.1, 5.1).
+    """
+    # Honest non-fatal markers are pass-through — they are not violations.
+    if _has_honest_marker(payload):
+        return payload
+
+    try:
+        if tool_name == "get_candles":
+            if not isinstance(payload, list):
+                return _contract_error(
+                    f"get_candles expected a list of candles, got {type(payload).__name__}"
+                )
+            for i, candle in enumerate(payload):
+                if not isinstance(candle, dict):
+                    return _contract_error(f"candle[{i}] is not an object")
+                for field in ("timestamp_ms", "open", "high", "low", "close", "volume"):
+                    if field not in candle:
+                        return _contract_error(f"candle[{i}] missing field '{field}'")
+                    if not _is_number(candle[field]):
+                        return _contract_error(f"candle[{i}].{field} is not numeric")
+            return payload
+
+        if tool_name == "get_consensus_report":
+            if not isinstance(payload, dict):
+                return _contract_error(
+                    f"get_consensus_report expected an object, got {type(payload).__name__}"
+                )
+            for field in _CONSENSUS_REQUIRED_FIELDS:
+                if field not in payload:
+                    return _contract_error(f"consensus report missing field '{field}'")
+                if not _is_number_or_null(payload[field]):
+                    return _contract_error(
+                        f"consensus field '{field}' is neither numeric nor null"
+                    )
+            return payload
+
+        if tool_name == "get_support_resistance":
+            if not isinstance(payload, dict):
+                return _contract_error(
+                    f"get_support_resistance expected an object, got {type(payload).__name__}"
+                )
+            for field in _SR_REQUIRED_FIELDS:
+                if field not in payload:
+                    return _contract_error(f"support/resistance missing field '{field}'")
+                if not _is_number(payload[field]):
+                    return _contract_error(f"support/resistance field '{field}' is not numeric")
+            return payload
+
+        if tool_name == "get_news_context":
+            if not isinstance(payload, dict):
+                return _contract_error(
+                    f"get_news_context expected an object, got {type(payload).__name__}"
+                )
+            if "sentiment_summary" not in payload:
+                return _contract_error("news context missing 'sentiment_summary'")
+            return payload
+
+        if tool_name == "get_prediction":
+            if not isinstance(payload, dict):
+                return _contract_error(
+                    f"get_prediction expected an object, got {type(payload).__name__}"
+                )
+            direction = payload.get("projected_direction")
+            if direction not in _VALID_PROJECTION_DIRECTIONS:
+                return _contract_error(
+                    f"projected_direction '{direction}' not in {{Up, Down, Flat}}"
+                )
+            if not _is_number(payload.get("projected_value")):
+                return _contract_error("prediction missing numeric 'projected_value'")
+            if not _is_number(payload.get("confidence")):
+                return _contract_error("prediction missing numeric 'confidence'")
+            return payload
+
+        if tool_name == "get_multi_tf_trend":
+            if not isinstance(payload, dict):
+                return _contract_error(
+                    f"get_multi_tf_trend expected an object, got {type(payload).__name__}"
+                )
+            for field in _MULTI_TF_REQUIRED_FIELDS:
+                if field not in payload:
+                    return _contract_error(f"multi-tf trend missing field '{field}'")
+            return payload
+
+        if tool_name == "get_chart_patterns":
+            if not isinstance(payload, dict):
+                return _contract_error(
+                    f"get_chart_patterns expected an object, got {type(payload).__name__}"
+                )
+            patterns = payload.get("patterns")
+            if not isinstance(patterns, list):
+                return _contract_error("chart patterns 'patterns' field is not a list")
+            for i, p in enumerate(patterns):
+                if not isinstance(p, dict):
+                    return _contract_error(f"pattern[{i}] is not an object")
+                for field in _PATTERN_REQUIRED_FIELDS:
+                    if field not in p:
+                        return _contract_error(f"pattern[{i}] missing field '{field}'")
+                conf = p.get("confidence")
+                if not _is_number(conf) or not (0.0 <= conf <= 1.0):
+                    return _contract_error(
+                        f"pattern[{i}].confidence is not a number in [0.0, 1.0]"
+                    )
+            return payload
+
+        # Unknown / non-contract tool (e.g. declare_trade, watch_price_condition):
+        # nothing to validate — pass through unchanged.
+        return payload
+    except Exception as e:  # defensive: never raise — contract failures are data
+        return _contract_error(f"unexpected error validating {tool_name}: {e}")
 
 @tool
 def get_candles(symbol: str, timeframe: str, limit: int) -> list:
@@ -45,7 +237,7 @@ def get_candles(symbol: str, timeframe: str, limit: int) -> list:
         response.raise_for_status()
         res = response.json()
         print(f"[Tool Success] <<< get_candles: symbol={symbol}, timeframe={timeframe}, retrieved {len(res)} candles.")
-        return res
+        return validate_contract("get_candles", res)
     except Exception as e:
         print(f"[Tool Error] <<< get_candles FAIL: {str(e)}")
         return [{"error": f"Failed to retrieve candles from Rust server: {str(e)}"}]
@@ -80,7 +272,7 @@ def get_consensus_report(symbol: str, timeframe: str) -> dict:
         response.raise_for_status()
         res = response.json()
         print(f"[Tool Success] <<< get_consensus_report: symbol={symbol}, trend_score={res.get('trend_score')}, momentum={res.get('momentum_state')}")
-        return res
+        return validate_contract("get_consensus_report", res)
     except Exception as e:
         print(f"[Tool Error] <<< get_consensus_report FAIL: {str(e)}")
         return {"error": f"Failed to compile consensus report: {str(e)}"}
@@ -106,7 +298,7 @@ def get_multi_tf_trend(symbol: str) -> dict:
         response.raise_for_status()
         res = response.json()
         print(f"[Tool Success] <<< get_multi_tf_trend: symbol={symbol}, response={res}")
-        return res
+        return validate_contract("get_multi_tf_trend", res)
     except Exception as e:
         print(f"[Tool Error] <<< get_multi_tf_trend FAIL: {str(e)}")
         return {"error": f"Failed to compute multi-tf trend: {str(e)}"}
@@ -149,7 +341,7 @@ def get_chart_patterns(symbol: str, timeframe: str, limit: int = 200) -> dict:
         print(f"[Tool Success] <<< get_chart_patterns: symbol={symbol}, timeframe={timeframe}, detected {len(patterns)} patterns")
         for p in patterns:
             print(f"  → {p.get('pattern_type')} ({p.get('sentiment')}, confidence={p.get('confidence', 0):.2f})")
-        return res
+        return validate_contract("get_chart_patterns", res)
     except Exception as e:
         print(f"[Tool Error] <<< get_chart_patterns FAIL: {str(e)}")
         return {"error": f"Failed to detect chart patterns: {str(e)}"}
@@ -158,105 +350,38 @@ def get_chart_patterns(symbol: str, timeframe: str, limit: int = 200) -> dict:
 def get_support_resistance(symbol: str, timeframe: str = "1d") -> dict:
     """
     Identifies exact support and resistance liquidity zones for the specified trading symbol.
-    Calculates Pivot Points, support levels (S1, S2, S3), and resistance levels (R1, R2, R3) 
-    using recent candle high, low, and close levels. Use this to determine valid placement for 
-    entry price, stop loss, and take profit targets.
-    
-    For intraday timeframes (5m, 10m, 15m, 1h), also computes the Opening Range high/low
-    from the first 3 candles — a key micro-level for day traders.
-    
+    Returns the Pivot Point, support levels (S1, S2, S3), and resistance levels (R1, R2, R3)
+    computed by the authoritative Rust SR_Engine from the same candle source used for every
+    other indicator, so the levels stay consistent across the system. Use this to determine
+    valid placement for entry price, stop loss, and take profit targets.
+
+    For intraday timeframes, the engine additionally returns the Opening Range high/low and a
+    daily macro pivot — key micro-levels for day traders.
+
     Args:
         symbol (str): The trading symbol (e.g., "RELIANCE").
-        timeframe (str): Timeframe for pivot calculation (e.g., "5m", "15m", "1h", "1d"). 
+        timeframe (str): Timeframe for pivot calculation (e.g., "5m", "15m", "1h", "1d").
                          Default "1d" for macro levels. Use shorter timeframes for intraday S/R.
-        
+
     Returns:
-        dict: Key support and resistance levels (Pivot, S1, S2, S3, R1, R2, R3, high, low),
-              plus daily macro levels and intraday Opening Range when applicable.
+        dict: Authoritative support/resistance levels with keys: pivot, s1, s2, s3, r1, r2, r3,
+              recent_high, recent_low. Intraday timeframes also include opening_range_high,
+              opening_range_low, and daily_pivot. An ordering_exception field is set when the
+              computed levels cannot satisfy the canonical S3≤S2≤S1≤pivot≤R1≤R2≤R3 ordering.
     """
     print(f"\n[Tool Call] >>> get_support_resistance: symbol={symbol}, timeframe={timeframe}")
     try:
-        # Fetch candles at the requested timeframe for precise S/R
         response = httpx.post(
-            f"{RUST_SERVER_URL}/tools/get_candles",
-            json={"symbol": symbol, "timeframe": timeframe, "limit": 50},
+            f"{RUST_SERVER_URL}/tools/get_support_resistance",
+            json={"symbol": symbol, "timeframe": timeframe},
             timeout=10.0
         )
+        if response.status_code != 200:
+            print(f"[Tool Error] Server returned {response.status_code}: {response.text}")
         response.raise_for_status()
-        candles = response.json()
-        
-        highs = [c["high"] for c in candles if "high" in c]
-        lows = [c["low"] for c in candles if "low" in c]
-        closes = [c["close"] for c in candles if "close" in c]
-        
-        if not highs or not lows or not closes:
-            print("[Tool Warning] <<< get_support_resistance: Insufficient candle data.")
-            return {"error": "Insufficient candle data to determine support/resistance."}
-            
-        h = max(highs[-20:])
-        l = min(lows[-20:])
-        c = closes[-1]
-        
-        pivot = (h + l + c) / 3.0
-        r1 = 2 * pivot - l
-        s1 = 2 * pivot - h
-        r2 = pivot + (h - l)
-        s2 = pivot - (h - l)
-        r3 = h + 2 * (pivot - l)
-        s3 = l - 2 * (h - pivot)
-        
-        res = {
-            "symbol": symbol,
-            "timeframe": timeframe,
-            "pivot_point": round(pivot, 2),
-            "resistance_1": round(r1, 2),
-            "resistance_2": round(r2, 2),
-            "resistance_3": round(r3, 2),
-            "support_1": round(s1, 2),
-            "support_2": round(s2, 2),
-            "support_3": round(s3, 2),
-            "recent_high": round(h, 2),
-            "recent_low": round(l, 2),
-            "current_close": round(c, 2),
-        }
-        
-        # For intraday timeframes, add Opening Range (first 3 candles) as micro-levels
-        is_intraday = timeframe in ("1m", "3m", "5m", "10m", "15m", "30m", "1h")
-        if is_intraday and len(candles) >= 3:
-            or_highs = [cd["high"] for cd in candles[:3] if "high" in cd]
-            or_lows = [cd["low"] for cd in candles[:3] if "low" in cd]
-            if or_highs and or_lows:
-                res["opening_range_high"] = round(max(or_highs), 2)
-                res["opening_range_low"] = round(min(or_lows), 2)
-        
-        # Always include daily macro levels as secondary reference when using intraday TF
-        if is_intraday:
-            try:
-                daily_resp = httpx.post(
-                    f"{RUST_SERVER_URL}/tools/get_candles",
-                    json={"symbol": symbol, "timeframe": "1d", "limit": 20},
-                    timeout=10.0
-                )
-                daily_resp.raise_for_status()
-                daily_candles = daily_resp.json()
-                dh = [dc["high"] for dc in daily_candles if "high" in dc]
-                dl = [dc["low"] for dc in daily_candles if "low" in dc]
-                dc_closes = [dc["close"] for dc in daily_candles if "close" in dc]
-                if dh and dl and dc_closes:
-                    daily_h = max(dh[-10:])
-                    daily_l = min(dl[-10:])
-                    daily_c = dc_closes[-1]
-                    daily_pivot = (daily_h + daily_l + daily_c) / 3.0
-                    res["daily_pivot"] = round(daily_pivot, 2)
-                    res["daily_resistance_1"] = round(2 * daily_pivot - daily_l, 2)
-                    res["daily_support_1"] = round(2 * daily_pivot - daily_h, 2)
-                    res["daily_high"] = round(daily_h, 2)
-                    res["daily_low"] = round(daily_l, 2)
-            except Exception:
-                pass  # Daily macro levels are best-effort
-        
-        print(f"[Tool Success] <<< get_support_resistance: symbol={symbol}, timeframe={timeframe}, pivot={res['pivot_point']}, S1={res['support_1']}, R1={res['resistance_1']}")
-        return res
+        res = response.json()
+        print(f"[Tool Success] <<< get_support_resistance: symbol={symbol}, timeframe={timeframe}, pivot={res.get('pivot')}, S1={res.get('s1')}, R1={res.get('r1')}")
+        return validate_contract("get_support_resistance", res)
     except Exception as e:
         print(f"[Tool Error] <<< get_support_resistance FAIL: {str(e)}")
         return {"error": f"Failed to compute support/resistance: {str(e)}"}
@@ -264,63 +389,90 @@ def get_support_resistance(symbol: str, timeframe: str = "1d") -> dict:
 @tool
 def get_news_context(symbol: str) -> dict:
     """
-    Retrieves the latest news headlines and sentiment context for the specified trading symbol.
-    Queries the news aggregator feed to check for catalyst events. 
-    Use this to evaluate sentiment and micro-news impact when volatility is high.
-    
+    Retrieves the latest news headlines and a directional sentiment classification for the
+    specified trading symbol, produced by the dedicated Rust-proxied Sentiment_Service rather
+    than naive keyword counting. Use this to evaluate catalyst sentiment and micro-news impact
+    when volatility is high.
+
     Args:
         symbol (str): The trading symbol (e.g., "RELIANCE").
-        
+
     Returns:
-        dict: List of recent headlines and a basic rule-based sentiment summary.
+        dict: Recent headlines plus a directional sentiment label. When the Sentiment_Service
+              is unavailable, returns {"sentiment_summary": "Unavailable", ...} with no
+              fabricated classification — treat that as a missing input, not a blocker.
     """
     print(f"\n[Tool Call] >>> get_news_context: symbol={symbol}")
     try:
-        import xml.etree.ElementTree as ET
-        query = f"{symbol} stock NSE India"
-        url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
-        
-        response = httpx.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10.0)
+        response = httpx.post(
+            f"{RUST_SERVER_URL}/tools/get_news_context",
+            json={"symbol": symbol},
+            timeout=15.0
+        )
+        if response.status_code != 200:
+            print(f"[Tool Error] Server returned {response.status_code}: {response.text}")
         response.raise_for_status()
-        
-        root = ET.fromstring(response.text)
-        headlines = []
-        for item in root.findall(".//item")[:5]:
-            title = item.find("title").text
-            if title:
-                headlines.append(title)
-                
-        combined_text = " ".join(headlines).lower()
-        positive_words = ["gain", "rise", "jump", "surge", "up", "bull", "buy", "profit", "grow"]
-        negative_words = ["fall", "drop", "plunge", "down", "bear", "sell", "loss", "crash", "decline"]
-        
-        pos_count = sum(1 for w in positive_words if w in combined_text)
-        neg_count = sum(1 for w in negative_words if w in combined_text)
-        
-        if pos_count > neg_count:
-            sentiment = "Positive / Bullish Catalyst"
-        elif neg_count > pos_count:
-            sentiment = "Negative / Bearish Catalyst"
-        else:
-            sentiment = "Neutral Catalyst"
-            
-        res = {
-            "symbol": symbol,
-            "headlines": headlines,
-            "sentiment_summary": sentiment
-        }
-        print(f"[Tool Success] <<< get_news_context: symbol={symbol}, sentiment={sentiment}")
-        return res
+        res = response.json()
+        print(f"[Tool Success] <<< get_news_context: symbol={symbol}, sentiment={res.get('sentiment_summary')}")
+        return validate_contract("get_news_context", res)
     except Exception as e:
-        print(f"[Tool Warning] <<< get_news_context Google RSS failed: {str(e)}")
-        # No local news aggregator service exists in this stack, so there is no
-        # secondary endpoint to fall back to. Return a structured, honest error
-        # instead of probing a phantom URL.
+        print(f"[Tool Warning] <<< get_news_context FAIL: {str(e)}")
+        # Honest abstention over fabrication (R10.3/R10.4): return the explicit
+        # unavailable marker so the agent treats sentiment as a missing input
+        # and does not block a decision on its absence.
         return {
             "symbol": symbol,
             "headlines": [],
             "sentiment_summary": "Unavailable",
-            "error": f"Failed to fetch news context from Google News RSS: {str(e)}"
+            "error": f"Failed to fetch news context from sentiment service: {str(e)}"
+        }
+
+
+@tool
+def get_prediction(symbol: str, timeframe: str = "1d") -> dict:
+    """
+    Obtains a forward price projection for the specified symbol and timeframe from the Rust
+    Predictive_Engine (linear-OLS forecast). Use this during directional analysis to inform
+    and cross-check your directional bias; when the projection conflicts with your bias, state
+    the conflict in setup_validation.
+
+    Args:
+        symbol (str): The trading symbol (e.g., "RELIANCE").
+        timeframe (str): The timeframe to project (e.g., "5m", "15m", "1h", "4h", "1d").
+                         Default "1d".
+
+    Returns:
+        dict: Forward projection with keys projected_direction ("Up" | "Down" | "Flat"),
+              projected_value (float), and confidence (0.0-1.0). When the engine cannot
+              produce a forecast, returns {"unavailable": true, "reason": ...} — treat that
+              as a missing input and proceed with the remaining analysis.
+    """
+    print(f"\n[Tool Call] >>> get_prediction: symbol={symbol}, timeframe={timeframe}")
+    try:
+        response = httpx.post(
+            f"{RUST_SERVER_URL}/tools/get_prediction",
+            json={"symbol": symbol, "timeframe": timeframe},
+            timeout=15.0
+        )
+        if response.status_code != 200:
+            print(f"[Tool Error] Server returned {response.status_code}: {response.text}")
+        response.raise_for_status()
+        res = response.json()
+        if res.get("unavailable"):
+            print(f"[Tool Success] <<< get_prediction: symbol={symbol}, projection unavailable ({res.get('reason')})")
+        else:
+            print(f"[Tool Success] <<< get_prediction: symbol={symbol}, direction={res.get('projected_direction')}, value={res.get('projected_value')}, confidence={res.get('confidence')}")
+        return validate_contract("get_prediction", res)
+    except Exception as e:
+        print(f"[Tool Warning] <<< get_prediction FAIL: {str(e)}")
+        # Graceful degradation (R12.4): return an explicit unavailable marker so
+        # the agent proceeds with the remaining inputs and notes the projection
+        # as unavailable rather than receiving a fabricated forecast.
+        return {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "unavailable": True,
+            "reason": f"Failed to fetch prediction from predictive engine: {str(e)}"
         }
 
 @tool
@@ -357,9 +509,11 @@ def watch_price_condition(
             "direction": direction,
             "volume_multiplier": volume_multiplier
         }
-        # Retry up to 3 times in case the Rust tool server is still starting up
+        # Retry registration up to the configured number of attempts in case the
+        # Rust tool server is still starting up.
+        max_attempts = max(1, WATCH_REGISTRATION_MAX_ATTEMPTS)
         last_error = None
-        for attempt in range(1, 4):
+        for attempt in range(1, max_attempts + 1):
             try:
                 response = httpx.post(
                     f"{RUST_SERVER_URL}/tools/watch_condition",
@@ -371,21 +525,37 @@ def watch_price_condition(
                 break
             except Exception as retry_err:
                 last_error = retry_err
-                print(f"[Tool Warning] watch_price_condition attempt {attempt}/3 failed: {str(retry_err)}")
-                if attempt < 3:
-                    _time.sleep(2)
+                print(f"[Tool Warning] watch_price_condition attempt {attempt}/{max_attempts} failed: {str(retry_err)}")
+                if attempt < max_attempts:
+                    _time.sleep(WATCH_REGISTRATION_RETRY_DELAY_S)
 
         if last_error is not None:
             raise last_error
 
         print(f"[Tool Success] <<< watch_price_condition registered watcher for symbol={symbol} on Rust server.")
     except Exception as e:
-        print(f"[Tool Error] <<< watch_price_condition FAIL after 3 attempts: {str(e)}")
-        return (
-            f"CRITICAL: Failed to register price watcher after 3 attempts: {str(e)}. "
-            f"The desktop application (Tauri) must be running for the live price watcher to work. "
-            f"Falling back to HOLD. Do NOT output a trade — the condition has not been met."
-        )
+        # Registration failed after exhausting the configured retry budget
+        # (R14.3). Return a STRUCTURED failure result carrying an explicit
+        # ``error`` marker so the ReAct loop treats it as a non-fatal tool error
+        # (recognized by graph._tool_result_is_error): the run is not aborted,
+        # no watcher is suspended, and the bounded loop ultimately yields a HOLD
+        # with no trade committed. The ``action: HOLD`` / ``trade: None`` fields
+        # make the intended outcome explicit to the agent.
+        print(f"[Tool Error] <<< watch_price_condition FAIL after {WATCH_REGISTRATION_MAX_ATTEMPTS} attempts: {str(e)}")
+        return {
+            "status": "watch_registration_failed",
+            "action": "HOLD",
+            "trade": None,
+            "error": (
+                f"Failed to register price watcher after {WATCH_REGISTRATION_MAX_ATTEMPTS} "
+                f"attempts: {str(e)}."
+            ),
+            "message": (
+                "The desktop application (Tauri) must be running for the live price "
+                "watcher to work. Falling back to HOLD. Do NOT output a trade — the "
+                "condition has not been met."
+            ),
+        }
 
     print(f"[Tool Pause] watch_price_condition: Interrupting graph, waiting for user resume...")
     triggered_candle = interrupt(
