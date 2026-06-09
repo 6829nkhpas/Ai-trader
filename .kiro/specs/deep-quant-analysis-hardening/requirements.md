@@ -216,3 +216,46 @@ The scope is the deep-quant analysis core and the agents/services it directly de
 3. THE Evaluation_Harness SHALL report the proportion of generated trades that satisfied all Trade_Validator checks.
 4. WHEN the Evaluation_Harness completes a run, THE Evaluation_Harness SHALL emit a summary report containing the directional-accuracy metric and the trade-quality metrics.
 5. IF the Evaluation_Harness detects non-deterministic metric values when replaying the same historical dataset and configuration, THEN THE Evaluation_Harness SHALL abort the evaluation run and report a non-determinism failure.
+
+### Requirement 16: Glass-Box Reasoning and Tool Transparency
+
+**User Story:** As a trader, I want to see exactly how the agent and the language model process data and use tools as it happens, so that I can follow the full chain of reasoning behind a decision rather than trust a black box.
+
+#### Acceptance Criteria
+
+1. WHEN the Deep_Quant_Agent produces reasoning text without an accompanying tool call, THE Glass_Box_Stream SHALL emit a Reasoning_Trace event containing that natural-language monologue.
+2. WHEN the Deep_Quant_Agent issues an Analysis_Tool call, THE Glass_Box_Stream SHALL emit a TOOL_CALL_START event containing the tool name and the arguments supplied to that tool.
+3. WHEN an Analysis_Tool returns a result, THE Glass_Box_Stream SHALL emit a TOOL_CALL_RESULT event containing the tool name and the returned result or a structured summary of that result, in addition to the terminal-status event.
+4. WHEN an Analysis_Tool call completes, THE Glass_Box_Stream SHALL emit a TOOL_CALL_END event stating the tool name and a terminal status of success or failure.
+5. IF an Analysis_Tool returns an error result, THEN THE Glass_Box_Stream SHALL emit a TOOL_CALL_END event with failure status and an error-reason field describing the failure.
+6. WHEN the Deep_Quant_Agent evaluates a Verification_Step from the self-verification protocol, THE Glass_Box_Stream SHALL emit a VERIFICATION_STEP event naming the check and stating its outcome.
+7. WHEN a finalized decision is produced, THE Glass_Box_Stream SHALL emit a DECISION event containing the action, the conviction score, and the decision rationale.
+8. WHEN the Deep_Quant_Agent emits a message that combines reasoning text with tool-call markup, THE Glass_Box_Stream SHALL separate the natural-language reasoning from the tool-call markup so that no raw tool-call markup appears within a Reasoning_Trace event.
+
+### Requirement 17: Glass-Box Stream Ordering and Resilience
+
+**User Story:** As a trader, I want the transparency stream to arrive in the correct order and keep working even when individual steps fail, so that the sequence I observe faithfully reflects what the agent did.
+
+#### Acceptance Criteria
+
+1. THE Glass_Box_Stream SHALL emit a RUN_STARTED event before any Reasoning_Trace, tool, verification, or decision event for that run.
+2. THE Glass_Box_Stream SHALL emit a RUN_FINISHED event as the final event of a run that completes or pauses, stating whether the run is completed or paused.
+3. WHEN the Deep_Quant_Agent invokes an Analysis_Tool, THE Glass_Box_Stream SHALL emit that tool's TOOL_CALL_START event before its corresponding TOOL_CALL_RESULT and TOOL_CALL_END events.
+4. WHEN multiple Stream_Events are emitted during a run, THE Glass_Box_Stream SHALL deliver the events in the order the underlying agent steps occurred.
+5. IF the language model stream fails during a run, THEN THE Glass_Box_Stream SHALL emit an ERROR event describing the failure and SHALL NOT emit a DECISION event for that run.
+6. WHEN a run is suspended by watch_price_condition, THE Glass_Box_Stream SHALL emit a RUN_FINISHED event with paused status so that the user interface can distinguish a paused run from a completed run.
+7. THE data payload of every Stream_Event SHALL be a valid JSON object.
+
+### Requirement 18: Conversational Trade Question-and-Answer
+
+**User Story:** As a trader, I want to ask the language model free-form questions about the analyzed trade, so that I can understand and challenge the decision without re-running the analysis.
+
+#### Acceptance Criteria
+
+1. WHEN the user submits a question in Trade_QA_Mode for a thread_id that has an existing Session_Analysis_Context, THE Deep_Quant_Agent SHALL answer using the analysis evidence in that Session_Analysis_Context.
+2. WHEN the user asks why a specific level of the Declared_Trade was chosen, THE Deep_Quant_Agent SHALL answer using the entry, stop-loss, take-profit, Risk_Reward_Ratio, and volatility basis recorded for that Declared_Trade.
+3. IF the user asks a question in Trade_QA_Mode and no Declared_Trade exists for the thread_id, THEN THE Deep_Quant_Agent SHALL answer from the available Session_Analysis_Context and SHALL state that no trade has been declared yet.
+4. IF a question requires data that is absent from the Session_Analysis_Context, THEN THE Deep_Quant_Agent SHALL either call the relevant Analysis_Tool to obtain that data or state that the data is unavailable, and SHALL NOT fabricate an answer.
+5. WHEN the Deep_Quant_Agent answers a Trade_QA_Mode question, THE Deep_Quant_Agent SHALL preserve the existing Session_Analysis_Context so that subsequent questions in the same thread_id retain access to the prior analysis.
+6. WHILE operating in Trade_QA_Mode, THE Deep_Quant_Agent SHALL answer the user's questions without altering the committed Declared_Trade.
+7. WHEN the Deep_Quant_Agent answers a Trade_QA_Mode question, THE Glass_Box_Stream SHALL emit the answer using the same event conventions defined for run transparency.
