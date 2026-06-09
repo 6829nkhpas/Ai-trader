@@ -225,7 +225,7 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
     - **Property 44: Uncomputable horizons return Neutral while others compute**
     - **Validates: Requirements 13.2**
 
-- [ ] 9. Checkpoint - Ensure all tests pass
+- [x] 9. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 10. Price watcher reliability (`tool_server.rs` / `quant/mod.rs`)
@@ -233,19 +233,19 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
     - Register watchers keyed by `thread_id`, suspend the run resumably; trigger predicate fires iff price condition AND `volume >= average_volume × volume_multiplier`; remove the watcher on fire; resume via `/resume`
     - _Requirements: 14.1, 14.2, 14.4_
 
-  - [ ]* 10.2 Write property test for watcher registration and suspension
+  - [x]* 10.2 Write property test for watcher registration and suspension
     - **Property 46: Valid watch parameters register a watcher and suspend the run**
     - **Validates: Requirements 14.1**
 
-  - [ ]* 10.3 Write property test for the trigger predicate
+  - [x]* 10.3 Write property test for the trigger predicate
     - **Property 47: The watcher trigger predicate is correct**
     - **Validates: Requirements 14.2**
 
-  - [ ]* 10.4 Write property test for watcher removal on fire
+  - [x]* 10.4 Write property test for watcher removal on fire
     - **Property 48: A fired watcher is removed from the registry**
     - **Validates: Requirements 14.4**
 
-  - [ ]* 10.5 Write unit test for registration-failure HOLD path
+  - [x]* 10.5 Write unit test for registration-failure HOLD path
     - Registration failing after configured retries → agent declares HOLD and outputs no trade
     - _Requirements: 14.3_
 
@@ -270,33 +270,33 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
     - **Property 41: Predictive projection carries direction and value**
     - **Validates: Requirements 12.2**
 
-  - [ ] 11.6 Add the `POST /tools/get_news_context` sentiment proxy (`agents/sentiment/` + `tool_server.rs`)
+  - [x] 11.6 Add the `POST /tools/get_news_context` sentiment proxy (`agents/sentiment/` + `tool_server.rs`)
     - Proxy to the Node Sentiment_Service; return recent headlines + a directional sentiment label; return `{"sentiment_summary": "Unavailable", ...}` on failure without fabrication
     - _Requirements: 10.1, 10.2, 10.3_
 
-  - [ ]* 11.7 Write property test for news mapping
+  - [x]* 11.7 Write property test for news mapping
     - **Property 37: News result maps service classification to headlines + directional label**
     - **Validates: Requirements 10.2**
 
-  - [ ]* 11.8 Write unit test for sentiment-unavailable marker
+  - [x]* 11.8 Write unit test for sentiment-unavailable marker
     - Sentiment service unreachable → `Unavailable` marker, no fabricated classification
     - _Requirements: 10.3_
 
 - [ ] 12. Python tool client and contract revalidation (`tools.py`)
-  - [ ] 12.1 Convert SR/news/prediction tools to thin HTTP clients
+  - [x] 12.1 Convert SR/news/prediction tools to thin HTTP clients
     - Replace local computation in `get_support_resistance` and `get_news_context` with calls to the new Rust endpoints; add `get_prediction` client
     - _Requirements: 9.1, 10.1, 12.1_
 
-  - [ ] 12.2 Implement consumer-side `validate_contract(tool_name, payload)`
+  - [x] 12.2 Implement consumer-side `validate_contract(tool_name, payload)`
     - Re-validate each tool result against its contract on receipt; return a structured `{"error", "contract_violation"}` instead of raising; never pass malformed data to the model
     - _Requirements: 4.1, 5.1_
 
-  - [ ]* 12.3 Write unit test for contract-violation handling
+  - [x]* 12.3 Write unit test for contract-violation handling
     - A contract-violating payload yields a structured error result, not an exception, and never reaches the model
     - _Requirements: 4.1_
 
 - [ ] 13. declare_trade commit and defensibility record
-  - [ ] 13.1 Wire Trade_Validator into the `declare_trade` commit path (`tool_server.rs`)
+  - [x] 13.1 Wire Trade_Validator into the `declare_trade` commit path (`tool_server.rs`)
     - Commit and emit the final-analysis decision event only when validation passes; on any failure return the reason and do not commit
     - _Requirements: 6.6, 6.7_
 
@@ -304,104 +304,104 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
     - Record multi-TF bias, key S/R levels used, volatility basis for the stop, RR value, named high-confidence patterns (`>0.6`), predictive-conflict statement, and macro-trend-conflict statement; VERIFY mode reports each validator check outcome
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 11.3, 12.3, 13.3_
 
-  - [ ]* 13.3 Write property test for commit-iff-pass
+  - [x]* 13.3 Write property test for commit-iff-pass
     - **Property 24: Commit happens exactly when validation passes**
     - **Validates: Requirements 6.6, 6.7**
 
-  - [ ]* 13.4 Write property test for the defensibility record
+  - [x]* 13.4 Write property test for the defensibility record
     - **Property 25: Committed trades carry a complete defensibility record**
     - **Validates: Requirements 7.1, 7.2**
 
-  - [ ]* 13.5 Write property test for naming high-confidence patterns
+  - [x]* 13.5 Write property test for naming high-confidence patterns
     - **Property 26: High-confidence patterns are named in the thesis**
     - **Validates: Requirements 7.3, 11.3**
 
-  - [ ]* 13.6 Write property test for stated predictive conflict
+  - [x]* 13.6 Write property test for stated predictive conflict
     - **Property 42: A projection conflicting with bias is stated**
     - **Validates: Requirements 12.3**
 
-  - [ ]* 13.7 Write property test for stated macro-trend conflict
+  - [x]* 13.7 Write property test for stated macro-trend conflict
     - **Property 45: A trade opposing the 1D trend states the macro conflict**
     - **Validates: Requirements 13.3**
 
-  - [ ]* 13.8 Write property test for VERIFY-mode per-check reporting
+  - [x]* 13.8 Write property test for VERIFY-mode per-check reporting
     - **Property 27: VERIFY mode reports an outcome for every validator check**
     - **Validates: Requirements 7.4**
 
-  - [ ]* 13.9 Write unit test for decision provenance
+  - [x]* 13.9 Write unit test for decision provenance
     - A fixed scenario's defensibility record cites only values present in tool results
     - _Requirements: 5.4_
 
-- [ ] 14. Checkpoint - Ensure all tests pass
+- [x] 14. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 15. Glass-box SSE stream (`main.py`)
-  - [ ] 15.1 Implement the reasoning splitter and event vocabulary in `event_generator`
+  - [x] 15.1 Implement the reasoning splitter and event vocabulary in `event_generator`
     - Emit `REASONING` (markup stripped), `TOOL_CALL_START`, `TOOL_CALL_RESULT`, `TOOL_CALL_END` (with `error_reason` on failure), `VERIFICATION_STEP`, and `DECISION`; ensure no raw tool-call markup leaks into `REASONING`
     - _Requirements: 16.1, 16.2, 16.3, 16.4, 16.5, 16.6, 16.7, 16.8_
 
-  - [ ] 15.2 Implement run lifecycle, ordering guarantees, and the ERROR path
+  - [x] 15.2 Implement run lifecycle, ordering guarantees, and the ERROR path
     - `RUN_STARTED` first; `TOOL_CALL_START` before its RESULT/END; events in step order; `RUN_FINISHED` last with `completed`/`paused`; LLM stream failure emits `ERROR` and no `DECISION`; every payload is a valid JSON object
     - _Requirements: 17.1, 17.2, 17.3, 17.4, 17.5, 17.6, 17.7, 5.5_
 
-  - [ ]* 15.3 Write property test for REASONING emission
+  - [x]* 15.3 Write property test for REASONING emission
     - **Property 53: Reasoning-only messages emit a REASONING event**
     - **Validates: Requirements 16.1**
 
-  - [ ]* 15.4 Write property test for TOOL_CALL_START
+  - [x]* 15.4 Write property test for TOOL_CALL_START
     - **Property 54: Tool calls emit START with name and args**
     - **Validates: Requirements 16.2**
 
-  - [ ]* 15.5 Write property test for TOOL_CALL_RESULT
+  - [x]* 15.5 Write property test for TOOL_CALL_RESULT
     - **Property 55: Tool results emit RESULT with name and result/summary**
     - **Validates: Requirements 16.3**
 
-  - [ ]* 15.6 Write property test for TOOL_CALL_END status
+  - [x]* 15.6 Write property test for TOOL_CALL_END status
     - **Property 56: Tool completion emits END with a terminal status**
     - **Validates: Requirements 16.4, 16.5**
 
-  - [ ]* 15.7 Write property test for VERIFICATION_STEP
+  - [x]* 15.7 Write property test for VERIFICATION_STEP
     - **Property 57: Verification steps emit VERIFICATION_STEP with check and outcome**
     - **Validates: Requirements 16.6**
 
-  - [ ]* 15.8 Write property test for DECISION event
+  - [x]* 15.8 Write property test for DECISION event
     - **Property 58: Finalized decisions emit DECISION with action, conviction, rationale**
     - **Validates: Requirements 16.7**
 
-  - [ ]* 15.9 Write property test for markup-free reasoning
+  - [x]* 15.9 Write property test for markup-free reasoning
     - **Property 59: Reasoning events contain no raw tool-call markup**
     - **Validates: Requirements 16.8**
 
-  - [ ]* 15.10 Write property test for RUN_STARTED ordering
+  - [x]* 15.10 Write property test for RUN_STARTED ordering
     - **Property 60: RUN_STARTED is the first event**
     - **Validates: Requirements 17.1**
 
-  - [ ]* 15.11 Write property test for RUN_FINISHED finality
+  - [x]* 15.11 Write property test for RUN_FINISHED finality
     - **Property 61: RUN_FINISHED is the final event with a status**
     - **Validates: Requirements 17.2, 17.6**
 
-  - [ ]* 15.12 Write property test for tool-event ordering
+  - [x]* 15.12 Write property test for tool-event ordering
     - **Property 62: A tool call's START precedes its RESULT and END**
     - **Validates: Requirements 17.3, 17.4**
 
-  - [ ]* 15.13 Write property test for the failed-stream ERROR path
+  - [x]* 15.13 Write property test for the failed-stream ERROR path
     - **Property 63: A failed LLM stream emits ERROR and no DECISION**
     - **Validates: Requirements 17.5**
 
-  - [ ]* 15.14 Write property test for JSON-object payloads
+  - [x]* 15.14 Write property test for JSON-object payloads
     - **Property 64: Every stream event payload is a valid JSON object**
     - **Validates: Requirements 17.7**
 
-  - [ ]* 15.15 Write unit test for LLM stream-failure end to end
+  - [x]* 15.15 Write unit test for LLM stream-failure end to end
     - Stream failure mid-run surfaces `ERROR` and emits no `DECISION`/trade plan
     - _Requirements: 5.5, 17.5_
 
 - [ ] 16. Trade Q&A mode (`graph.py` + `main.py`)
-  - [ ] 16.1 Implement the Trade_QA_Mode handler reusing the MemorySaver context (`graph.py`)
+  - [x] 16.1 Implement the Trade_QA_Mode handler reusing the MemorySaver context (`graph.py`)
     - Answer from the thread's `Session_Analysis_Context`; cite recorded entry/SL/TP/RR/volatility basis for level questions; state "no trade declared" when none exists; call the relevant tool or state unavailable rather than fabricate; never mutate the committed trade; preserve context across turns
     - _Requirements: 18.1, 18.2, 18.3, 18.4, 18.5, 18.6_
 
-  - [ ] 16.2 Add the Q&A request route to `main.py`
+  - [x] 16.2 Add the Q&A request route to `main.py`
     - Reuse the same `thread_id` and emit answers via the existing stream conventions
     - _Requirements: 18.7_
 
@@ -430,24 +430,24 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
     - Re-run each dataset twice; abort with a non-determinism failure if metrics differ
     - _Requirements: 15.5_
 
-  - [ ]* 17.3 Write property test for directional-accuracy metric
+  - [x]* 17.3 Write property test for directional-accuracy metric
     - **Property 49: Directional-accuracy metric is well-formed**
     - **Validates: Requirements 15.1**
 
-  - [ ]* 17.4 Write property test for trade-quality proportions
+  - [x]* 17.4 Write property test for trade-quality proportions
     - **Property 50: Trade-quality proportions equal the true proportions**
     - **Validates: Requirements 15.2, 15.3**
 
-  - [ ]* 17.5 Write property test for the summary report
+  - [x]* 17.5 Write property test for the summary report
     - **Property 51: A completed evaluation emits a full summary report**
     - **Validates: Requirements 15.4**
 
-  - [ ]* 17.6 Write property test for evaluation determinism
+  - [x]* 17.6 Write property test for evaluation determinism
     - **Property 52: Evaluation metrics are deterministic across identical runs**
     - **Validates: Requirements 15.5**
 
 - [ ] 18. Integration wiring and verification
-  - [ ] 18.1 Wire all new tools into the agent registry and system prompt
+  - [x] 18.1 Wire all new tools into the agent registry and system prompt
     - Register `get_support_resistance`, `get_news_context`, `get_prediction` in `tools.py`/`graph.py`; add prompt rules for high-confidence patterns, predictive conflict, and macro-trend conflict so they surface in `setup_validation`
     - _Requirements: 10.1, 11.3, 12.1, 12.3, 13.3_
 

@@ -1,6 +1,7 @@
 import os
-from typing import Annotated, Sequence, TypedDict, Optional
-from langchain_core.messages import SystemMessage, AIMessage, HumanMessage, BaseMessage
+from typing import Annotated, Sequence, TypedDict, Optional, Literal, List
+from dataclasses import dataclass, field
+from langchain_core.messages import SystemMessage, AIMessage, HumanMessage, BaseMessage, ToolMessage
 import json
 
 # ── AIMessage Monkeypatch to robustly fix string args in tool calls ──────────
@@ -37,6 +38,7 @@ from tools import (
     get_chart_patterns,
     get_support_resistance,
     get_news_context,
+    get_prediction,
     watch_price_condition,
     declare_trade
 )
@@ -49,6 +51,27 @@ class AgentState(TypedDict):
     symbol: Optional[str]
     manual_trade: Optional[dict]
     timeframe: Optional[str]
+    # ── Deterministic loop-control state (Requirement 2) ──────────────────────
+    # `decision` is the single authoritative completion signal. It is set ONLY
+    # by a validated declare_trade (its structured args) or by the forced-HOLD
+    # path — never inferred from keyword matching on reasoning prose (R2.7).
+    decision: Optional[dict]
+    # Count of consecutive turns in which the model produced reasoning with no
+    # tool calls. Reset to 0 on any turn that issues tool calls (R2.3, R2.5).
+    reasoning_turns: int
+    # True once any market-data Analysis_Tool has returned usable data in the
+    # current run. Maintained here; gating on it is handled in a later task.
+    market_data_seen: bool
+    # ── Trade Q&A mode bookkeeping (Requirement 18) ──────────────────────────
+    # Consecutive Trade_QA_Mode turns taken in this thread, used purely to bound
+    # the Q&A tool-fetch loop (R18.4). It never affects the committed decision —
+    # the Declared_Trade is immutable while answering questions (R18.6).
+    qa_turns: int
+
+
+# Maximum number of consecutive reasoning-only turns the agent may take before
+# the loop forces a HOLD with reason `no-decision-reached` (R2.3, R2.5).
+MAX_REASONING_TURNS = 3
 
 # ── System Prompts ──────────────────────────────────────────────────────────
 
@@ -87,6 +110,8 @@ You must follow this exact loop until a perfect setup is found or registered:
    Use confidence > 0.6 patterns to strengthen your trade thesis. Cross-reference with S/R levels and multi-TF trend.
    Call on MULTIPLE timeframes (e.g. '15m' and '1h') to find confluence — a pattern appearing on both timeframes is high-conviction.
 5. PRICE ACTION: Optionally call `get_candles` for specific timeframes. Candles include timestamps — use them to identify gap opens, session boundaries, and time-based patterns.
+6. PREDICTIVE CROSS-CHECK: Call `get_prediction` with the analyzed symbol and timeframe to obtain a forward price projection (projected_direction Up/Down/Flat, projected_value, confidence) from the Predictive_Engine. Use it to cross-check your directional bias. If the projection is unavailable, proceed with the remaining inputs and note it as unavailable.
+7. NEWS CATALYST: Call `get_news_context` to obtain the dedicated Sentiment_Service classification (recent headlines + directional label). If sentiment is Unavailable, treat it as a missing — but non-blocking — input and continue.
 
 CRITICAL: You must execute at least one tool call (e.g., `get_multi_tf_trend`) on your very first turn. Do not output text reasoning without calling a tool in the same turn.
 </order_of_operations>
@@ -103,6 +128,14 @@ Ask yourself:
 If the answer to ANY of the first 3 checks is YES, you must scrap the trade. You must either analyze a different timeframe to find a better entry, or call `watch_price_condition` to wait for a safer pullback. 
 ONLY call `declare_trade` if you are 100% confident you could defend this trade against rigorous critique.
 </self_verification_protocol>
+
+<setup_validation_disclosure>
+Your `setup_validation` is the defensibility record for the trade and MUST explicitly state the following whenever they apply:
+- HIGH-CONFIDENCE PATTERNS: Name every chart pattern from `get_chart_patterns` with confidence > 0.6 that informed your thesis (e.g., "Inverse H&S (conf 0.71) confirms").
+- PREDICTIVE CONFLICT: If the `get_prediction` projected_direction conflicts with your directional bias, state the conflict explicitly (e.g., "Predictive projects Down, conflicting with my long bias"). If they agree, note the agreement.
+- MACRO-TREND CONFLICT: If your trade direction opposes the 1D trend bias from `get_multi_tf_trend`, state the macro-trend conflict explicitly before committing (e.g., "Trade is long against a bearish 1D macro trend").
+Always include the multi-timeframe bias, the key S/R levels used, the volatility (ATR) basis for the stop, and the Risk:Reward ratio in your setup_validation.
+</setup_validation_disclosure>
 
 <communication_rules>
 THINK OUT LOUD. Stream your internal monologue. 
@@ -201,6 +234,7 @@ tools = [
     get_chart_patterns,
     get_support_resistance,
     get_news_context,
+    get_prediction,
     watch_price_condition,
     declare_trade
 ]
@@ -210,71 +244,789 @@ llm_with_tools = llm.bind_tools(tools)
 
 import re
 import json
+import ast
+import math
 
-def parse_deepseek_custom_tool_calls(content: str) -> list:
+# Trade_Validator (Python mirror, task 5.2) — reused to derive the
+# Risk_Reward_Ratio and to report per-check outcomes in VERIFY mode (R7.4).
+from validator import Action
+
+# ── Structured Tool-Call Extraction ──────────────────────────────────────────
+# The registered Analysis_Tool set. A tool name discovered in model output that
+# is not in this set is classified as an invalid-tool call.
+REGISTERED_TOOL_NAMES = {
+    "get_candles",
+    "get_consensus_report",
+    "get_multi_tf_trend",
+    "get_chart_patterns",
+    "get_support_resistance",
+    "get_news_context",
+    "get_prediction",
+    "watch_price_condition",
+    "declare_trade",
+}
+
+# The subset of Analysis_Tools that return market data (used to maintain the
+# `market_data_seen` flag). watch_price_condition and declare_trade are control
+# tools, not market-data sources.
+MARKET_DATA_TOOL_NAMES = {
+    "get_candles",
+    "get_consensus_report",
+    "get_multi_tf_trend",
+    "get_chart_patterns",
+    "get_support_resistance",
+    "get_news_context",
+    "get_prediction",
+}
+
+# DeepSeek/HuggingFace custom-token markup boundaries.
+_CALL_BLOCK_RE = re.compile(r"<｜tool▁call▁begin｜>(.*?)<｜tool▁call▁end｜>", re.DOTALL)
+_SEP_NAME_RE = re.compile(r"<｜tool▁sep｜>\s*([^\s`{]+)")
+_ZERO_WIDTH_RE = re.compile(r"[\u200b-\u200d\uFEFF]")
+
+
+@dataclass
+class ExtractedCall:
+    """A single tool call discovered in a model response.
+
+    status:
+      - "ok"            args parsed into a valid JSON object; safe to execute
+      - "parse_failure" args fragment could not be parsed into JSON
+      - "invalid_tool"  tool name is not a registered Analysis_Tool
     """
-    Parses DeepSeek/HuggingFace custom token tool call representations from raw text content.
-    Example: <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_multi_tf_trend ```json {"symbol":"HDFCBANK"} ```<｜tool▁call▁end｜><｜tool▁calls▁end｜>
+    name: str
+    args: Optional[dict]
+    raw_args: str
+    status: Literal["ok", "parse_failure", "invalid_tool"]
+    id: str
+
+
+@dataclass
+class ToolCallExtraction:
+    calls: List[ExtractedCall] = field(default_factory=list)
+    used_text_extraction: bool = False
+
+
+def _extract_balanced_json(text: str, start: int) -> Optional[str]:
+    """Return the first brace-balanced ``{...}`` substring at/after ``start``.
+
+    Returns None when no opening brace is found. The matcher is string-aware so
+    braces inside JSON string literals do not unbalance the scan.
+    """
+    open_idx = text.find("{", start)
+    if open_idx == -1:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for i in range(open_idx, len(text)):
+        ch = text[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_idx:i + 1]
+    return None
+
+
+def _scan_custom_token_calls(content: str) -> List[tuple]:
+    """Scan raw content for custom-token tool-call markup.
+
+    Returns a list of ``(name, raw_args)`` tuples in source order. Both
+    registered and unregistered tool names are returned so the caller can
+    classify them; classification (ok / parse_failure / invalid_tool) is the
+    caller's responsibility.
     """
     if not content:
         return []
-        
-    tool_calls = []
-    
-    # 1. Look for tool names in the list
-    valid_tools = [
-        "get_candles", "get_consensus_report", "get_multi_tf_trend", "get_chart_patterns",
-        "get_support_resistance", "get_news_context", "watch_price_condition", "declare_trade"
-    ]
-    
-    # Find all occurrences of valid tools
-    for tool_name in valid_tools:
-        # Search for tool name, optionally some whitespace/markdown, then a JSON object
-        pattern = re.compile(rf"{tool_name}\s*(?:```json\s*)?(\{{\s*[\s\S]*?\}})(?:\s*```)?")
-        matches = pattern.finditer(content)
-        for match in matches:
-            args_str = match.group(1)
-            try:
-                args = json.loads(args_str)
-                tool_calls.append({
-                    "name": tool_name,
-                    "args": args,
-                    "id": f"call_{tool_name}_{len(tool_calls)}"
-                })
-            except Exception as e:
-                # Fallback: clean some weird characters and try again
-                cleaned_args = re.sub(r'[\u200b-\u200d\uFEFF]', '', args_str) # strip zero-width spaces
-                try:
-                    args = json.loads(cleaned_args)
-                    tool_calls.append({
-                        "name": tool_name,
-                        "args": args,
-                        "id": f"call_{tool_name}_{len(tool_calls)}"
-                    })
-                except:
-                    pass
-                
-    # 2. Fallback to general JSON extraction if no tool calls matched but tags are present
-    if not tool_calls and ("tool" in content or "call" in content or "func" in content):
-        for tool_name in valid_tools:
-            if tool_name in content:
-                # Find the nearest JSON block after the tool name
-                idx = content.find(tool_name)
-                after_tool = content[idx + len(tool_name):]
-                json_match = re.search(r"(\{\s*[\s\S]*?\})", after_tool)
-                if json_match:
-                    args_str = json_match.group(1)
-                    try:
-                        args = json.loads(args_str)
-                        tool_calls.append({
-                            "name": tool_name,
-                            "args": args,
-                            "id": f"call_{tool_name}_{len(tool_calls)}"
-                        })
-                    except:
-                        pass
-                        
-    return tool_calls
+
+    discovered: List[tuple] = []
+
+    # Tier 1: explicit DeepSeek call blocks delimited by tool-call tokens.
+    blocks = list(_CALL_BLOCK_RE.finditer(content))
+    if blocks:
+        for block in blocks:
+            inner = block.group(1)
+            sep_match = _SEP_NAME_RE.search(inner)
+            if sep_match:
+                name = sep_match.group(1).strip()
+                json_start = sep_match.end()
+            else:
+                # No separator token — take the first identifier-looking token.
+                name_match = re.search(r"([A-Za-z_][A-Za-z0-9_]*)", inner)
+                if not name_match:
+                    continue
+                name = name_match.group(1).strip()
+                json_start = name_match.end()
+            raw_args = _extract_balanced_json(inner, json_start)
+            discovered.append((name, raw_args if raw_args is not None else ""))
+        return discovered
+
+    # Tier 2: separator tokens present without explicit call-block wrappers.
+    sep_matches = list(_SEP_NAME_RE.finditer(content))
+    if sep_matches:
+        for sep in sep_matches:
+            name = sep.group(1).strip()
+            raw_args = _extract_balanced_json(content, sep.end())
+            discovered.append((name, raw_args if raw_args is not None else ""))
+        return discovered
+
+    # Tier 3: plain-text fallback. Without markup tokens we can only reliably
+    # anchor on registered tool names; locate each followed by a JSON object,
+    # preserving source order by position.
+    positioned: List[tuple] = []
+    for tool_name in REGISTERED_TOOL_NAMES:
+        for m in re.finditer(re.escape(tool_name), content):
+            raw_args = _extract_balanced_json(content, m.end())
+            if raw_args is not None:
+                positioned.append((m.start(), tool_name, raw_args))
+    positioned.sort(key=lambda t: t[0])
+    return [(name, raw_args) for _pos, name, raw_args in positioned]
+
+
+def _parse_args_fragment(raw_args: str):
+    """Attempt to parse a JSON args fragment.
+
+    Returns ``(parsed_dict, True)`` on success or ``(None, False)`` on failure.
+    A zero-width-character cleanup pass is attempted before giving up.
+    """
+    if raw_args is None:
+        return None, False
+    try:
+        parsed = json.loads(raw_args)
+        if isinstance(parsed, dict):
+            return parsed, True
+        return None, False
+    except Exception:
+        cleaned = _ZERO_WIDTH_RE.sub("", raw_args)
+        try:
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, dict):
+                return parsed, True
+            return None, False
+        except Exception:
+            return None, False
+
+
+def extract_tool_calls(response) -> ToolCallExtraction:
+    """Extract every tool call from a model response in source order.
+
+    Native structured ``tool_calls`` are the primary path: when present, each is
+    wrapped as an ``ExtractedCall`` with status ``ok`` and NO text-based
+    extraction is applied (Requirement 1.1). Otherwise the response content is
+    scanned for custom-token markup and each discovered call is classified as
+    ``ok`` / ``parse_failure`` / ``invalid_tool`` (Requirements 1.2-1.4). Every
+    discovered call is preserved in order; none are dropped (Requirement 1.5).
+    """
+    extraction = ToolCallExtraction()
+
+    native_calls = getattr(response, "tool_calls", None) or []
+    if native_calls:
+        # Primary path: trust the provider's structured tool calls verbatim.
+        for idx, tc in enumerate(native_calls):
+            name = (tc.get("name") or "").strip()
+            args = tc.get("args")
+            if isinstance(args, str):
+                parsed, ok = _parse_args_fragment(args)
+                args = parsed if ok else None
+            call_id = tc.get("id") or f"call_{name}_{idx}"
+            extraction.calls.append(
+                ExtractedCall(
+                    name=name,
+                    args=args if isinstance(args, dict) else {},
+                    raw_args=tc.get("args") if isinstance(tc.get("args"), str) else json.dumps(args) if args is not None else "",
+                    status="ok",
+                    id=call_id,
+                )
+            )
+        extraction.used_text_extraction = False
+        return extraction
+
+    # Fallback path: parse custom-token markup out of the content string.
+    content = getattr(response, "content", "") or ""
+    discovered = _scan_custom_token_calls(content)
+    if discovered:
+        extraction.used_text_extraction = True
+
+    for idx, (name, raw_args) in enumerate(discovered):
+        call_id = f"call_{name}_{idx}"
+        if name not in REGISTERED_TOOL_NAMES:
+            extraction.calls.append(
+                ExtractedCall(
+                    name=name,
+                    args=None,
+                    raw_args=raw_args,
+                    status="invalid_tool",
+                    id=call_id,
+                )
+            )
+            continue
+        parsed, ok = _parse_args_fragment(raw_args)
+        if ok:
+            extraction.calls.append(
+                ExtractedCall(
+                    name=name,
+                    args=parsed,
+                    raw_args=raw_args,
+                    status="ok",
+                    id=call_id,
+                )
+            )
+        else:
+            extraction.calls.append(
+                ExtractedCall(
+                    name=name,
+                    args=None,
+                    raw_args=raw_args,
+                    status="parse_failure",
+                    id=call_id,
+                )
+            )
+    return extraction
+
+
+def _synthetic_failure_content(call: ExtractedCall) -> str:
+    """Build the synthetic ToolMessage feedback for a non-executable call."""
+    if call.status == "invalid_tool":
+        return (
+            f"Tool-call error: '{call.name}' is not a registered Analysis_Tool. "
+            f"Registered tools are: {', '.join(sorted(REGISTERED_TOOL_NAMES))}. "
+            f"Re-issue the call using a valid tool name."
+        )
+    return (
+        f"Tool-call error: could not parse JSON arguments for '{call.name}'. "
+        f"Received fragment: {call.raw_args!r}. "
+        f"Re-issue the call with a valid JSON object as arguments."
+    )
+
+
+def _is_tool_message(message) -> bool:
+    """True when ``message`` is a ToolMessage (tool result)."""
+    if isinstance(message, ToolMessage):
+        return True
+    return getattr(message, "type", None) == "tool"
+
+
+def _tool_result_is_error(content) -> bool:
+    """Heuristically decide whether a tool result represents a failure.
+
+    Tool functions in this stack return a structured payload carrying an
+    ``"error"`` key (or an ``error:`` string) when they fail. A result without
+    such a marker is treated as usable market data.
+    """
+    if content is None:
+        return True
+    text = content if isinstance(content, str) else str(content)
+    stripped = text.strip().lower()
+    return '"error"' in text or "'error'" in text or stripped.startswith("error")
+
+
+# Graceful-degradation markers (R5/R10/R12): an engine that cannot produce a
+# result returns an explicit "unavailable" marker rather than fabricating data.
+# Such a result is NOT usable directional data and must not, on its own, satisfy
+# the first-turn data-acquisition gate. In particular an `Unavailable` sentiment
+# result is treated as a missing — but non-blocking — input (R10.4). Both JSON
+# (`"..."`) and Python dict-repr (`'...'`) quoting styles are matched.
+_UNAVAILABLE_RE = re.compile(
+    r"['\"]sentiment_summary['\"]\s*:\s*['\"]unavailable['\"]"
+    r"|['\"]unavailable['\"]\s*:\s*true"
+    r"|['\"]status['\"]\s*:\s*['\"]unavailable['\"]",
+    re.IGNORECASE,
+)
+
+
+def _tool_result_is_unavailable(content) -> bool:
+    """True when a tool result carries an explicit graceful-degradation marker.
+
+    These results (e.g. ``{"sentiment_summary": "Unavailable"}``) represent a
+    missing input rather than usable market data, so they neither count toward
+    ``market_data_seen`` nor block a decision on their own (R10.4).
+    """
+    if content is None:
+        return False
+    text = content if isinstance(content, str) else str(content)
+    return bool(_UNAVAILABLE_RE.search(text))
+
+
+def _market_data_seen(messages) -> bool:
+    """True once any market-data Analysis_Tool has returned usable data.
+
+    A market-data tool result counts only when it is neither an error nor an
+    explicit unavailable marker — so an `Unavailable` sentiment (or any other
+    graceful-degradation marker) does not, by itself, satisfy the gate (R10.4).
+    """
+    for m in messages:
+        if not _is_tool_message(m):
+            continue
+        name = getattr(m, "name", None)
+        if name not in MARKET_DATA_TOOL_NAMES:
+            continue
+        content = getattr(m, "content", None)
+        if _tool_result_is_error(content) or _tool_result_is_unavailable(content):
+            continue
+        return True
+    return False
+
+
+def _market_data_attempted(messages) -> bool:
+    """True once any market-data Analysis_Tool has been called this run.
+
+    Distinguishes a premature finalize (no market-data tool attempted yet → block
+    and keep gathering data, R3.3) from a finalize where directional data was
+    sought but is unavailable (tools attempted but all failed/unavailable → HOLD
+    with a stated data limitation, R5.3).
+    """
+    for m in messages:
+        if _is_tool_message(m) and getattr(m, "name", None) in MARKET_DATA_TOOL_NAMES:
+            return True
+    return False
+
+
+def _decision_from_declare(ok_calls) -> Optional[dict]:
+    """Build the structured decision from a declare_trade tool call, if present.
+
+    The declared trade's structured arguments — not any prose — are the
+    authoritative completion signal read by ``should_continue`` (R2.2, R2.7).
+    """
+    for tc in ok_calls:
+        if tc.get("name") == "declare_trade":
+            args = tc.get("args") or {}
+            return {
+                "action": (args.get("action") or "HOLD"),
+                "conviction_score": args.get("conviction_score"),
+                "setup_validation": args.get("setup_validation"),
+                "execution_plan": args.get("execution_plan"),
+                "source": "declare_trade",
+            }
+    return None
+
+
+# ── Trade Defensibility Record (Requirement 7) ───────────────────────────────
+# When a trade is committed, it must carry the evidence behind it so the trader
+# can review and defend it (R7). The record is assembled ENTIRELY from the
+# Analysis_Tool results already present in the message history — nothing is
+# fabricated (R5.4). It captures: the multi-timeframe trend bias (R7.1), the key
+# support/resistance levels used (R7.1), the volatility basis for the stop
+# (atr_14, R7.1), the Risk_Reward_Ratio (R7.2), any high-confidence chart
+# patterns >0.6 (R7.3 / R11.3), a predictive-conflict statement (R12.3), and a
+# macro-trend-conflict statement (R13.3). In VERIFY mode it additionally reports
+# the outcome of every Trade_Validator check for the user-proposed trade (R7.4).
+
+# Confidence threshold above which a chart pattern is named in the thesis (R7.3).
+PATTERN_CONFIDENCE_THRESHOLD = 0.6
+
+_LEVEL_NUM = r"([0-9]+(?:\.[0-9]+)?)"
+_ENTRY_RE = re.compile(r"entry\b[^0-9\-]*" + _LEVEL_NUM, re.IGNORECASE)
+_SL_RE = re.compile(r"(?:stop[\s\-]?loss|stop|sl)\b[^0-9\-]*" + _LEVEL_NUM, re.IGNORECASE)
+_TP_RE = re.compile(r"(?:take[\s\-]?profit|target|tp)\b[^0-9\-]*" + _LEVEL_NUM, re.IGNORECASE)
+
+
+def _is_finite_num(x) -> bool:
+    """True when ``x`` is a finite real number (bools are not numbers here)."""
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+
+
+def _parse_tool_content(content):
+    """Best-effort parse of a ToolMessage payload into a Python object.
+
+    Tool results may be serialized as JSON (double-quoted) or as a Python
+    dict/list repr (single-quoted) depending on the serializer, so both styles
+    are attempted. Returns the parsed object, or ``None`` when it cannot be
+    parsed.
+    """
+    if content is None:
+        return None
+    if isinstance(content, (dict, list)):
+        return content
+    text = content if isinstance(content, str) else str(content)
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    try:
+        return ast.literal_eval(text)
+    except Exception:
+        return None
+
+
+def _latest_tool_results(messages) -> dict:
+    """Map each tool name to its most recent successfully parsed, non-error result.
+
+    Error results (those carrying an ``error`` marker) are skipped so the record
+    cites only usable data (R5.4). Later results win, reflecting the agent's most
+    recent view of the market.
+    """
+    results: dict = {}
+    for m in messages:
+        if not _is_tool_message(m):
+            continue
+        name = getattr(m, "name", None)
+        if not name:
+            continue
+        content = getattr(m, "content", None)
+        if _tool_result_is_error(content):
+            continue
+        parsed = _parse_tool_content(content)
+        if parsed is None:
+            continue
+        results[name] = parsed
+    return results
+
+
+def _collect_high_confidence_patterns(messages, threshold=PATTERN_CONFIDENCE_THRESHOLD):
+    """Collect chart patterns with confidence strictly above ``threshold`` (R7.3).
+
+    Patterns are gathered across EVERY get_chart_patterns result in the history
+    (the agent may scan several timeframes), de-duplicated on
+    ``(pattern_type, timeframe, confidence)``.
+    """
+    found = []
+    seen = set()
+    for m in messages:
+        if not _is_tool_message(m) or getattr(m, "name", None) != "get_chart_patterns":
+            continue
+        content = getattr(m, "content", None)
+        if _tool_result_is_error(content):
+            continue
+        parsed = _parse_tool_content(content)
+        if not isinstance(parsed, dict):
+            continue
+        tf = parsed.get("timeframe")
+        for p in parsed.get("patterns", []) or []:
+            if not isinstance(p, dict):
+                continue
+            conf = p.get("confidence")
+            if not _is_finite_num(conf) or conf <= threshold:
+                continue
+            key = (p.get("pattern_type"), tf, round(float(conf), 4))
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append({
+                "pattern_type": p.get("pattern_type"),
+                "sentiment": p.get("sentiment"),
+                "confidence": float(conf),
+                "description": p.get("description"),
+                "timeframe": tf,
+            })
+    return found
+
+
+def _normalize_action(s):
+    """Normalize a free-form action/side string to BUY / SELL / HOLD (or None)."""
+    if not s:
+        return None
+    n = str(s).strip().upper()
+    if n in ("BUY", "LONG"):
+        return "BUY"
+    if n in ("SELL", "SHORT"):
+        return "SELL"
+    if n == "HOLD":
+        return "HOLD"
+    return n
+
+
+def _parse_levels_from_text(text):
+    """Extract entry / stop-loss / take-profit prices from a free-form plan.
+
+    The declare_trade tool carries levels only inside the prose ``execution_plan``
+    (and ``setup_validation``), so they are recovered here for the RR computation.
+    Returns a dict with whatever subset was found (or ``None``).
+    """
+    if not text:
+        return None
+    levels = {}
+    e = _ENTRY_RE.search(text)
+    s = _SL_RE.search(text)
+    t = _TP_RE.search(text)
+    if e:
+        levels["entry"] = float(e.group(1))
+    if s:
+        levels["stop_loss"] = float(s.group(1))
+    if t:
+        levels["take_profit"] = float(t.group(1))
+    return levels or None
+
+
+def _resolve_action_and_levels(decision, mode, manual_trade):
+    """Resolve the trade action and execution levels for the record.
+
+    In VERIFY mode the levels are the user-proposed ones (manual_trade). In FIND
+    mode the action comes from the committed decision and the levels are parsed
+    out of the execution plan / setup validation prose.
+    """
+    if mode == "VERIFY" and manual_trade:
+        action = _normalize_action(manual_trade.get("side"))
+        levels = {}
+        for k in ("entry", "stop_loss", "take_profit"):
+            v = manual_trade.get(k)
+            if _is_finite_num(v):
+                levels[k] = float(v)
+        return action, (levels or None)
+    action = _normalize_action((decision or {}).get("action"))
+    text = " ".join(
+        part for part in [
+            (decision or {}).get("execution_plan"),
+            (decision or {}).get("setup_validation"),
+        ] if part
+    )
+    return action, _parse_levels_from_text(text)
+
+
+def _latest_atr(results):
+    """The most recent finite ``atr_14`` from a consensus report, else None."""
+    consensus = results.get("get_consensus_report")
+    if isinstance(consensus, dict):
+        atr = consensus.get("atr_14")
+        if _is_finite_num(atr):
+            return float(atr)
+    return None
+
+
+def _extract_1d_bias(multi_tf):
+    """Pull the 1D (daily) directional bias string from a multi-TF trend result."""
+    if not isinstance(multi_tf, dict):
+        return None
+    for k, v in multi_tf.items():
+        kl = str(k).lower()
+        if isinstance(v, str) and ("1d" in kl or "1day" in kl or "daily" in kl or kl == "day"):
+            return v
+    return None
+
+
+def _bias_sign(bias):
+    """Normalize a bias string to Bullish / Bearish / Neutral (or None)."""
+    if not bias:
+        return None
+    b = str(bias).lower()
+    if "bull" in b or b == "up":
+        return "Bullish"
+    if "bear" in b or b == "down":
+        return "Bearish"
+    if "neutral" in b or "flat" in b:
+        return "Neutral"
+    return None
+
+
+def _predictive_direction(results):
+    """Derive the forward projected direction and its source from tool results.
+
+    Prefers an explicit get_prediction projection; otherwise falls back to the
+    sign of the consensus OLS / VWEPR projection slope. Returns
+    ``(direction, source)`` or ``(None, None)`` when no projection is available.
+    """
+    pred = results.get("get_prediction")
+    if isinstance(pred, dict):
+        d = pred.get("projected_direction")
+        if isinstance(d, str) and d.strip():
+            return d.strip().capitalize(), "predictive-engine"
+    consensus = results.get("get_consensus_report")
+    if isinstance(consensus, dict):
+        for key in ("ols_slope", "vwepr_slope"):
+            slope = consensus.get(key)
+            if _is_finite_num(slope):
+                if slope > 0:
+                    return "Up", key
+                if slope < 0:
+                    return "Down", key
+                return "Flat", key
+    return None, None
+
+
+def _verify_mode_validator_checks(action, levels, atr_14):
+    """Report the outcome of EVERY Trade_Validator check independently (R7.4).
+
+    The Trade_Validator short-circuits on the first failure, but VERIFY mode must
+    state pass/fail for each check on the user-proposed trade. This evaluates the
+    four checks independently so each receives an explicit outcome.
+    """
+    act = _normalize_action(action)
+    if act not in ("BUY", "SELL"):
+        return [{"check": "direction", "outcome": "n/a — HOLD/abstain bypasses level checks"}]
+
+    checks = []
+    have_levels = (
+        isinstance(levels, dict)
+        and all(_is_finite_num(levels.get(k)) for k in ("entry", "stop_loss", "take_profit"))
+    )
+    checks.append({
+        "check": "execution-levels-present",
+        "outcome": "pass" if have_levels else "fail",
+    })
+    if not have_levels:
+        for c in ("direction-consistency", "stop-distance-vs-atr", "risk-reward"):
+            checks.append({"check": c, "outcome": "not-evaluable — missing levels"})
+        return checks
+
+    entry = float(levels["entry"])
+    sl = float(levels["stop_loss"])
+    tp = float(levels["take_profit"])
+
+    if act == "BUY":
+        dir_ok = sl < entry < tp
+    else:
+        dir_ok = tp < entry < sl
+    checks.append({"check": "direction-consistency", "outcome": "pass" if dir_ok else "fail"})
+
+    risk = abs(entry - sl)
+    if atr_14 is not None and _is_finite_num(atr_14) and atr_14 > 0:
+        stop_ok = risk >= 1.5 * atr_14
+        checks.append({
+            "check": "stop-distance-vs-atr",
+            "outcome": "pass" if stop_ok else "fail",
+            "detail": f"stop_distance={risk:.4f}, 1.5xATR={1.5 * atr_14:.4f}",
+        })
+    else:
+        checks.append({"check": "stop-distance-vs-atr", "outcome": "not-evaluable — ATR unavailable"})
+
+    if risk > 0:
+        rr = abs(tp - entry) / risk
+        checks.append({
+            "check": "risk-reward",
+            "outcome": "pass" if rr >= 2.0 else "fail",
+            "detail": f"RR={rr:.4f}",
+        })
+    else:
+        checks.append({"check": "risk-reward", "outcome": "not-evaluable — zero risk"})
+
+    return checks
+
+
+def build_defensibility_record(messages, decision, mode=None, manual_trade=None) -> dict:
+    """Assemble the trade defensibility record from tool results in history (R7).
+
+    Gathers the evidence behind a committed decision from the Analysis_Tool
+    results already present in ``messages`` — multi-timeframe bias
+    (get_multi_tf_trend), key support/resistance levels (get_support_resistance),
+    the volatility basis for the stop (atr_14 from get_consensus_report), named
+    high-confidence chart patterns >0.6 (get_chart_patterns), and a forward
+    projection (get_prediction or the consensus OLS/VWEPR slope) — then derives
+    the Risk_Reward_Ratio, a predictive-conflict statement, and a
+    macro-trend-conflict statement. In VERIFY mode it also reports the outcome of
+    every Trade_Validator check for the user-proposed trade (R7.4).
+
+    The record cites only values returned by Analysis_Tools (R5.4); nothing is
+    fabricated. It is attached to the committed decision as
+    ``decision["defensibility"]``.
+    """
+    mode = (mode or "FIND").upper()
+    results = _latest_tool_results(messages)
+    patterns = _collect_high_confidence_patterns(messages)
+    action, levels = _resolve_action_and_levels(decision, mode, manual_trade)
+
+    multi_tf = results.get("get_multi_tf_trend")
+    multi_tf = multi_tf if isinstance(multi_tf, dict) else None
+    sr = results.get("get_support_resistance")
+    sr = sr if isinstance(sr, dict) else None
+    atr = _latest_atr(results)
+
+    # ── Volatility basis for the stop (R7.1) ─────────────────────────────────
+    if atr is not None:
+        vol_basis = (
+            f"Stop sized against ATR(14)={atr:.4f}; risk-manager floor is "
+            f"1.5x ATR = {1.5 * atr:.4f}."
+        )
+        if isinstance(levels, dict) and _is_finite_num(levels.get("entry")) and _is_finite_num(levels.get("stop_loss")):
+            stop_dist = abs(levels["entry"] - levels["stop_loss"])
+            meets = stop_dist >= 1.5 * atr
+            vol_basis += f" Actual stop distance = {stop_dist:.4f} ({'>=' if meets else '<'} 1.5x ATR)."
+    else:
+        vol_basis = "ATR(14) unavailable from consensus; volatility basis for the stop could not be confirmed."
+
+    # ── Risk_Reward_Ratio (R7.2) ─────────────────────────────────────────────
+    risk_reward = None
+    if isinstance(levels, dict) and all(_is_finite_num(levels.get(k)) for k in ("entry", "stop_loss", "take_profit")):
+        risk = abs(levels["entry"] - levels["stop_loss"])
+        if risk > 0:
+            risk_reward = round(abs(levels["take_profit"] - levels["entry"]) / risk, 4)
+
+    # ── Directional bias from the action ─────────────────────────────────────
+    agent_dir = {"BUY": "Up", "SELL": "Down", "HOLD": "Flat"}.get(action)
+
+    # ── Predictive-conflict statement (R12.3) ────────────────────────────────
+    proj_dir, proj_src = _predictive_direction(results)
+    if proj_dir and agent_dir and agent_dir != "Flat":
+        if {proj_dir, agent_dir} == {"Up", "Down"}:
+            predictive_conflict = (
+                f"CONFLICT: predictive projection is {proj_dir} (source: {proj_src}) "
+                f"but the trade bias is {agent_dir}."
+            )
+        else:
+            predictive_conflict = (
+                f"No predictive conflict: projection {proj_dir} aligns with trade bias "
+                f"{agent_dir} (source: {proj_src})."
+            )
+    elif proj_dir:
+        predictive_conflict = (
+            f"Predictive projection is {proj_dir} (source: {proj_src}); "
+            f"no directional trade bias to compare."
+        )
+    else:
+        predictive_conflict = "Predictive projection unavailable; no conflict assessment possible."
+
+    # ── Macro-trend-conflict statement (R13.3) ───────────────────────────────
+    bias_1d_raw = _extract_1d_bias(multi_tf)
+    bias_1d = _bias_sign(bias_1d_raw)
+    if bias_1d in ("Bullish", "Bearish") and agent_dir in ("Up", "Down"):
+        opposes = (agent_dir == "Up" and bias_1d == "Bearish") or (agent_dir == "Down" and bias_1d == "Bullish")
+        if opposes:
+            macro_conflict = f"MACRO CONFLICT: {action} opposes the 1D trend bias ({bias_1d_raw})."
+        else:
+            macro_conflict = f"Aligned with the 1D trend bias ({bias_1d_raw})."
+    elif bias_1d_raw:
+        macro_conflict = f"1D trend bias is {bias_1d_raw}; trade direction is {action or 'n/a'}."
+    else:
+        macro_conflict = "1D trend bias unavailable; macro-trend alignment could not be assessed."
+
+    news = results.get("get_news_context")
+    news_sentiment = news.get("sentiment_summary") if isinstance(news, dict) else None
+
+    named = ", ".join(
+        f"{p['pattern_type']} (conf {p['confidence']:.2f})" for p in patterns
+    ) or "none >0.6"
+
+    record = {
+        "mode": mode,
+        "action": action,
+        "multi_tf_bias": multi_tf,
+        "trend_1d": bias_1d_raw,
+        "support_resistance": sr,
+        "volatility_basis": vol_basis,
+        "atr_14": atr,
+        "levels": levels,
+        "risk_reward": risk_reward,
+        "patterns": patterns,
+        "predictive_conflict": predictive_conflict,
+        "macro_trend_conflict": macro_conflict,
+        "news_sentiment": news_sentiment,
+        "summary": (
+            f"Multi-TF 1D bias: {bias_1d_raw or 'n/a'}. "
+            f"RR: {risk_reward if risk_reward is not None else 'n/a'}. "
+            f"High-confidence patterns: {named}. "
+            f"{macro_conflict} {predictive_conflict}"
+        ),
+    }
+
+    # VERIFY mode must report every Trade_Validator check outcome (R7.4).
+    if mode == "VERIFY":
+        record["validator_checks"] = _verify_mode_validator_checks(action, levels, atr)
+
+    return record
+
 
 def call_model(state: AgentState):
     messages = state["messages"]
@@ -295,94 +1047,596 @@ def call_model(state: AgentState):
     response = llm_with_tools.invoke(messages)
     
     print(f"[Deep Quant Agent] Model responded. Content length: {len(response.content or '')}")
-    
-    # If the model returned raw DeepSeek token tool calls inside the content string,
-    # parse them manually and assign them to response.tool_calls.
-    if not response.tool_calls and response.content:
-        parsed_calls = parse_deepseek_custom_tool_calls(response.content)
-        if parsed_calls:
-            print(f"[Deep Quant Agent] Natively parsed custom DeepSeek tool call(s) from content: {[tc.get('name') for tc in parsed_calls]}")
-            response.tool_calls = parsed_calls
-            
-    if response.tool_calls:
-        fixed_calls = []
-        for tc in response.tool_calls:
-            cleaned_tc = dict(tc)
-            # Clean tool name
-            if "name" in cleaned_tc:
-                cleaned_name = cleaned_tc["name"].strip()
-                if cleaned_name != cleaned_tc["name"]:
-                    print(f"[Deep Quant Agent] Cleaned tool name from '{cleaned_tc['name']}' to '{cleaned_name}'")
-                    cleaned_tc["name"] = cleaned_name
-            # Fix string args to dict
-            if "args" in cleaned_tc and isinstance(cleaned_tc["args"], str):
-                try:
-                    cleaned_tc["args"] = json.loads(cleaned_tc["args"])
-                    print(f"[Deep Quant Agent] Natively deserialized tool call '{cleaned_tc.get('name')}' string args to dict: {cleaned_tc['args']}")
-                except Exception as parse_err:
-                    print(f"[Deep Quant Agent] Failed to parse tool call '{cleaned_tc.get('name')}' args string: {parse_err}")
-            fixed_calls.append(cleaned_tc)
-        
-        response.tool_calls = fixed_calls
-        print(f"[Deep Quant Agent] Model requested tool call(s): {[tc.get('name') for tc in response.tool_calls]}")
+
+    # Single structured extraction pass: native structured calls are primary;
+    # otherwise custom-token markup is parsed and classified per-call.
+    extraction = extract_tool_calls(response)
+
+    if extraction.used_text_extraction:
+        print(f"[Deep Quant Agent] Extracted {len(extraction.calls)} tool call(s) from content markup.")
+
+    ok_calls = [c for c in extraction.calls if c.status == "ok"]
+    failed_calls = [c for c in extraction.calls if c.status != "ok"]
+
+    # The assistant message carries every discovered call (so each id is paired
+    # with a tool response and nothing is dropped), but only `ok` calls are
+    # actually fed to the ToolNode. Failures are answered with synthetic results.
+    response.tool_calls = [
+        {"name": c.name, "args": c.args or {}, "id": c.id}
+        for c in extraction.calls
+    ]
+    response.additional_kwargs["_extraction_status"] = {
+        c.id: c.status for c in extraction.calls
+    }
+    response.additional_kwargs["_synthetic_results"] = {
+        c.id: _synthetic_failure_content(c) for c in failed_calls
+    }
+
+    if extraction.calls:
+        print(
+            f"[Deep Quant Agent] Tool calls -> ok: {[c.name for c in ok_calls]}, "
+            f"failed: {[(c.name, c.status) for c in failed_calls]}"
+        )
     else:
         snippet = (response.content or "").strip().replace('\n', ' ')
         print(f"[Deep Quant Agent] Model output snippet: {snippet[:200]}...")
-        
-    return {"messages": [response]}
 
-tool_node = ToolNode(tools)
+    # ── Deterministic loop bookkeeping (R2.3, R2.5) ──────────────────────────
+    # `reasoning_turns` counts consecutive reasoning-only turns. Any turn that
+    # issues tool calls (ok or failed — both route to the tools node) resets the
+    # counter so that pending work always takes precedence over the cap (R2.4).
+    if extraction.calls:
+        reasoning_turns = 0
+    else:
+        reasoning_turns = state.get("reasoning_turns", 0) + 1
+
+    # `market_data_seen` latches true once any market-data tool has returned
+    # usable data in this run. (Gating on this flag is implemented separately.)
+    market_data_seen = bool(state.get("market_data_seen")) or _market_data_seen(messages)
+
+    return {
+        "messages": [response],
+        "reasoning_turns": reasoning_turns,
+        "market_data_seen": market_data_seen,
+    }
+
+# Base ToolNode used to execute only the well-formed (`ok`) tool calls.
+_base_tool_node = ToolNode(tools)
+
+
+def tool_node(state: AgentState):
+    """Execute only `ok` tool calls; answer failed calls with synthetic results.
+
+    Every tool call present on the assistant message receives a ToolMessage so
+    no call is left unanswered: `ok` calls are dispatched to the real tools while
+    `parse_failure`/`invalid_tool` calls are answered with a synthetic feedback
+    message so the model can self-correct and the loop continues.
+
+    First-turn data-acquisition gating (R3.1-R3.3): a ``declare_trade`` issued
+    before any market-data Analysis_Tool has returned usable data is NOT allowed
+    to finalize. If no market-data tool has even been attempted, the declaration
+    is rejected with feedback and the loop continues so the agent gathers data.
+    If market-data tools were attempted but yielded no usable directional data,
+    the run finalizes with a HOLD that states the data limitation (R5.3).
+    """
+    last_message = state["messages"][-1]
+    all_calls = list(getattr(last_message, "tool_calls", None) or [])
+    statuses = (last_message.additional_kwargs or {}).get("_extraction_status", {})
+    synthetic = (last_message.additional_kwargs or {}).get("_synthetic_results", {})
+
+    ok_calls = [tc for tc in all_calls if statuses.get(tc["id"], "ok") == "ok"]
+    failed_calls = [tc for tc in all_calls if statuses.get(tc["id"], "ok") != "ok"]
+
+    # ── First-turn data-acquisition gate (R3.1-R3.3) ─────────────────────────
+    # `market_data_seen` is maintained by call_model from the messages that
+    # preceded this turn, so it reflects whether usable market data was returned
+    # in a PRIOR turn. While it is false, no declare_trade may finalize: hold
+    # back any declare_trade calls so they are not committed.
+    market_data_seen = bool(state.get("market_data_seen"))
+    blocked_declares: List[dict] = []
+    if not market_data_seen:
+        retained = []
+        for tc in ok_calls:
+            if tc.get("name") == "declare_trade":
+                blocked_declares.append(tc)
+            else:
+                retained.append(tc)
+        ok_calls = retained
+
+    out_messages: List[BaseMessage] = []
+
+    if ok_calls:
+        temp_message = AIMessage(content="", tool_calls=ok_calls)
+        result = _base_tool_node.invoke({"messages": [temp_message]})
+        out_messages.extend(result["messages"])
+
+    for tc in failed_calls:
+        content = synthetic.get(
+            tc["id"],
+            f"Tool-call error: '{tc.get('name')}' could not be executed.",
+        )
+        print(f"[Deep Quant Tools] Synthetic feedback for failed call '{tc.get('name')}' ({statuses.get(tc['id'])}).")
+        out_messages.append(
+            ToolMessage(content=content, tool_call_id=tc["id"], name=tc.get("name") or "unknown_tool")
+        )
+
+    update = {"messages": out_messages}
+
+    # ── Resolve gated declare_trade calls ────────────────────────────────────
+    if blocked_declares:
+        # Has any market-data tool been called this run? Errors/unavailable
+        # results still count as an *attempt* — they just did not yield usable
+        # directional data.
+        attempted = _market_data_attempted(state["messages"])
+        for tc in blocked_declares:
+            if attempted:
+                note = (
+                    "declare_trade not committed: required market data for a directional "
+                    "decision is unavailable (market-data tools were called but failed or "
+                    "returned no usable data). Finalizing HOLD due to the data limitation."
+                )
+            else:
+                note = (
+                    "declare_trade rejected: no market-data tool has returned data yet in "
+                    "this run. You MUST call at least one market-data tool (e.g. "
+                    "get_multi_tf_trend or get_consensus_report) and review its result "
+                    "before declaring a trade. Continue your analysis."
+                )
+            print(
+                f"[Deep Quant Tools] Gated declare_trade (market_data_seen=False, "
+                f"attempted={attempted}) -> {'HOLD' if attempted else 'block+loop'}."
+            )
+            out_messages.append(
+                ToolMessage(content=note, tool_call_id=tc["id"], name="declare_trade")
+            )
+
+        if attempted:
+            # R5.3: directional data was sought but is unavailable. Terminate
+            # with an explicit HOLD that states the limitation rather than
+            # looping or fabricating a setup.
+            hold_decision = {
+                "action": "HOLD",
+                "conviction_score": 0,
+                "reason": "directional-data-unavailable",
+                "setup_validation": (
+                    "Required market data for a directional decision is unavailable; "
+                    "market-data tools were called but failed or returned no usable data. "
+                    "Holding to preserve capital rather than trade on assumptions."
+                ),
+                "execution_plan": "HOLD — no trade taken due to a data limitation.",
+                "source": "data_gating",
+            }
+            hold_decision["defensibility"] = build_defensibility_record(
+                state["messages"],
+                hold_decision,
+                mode=state.get("mode"),
+                manual_trade=state.get("manual_trade"),
+            )
+            out_messages.append(
+                AIMessage(
+                    content=json.dumps(
+                        {
+                            "conviction_score": hold_decision["conviction_score"],
+                            "setup_validation": hold_decision["setup_validation"],
+                            "execution_plan": hold_decision["execution_plan"],
+                        }
+                    )
+                )
+            )
+            update["decision"] = hold_decision
+        # else: premature finalize with no data acquired at all → no decision is
+        # set, so route_after_tools returns the agent to gather data (R3.3). The
+        # bounded reasoning cap still guarantees eventual termination.
+        return update
+
+    # ── Normal finalize path ─────────────────────────────────────────────────
+    # A validated declare_trade (only reachable once market data has been seen)
+    # is the authoritative completion signal: record its structured result as
+    # state["decision"] so should_continue terminates the run without ever
+    # matching keywords in reasoning prose (R2.2, R2.7).
+    decision = _decision_from_declare(ok_calls)
+    if decision is not None:
+        print(f"[Deep Quant Tools] declare_trade committed decision: action={decision.get('action')}")
+        # Attach the defensibility record assembled from the tool results seen
+        # so far so the committed trade carries the evidence behind it (R7).
+        decision["defensibility"] = build_defensibility_record(
+            state["messages"],
+            decision,
+            mode=state.get("mode"),
+            manual_trade=state.get("manual_trade"),
+        )
+        update["decision"] = decision
+
+    return update
 
 def should_continue(state: AgentState) -> str:
+    """Deterministic routing for the ReAct loop (Requirement 2).
+
+    Precedence (strict order):
+      1. Pending tool calls on the latest message → execute them (R2.1, R2.4).
+         A watch_price_condition call routes to the tools node as well, where
+         its interrupt() suspends the run in a resumable state rather than
+         terminating it (R2.6) — surfaced here via the distinct "suspend" route.
+      2. A finalized decision in state["decision"] → terminate (R2.2).
+      3. Reasoning budget remaining → loop for more reasoning (R2.3).
+      4. Reasoning budget exhausted → force a HOLD decision (R2.5).
+
+    Completion is read ONLY from state["decision"]; reasoning prose is never
+    keyword-matched (R2.7).
+    """
     messages = state["messages"]
     last_message = messages[-1]
-    
+
     print("\n[Deep Quant Routing] === Checking Routing Decision ===")
     print(f"[Deep Quant Routing] Last message type: {type(last_message).__name__}")
-    
-    # If the model has output a tool call, we go to tools
-    if last_message.tool_calls:
-        print(f"[Deep Quant Routing] Model requested tool call(s): {[tc.get('name') for tc in last_message.tool_calls]}. Routing to -> tools")
+
+    all_calls = list(getattr(last_message, "tool_calls", None) or [])
+    statuses = (getattr(last_message, "additional_kwargs", None) or {}).get("_extraction_status", {})
+    ok_calls = [tc for tc in all_calls if statuses.get(tc.get("id"), "ok") == "ok"]
+
+    # ── Precedence 1: pending tool calls always take priority ────────────────
+    # Both `ok` calls (executed) and failed calls (answered with synthetic
+    # feedback) must reach the tools node so every call is resolved and the
+    # loop continues — never terminated by the reasoning cap while work pends.
+    if all_calls:
+        if any(tc.get("name") == "watch_price_condition" for tc in ok_calls):
+            print("[Deep Quant Routing] Pending watch_price_condition call. Routing to -> suspend (tools/interrupt)")
+            return "suspend"
+        print(
+            f"[Deep Quant Routing] Pending tool call(s): {[tc.get('name') for tc in all_calls]}. Routing to -> tools"
+        )
         return "continue"
-        
-    # If no tool calls, check if the model has finalized its JSON response.
-    # Only detect completion via the structured JSON plan — never via loose keyword matching.
-    # The LLM's "think out loud" monologue regularly mentions entry/stop/target while
-    # still planning to call watch_price_condition, which previously caused premature exit.
-    content = last_message.content or ""
-    has_final_json = "{" in content and "}" in content and (
-        "conviction_score" in content or "conviction" in content
-    )
-    
-    print(f"[Deep Quant Routing] Has final JSON: {has_final_json}")
-    if has_final_json:
-        print("[Deep Quant Routing] Final conviction JSON detected. Routing to -> end")
+
+    # ── Precedence 2: a finalized, validated decision terminates the run ─────
+    if state.get("decision"):
+        print(f"[Deep Quant Routing] Finalized decision present ({state['decision'].get('action')}). Routing to -> end")
         return "end"
-        
-    # If it hasn't finalized and has no tool calls, check how many consecutive AIMessages there are
-    consecutive_ai = 0
-    for m in reversed(messages):
-        msg_type = type(m).__name__
-        is_ai = "AIMessage" in msg_type or (hasattr(m, "role") and m.role == "assistant")
-        is_user_or_tool = "ToolMessage" in msg_type or "SystemMessage" in msg_type or (hasattr(m, "role") and m.role in ["user", "tool", "system"])
-        if is_ai:
-            consecutive_ai += 1
-        elif is_user_or_tool:
-            break
-            
-    print(f"[Deep Quant Routing] Consecutive AI responses: {consecutive_ai}")
-    # Give the agent up to 2 consecutive monologue/thoughts turns to finalize or invoke a tool
-    if consecutive_ai < 3:
-        print("[Deep Quant Routing] Monologue count < 3. Routing to -> loop_agent")
+
+    # ── Precedence 3: bounded reasoning loop ─────────────────────────────────
+    reasoning_turns = state.get("reasoning_turns", 0)
+    print(f"[Deep Quant Routing] Consecutive reasoning turns: {reasoning_turns}/{MAX_REASONING_TURNS}")
+    if reasoning_turns < MAX_REASONING_TURNS:
+        print("[Deep Quant Routing] Reasoning budget remaining. Routing to -> loop_agent")
         return "loop_agent"
 
-    # If the model is clearly about to call watch_price_condition, let it continue
-    if "watch_price_condition" in content:
-        print("[Deep Quant Routing] Model intends to call watch_price_condition. Routing to -> loop_agent")
-        return "loop_agent"
+    # ── Precedence 4: reasoning exhausted → forced HOLD ──────────────────────
+    print("[Deep Quant Routing] Reasoning budget exhausted. Routing to -> force_hold")
+    return "force_hold"
 
-    print("[Deep Quant Routing] Monologue count limit reached. Routing to -> end")
+
+def force_hold(state: AgentState):
+    """Inject a HOLD decision when the reasoning budget is exhausted (R2.5).
+
+    The agent produced no validated decision and no pending tool call within
+    the allowed reasoning turns, so the loop terminates with an explicit HOLD
+    whose stated reason is `no-decision-reached` rather than fabricating a trade.
+    """
+    print("[Deep Quant Routing] Injecting forced HOLD decision (reason: no-decision-reached).")
+    decision = {
+        "action": "HOLD",
+        "conviction_score": 0,
+        "reason": "no-decision-reached",
+        "setup_validation": (
+            "Reasoning budget exhausted without a validated A+ setup. "
+            "Holding to preserve capital rather than force a low-conviction trade."
+        ),
+        "execution_plan": "HOLD — no trade taken.",
+        "source": "forced_hold",
+    }
+    decision["defensibility"] = build_defensibility_record(
+        state["messages"],
+        decision,
+        mode=state.get("mode"),
+        manual_trade=state.get("manual_trade"),
+    )
+    final_message = AIMessage(
+        content=json.dumps(
+            {
+                "conviction_score": decision["conviction_score"],
+                "setup_validation": decision["setup_validation"],
+                "execution_plan": decision["execution_plan"],
+            }
+        )
+    )
+    return {"decision": decision, "messages": [final_message]}
+
+
+def route_after_tools(state: AgentState) -> str:
+    """After tool execution, terminate if a decision was committed, else loop.
+
+    declare_trade commits a decision into state["decision"] during tool
+    execution; when present the run ends immediately rather than spending an
+    extra model turn (R2.2). Otherwise control returns to the agent.
+    """
+    if state.get("decision"):
+        print("[Deep Quant Routing] Decision committed during tool execution. Routing to -> end")
+        return "end"
+    return "agent"
+
+
+# ── Trade Q&A Mode (Requirement 18) ──────────────────────────────────────────
+# A conversational follow-up mode in which the trader asks free-form questions
+# about a completed analysis and the committed Declared_Trade. It REUSES the
+# same thread_id and the MemorySaver checkpointer, so the persisted state for
+# that thread — the Session_Analysis_Context: the committed `decision`, its
+# defensibility record (multi-TF bias, S/R levels, indicators, patterns,
+# sentiment, levels/RR/volatility basis), and the accumulated tool results in
+# `messages` — is available to ground the answer (R18.1, R18.5).
+#
+# Hard guarantees enforced structurally here, independent of what the model does:
+#   * The committed trade is IMMUTABLE in Q&A: ``qa_node`` never returns a
+#     ``decision`` update and ``declare_trade`` / ``watch_price_condition`` are
+#     refused rather than executed, so no Q&A turn can commit/alter a trade or
+#     suspend the run (R18.6).
+#   * The Session_Analysis_Context is PRESERVED: answers only append messages;
+#     no prior context channel is cleared (R18.5).
+#   * Missing data is handled honestly: the model may call a read-only
+#     market-data Analysis_Tool to obtain it, or state it is unavailable — it is
+#     instructed never to fabricate (R18.4).
+
+QA_MODE = "QA"
+
+# Maximum number of Q&A model turns (each may issue read-only tool fetches)
+# before the Q&A loop is forced to end. Bounds the tool-fetch loop (R18.4).
+MAX_QA_TURNS = 3
+
+# Tools that would mutate/commit a trade or suspend the run. They are disabled
+# in Q&A mode so the committed Declared_Trade can never be altered (R18.6).
+QA_FORBIDDEN_TOOLS = {"declare_trade", "watch_price_condition"}
+
+
+def _is_system_message(message) -> bool:
+    """True when ``message`` is a system instruction message."""
+    if isinstance(message, SystemMessage):
+        return True
+    return (
+        getattr(message, "role", None) == "system"
+        or getattr(message, "type", None) == "system"
+    )
+
+
+def build_qa_context(state: AgentState) -> dict:
+    """Assemble the Session_Analysis_Context that grounds a Q&A answer (R18.1).
+
+    Reads the persisted state for the thread (the MemorySaver-checkpointed
+    `decision` + its defensibility record, plus the latest Analysis_Tool results
+    in `messages`) and projects it into a compact, JSON-serializable context. The
+    context cites only recorded values — nothing is fabricated (R18.4).
+
+    ``has_declared_trade`` is True only for an actionable BUY/SELL committed via
+    ``declare_trade``; a HOLD or an absent decision means no trade has been
+    declared yet, which the prompt must disclose (R18.3).
+    """
+    messages = state.get("messages") or []
+    decision = state.get("decision")
+    decision = decision if isinstance(decision, dict) else None
+    record = decision.get("defensibility") if decision else None
+    record = record if isinstance(record, dict) else {}
+    results = _latest_tool_results(messages)
+
+    action = _normalize_action(decision.get("action")) if decision else None
+    has_declared_trade = bool(
+        decision
+        and decision.get("source") == "declare_trade"
+        and action in ("BUY", "SELL")
+    )
+
+    levels = record.get("levels")
+    return {
+        "has_declared_trade": has_declared_trade,
+        "action": action,
+        "conviction_score": decision.get("conviction_score") if decision else None,
+        "execution_plan": decision.get("execution_plan") if decision else None,
+        "setup_validation": decision.get("setup_validation") if decision else None,
+        # Recorded level rationale used to answer "why this level?" (R18.2).
+        "levels": levels if isinstance(levels, dict) else None,
+        "risk_reward": record.get("risk_reward"),
+        "volatility_basis": record.get("volatility_basis"),
+        "atr_14": record.get("atr_14"),
+        "trend_1d": record.get("trend_1d"),
+        "multi_tf_bias": record.get("multi_tf_bias"),
+        "support_resistance": record.get("support_resistance"),
+        "patterns": record.get("patterns") or [],
+        "predictive_conflict": record.get("predictive_conflict"),
+        "macro_trend_conflict": record.get("macro_trend_conflict"),
+        "news_sentiment": record.get("news_sentiment"),
+        "defensibility_summary": record.get("summary"),
+        # Which tools have already returned usable data this thread — the model
+        # may re-call any of these (read-only) to fill a gap (R18.4).
+        "available_tool_results": sorted(results.keys()),
+    }
+
+
+def build_qa_system_prompt(context: dict) -> str:
+    """Build the grounding system prompt for a Trade_QA_Mode turn (R18.1-R18.6).
+
+    The prompt embeds the recorded Session_Analysis_Context and the answering
+    rules: answer from the recorded context (R18.1); when asked why a specific
+    level was chosen, cite the recorded entry/SL/TP, Risk_Reward_Ratio and
+    volatility basis (R18.2); when no trade has been declared, answer from
+    context and say so (R18.3); when data is missing, call the relevant read-only
+    tool or state it is unavailable — never fabricate (R18.4); and never alter
+    the committed trade (R18.6).
+    """
+    try:
+        context_json = json.dumps(context, indent=2, default=str)
+    except Exception:
+        context_json = str(context)
+
+    if context.get("has_declared_trade"):
+        trade_clause = (
+            "A Declared_Trade EXISTS for this session. When the user asks why a "
+            "specific level (entry, stop-loss, or take-profit) was chosen, you MUST "
+            "cite the recorded entry/stop-loss/take-profit, the Risk_Reward_Ratio, "
+            "and the volatility basis (ATR) from the context above — do not invent "
+            "new numbers."
+        )
+    else:
+        trade_clause = (
+            "NO Declared_Trade exists for this session yet (the analysis ended in a "
+            "HOLD or no trade was committed). Answer using the available analysis "
+            "context, and explicitly state that no trade has been declared yet."
+        )
+
+    return (
+        "You are Alpha-Quant in Trade Q&A mode. The user is asking follow-up "
+        "questions about a COMPLETED analysis for this session. Your job is to "
+        "explain and defend the recorded analysis — NOT to run a new analysis or "
+        "change anything.\n\n"
+        "RECORDED SESSION ANALYSIS CONTEXT (the only ground truth you may cite):\n"
+        f"{context_json}\n\n"
+        "RULES:\n"
+        "1. Answer ONLY from the recorded context above. Ground every factual "
+        "claim (levels, RR, ATR, trend bias, patterns, sentiment) in that "
+        "context.\n"
+        f"2. {trade_clause}\n"
+        "3. If the user asks something that is NOT in the context, you may call "
+        "ONE relevant read-only market-data tool (get_consensus_report, "
+        "get_candles, get_multi_tf_trend, get_chart_patterns, "
+        "get_support_resistance, get_news_context) to fetch it. If you cannot "
+        "obtain it, say the data is unavailable. NEVER fabricate an answer.\n"
+        "4. The committed trade is IMMUTABLE here. Do NOT call declare_trade or "
+        "watch_price_condition — they are disabled in Q&A mode. You cannot change "
+        "the committed decision.\n"
+        "5. Be concise and specific. Quote the recorded numbers when relevant."
+    )
+
+
+def qa_node(state: AgentState):
+    """Answer a Trade_QA_Mode question grounded in the Session_Analysis_Context.
+
+    Builds the grounding prompt from the persisted context (R18.1), invokes the
+    model, and classifies any tool calls it emits. Read-only market-data calls
+    are allowed (so a gap can be filled, R18.4); ``declare_trade`` and
+    ``watch_price_condition`` are reclassified as forbidden and answered with a
+    synthetic refusal so they are NEVER executed (R18.6).
+
+    Crucially, this node returns ONLY a ``messages`` update (plus the bounded
+    ``qa_turns`` counter); it never returns a ``decision`` update, so the
+    committed Declared_Trade in state is left untouched (R18.5, R18.6).
+    """
+    messages = state.get("messages") or []
+    symbol = state.get("symbol", "N/A")
+    print(f"\n[Deep Quant Q&A] === Trade Q&A Turn (Symbol: {symbol}) ===")
+
+    context = build_qa_context(state)
+    system_prompt = build_qa_system_prompt(context)
+
+    # Drop any FIND/VERIFY system message left in history; ground this turn on
+    # the Q&A system prompt while preserving the full conversation (R18.5).
+    convo = [m for m in messages if not _is_system_message(m)]
+    llm_messages = [SystemMessage(content=system_prompt)] + list(convo)
+
+    response = llm_with_tools.invoke(llm_messages)
+
+    extraction = extract_tool_calls(response)
+
+    statuses: dict = {}
+    synthetic: dict = {}
+    for c in extraction.calls:
+        status = c.status
+        if status == "ok" and c.name in QA_FORBIDDEN_TOOLS:
+            # Refuse trade-mutating / run-suspending tools in Q&A mode (R18.6).
+            status = "qa_forbidden"
+            synthetic[c.id] = (
+                f"'{c.name}' is disabled in Trade Q&A mode: the committed trade is "
+                f"immutable here. Answer the user's question using the recorded "
+                f"analysis context instead."
+            )
+        elif status != "ok":
+            synthetic[c.id] = _synthetic_failure_content(c)
+        statuses[c.id] = status
+
+    response.tool_calls = [
+        {"name": c.name, "args": c.args or {}, "id": c.id} for c in extraction.calls
+    ]
+    response.additional_kwargs["_extraction_status"] = statuses
+    response.additional_kwargs["_synthetic_results"] = synthetic
+
+    allowed = [c for c in extraction.calls if statuses.get(c.id) == "ok"]
+    refused = [c for c in extraction.calls if statuses.get(c.id) != "ok"]
+    if extraction.calls:
+        print(
+            f"[Deep Quant Q&A] Tool calls -> allowed (read-only): {[c.name for c in allowed]}, "
+            f"refused/failed: {[(c.name, statuses.get(c.id)) for c in refused]}"
+        )
+
+    qa_turns = (state.get("qa_turns") or 0) + 1
+    # NEVER return a "decision" update — the Declared_Trade is immutable (R18.6).
+    return {"messages": [response], "qa_turns": qa_turns}
+
+
+def qa_tool_node(state: AgentState):
+    """Execute only read-only tool calls for a Q&A turn; refuse the rest (R18.4, R18.6).
+
+    Allowed (``ok``) market-data calls are dispatched to the real tools so the
+    model can fill a context gap. Forbidden / malformed calls are answered with a
+    synthetic feedback message so every call is resolved and the loop continues.
+    This node NEVER sets ``state["decision"]`` — the committed trade cannot be
+    altered while answering questions (R18.6).
+    """
+    last_message = state["messages"][-1]
+    all_calls = list(getattr(last_message, "tool_calls", None) or [])
+    statuses = (last_message.additional_kwargs or {}).get("_extraction_status", {})
+    synthetic = (last_message.additional_kwargs or {}).get("_synthetic_results", {})
+
+    ok_calls = [tc for tc in all_calls if statuses.get(tc["id"], "ok") == "ok"]
+    other_calls = [tc for tc in all_calls if statuses.get(tc["id"], "ok") != "ok"]
+
+    out_messages: List[BaseMessage] = []
+
+    if ok_calls:
+        temp_message = AIMessage(content="", tool_calls=ok_calls)
+        result = _base_tool_node.invoke({"messages": [temp_message]})
+        out_messages.extend(result["messages"])
+
+    for tc in other_calls:
+        content = synthetic.get(
+            tc["id"],
+            f"Tool-call '{tc.get('name')}' could not be executed in Q&A mode.",
+        )
+        print(f"[Deep Quant Q&A] Synthetic feedback for refused/failed call '{tc.get('name')}' ({statuses.get(tc['id'])}).")
+        out_messages.append(
+            ToolMessage(content=content, tool_call_id=tc["id"], name=tc.get("name") or "unknown_tool")
+        )
+
+    # No "decision" key in the update: the committed trade is immutable (R18.6).
+    return {"messages": out_messages}
+
+
+def qa_should_continue(state: AgentState) -> str:
+    """Route a Q&A turn: fetch read-only data if requested, else end (R18.4).
+
+    If the latest Q&A message issued any tool calls and the Q&A turn budget is
+    not yet exhausted, route to the Q&A tools node to resolve them; otherwise the
+    answer is final and the run ends. Bounded by ``MAX_QA_TURNS`` so the
+    tool-fetch loop always terminates.
+    """
+    messages = state["messages"]
+    last_message = messages[-1]
+    all_calls = list(getattr(last_message, "tool_calls", None) or [])
+    qa_turns = state.get("qa_turns", 0)
+
+    print(f"\n[Deep Quant Q&A Routing] qa_turns={qa_turns}/{MAX_QA_TURNS}, pending calls={[tc.get('name') for tc in all_calls]}")
+
+    if all_calls and qa_turns < MAX_QA_TURNS:
+        print("[Deep Quant Q&A Routing] Routing to -> qa_tools (resolve read-only fetches)")
+        return "tools"
+    print("[Deep Quant Q&A Routing] Q&A answer final. Routing to -> end")
     return "end"
+
+
+def route_entry(state: AgentState) -> str:
+    """Select the entry node: the Q&A handler in QA mode, else the analysis loop.
+
+    A request with ``mode == "QA"`` reuses the same thread_id and answers from
+    the persisted Session_Analysis_Context without re-running analysis (R18.1).
+    """
+    if (state.get("mode") or "").strip().upper() == QA_MODE:
+        print("[Deep Quant Routing] mode=QA -> entering Trade Q&A handler.")
+        return "qa_agent"
+    return "agent"
+
 
 # ── Graph Assembly ──────────────────────────────────────────────────────────
 
@@ -391,23 +1645,67 @@ workflow = StateGraph(AgentState)
 # Add the main agent and tool execution nodes
 workflow.add_node("agent", call_model)
 workflow.add_node("tools", tool_node)
+workflow.add_node("force_hold", force_hold)
 
-# Set starting point
-workflow.set_entry_point("agent")
+# Trade Q&A nodes (Requirement 18). They reuse the same compiled graph + the
+# MemorySaver checkpointer so a QA request on an existing thread_id sees the
+# persisted Session_Analysis_Context. They are wired as a separate, bounded
+# sub-loop that never mutates the committed decision (R18.6).
+workflow.add_node("qa_agent", qa_node)
+workflow.add_node("qa_tools", qa_tool_node)
 
-# Define conditional route from agent to either tools, loop back, or end
+# Conditional entry: mode=QA enters the Q&A handler; everything else runs the
+# normal FIND/VERIFY analysis loop (R18.1).
+workflow.set_conditional_entry_point(
+    route_entry,
+    {
+        "qa_agent": "qa_agent",
+        "agent": "agent",
+    },
+)
+
+# Define conditional route from agent to tools, suspend (watch), loop, forced
+# HOLD, or terminate. "continue" and "suspend" both reach the tools node; the
+# distinct labels keep the watch-suspension path explicit (R2.6).
 workflow.add_conditional_edges(
     "agent",
     should_continue,
     {
         "continue": "tools",
+        "suspend": "tools",
         "loop_agent": "agent",
+        "force_hold": "force_hold",
         "end": "__end__",
     }
 )
 
-# Loop back to agent after tool execution
-workflow.add_edge("tools", "agent")
+# After tools run, terminate if declare_trade committed a decision, else loop.
+workflow.add_conditional_edges(
+    "tools",
+    route_after_tools,
+    {
+        "agent": "agent",
+        "end": "__end__",
+    }
+)
+
+# A forced HOLD terminates the run.
+workflow.add_edge("force_hold", "__end__")
+
+# ── Trade Q&A sub-loop edges (Requirement 18) ─────────────────────────────────
+# qa_agent answers from the persisted context; if it requested a read-only data
+# fetch, route to qa_tools and back, bounded by MAX_QA_TURNS (R18.4). Otherwise
+# the answer is final and the run ends. Neither node ever sets a decision, so
+# the committed trade stays immutable (R18.6).
+workflow.add_conditional_edges(
+    "qa_agent",
+    qa_should_continue,
+    {
+        "tools": "qa_tools",
+        "end": "__end__",
+    },
+)
+workflow.add_edge("qa_tools", "qa_agent")
 
 # Initialize in-memory checkpointer to persist thread states
 memory = MemorySaver()
