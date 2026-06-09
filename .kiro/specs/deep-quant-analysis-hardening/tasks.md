@@ -405,19 +405,19 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
     - Reuse the same `thread_id` and emit answers via the existing stream conventions
     - _Requirements: 18.7_
 
-  - [ ]* 16.3 Write property test for context preservation
+  - [x]* 16.3 Write property test for context preservation
     - **Property 65: Q&A preserves the session analysis context**
     - **Validates: Requirements 18.5**
 
-  - [ ]* 16.4 Write property test for trade immutability
+  - [x]* 16.4 Write property test for trade immutability
     - **Property 66: Q&A never mutates the committed trade**
     - **Validates: Requirements 18.6**
 
-  - [ ]* 16.5 Write property test for Q&A stream conventions
+  - [x]* 16.5 Write property test for Q&A stream conventions
     - **Property 67: Q&A answers follow the run-transparency stream conventions**
     - **Validates: Requirements 18.7**
 
-  - [ ]* 16.6 Write unit tests for Q&A grounding behaviors
+  - [x]* 16.6 Write unit tests for Q&A grounding behaviors
     - Answer from context, state "no trade declared", and cite recorded level rationale (verify context is loaded/attached and guardrail branches are exercised)
     - _Requirements: 18.1, 18.2, 18.3, 18.4_
 
@@ -451,11 +451,11 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
     - Register `get_support_resistance`, `get_news_context`, `get_prediction` in `tools.py`/`graph.py`; add prompt rules for high-confidence patterns, predictive conflict, and macro-trend conflict so they surface in `setup_validation`
     - _Requirements: 10.1, 11.3, 12.1, 12.3, 13.3_
 
-  - [ ]* 18.2 Write integration tests for external-service wiring
+  - [x]* 18.2 Write integration tests for external-service wiring
     - Mocked Sentiment_Service classification surfaced by `get_news_context` (R10.1); mocked predictive projection fetched during directional analysis (R12.1); seeded-QuestDB endpoint contract checks; watcher register → triggering candle → `/resume` fires once and is removed
     - _Requirements: 10.1, 12.1, 4.1, 14.2_
 
-- [ ] 19. Final checkpoint - Ensure all tests pass
+- [x] 19. Final checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes

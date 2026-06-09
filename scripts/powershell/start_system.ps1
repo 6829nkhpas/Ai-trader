@@ -170,6 +170,38 @@ try {
         Pop-Location
     }
 
+    # ── Install Python Dependencies (Deep Quant LangGraph Agent) ─────────────
+    # The Python Deep_Quant_Agent (agents/deep-quant-loop) needs fastapi,
+    # uvicorn, langgraph, langchain-*, httpx and pydantic. Install them into a
+    # self-contained virtualenv so the system runs in one go on a clean machine
+    # without polluting the global Python environment. The launch step below
+    # uses $script:DeepQuantPython, which points at this venv when available.
+    $script:DeepQuantPython = "python"
+    if (Test-Path agents/deep-quant-loop) {
+        Write-Host "Checking Python (deep-quant-loop) dependencies..." -ForegroundColor DarkCyan
+        Push-Location agents/deep-quant-loop
+        $venvPython = Join-Path (Get-Location) ".venv\Scripts\python.exe"
+        if (!(Test-Path $venvPython)) {
+            Write-Host "Creating Python virtual environment (.venv)..." -ForegroundColor Yellow
+            python -m venv .venv
+        }
+        if (Test-Path $venvPython) {
+            Write-Host "Installing deep-quant-loop dependencies into .venv..." -ForegroundColor Yellow
+            & $venvPython -m pip install --upgrade pip --quiet
+            & $venvPython -m pip install -r requirements.txt --quiet
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "deep-quant-loop Python dependencies ready." -ForegroundColor Green
+            } else {
+                Write-Host "WARNING: pip install reported a non-zero exit code; the agent may fail to start." -ForegroundColor Yellow
+            }
+            $script:DeepQuantPython = $venvPython
+        } else {
+            Write-Host "WARNING: could not create .venv; falling back to system python." -ForegroundColor Yellow
+            python -m pip install -r requirements.txt
+        }
+        Pop-Location
+    }
+
     # ── Push Database Schema & Generate Clients ──────────────────────────────
     Write-Host "Synchronizing databases and generating Prisma clients..." -ForegroundColor Cyan
     Push-Location alpha-backend
@@ -241,7 +273,7 @@ try {
 
     Write-Host "Starting Python LangGraph Deep Quant Agent (Port 8086)..." -ForegroundColor Cyan
     Push-Location agents/deep-quant-loop
-    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "python" -ArgumentList "main.py"
+    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath $script:DeepQuantPython -ArgumentList "main.py"
     Pop-Location
 
     Wait-ForPort -Port 8086 -TimeoutSec 60 -Label "Python Deep Quant Loop (:8086)"
