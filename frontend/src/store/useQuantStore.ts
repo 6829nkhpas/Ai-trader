@@ -95,6 +95,20 @@ export interface StreamEventPayload {
   };
 }
 
+// ── Trade Q&A chat message ──────────────────────────────────────────────
+// One turn of the post-analysis Trade_QA_Mode chat. `role` mirrors the
+// LLM convention; `content` is the (streamed) text; `activity` surfaces
+// lightweight tool-call lines while the assistant turn streams; `streaming`
+// is true while REASONING is still accumulating; `error` marks an ERROR turn.
+export interface QaChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  activity?: string[];
+  streaming?: boolean;
+  error?: boolean;
+}
+
 // ── Decoupled Sentiment Payload (independent of Kafka/WS ticks) ─────────
 
 export interface SentimentPayload {
@@ -166,6 +180,17 @@ interface QuantStore {
   /** Guard: true once RUN_FINISHED has been processed for this session */
   _runFinishedProcessed: boolean;
 
+  // ── Trade Q&A (post-analysis follow-up chat) ──────────────────────────
+  /** Thread id of the most recent analysis run — reused for Q&A turns so the
+   *  Python service answers from the persisted Session_Analysis_Context. */
+  currentThreadId: string | null;
+  /** Ordered list of Q&A chat turns (user + assistant). */
+  qaMessages: QaChatMessage[];
+  /** 'streaming' while a Q&A turn is in flight, otherwise 'idle'. */
+  qaStatus: 'idle' | 'streaming';
+  /** Guard: true once the current Q&A turn's RUN_FINISHED has been handled. */
+  _qaRunFinishedProcessed: boolean;
+
   setConsensusData: (data: ConsensusReport) => void;
   clearConsensusData: () => void;
   loadConsensusForSymbol: (symbol: string) => void;
@@ -187,6 +212,13 @@ interface QuantStore {
   closePosition: (id: string, exitPrice: number) => void;
   handleStreamEvent: (payload: StreamEventPayload) => void;
   resetTerminal: () => void;
+
+  // ── Trade Q&A actions ───────────────────────────────────────────────
+  /** Ask a follow-up question about the completed analysis. Streams the
+   *  answer over the dedicated `deep-quant-qa-stream` Tauri event. */
+  askQuestion: (question: string) => Promise<void>;
+  /** Clear the Q&A chat transcript (keeps the captured thread id). */
+  clearQa: () => void;
 
   // ── Multi-Timeframe Chart Patterns ──────────────────────────────────
   multiTfPatterns: MultiTfChartPatterns[] | null;
@@ -382,6 +414,12 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
   _pendingToolCalls: 0,
   _runFinishedProcessed: false,
 
+  // ── Trade Q&A State ──────────────────────────────────────────────
+  currentThreadId: null,
+  qaMessages: [],
+  qaStatus: 'idle',
+  _qaRunFinishedProcessed: false,
+
   // ── Decoupled Sentiment State ────────────────────────────────────
   activeSentiment: null,
   isFetchingSentiment: false,
@@ -566,6 +604,12 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       _runFinishedProcessed: false,
       multiTfPatterns: null,
       isFetchingPatterns: true,
+      // A fresh analysis invalidates any prior Q&A transcript / thread id —
+      // the new run will re-capture currentThreadId from its RUN_STARTED.
+      currentThreadId: null,
+      qaMessages: [],
+      qaStatus: 'idle',
+      _qaRunFinishedProcessed: false,
     });
 
     // Trigger multi-timeframe chart patterns fetch in parallel
@@ -655,6 +699,14 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
 
     switch (event) {
       case 'RUN_STARTED': {
+        // Capture the analysis thread_id so post-analysis Q&A turns can reuse
+        // it (the Python service grounds Q&A in this thread's persisted
+        // Session_Analysis_Context).
+        const startedThreadId = data?.thread_id;
+        if (startedThreadId) {
+          set({ currentThreadId: startedThreadId });
+        }
+
         // If we're resuming from a 'watching' state, DON'T clear the existing
         // reasoning steps — the user needs the full analysis context from the
         // original run. Only reset the guard flag so the resumed RUN_FINISHED
@@ -814,6 +866,159 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     multiTfPatterns: null,
     isFetchingPatterns: false,
   }),
+
+  clearQa: () => set({
+    qaMessages: [],
+    qaStatus: 'idle',
+    _qaRunFinishedProcessed: false,
+  }),
+
+  askQuestion: async (question: string) => {
+    const threadId = get().currentThreadId;
+    const trimmed = question.trim();
+
+    if (!trimmed) return;
+    if (!threadId) {
+      console.warn('[QuantStore] askQuestion ignored — no analysis thread_id captured yet.');
+      return;
+    }
+    if (get().qaStatus === 'streaming') {
+      console.warn('[QuantStore] askQuestion ignored — a Q&A turn is already streaming.');
+      return;
+    }
+
+    console.log(`[QuantStore] ▶ Trade Q&A ask thread=${threadId} q="${trimmed}"`);
+
+    const stamp = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const userMsgId = `qa-user-${stamp}`;
+    const assistantMsgId = `qa-asst-${stamp}`;
+
+    // Push the user turn + an in-progress assistant turn, and enter streaming.
+    set((state) => ({
+      qaStatus: 'streaming',
+      _qaRunFinishedProcessed: false,
+      qaMessages: [
+        ...state.qaMessages,
+        { id: userMsgId, role: 'user', content: trimmed },
+        { id: assistantMsgId, role: 'assistant', content: '', activity: [], streaming: true },
+      ],
+    }));
+
+    let unlisten: (() => void) | undefined;
+
+    // Finalize the assistant turn exactly once and tear down the listener.
+    // Guards against duplicate RUN_FINISHED like the analysis run handler.
+    const finalize = () => {
+      if (get()._qaRunFinishedProcessed) {
+        console.log('[QuantStore] ⚠ Duplicate Q&A RUN_FINISHED ignored.');
+        return;
+      }
+      set((state) => ({
+        qaStatus: 'idle',
+        _qaRunFinishedProcessed: true,
+        qaMessages: state.qaMessages.map((m) =>
+          m.id === assistantMsgId ? { ...m, streaming: false } : m
+        ),
+      }));
+      unlisten?.();
+      unlisten = undefined;
+    };
+
+    try {
+      // Mirror the deep-quant-stream listener registration (dynamic import of
+      // the same `@tauri-apps/api/event` `listen`), but on the dedicated
+      // `deep-quant-qa-stream` channel emitted by `ask_trade_question`.
+      const { listen } = await import('@tauri-apps/api/event');
+      unlisten = await listen<StreamEventPayload>('deep-quant-qa-stream', (event) => {
+        const payload = event.payload;
+        if (!payload || !payload.event) return;
+
+        const ev = payload.event;
+        const data = payload.data;
+
+        switch (ev) {
+          case 'RUN_STARTED':
+            // Q&A reuses the original thread; nothing to capture here.
+            break;
+          // A Q&A turn streams its answer as REASONING content (TEXT_MESSAGE
+          // tolerated for parity with the analysis run conventions).
+          case 'REASONING':
+          case 'TEXT_MESSAGE': {
+            const content = data?.content || '';
+            if (content) {
+              set((state) => ({
+                qaMessages: state.qaMessages.map((m) =>
+                  m.id === assistantMsgId ? { ...m, content: m.content + content } : m
+                ),
+              }));
+            }
+            break;
+          }
+          case 'TOOL_CALL_START': {
+            const tool = data?.tool || '';
+            if (tool) {
+              set((state) => ({
+                qaMessages: state.qaMessages.map((m) =>
+                  m.id === assistantMsgId
+                    ? { ...m, activity: [...(m.activity || []), `> ${tool}…`] }
+                    : m
+                ),
+              }));
+            }
+            break;
+          }
+          case 'TOOL_CALL_END': {
+            const tool = data?.tool || '';
+            if (tool) {
+              set((state) => ({
+                qaMessages: state.qaMessages.map((m) =>
+                  m.id === assistantMsgId
+                    ? { ...m, activity: [...(m.activity || []), `✔ ${tool}`] }
+                    : m
+                ),
+              }));
+            }
+            break;
+          }
+          case 'RUN_FINISHED':
+            finalize();
+            break;
+          case 'ERROR': {
+            const errorMsg = data?.error || 'Unknown Q&A streaming error';
+            console.error(`[QuantStore] ✘ Trade Q&A ERROR: ${errorMsg}`);
+            set((state) => ({
+              qaMessages: state.qaMessages.map((m) =>
+                m.id === assistantMsgId
+                  ? { ...m, content: m.content || `⚠ ${errorMsg}`, error: true }
+                  : m
+              ),
+            }));
+            finalize();
+            break;
+          }
+          default:
+            break;
+        }
+      });
+
+      // Invoke the proxy command (camelCase args → snake_case Rust params).
+      await tauriInvoke<void>('ask_trade_question', { threadId, question: trimmed });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[QuantStore] ✘ askQuestion FAIL: ${message}`);
+      set((state) => ({
+        qaStatus: 'idle',
+        _qaRunFinishedProcessed: true,
+        qaMessages: state.qaMessages.map((m) =>
+          m.id === assistantMsgId
+            ? { ...m, content: m.content || `⚠ ${message}`, error: true, streaming: false }
+            : m
+        ),
+      }));
+      unlisten?.();
+      unlisten = undefined;
+    }
+  },
 
   fetchMultiTfPatterns: async (symbol: string) => {
     console.log(`[QuantStore] fetchMultiTfPatterns starting for symbol=${symbol}`);

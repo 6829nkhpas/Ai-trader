@@ -15,6 +15,7 @@ import { useChartUIStore } from '../../store/useChartUIStore';
 import { useMemo } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import AgentTerminal from './AgentTerminal';
+import TradeQaPanel from './TradeQaPanel';
 import { useAuthStore } from '../../store/useAuthStore';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -138,6 +139,7 @@ export default function DeepQuantPanel() {
     sessionStatus,
     multiTfPatterns,
     isFetchingPatterns,
+    currentThreadId,
   } = useQuantStore();
 
   if (!user || user.tier === 'FREE') {
@@ -581,6 +583,13 @@ export default function DeepQuantPanel() {
                 for <span className="text-text-secondary font-semibold">{symbol}</span>
               </p>
             </div>
+          </div>
+        )}
+
+        {/* ── Trade Q&A Chat (post-analysis follow-up) ── */}
+        {currentThreadId && (sessionStatus === 'complete' || aiPlan || analysisError) && (
+          <div className="px-2 pb-2">
+            <TradeQaPanel />
           </div>
         )}
       </div>
