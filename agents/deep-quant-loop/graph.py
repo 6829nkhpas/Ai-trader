@@ -4,6 +4,49 @@ from dataclasses import dataclass, field
 from langchain_core.messages import SystemMessage, AIMessage, HumanMessage, BaseMessage, ToolMessage
 import json
 
+
+# ── .env loader (dependency-free) ────────────────────────────────────────────
+# The agent reads its LLM/provider configuration from the process environment
+# (os.getenv below). When launched via start_system.ps1 those vars are injected
+# once at script start — which means editing .env and restarting ONLY the Python
+# process would otherwise pick up nothing. To make "edit .env → restart python"
+# reliable (and to support running `python main.py` directly), we load the
+# repo-root .env here at import time, before any os.getenv call.
+#
+# Uses setdefault semantics: a variable already present in the real environment
+# (e.g. injected by the launcher or set by the OS) always wins over the file, so
+# this never clobbers an intentionally-exported value.
+def _load_repo_dotenv() -> None:
+    here = os.path.abspath(os.path.dirname(__file__))
+    # Walk up from agents/deep-quant-loop/ to the repository root looking for .env.
+    current = here
+    for _ in range(8):  # bounded walk; repo root is 2 levels up but be generous
+        candidate = os.path.join(current, ".env")
+        if os.path.isfile(candidate):
+            try:
+                with open(candidate, "r", encoding="utf-8") as fh:
+                    for raw in fh:
+                        line = raw.strip()
+                        if not line or line.startswith("#") or "=" not in line:
+                            continue
+                        key, _, value = line.partition("=")
+                        key = key.strip()
+                        # Strip surrounding single/double quotes and whitespace.
+                        value = value.strip().strip('"').strip("'")
+                        if key:
+                            os.environ.setdefault(key, value)
+            except OSError as e:
+                print(f"[deep-quant] Could not read {candidate}: {e}")
+            return
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    print("[deep-quant] No .env found while walking up from agent directory.")
+
+_load_repo_dotenv()
+
+
 # ── AIMessage Monkeypatch to robustly fix string args in tool calls ──────────
 original_init = AIMessage.__init__
 
@@ -208,10 +251,38 @@ def format_system_prompt(state: AgentState) -> str:
 
 # ── Model & Tools Binding ───────────────────────────────────────────────────
 
-# Configure the LLM to target any OpenAI-compatible provider (e.g., HuggingFace, OpenAI, Groq, Ollama)
-api_key = os.getenv("LLM_API_KEY", os.getenv("DEEPSEEK_API_KEY", "mock-key"))
-base_url = os.getenv("LLM_API_URL", os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1"))
-model_name = os.getenv("LLM_MODEL", os.getenv("DEEPSEEK_MODEL", "deepseek-chat"))
+# ── LLM provider configuration ───────────────────────────────────────────────
+# The LLM targets any OpenAI-compatible provider via three env vars (loaded from
+# the repo-root .env above). The project standardizes on Google Gemini's
+# OpenAI-compatible endpoint, so the defaults below reflect that — not a stale
+# DeepSeek endpoint that would surface confusing errors against the wrong host.
+def _env_nonempty(*names: str, default: str = "") -> str:
+    """Return the first env var that is set AND non-empty.
+
+    Unlike os.getenv(name, default), this also treats an empty/whitespace value
+    (e.g. ``LLM_API_KEY=`` left blank in .env) as "unset", so we fall through to
+    the next candidate / default instead of silently sending an empty key.
+    """
+    for name in names:
+        val = os.getenv(name)
+        if val and val.strip():
+            return val.strip()
+    return default
+
+GEMINI_DEFAULT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+GEMINI_DEFAULT_MODEL = "gemini-2.5-flash"
+
+api_key = _env_nonempty("LLM_API_KEY", "GEMINI_API_KEY")
+base_url = _env_nonempty("LLM_API_URL", default=GEMINI_DEFAULT_URL)
+model_name = _env_nonempty("LLM_MODEL", default=GEMINI_DEFAULT_MODEL)
+
+# Fail loud (in the log) on misconfiguration rather than silently using a fake
+# key — every LLM call would otherwise 401, and the cause would be opaque.
+if not api_key:
+    print(
+        "[deep-quant] WARNING: no LLM_API_KEY set in environment or .env. "
+        "LLM calls will fail with an auth error. Set LLM_API_KEY (see .env)."
+    )
 
 # Strip trailing /chat/completions if present because LangChain appends it internally
 if base_url and base_url.endswith("/chat/completions"):
@@ -226,6 +297,13 @@ llm = ChatOpenAI(
     openai_api_key=api_key,
     openai_api_base=base_url,
     temperature=0.2,
+    # Honor the provider's Retry-After on 429s. This transparently absorbs
+    # per-minute rate/token throttles (e.g. Groq's TPM window, which resets in
+    # seconds) so a single throttled turn doesn't fail the whole run. It does
+    # NOT rescue a per-DAY quota exhaustion (e.g. Gemini free tier) — nothing
+    # client-side can, short of switching provider/model.
+    max_retries=int(_env_nonempty("LLM_MAX_RETRIES", default="4")),
+    timeout=float(_env_nonempty("LLM_TIMEOUT_SECS", default="90")),
 )
 
 tools = [

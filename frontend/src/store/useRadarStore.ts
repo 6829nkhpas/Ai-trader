@@ -106,6 +106,27 @@ async function syncRegistry(symbols: string[]) {
 
 const clean = (s: string) => s.trim().toUpperCase();
 
+// ── Scan in-flight guard ────────────────────────────────────────────────────
+// Keyed by `${symbol}|${timeframe}`. Prevents the auto-scan timer, the empty-
+// data retry, manual rescans, and scanAll from running overlapping scans for
+// the same symbol+timeframe — which previously caused duplicate Kite backfills
+// and last-write-wins stale-state overwrites on `scans[sym]`.
+const scanInFlight = new Set<string>();
+
+/** Run async tasks with a bounded number in flight at once (preserves
+ *  rate-limit friendliness vs an unbounded fan-out, while removing the fully
+ *  serial latency of the old 250ms-gap loop). */
+async function runBounded<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const idx = cursor++;
+      await fn(items[idx]);
+    }
+  });
+  await Promise.all(workers);
+}
+
 export const useRadarStore = create<RadarStore>((set, get) => ({
   enabled: true,
   symbols: [],
@@ -163,6 +184,16 @@ export const useRadarStore = create<RadarStore>((set, get) => ({
   scanOne: async (symbol, retriesLeft = 2) => {
     const sym = clean(symbol);
     const tf = get().timeframe;
+    const key = `${sym}|${tf}`;
+
+    // Drop overlapping scans for the same symbol+timeframe (auto-scan vs
+    // retry vs manual rescan). The retry path re-invokes scanOne only after
+    // the previous scan has settled, so legitimate retries still proceed.
+    if (scanInFlight.has(key)) {
+      return;
+    }
+    scanInFlight.add(key);
+
     set((state) => ({
       scans: {
         ...state.scans,
@@ -191,6 +222,12 @@ export const useRadarStore = create<RadarStore>((set, get) => ({
             },
           },
         }));
+        return;
+      }
+
+      // Guard against a timeframe switch mid-scan: if the user changed the
+      // radar timeframe while this scan was in flight, discard the stale result.
+      if (get().timeframe !== tf) {
         return;
       }
 
@@ -238,17 +275,19 @@ export const useRadarStore = create<RadarStore>((set, get) => ({
           },
         },
       }));
+    } finally {
+      scanInFlight.delete(key);
     }
   },
 
   scanAll: async () => {
     const { symbols } = get();
-    // Sequential to respect Kite rate limits (the radar background worker
-    // does the same). Small gap between symbols.
-    for (const sym of symbols) {
-      await get().scanOne(sym);
-      await new Promise((r) => setTimeout(r, 250));
-    }
+    // Bounded concurrency: scan a few symbols at a time. Faster than the old
+    // fully-serial 250ms-gap loop for multi-symbol watchlists, while still
+    // capping simultaneous Kite backfills to stay within broker rate limits.
+    // The per-symbol in-flight guard in scanOne dedups any overlap with the
+    // auto-scan timer or manual rescans.
+    await runBounded(symbols, 3, (sym) => get().scanOne(sym));
   },
 
   setVizTarget: (target) => set({ vizTarget: target, vizEnabled: true }),

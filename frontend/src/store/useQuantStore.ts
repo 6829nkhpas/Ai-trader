@@ -234,6 +234,17 @@ const sentimentInFlight = new Set<string>();
 const SENTIMENT_TTL_MS = 10 * 60 * 1000;  // 10 minutes
 const SENTIMENT_429_COOL = 5 * 60 * 1000;  // 5 minutes cooldown after 429
 
+// ── Multi-timeframe chart-pattern cache + in-flight dedup ────────────────
+// fetchMultiTfPatterns is auto-triggered on EVERY Deep Quant run, and the
+// underlying command fans out a DB fetch + forming-pattern detection across
+// 7 timeframes. Without a cache, repeatedly analyzing the same symbol re-did
+// all of that work each time. A short TTL keeps intraday patterns fresh while
+// collapsing back-to-back runs into one fetch; the in-flight set drops
+// duplicate concurrent requests for the same symbol.
+const multiTfInFlight = new Set<string>();
+const multiTfCache = new Map<string, { data: MultiTfChartPatterns[]; fetchedAt: number }>();
+const MULTI_TF_TTL_MS = 2 * 60 * 1000;  // 2 minutes
+
 // ── Tauri invoke helper ─────────────────────────────────────────────────
 
 async function tauriInvoke<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
@@ -905,7 +916,10 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
         }
 
         set((state) => ({
-          sessionStatus: 'complete',
+          // Never downgrade an error to 'complete' — if an ERROR already
+          // finalized this run, keep it (defense in depth alongside the
+          // _runFinishedProcessed guard set in the ERROR case).
+          sessionStatus: state.sessionStatus === 'error' ? 'error' : 'complete',
           // Prefer a freshly-parsed JSON plan, but fall back to whatever was
           // already set (e.g. seeded by a DECISION event) so the plan panel is
           // never blanked out at the end of a run.
@@ -918,10 +932,16 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       }
       case 'ERROR': {
         const errorMsg = data?.error || 'Unknown streaming error';
+        // Mark the run finalized so a trailing *synthetic* RUN_FINISHED emitted
+        // by the Rust bridge (which fires whenever the Python stream ends without
+        // its own RUN_FINISHED — including the error path) is treated as a
+        // duplicate and ignored, preserving the error state instead of flipping
+        // it to 'complete'.
         set({
           sessionStatus: 'error',
           isAnalyzing: false,
-          analysisError: errorMsg
+          analysisError: errorMsg,
+          _runFinishedProcessed: true,
         });
         break;
       }
@@ -1096,15 +1116,37 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
   },
 
   fetchMultiTfPatterns: async (symbol: string) => {
-    console.log(`[QuantStore] fetchMultiTfPatterns starting for symbol=${symbol}`);
-    set({ isFetchingPatterns: true, multiTfPatterns: null });
+    const sym = symbol.toUpperCase();
+    const now = Date.now();
+
+    // Serve a fresh cache hit instantly — no DB fan-out, no re-detection.
+    const cached = multiTfCache.get(sym);
+    if (cached && now - cached.fetchedAt < MULTI_TF_TTL_MS) {
+      console.log(`[QuantStore] ✔ MultiTF CACHE HIT symbol=${sym} age=${Math.round((now - cached.fetchedAt) / 1000)}s`);
+      set({ multiTfPatterns: cached.data, isFetchingPatterns: false });
+      return;
+    }
+
+    // Collapse duplicate concurrent requests for the same symbol.
+    if (multiTfInFlight.has(sym)) {
+      console.log(`[QuantStore] ⏳ MultiTF already in-flight for ${sym} — skipping duplicate`);
+      return;
+    }
+
+    console.log(`[QuantStore] ▶ fetchMultiTfPatterns starting for symbol=${sym}`);
+    multiTfInFlight.add(sym);
+    // Keep any stale cached patterns visible instead of flashing empty while we refetch.
+    set((state) => ({ isFetchingPatterns: true, multiTfPatterns: cached?.data ?? state.multiTfPatterns ?? null }));
     try {
       const data = await tauriInvoke<MultiTfChartPatterns[]>('get_multi_timeframe_chart_patterns', { symbol });
-      console.log(`[QuantStore] fetchMultiTfPatterns completed:`, data);
+      multiTfCache.set(sym, { data, fetchedAt: Date.now() });
+      console.log(`[QuantStore] ✔ fetchMultiTfPatterns completed symbol=${sym} (${data.length} timeframes)`);
       set({ multiTfPatterns: data, isFetchingPatterns: false });
     } catch (err) {
-      console.error(`[QuantStore] fetchMultiTfPatterns failed:`, err);
-      set({ isFetchingPatterns: false, multiTfPatterns: [] });
+      console.error(`[QuantStore] ✘ fetchMultiTfPatterns failed for ${sym}:`, err);
+      set({ isFetchingPatterns: false, multiTfPatterns: multiTfCache.get(sym)?.data ?? [] });
+    } finally {
+      multiTfInFlight.delete(sym);
     }
   },
 

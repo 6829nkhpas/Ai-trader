@@ -141,10 +141,14 @@ export default function MultiTfPatternsView() {
             const isForming = p.is_forming ?? false;
             const progress = p.formation_progress ?? 0;
             const progressPct = Math.round(progress * 100);
+            // Stable key from the pattern's identity (type + candle span) so
+            // re-sorting by progress/confidence doesn't churn the DOM via
+            // index-based reconciliation. Fall back to idx only on collision.
+            const key = `${p.pattern_type}-${p.start_idx}-${p.end_idx}-${idx}`;
 
             return (
               <div
-                key={idx}
+                key={key}
                 onClick={() => handlePatternClick(p)}
                 className={`
                   group relative flex flex-col gap-1 p-2 rounded-lg border transition-all duration-200 cursor-pointer hover:scale-[1.005] active:scale-[0.995]

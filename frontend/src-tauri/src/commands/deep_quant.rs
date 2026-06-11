@@ -425,14 +425,21 @@ pub(crate) async fn load_candles_with_ts(
                 .fetch_all(pool)
                 .await
         } else {
+            // Bound the fetch to the requested `limit` (already floored to 100
+            // above). The merge step slices the union of all sources to the most
+            // recent `limit` candles anyway, so fetching the full table (the old
+            // hardcoded LIMIT 5000) just wasted DB time + parsing on rows that
+            // were immediately discarded — multiplied across every timeframe and
+            // every radar cycle.
             sqlx::query(
                 "SELECT ts, open, high, low, close, volume \
                  FROM historical_candles \
                  WHERE symbol = $1 \
                  ORDER BY ts DESC \
-                 LIMIT 5000",
+                 LIMIT $2",
             )
             .bind(symbol)
+            .bind(limit)
             .fetch_all(pool)
             .await
         };
@@ -499,15 +506,19 @@ pub(crate) async fn load_candles_with_ts(
                 .fetch_all(pool)
                 .await
         } else {
+            // Bound to the requested `limit` (see note in the daily branch) —
+            // the union is sliced to the most recent `limit` after merging, so
+            // the old LIMIT 5000 just over-fetched and discarded.
             sqlx::query(
                 "SELECT ts, open, high, low, close, volume \
                  FROM historical_intraday \
                  WHERE symbol = $1 AND timeframe = $2 \
                  ORDER BY ts DESC \
-                 LIMIT 5000",
+                 LIMIT $3",
             )
             .bind(symbol)
             .bind(timeframe)
+            .bind(limit)
             .fetch_all(pool)
             .await
         };
@@ -1760,6 +1771,7 @@ pub async fn run_deep_quant_agent(
         let client = reqwest::Client::new();
         let url = "http://localhost:8086/run";
         let mut saw_run_finished = false;
+        let mut saw_error = false;
         
         match client.post(url).json(&payload).send().await {
             Ok(response) => {
@@ -1794,6 +1806,12 @@ pub async fn run_deep_quant_agent(
                                 if let Some(ref ev_type) = event_type {
                                     if ev_type == "RUN_FINISHED" {
                                         saw_run_finished = true;
+                                    } else if ev_type == "ERROR" {
+                                        // Python emits ERROR (and no RUN_FINISHED)
+                                        // on a failed run. Record it so the
+                                        // synthetic-completion fallback below is
+                                        // suppressed and the UI keeps the error.
+                                        saw_error = true;
                                     }
                                 }
                                 
@@ -1816,6 +1834,7 @@ pub async fn run_deep_quant_agent(
                         }
                         Err(e) => {
                             error!("[deep_quant_agent] Stream read error: {}", e);
+                            saw_error = true;
                             let _ = app.emit("deep-quant-stream", serde_json::json!({
                                 "event": "ERROR",
                                 "data": { "error": format!("Stream read error: {}", e) }
@@ -1829,7 +1848,7 @@ pub async fn run_deep_quant_agent(
                 // (e.g. Python server crashed mid-stream or connection dropped cleanly),
                 // emit a synthetic RUN_FINISHED so the frontend always transitions
                 // out of the 'running' state.
-                if !saw_run_finished {
+                if !saw_run_finished && !saw_error {
                     warn!("[deep_quant_agent] Stream ended without RUN_FINISHED — emitting synthetic completion.");
                     let _ = app.emit("deep-quant-stream", serde_json::json!({
                         "event": "RUN_FINISHED",

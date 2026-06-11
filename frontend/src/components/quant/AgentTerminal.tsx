@@ -352,6 +352,41 @@ export default function AgentTerminal() {
         {/* Watching Indicator inside scroll log */}
         {sessionStatus === 'watching' && <WatchingIndicator />}
 
+        {/* Empty-state guards — the console must NEVER render visually blank.
+            Covers the case where the run finished (or is starting) but no
+            renderable reasoning/tool/decision steps were captured (missed-event
+            race, an early-ending stream that triggered a synthetic RUN_FINISHED,
+            or a graph update that produced no surfaced events). */}
+        {reasoningSteps.length === 0 && sessionStatus === 'running' && (
+          <div className="flex items-center gap-2 pl-3 py-2 text-[10px] text-teal-400/70 animate-pulse">
+            <Loader2 size={11} className="animate-spin text-teal-400" />
+            <span>Connecting to Deep Quant agent — awaiting first reasoning step…</span>
+          </div>
+        )}
+
+        {reasoningSteps.length === 0 && sessionStatus === 'complete' && (
+          <div className="flex items-start gap-3 p-3.5 bg-amber-500/10 border border-amber-500/25 rounded-xl mt-2 select-text font-sans shadow-lg shadow-amber-950/20">
+            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-400 text-[10px] font-bold select-none mt-0.5">
+              !
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[11px] font-bold text-amber-400">No reasoning was streamed</span>
+              <span className="text-[10px] text-amber-300/80 mt-1 leading-relaxed">
+                The agent run completed but produced no visible reasoning, tool, or
+                decision steps. This usually means the Python agent (:8086) returned
+                an empty response or the stream ended early. Press
+                {' '}<span className="font-bold text-amber-200">Find Quant Trade</span>{' '}
+                again to retry.
+              </span>
+              {analysisError && (
+                <span className="text-[9px] font-mono text-amber-400 bg-amber-950/30 rounded border border-amber-500/10 px-2 py-1 mt-2 leading-normal">
+                  {analysisError}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Streaming spinner inside console */}
         {sessionStatus === 'running' && (
           <div className="flex items-center gap-2 pl-3 py-2 text-[10px] text-emerald-500/60 animate-pulse">
@@ -369,7 +404,7 @@ export default function AgentTerminal() {
             <div className="flex flex-col">
               <span className="text-[11px] font-bold text-rose-400">Deep Quant Analysis Error</span>
               <span className="text-[10px] text-rose-300/80 mt-1 leading-relaxed">
-                The LangGraph agent loop returned a pipeline error. This usually occurs if your third-party LLM key (e.g. HuggingFace, Groq, or OpenAI) is expired, rate-limited, or unpaid.
+                The LangGraph agent loop returned a pipeline error. This usually occurs if your LLM API key (e.g. Google Gemini or OpenAI) is expired, rate-limited, or out of quota.
               </span>
               <span className="text-[9px] font-mono text-rose-400 bg-rose-950/30 rounded border border-rose-500/10 px-2 py-1 mt-2 leading-normal">
                 {analysisError || "Connection refused: Python service port :8086 unreachable."}

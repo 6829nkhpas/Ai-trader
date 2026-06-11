@@ -289,6 +289,11 @@ pub fn spawn_radar_worker(app_handle: tauri::AppHandle) {
                 tokio::time::sleep(std::time::Duration::from_millis(300)).await;
             }
 
+            // Prune dedup entries older than the dedup window so `last_fired`
+            // cannot grow unbounded across a long-running session.
+            let cutoff = chrono::Utc::now().timestamp_millis() - DEDUP_WINDOW_MS;
+            last_fired.retain(|_, &mut t| t >= cutoff);
+
             debug!(
                 "[Radar] cycle done: {}/{} scanned | {} alerts | {:.1}s",
                 scanned, symbols.len(), emitted, scan_start.elapsed().as_secs_f64()
