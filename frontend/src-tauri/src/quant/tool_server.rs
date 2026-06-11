@@ -1155,8 +1155,13 @@ fn unavailable_news(reason: &str) -> serde_json::Value {
 
 /// POST /tools/get_news_context
 /// Proxies to the Node Sentiment_Service and returns the recent headlines plus
-/// a directional sentiment label derived from the service's classification
-/// (R10.1, R10.2).
+/// a directional sentiment label (R10.1, R10.2).
+///
+/// When the upstream service returns the richer STRATEGIC verdict (label,
+/// thesis, drivers, risks, horizon, confidence, profile/industry), those fields
+/// are passed through and `sentiment_summary` is set to the human-readable
+/// thesis. When only a numeric `conviction_score` is present, it falls back to
+/// the score→label mapping. `sentiment_summary` is ALWAYS present on success.
 ///
 /// On any failure — service unreachable, non-success status, malformed body, or
 /// a missing/non-finite classification — the endpoint returns the honest
@@ -1226,6 +1231,70 @@ async fn get_news_context(
         })
         .unwrap_or_default();
 
+    // ── Strategic passthrough ──────────────────────────────────────────────
+    // When the upstream service returns the richer strategic verdict (it carries
+    // `label`/`thesis`/`drivers`), build the response from those fields while
+    // staying backward compatible. `sentiment_summary` is ALWAYS set on success
+    // (the Python consumer's validate_contract requires it).
+    let upstream_label = body.get("label").and_then(|v| v.as_str());
+    let upstream_thesis = body.get("thesis").and_then(|v| v.as_str());
+    let has_strategic = upstream_label.is_some()
+        || upstream_thesis.is_some()
+        || body.get("drivers").is_some();
+
+    if has_strategic {
+        // Directional sentiment: prefer the upstream label, else derive it from
+        // the conviction score, else fall back to "Neutral".
+        let sentiment: String = match upstream_label {
+            Some(l) if !l.trim().is_empty() => l.to_string(),
+            _ => conviction_score
+                .filter(|s| s.is_finite())
+                .map(|s| classify_sentiment_label(s).to_string())
+                .unwrap_or_else(|| "Neutral".to_string()),
+        };
+
+        // Human-readable summary: the thesis when present, else the label.
+        let sentiment_summary: String = match upstream_thesis {
+            Some(t) if !t.trim().is_empty() => t.to_string(),
+            _ => sentiment.clone(),
+        };
+
+        let mut response = serde_json::json!({
+            "symbol": payload.symbol,
+            "headlines": headlines,
+            "sentiment": sentiment,
+            "sentiment_summary": sentiment_summary,
+        });
+
+        if let Some(obj) = response.as_object_mut() {
+            // Passthrough the strategic fields when present.
+            for key in [
+                "label",
+                "thesis",
+                "drivers",
+                "risks",
+                "horizon",
+                "confidence",
+                "conviction_score",
+                "industry",
+                "profile",
+            ] {
+                if let Some(v) = body.get(key) {
+                    obj.insert(key.to_string(), v.clone());
+                }
+            }
+        }
+
+        info!(
+            "[tool_server] get_news_context: symbol={} strategic label={} drivers={}",
+            payload.symbol,
+            sentiment,
+            body.get("drivers").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0)
+        );
+        return Ok(Json(response));
+    }
+
+    // ── Legacy fallback: score → label mapping ─────────────────────────────
     match conviction_score {
         Some(score) if score.is_finite() => {
             let mut mapped = map_sentiment_classification(score, headlines);
