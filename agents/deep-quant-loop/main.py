@@ -41,6 +41,7 @@ class RunRequest(BaseModel):
 class ResumeRequest(BaseModel):
     thread_id: str
     triggered_candle: dict
+    trigger_kind: Optional[str] = "target"
 
 class QARequest(BaseModel):
     # Trade_QA_Mode follow-up question. Reuses the SAME thread_id so the run
@@ -135,7 +136,13 @@ async def resume_agent(payload: ResumeRequest):
         )
     
     return StreamingResponse(
-        event_generator(payload.thread_id, resume_command=Command(resume=payload.triggered_candle)),
+        event_generator(
+            payload.thread_id,
+            resume_command=Command(resume={
+                "candle": payload.triggered_candle,
+                "trigger_kind": payload.trigger_kind,
+            }),
+        ),
         media_type="text/event-stream"
     )
 

@@ -54,6 +54,12 @@ pub struct WatchConditionRequest {
     pub price_level: f64,
     pub direction: String, // "above" / "up" or "below" / "down"
     pub volume_multiplier: f64,
+    /// Optional opposite-side invalidation level (R14, Bug #1). When supplied,
+    /// the watcher also fires (as an invalidation) if price moves against the
+    /// setup to this level, so the run is woken to re-analyze rather than
+    /// silently waiting forever. Defaults to `None` when omitted.
+    #[serde(default)]
+    pub invalidation_level: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -64,6 +70,13 @@ pub struct Watcher {
     pub price_level: f64,
     pub direction: String,
     pub volume_multiplier: f64,
+    /// Authoritative server-side current price captured at registration time.
+    /// The target `price_level` is validated to be strictly beyond this in the
+    /// chosen direction, which prevents the instant false trigger (Bug #2).
+    pub reference_price: f64,
+    /// Opposite-side invalidation level (Bug #1). `Some(level)` enables the
+    /// opposite-side fallback trigger; `None` disables it.
+    pub invalidation_level: Option<f64>,
 }
 
 // ── Server State ────────────────────────────────────────────────────────────
@@ -290,16 +303,39 @@ async fn get_support_resistance(
     Ok(Json(sr))
 }
 
+/// Which registered condition a watcher candle satisfied (R14.2).
+///
+/// Serialized to the exact lowercase strings `"target"` / `"invalidation"` so
+/// the `/resume` handoff payload's `trigger_kind` field carries a stable
+/// contract the Python side branches on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WatcherTrigger {
+    /// The watched target level was reached WITH the required volume surge.
+    Target,
+    /// Price moved against the setup to the opposite-side invalidation level
+    /// (price-only — the volume gate does not apply to an invalidation/stop).
+    Invalidation,
+}
+
 /// Pure watcher trigger predicate (R14.2).
 ///
-/// Returns `true` iff the registered price condition holds AND the candle's
-/// volume meets the volume-surge threshold (`candle_volume >= average_volume *
-/// volume_multiplier`). The price condition is direction-aware:
+/// Returns `Some(WatcherTrigger)` describing WHICH condition fired, or `None`
+/// when neither the target nor the invalidation condition is satisfied:
 ///
-/// * `"above"` / `"up"`   → `candle_close >= price_level`
-/// * `"below"` / `"down"` → `candle_close <= price_level`
-/// * any other direction  → never fires (unknown direction is treated as no
-///   match so a malformed watcher can never trigger a spurious resume).
+/// * Target fires iff the direction-aware price condition holds AND the
+///   candle's volume meets the volume-surge threshold (`candle_volume >=
+///   average_volume * volume_multiplier`):
+///     * `"above"` / `"up"`   → `candle_close >= price_level`
+///     * `"below"` / `"down"` → `candle_close <= price_level`
+/// * Invalidation fires (price-only, NO volume gate — a stop/invalidation must
+///   fire on price alone) when an `invalidation_level` is supplied and price
+///   crosses it on the opposite side:
+///     * `"above"` / `"up"`   → `candle_close <= invalidation_level`
+///     * `"below"` / `"down"` → `candle_close >= invalidation_level`
+/// * The target takes precedence over the invalidation when both could match.
+/// * Any other direction never fires (unknown direction is treated as no match
+///   so a malformed watcher can never trigger a spurious resume).
 ///
 /// Extracted as a pure function so the trigger semantics are independently
 /// unit-/property-testable and applied identically inside the live watcher task
@@ -307,20 +343,43 @@ async fn get_support_resistance(
 fn watcher_triggered(
     direction: &str,
     price_level: f64,
+    invalidation_level: Option<f64>,
     volume_multiplier: f64,
     average_volume: f64,
     candle_close: f64,
     candle_volume: f64,
-) -> bool {
-    let price_matched = match direction {
-        "above" | "up" => candle_close >= price_level,
-        "below" | "down" => candle_close <= price_level,
-        _ => false,
-    };
-
+) -> Option<WatcherTrigger> {
     let volume_matched = candle_volume >= average_volume * volume_multiplier;
 
-    price_matched && volume_matched
+    match direction {
+        "above" | "up" => {
+            if candle_close >= price_level && volume_matched {
+                Some(WatcherTrigger::Target)
+            } else if let Some(inv) = invalidation_level {
+                if candle_close <= inv {
+                    Some(WatcherTrigger::Invalidation)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        "below" | "down" => {
+            if candle_close <= price_level && volume_matched {
+                Some(WatcherTrigger::Target)
+            } else if let Some(inv) = invalidation_level {
+                if candle_close >= inv {
+                    Some(WatcherTrigger::Invalidation)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 /// Status returned to the agent when a watcher is registered (R14.1).
@@ -343,6 +402,8 @@ fn build_watcher(
     price_level: f64,
     direction: &str,
     volume_multiplier: f64,
+    reference_price: f64,
+    invalidation_level: Option<f64>,
 ) -> Watcher {
     Watcher {
         thread_id,
@@ -351,6 +412,8 @@ fn build_watcher(
         price_level,
         direction: direction.trim().to_lowercase(),
         volume_multiplier,
+        reference_price,
+        invalidation_level,
     }
 }
 
@@ -394,6 +457,128 @@ async fn watch_condition(
 
     let timeframe = payload.timeframe.unwrap_or_else(|| "10m".to_string());
 
+    // Capture the authoritative current price server-side BEFORE registering
+    // (Bug #2). Load the most recent candle and take its close as the
+    // `reference_price`; the target level is then validated to be strictly
+    // beyond it in the chosen direction so a watcher can never instantly
+    // false-trigger on a level price has already passed.
+    let pool = state.app.try_state::<sqlx::PgPool>().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "QuestDB PG pool not available" })),
+        )
+    })?;
+
+    let reference_price = match crate::commands::deep_quant::load_candles_from_db(
+        Some(&state.app),
+        pool.inner(),
+        &watch_symbol,
+        &timeframe,
+        1,
+    )
+    .await
+    {
+        Ok(c) if !c.is_empty() => c.last().unwrap().close,
+        Ok(_) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!(
+                        "No current price available for {} on timeframe {}; cannot register watcher.",
+                        watch_symbol, timeframe
+                    )
+                })),
+            ));
+        }
+        Err(e) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e })),
+            ));
+        }
+    };
+
+    // Normalize direction up front so validation matches the canonical form
+    // the watcher will store.
+    let direction_norm = payload.direction.trim().to_lowercase();
+
+    // Validate the target level is on the correct side of the reference price
+    // and REJECT if already satisfied (this prevents the instant false trigger,
+    // Bug #2).
+    match direction_norm.as_str() {
+        "above" | "up" => {
+            if !(payload.price_level > reference_price) {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": format!(
+                            "price_level {} is not above current price {}; choose a level above the current price or use direction 'below'.",
+                            payload.price_level, reference_price
+                        )
+                    })),
+                ));
+            }
+        }
+        "below" | "down" => {
+            if !(payload.price_level < reference_price) {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": format!(
+                            "price_level {} is not below current price {}; choose a level below the current price or use direction 'above'.",
+                            payload.price_level, reference_price
+                        )
+                    })),
+                ));
+            }
+        }
+        other => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!(
+                        "Unknown direction '{}'; expected 'above'/'up' or 'below'/'down'.",
+                        other
+                    )
+                })),
+            ));
+        }
+    }
+
+    // If an invalidation level is supplied, validate it sits on the OPPOSITE
+    // side of the reference price from the target (Bug #1).
+    if let Some(inv) = payload.invalidation_level {
+        match direction_norm.as_str() {
+            "above" | "up" => {
+                if !(inv < reference_price) {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": format!(
+                                "invalidation_level {} must be below current price {} for an 'above' setup (the setup is wrong if price drops there).",
+                                inv, reference_price
+                            )
+                        })),
+                    ));
+                }
+            }
+            "below" | "down" => {
+                if !(inv > reference_price) {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": format!(
+                                "invalidation_level {} must be above current price {} for a 'below' setup (the setup is wrong if price rises there).",
+                                inv, reference_price
+                            )
+                        })),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+
     let watcher = build_watcher(
         payload.thread_id.clone(),
         watch_symbol.clone(),
@@ -401,6 +586,8 @@ async fn watch_condition(
         payload.price_level,
         &payload.direction,
         payload.volume_multiplier,
+        reference_price,
+        payload.invalidation_level,
     );
 
     // Register watcher keyed by thread_id (R14.1).
@@ -410,8 +597,8 @@ async fn watch_condition(
     }
 
     info!(
-        "[tool_server] Registered watcher for thread_id={} symbol={} price_level={:.2} direction={}",
-        watcher.thread_id, watcher.symbol, watcher.price_level, watcher.direction
+        "[tool_server] Registered watcher for thread_id={} symbol={} price_level={:.2} direction={} reference_price={:.2} invalidation_level={:?}",
+        watcher.thread_id, watcher.symbol, watcher.price_level, watcher.direction, watcher.reference_price, watcher.invalidation_level
     );
 
     // Retrieve the broadcast channel Sender from Tauri managed state
@@ -467,19 +654,21 @@ async fn watch_condition(
                 }
 
                 // Trigger semantics are factored into the pure `watcher_triggered`
-                // predicate (R14.2): fire iff the price condition holds AND the
-                // candle volume meets `avg_volume * volume_multiplier`.
-                if watcher_triggered(
+                // predicate (R14.2): the target fires iff the price condition
+                // holds AND volume surges; the opposite-side invalidation fires
+                // on price alone. The returned `WatcherTrigger` tells us which.
+                if let Some(trigger_kind) = watcher_triggered(
                     &watcher.direction,
                     watcher.price_level,
+                    watcher.invalidation_level,
                     watcher.volume_multiplier,
                     avg_volume,
                     candle.close,
                     candle.volume,
                 ) {
                     info!(
-                        "[watcher] Condition MET for thread_id={}! Price close={:.2} (level={:.2}), Vol={:.2} (threshold={:.2})",
-                        watcher.thread_id, candle.close, watcher.price_level, candle.volume, avg_volume * watcher.volume_multiplier
+                        "[watcher] Condition MET ({:?}) for thread_id={}! Price close={:.2} (level={:.2}, inv={:?}), Vol={:.2} (threshold={:.2})",
+                        trigger_kind, watcher.thread_id, candle.close, watcher.price_level, watcher.invalidation_level, candle.volume, avg_volume * watcher.volume_multiplier
                     );
 
                     // Remove from registry
@@ -493,6 +682,7 @@ async fn watch_condition(
                     let response_payload = serde_json::json!({
                         "thread_id": watcher.thread_id,
                         "triggered_candle": candle,
+                        "trigger_kind": trigger_kind,
                     });
 
                     info!("[watcher] Making handoff resume POST to port 8086 for thread_id={}", watcher.thread_id);
@@ -1711,19 +1901,20 @@ mod watcher_registry_proptests {
         average_volume: f64,
         candle_close: f64,
         candle_volume: f64,
-    ) -> bool {
+    ) -> Option<WatcherTrigger> {
         let fired = match registry.get(thread_id) {
             Some(w) => watcher_triggered(
                 &w.direction,
                 w.price_level,
+                w.invalidation_level,
                 w.volume_multiplier,
                 average_volume,
                 candle_close,
                 candle_volume,
             ),
-            None => false,
+            None => None,
         };
-        if fired {
+        if fired.is_some() {
             registry.remove(thread_id);
         }
         fired
@@ -1748,6 +1939,8 @@ mod watcher_registry_proptests {
             price_level in 0.01f64..1.0e6,
             direction in valid_direction(),
             volume_multiplier in 0.1f64..10.0,
+            reference_price in 0.01f64..1.0e6,
+            invalidation_level in prop::option::of(0.01f64..1.0e6),
         ) {
             let watcher = build_watcher(
                 thread_id.clone(),
@@ -1756,6 +1949,8 @@ mod watcher_registry_proptests {
                 price_level,
                 direction,
                 volume_multiplier,
+                reference_price,
+                invalidation_level,
             );
 
             let mut registry: HashMap<String, Watcher> = HashMap::new();
@@ -1773,6 +1968,10 @@ mod watcher_registry_proptests {
             prop_assert_eq!(stored.price_level, price_level);
             prop_assert_eq!(stored.volume_multiplier, volume_multiplier);
             prop_assert_eq!(&stored.direction, &direction.trim().to_lowercase());
+            // build_watcher stores the reference_price and invalidation_level
+            // exactly as supplied (Bug #1 / Bug #2 support fields).
+            prop_assert_eq!(stored.reference_price, reference_price);
+            prop_assert_eq!(stored.invalidation_level, invalidation_level);
 
             // Resumable-suspend contract (R14.1): registration yields the
             // resumable-suspend signal (the run pauses, awaiting /resume),
@@ -1790,6 +1989,7 @@ mod watcher_registry_proptests {
             average_volume in 0.0f64..1.0e6,
             candle_close in -1.0e6f64..1.0e6,
             candle_volume in 0.0f64..1.0e7,
+            invalidation_level in prop::option::of(-1.0e6f64..1.0e6),
             dir_idx in 0usize..5,
         ) {
             // Index 4 ("sideways") is an unknown/unsupported direction.
@@ -1799,21 +1999,39 @@ mod watcher_registry_proptests {
             let fired = watcher_triggered(
                 direction,
                 price_level,
+                invalidation_level,
                 volume_multiplier,
                 average_volume,
                 candle_close,
                 candle_volume,
             );
 
-            // Reference semantics: fires iff the direction-aware price condition
-            // holds AND volume >= avg * mult; unknown direction never matches.
-            let price_matched = match direction {
-                "above" | "up" => candle_close >= price_level,
-                "below" | "down" => candle_close <= price_level,
-                _ => false,
-            };
+            // Reference semantics: target fires iff the direction-aware price
+            // condition holds AND volume >= avg * mult; otherwise the
+            // opposite-side invalidation fires on price alone (no volume gate);
+            // unknown direction never matches.
             let volume_matched = candle_volume >= average_volume * volume_multiplier;
-            let expected = price_matched && volume_matched;
+            let expected = match direction {
+                "above" | "up" => {
+                    if candle_close >= price_level && volume_matched {
+                        Some(WatcherTrigger::Target)
+                    } else if let Some(inv) = invalidation_level {
+                        if candle_close <= inv { Some(WatcherTrigger::Invalidation) } else { None }
+                    } else {
+                        None
+                    }
+                }
+                "below" | "down" => {
+                    if candle_close <= price_level && volume_matched {
+                        Some(WatcherTrigger::Target)
+                    } else if let Some(inv) = invalidation_level {
+                        if candle_close >= inv { Some(WatcherTrigger::Invalidation) } else { None }
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
 
             prop_assert_eq!(fired, expected);
 
@@ -1821,12 +2039,13 @@ mod watcher_registry_proptests {
             let unknown = watcher_triggered(
                 "sideways",
                 price_level,
+                invalidation_level,
                 volume_multiplier,
                 average_volume,
                 candle_close,
                 candle_volume,
             );
-            prop_assert!(!unknown);
+            prop_assert!(unknown.is_none());
         }
 
         // Feature: deep-quant-analysis-hardening, Property 48: A fired watcher
@@ -1840,6 +2059,7 @@ mod watcher_registry_proptests {
             average_volume in 0.0f64..1.0e6,
             candle_close in -1.0e6f64..1.0e6,
             candle_volume in 0.0f64..1.0e7,
+            invalidation_level in prop::option::of(0.01f64..1.0e6),
             direction in valid_direction(),
         ) {
             let watcher = build_watcher(
@@ -1849,6 +2069,8 @@ mod watcher_registry_proptests {
                 price_level,
                 direction,
                 volume_multiplier,
+                price_level, // reference_price (arbitrary for this pure test)
+                invalidation_level,
             );
 
             let mut registry: HashMap<String, Watcher> = HashMap::new();
@@ -1866,6 +2088,7 @@ mod watcher_registry_proptests {
             let expected_fire = watcher_triggered(
                 direction,
                 price_level,
+                invalidation_level,
                 volume_multiplier,
                 average_volume,
                 candle_close,
@@ -1873,7 +2096,7 @@ mod watcher_registry_proptests {
             );
             prop_assert_eq!(fired, expected_fire);
 
-            if fired {
+            if fired.is_some() {
                 // R14.4: after a trigger, the registry no longer contains the
                 // thread_id.
                 prop_assert!(!registry.contains_key(&thread_id));
@@ -1902,6 +2125,8 @@ mod watcher_registry_proptests {
             2450.0,
             "above",
             1.5,
+            2400.0, // reference_price (below the target, as the handler requires)
+            None,   // no invalidation level for this lifecycle test
         );
         let mut registry: HashMap<String, Watcher> = HashMap::new();
         register_watcher(&mut registry, watcher);
@@ -1916,7 +2141,7 @@ mod watcher_registry_proptests {
             2451.0,          // close >= 2450 (price condition met)
             120_000.0,       // volume < 100_000 * 1.5 = 150_000 (surge NOT met)
         );
-        assert!(!fired_weak, "weak-volume candle must not fire the watcher");
+        assert!(fired_weak.is_none(), "weak-volume candle must not fire the watcher");
         assert!(registry.contains_key(thread_id), "non-firing watcher stays registered");
 
         // 2b. A triggering candle (price AND volume surge) fires exactly once
@@ -1926,7 +2151,7 @@ mod watcher_registry_proptests {
             2451.0,          // close >= 2450
             250_000.0,       // volume >= 150_000 (surge met)
         );
-        assert!(fired, "triggering candle must fire the watcher");
+        assert_eq!(fired, Some(WatcherTrigger::Target), "triggering candle must fire the target");
         assert!(
             !registry.contains_key(thread_id),
             "R14.4: a fired watcher is removed from the registry"
@@ -1937,8 +2162,112 @@ mod watcher_registry_proptests {
         let fired_again = remove_on_fire(
             &mut registry, thread_id, average_volume, 2460.0, 500_000.0,
         );
-        assert!(!fired_again, "a removed watcher cannot fire a second time");
+        assert!(fired_again.is_none(), "a removed watcher cannot fire a second time");
         assert!(!registry.contains_key(thread_id));
+    }
+
+    // ── Explicit unit tests for the target/invalidation trigger semantics ────
+    //
+    // Feature: deep-quant-analysis-hardening, Property 47 (examples): the pure
+    // `watcher_triggered` predicate distinguishes Target (price + volume) from
+    // Invalidation (opposite-side, price-only) and returns None in between.
+
+    #[test]
+    fn above_target_fires_with_volume() {
+        // above/up: close >= level WITH volume → Target.
+        let avg = 100.0;
+        assert_eq!(
+            watcher_triggered("above", 2450.0, Some(2400.0), 1.5, avg, 2451.0, 160.0),
+            Some(WatcherTrigger::Target)
+        );
+        // "up" is the same canonical direction.
+        assert_eq!(
+            watcher_triggered("up", 2450.0, None, 1.5, avg, 2451.0, 160.0),
+            Some(WatcherTrigger::Target)
+        );
+    }
+
+    #[test]
+    fn above_target_requires_volume_but_invalidation_does_not() {
+        let avg = 100.0;
+        // Target price met but volume below threshold (1.5 * 100 = 150) → NOT
+        // Target. With no invalidation, that's None.
+        assert_eq!(
+            watcher_triggered("above", 2450.0, None, 1.5, avg, 2451.0, 120.0),
+            None
+        );
+        // Invalidation ignores the volume gate: price at/below the invalidation
+        // level fires Invalidation even with zero volume.
+        assert_eq!(
+            watcher_triggered("above", 2450.0, Some(2400.0), 1.5, avg, 2399.0, 0.0),
+            Some(WatcherTrigger::Invalidation)
+        );
+    }
+
+    #[test]
+    fn above_between_levels_is_none() {
+        let avg = 100.0;
+        // Price between invalidation (2400) and target (2450), volume high:
+        // neither condition holds → None.
+        assert_eq!(
+            watcher_triggered("above", 2450.0, Some(2400.0), 1.5, avg, 2420.0, 999.0),
+            None
+        );
+    }
+
+    #[test]
+    fn below_target_and_invalidation_are_symmetric() {
+        let avg = 100.0;
+        // below/down: close <= level WITH volume → Target.
+        assert_eq!(
+            watcher_triggered("below", 2400.0, Some(2450.0), 1.5, avg, 2399.0, 160.0),
+            Some(WatcherTrigger::Target)
+        );
+        assert_eq!(
+            watcher_triggered("down", 2400.0, None, 1.5, avg, 2399.0, 160.0),
+            Some(WatcherTrigger::Target)
+        );
+        // Target price met but insufficient volume → not Target.
+        assert_eq!(
+            watcher_triggered("below", 2400.0, None, 1.5, avg, 2399.0, 120.0),
+            None
+        );
+        // Opposite-side invalidation (price rises to/above 2450) fires on price
+        // alone, even with zero volume.
+        assert_eq!(
+            watcher_triggered("below", 2400.0, Some(2450.0), 1.5, avg, 2451.0, 0.0),
+            Some(WatcherTrigger::Invalidation)
+        );
+        // Between the levels → None.
+        assert_eq!(
+            watcher_triggered("below", 2400.0, Some(2450.0), 1.5, avg, 2420.0, 999.0),
+            None
+        );
+    }
+
+    #[test]
+    fn unknown_direction_never_fires() {
+        assert_eq!(
+            watcher_triggered("sideways", 2450.0, Some(2400.0), 1.5, 100.0, 9999.0, 9999.0),
+            None
+        );
+    }
+
+    #[test]
+    fn build_watcher_stores_reference_and_invalidation_and_normalizes_direction() {
+        let w = build_watcher(
+            "tid".to_string(),
+            "RELIANCE".to_string(),
+            "15m".to_string(),
+            2450.0,
+            "  ABOVE  ",
+            1.5,
+            2400.0,
+            Some(2375.0),
+        );
+        assert_eq!(w.direction, "above", "direction is trimmed + lowercased");
+        assert_eq!(w.reference_price, 2400.0);
+        assert_eq!(w.invalidation_level, Some(2375.0));
     }
 }
 
