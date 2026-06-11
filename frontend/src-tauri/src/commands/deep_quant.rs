@@ -1852,6 +1852,128 @@ pub async fn run_deep_quant_agent(
     Ok(())
 }
 
+/// Ask a free-form Trade_QA_Mode follow-up question about a prior analysis,
+/// proxying the Python `/qa` SSE stream to a dedicated Tauri event channel.
+///
+/// Modeled exactly on [`run_deep_quant_agent`] but:
+///   * POSTs to `http://localhost:8086/qa` with `{ thread_id, question }`,
+///     reusing the SAME `thread_id` as the original analysis so the Python
+///     service answers from the thread's persisted Session_Analysis_Context.
+///   * Emits each proxied SSE event on the DEDICATED `deep-quant-qa-stream`
+///     channel (never `deep-quant-stream`) using the same
+///     `{ "event": <NAME>, "data": <json> }` envelope.
+///   * A Q&A turn never emits a DECISION event and never mutates the committed
+///     trade — it only answers questions.
+#[tauri::command]
+pub async fn ask_trade_question(
+    app: tauri::AppHandle,
+    thread_id: String,
+    question: String,
+) -> Result<(), String> {
+    info!("[ask_trade_question] Starting Trade_QA_Mode proxy for thread={}", thread_id);
+
+    // Prepare the payload for Python FastAPI — reuse the SAME thread_id so the
+    // Q&A run grounds its answer in the persisted Session_Analysis_Context.
+    let payload = serde_json::json!({
+        "thread_id": thread_id,
+        "question": question
+    });
+
+    // Spawn the streaming reqwest client in the background, returning Ok(())
+    // immediately just like run_deep_quant_agent.
+    tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        let url = "http://localhost:8086/qa";
+        let mut saw_run_finished = false;
+
+        match client.post(url).json(&payload).send().await {
+            Ok(response) => {
+                let mut stream = response.bytes_stream();
+                use futures_util::StreamExt;
+                let mut buffer = String::new();
+
+                while let Some(chunk_result) = stream.next().await {
+                    match chunk_result {
+                        Ok(bytes) => {
+                            let text = String::from_utf8_lossy(&bytes);
+                            buffer.push_str(&text);
+
+                            // Process SSE event blocks
+                            while let Some(pos) = buffer.find("\n\n") {
+                                let event_block = buffer.drain(..pos + 2).collect::<String>();
+
+                                let mut event_type = None;
+                                // Accumulate ALL data: lines per SSE spec.
+                                let mut data_lines: Vec<String> = Vec::new();
+
+                                for line in event_block.lines() {
+                                    if line.starts_with("event: ") {
+                                        event_type = Some(line["event: ".len()..].trim().to_string());
+                                    } else if line.starts_with("data: ") {
+                                        data_lines.push(line["data: ".len()..].trim().to_string());
+                                    }
+                                }
+
+                                if let Some(ref ev_type) = event_type {
+                                    if ev_type == "RUN_FINISHED" {
+                                        saw_run_finished = true;
+                                    }
+                                }
+
+                                if let Some(ev_type) = event_type {
+                                    let json_val = if !data_lines.is_empty() {
+                                        let joined_data = data_lines.join("\n");
+                                        serde_json::from_str::<serde_json::Value>(&joined_data)
+                                            .unwrap_or(serde_json::Value::Null)
+                                    } else {
+                                        serde_json::Value::Null
+                                    };
+
+                                    let outbound = serde_json::json!({
+                                        "event": ev_type,
+                                        "data": json_val
+                                    });
+                                    let _ = app.emit("deep-quant-qa-stream", outbound);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("[ask_trade_question] Stream read error: {}", e);
+                            let _ = app.emit("deep-quant-qa-stream", serde_json::json!({
+                                "event": "ERROR",
+                                "data": { "error": format!("Stream read error: {}", e) }
+                            }));
+                            break;
+                        }
+                    }
+                }
+
+                // If the stream ended without a RUN_FINISHED event, emit a
+                // synthetic RUN_FINISHED so the frontend always transitions out
+                // of the 'streaming' state.
+                if !saw_run_finished {
+                    warn!("[ask_trade_question] Stream ended without RUN_FINISHED — emitting synthetic completion.");
+                    let _ = app.emit("deep-quant-qa-stream", serde_json::json!({
+                        "event": "RUN_FINISHED",
+                        "data": { "thread_id": thread_id, "status": "completed" }
+                    }));
+                }
+            }
+            Err(e) => {
+                error!("[ask_trade_question] Failed to connect to Python server: {}", e);
+                let _ = app.emit("deep-quant-qa-stream", serde_json::json!({
+                    "event": "ERROR",
+                    "data": { "error": format!("Failed to connect to Python server: {}", e) }
+                }));
+            }
+        }
+
+        info!("[ask_trade_question] Stream proxy finished for thread={}", thread_id);
+    });
+
+    Ok(())
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ApiChartPattern {
     pub pattern_type: String,
