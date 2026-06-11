@@ -483,22 +483,37 @@ def watch_price_condition(
     price_level: float,
     direction: str,
     volume_multiplier: float,
-    config: RunnableConfig
+    invalidation_level: Optional[float] = None,
+    config: RunnableConfig = None,
 ) -> str:
     """
     Suspends the agent to wait for a specific condition to trigger on the live ticker.
-    
+
+    The `price_level` MUST be strictly BEYOND the current price in the chosen
+    `direction` (above the current price for "above"/"up", below it for
+    "below"/"down"); the server rejects a level that is already satisfied so the
+    watcher cannot instantly false-trigger. Optionally provide an
+    `invalidation_level` on the OPPOSITE side — the price at which the setup is
+    proven wrong — so the system also wakes you to re-analyze (rather than wait
+    forever) if price moves against your thesis.
+
     Args:
         symbol (str): The symbol to watch (e.g. "RELIANCE").
         timeframe (str): The timeframe to watch (e.g. "1m", "5m", "15m", "1h", "4h", "1d").
-        price_level (float): The price level to watch.
+        price_level (float): The target price level to watch. MUST be beyond the
+            current price in the chosen direction.
         direction (str): Trigger direction, either "above" (or "up") or "below" (or "down").
         volume_multiplier (float): Volume threshold multiplier relative to the 20-period average.
-        
+        invalidation_level (float, optional): Opposite-side price level where the
+            setup is invalidated. If price reaches it (on price alone, no volume
+            requirement) you are woken to re-analyze instead of treating it as the
+            target being met.
+
     Returns:
-        str: Description of the triggered event once resumed.
+        str: Description of the triggered event once resumed — either the target
+             being reached or the setup being invalidated.
     """
-    print(f"\n[Tool Call] >>> watch_price_condition: symbol={symbol}, timeframe={timeframe}, level={price_level}, direction={direction}, vol_mult={volume_multiplier}")
+    print(f"\n[Tool Call] >>> watch_price_condition: symbol={symbol}, timeframe={timeframe}, level={price_level}, direction={direction}, vol_mult={volume_multiplier}, invalidation_level={invalidation_level}")
     try:
         import time as _time
         thread_id = config.get("configurable", {}).get("thread_id", "default_thread")
@@ -508,12 +523,19 @@ def watch_price_condition(
             "timeframe": timeframe,
             "price_level": price_level,
             "direction": direction,
-            "volume_multiplier": volume_multiplier
+            "volume_multiplier": volume_multiplier,
+            "invalidation_level": invalidation_level
         }
         # Retry registration up to the configured number of attempts in case the
         # Rust tool server is still starting up.
         max_attempts = max(1, WATCH_REGISTRATION_MAX_ATTEMPTS)
         last_error = None
+        # Set when the server deterministically REJECTS the requested level
+        # (HTTP 400 from the watcher validator — e.g. price_level already
+        # satisfied / on the wrong side, or invalidation_level on the wrong
+        # side). This is NOT retryable and NOT a "server down" condition: the
+        # agent simply chose a bad level and must pick a valid one.
+        rejection_msg = None
         for attempt in range(1, max_attempts + 1):
             try:
                 response = httpx.post(
@@ -521,6 +543,18 @@ def watch_price_condition(
                     json=payload,
                     timeout=10.0
                 )
+                if response.status_code == 400:
+                    # Extract the validator's specific reason from the JSON body
+                    # ({"error": "..."}) so the model can self-correct the level.
+                    try:
+                        body = response.json()
+                        rejection_msg = body.get("error") if isinstance(body, dict) else None
+                    except Exception:
+                        rejection_msg = None
+                    if not rejection_msg:
+                        rejection_msg = (response.text or "").strip() or "Watcher level rejected by validator."
+                    last_error = None
+                    break
                 response.raise_for_status()
                 last_error = None
                 break
@@ -529,6 +563,25 @@ def watch_price_condition(
                 print(f"[Tool Warning] watch_price_condition attempt {attempt}/{max_attempts} failed: {str(retry_err)}")
                 if attempt < max_attempts:
                     _time.sleep(WATCH_REGISTRATION_RETRY_DELAY_S)
+
+        # Recoverable validation rejection: surface the exact reason and tell the
+        # model to re-call watch_price_condition with a corrected level. This is
+        # deliberately NOT a HOLD — the setup may still be valid, the agent just
+        # picked a level on the wrong side of the current price.
+        if rejection_msg is not None:
+            print(f"[Tool Rejected] <<< watch_price_condition level rejected: {rejection_msg}")
+            return {
+                "status": "watch_level_rejected",
+                "error": rejection_msg,
+                "message": (
+                    "Your watch condition was REJECTED: " + rejection_msg + " "
+                    "Do NOT HOLD or output a trade because of this. Re-call "
+                    "watch_price_condition with a corrected price_level (strictly "
+                    "BEYOND the current price in your chosen direction) and, if you "
+                    "supply one, an invalidation_level on the OPPOSITE side of the "
+                    "current price."
+                ),
+            }
 
         if last_error is not None:
             raise last_error
@@ -559,7 +612,7 @@ def watch_price_condition(
         }
 
     print(f"[Tool Pause] watch_price_condition: Interrupting graph, waiting for user resume...")
-    triggered_candle = interrupt(
+    resumed = interrupt(
         {
             "status": "watching_registered",
             "thread_id": thread_id,
@@ -567,12 +620,33 @@ def watch_price_condition(
             "timeframe": timeframe,
             "price_level": price_level,
             "direction": direction,
-            "volume_multiplier": volume_multiplier
+            "volume_multiplier": volume_multiplier,
+            "invalidation_level": invalidation_level
         }
     )
-    
-    print(f"[Tool Resumed] <<< watch_price_condition triggered with candle: {triggered_candle}")
-    return f"Condition met! Triggered candle details: {triggered_candle}"
+
+    print(f"[Tool Resumed] <<< watch_price_condition resumed with: {resumed}")
+
+    # The resume value is now a dict {"candle": ..., "trigger_kind": ...}. Stay
+    # backward-compatible: if a bare value (or a dict without "trigger_kind")
+    # arrives, treat it as the target being reached.
+    if isinstance(resumed, dict) and "trigger_kind" in resumed:
+        candle = resumed.get("candle")
+        trigger_kind = resumed.get("trigger_kind") or "target"
+    else:
+        candle = resumed
+        trigger_kind = "target"
+
+    if trigger_kind == "invalidation":
+        return (
+            "Setup INVALIDATED: price moved to the invalidation level AGAINST the "
+            "setup before reaching the watched target. The target condition was NOT "
+            "met — do NOT treat this as the level being reached. Re-analyze the "
+            "current structure or HOLD. Invalidation candle details: "
+            f"{candle}"
+        )
+
+    return f"Target condition met (price reached the watched level). Triggered candle: {candle}"
 
 @tool
 def declare_trade(
