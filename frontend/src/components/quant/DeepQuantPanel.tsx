@@ -10,6 +10,7 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { useQuantStore } from '../../store/useQuantStore';
+import type { StreamEventPayload } from '../../store/useQuantStore';
 import { useTradeStore } from '../../store/useTradeStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
 import { useMemo } from 'react';
@@ -141,6 +142,36 @@ export default function DeepQuantPanel() {
     isFetchingPatterns,
     currentThreadId,
   } = useQuantStore();
+
+  // Register the deep-quant-stream listener at the PANEL level so it is mounted
+  // before any analysis run starts. (AgentTerminal only mounts once a run is in
+  // flight, which raced the backend SSE stream and intermittently dropped the
+  // opening REASONING/TOOL events — leaving the glass-box blank.) Placed before
+  // the paywall early-return so hook order stays stable.
+  React.useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    (async () => {
+      try {
+        const unlistenFn = await listen<StreamEventPayload>('deep-quant-stream', (event) => {
+          if (!cancelled) {
+            useQuantStore.getState().handleStreamEvent(event.payload);
+          }
+        });
+        if (cancelled) {
+          unlistenFn();
+        } else {
+          unlisten = unlistenFn;
+        }
+      } catch (err) {
+        console.error('Failed to register deep-quant-stream listener:', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
 
   if (!user || user.tier === 'FREE') {
     return <PremiumPaywall onUpgradeClick={handleUpgrade} />;

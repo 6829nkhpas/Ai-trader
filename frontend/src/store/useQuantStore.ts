@@ -741,6 +741,10 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
         }
         break;
       }
+      // The hardened backend emits the agent's chain-of-thought as REASONING
+      // events (TEXT_MESSAGE retained for backward compatibility). Both render
+      // as a `message` step so the glass-box transcript is never blank.
+      case 'REASONING':
       case 'TEXT_MESSAGE': {
         const content = data?.content || '';
         if (content) {
@@ -754,6 +758,74 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
             reasoningSteps: [...state.reasoningSteps, step]
           }));
         }
+        break;
+      }
+      // Glass-box verification events — each surfaces one self-check the agent
+      // ran (e.g. risk/reward validation, data-sufficiency gate) and its
+      // outcome. Rendered inline so the user can audit the decision trail.
+      case 'VERIFICATION_STEP': {
+        const check = (data?.check as string) || (data?.tool as string) || 'check';
+        const outcome = (data?.outcome as string) || (data?.status as string) || '';
+        const detail = (data?.content as string) || (data?.detail as string) || '';
+        const body = [outcome, detail].filter(Boolean).join(' — ');
+        const step = {
+          id: `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          type: 'message',
+          content: `**Verification — ${check}${body ? `: ${body}` : ''}**`,
+          timestamp: Date.now()
+        };
+        set((state) => ({
+          reasoningSteps: [...state.reasoningSteps, step]
+        }));
+        break;
+      }
+      // The terminal DECISION event carries the structured verdict. We render a
+      // human-readable summary into the transcript AND seed finalTrade/aiPlan
+      // from it as a fallback, so the plan panel populates even if the model
+      // never emitted a parseable JSON block in its free-text reasoning.
+      case 'DECISION': {
+        const action = (data?.action as string) || (data?.decision as string) || '';
+        const convictionRaw = data?.conviction_score ?? data?.conviction;
+        const conviction = typeof convictionRaw === 'number' && Number.isFinite(convictionRaw)
+          ? convictionRaw
+          : undefined;
+        const rationale = (data?.rationale as string)
+          || (data?.setup_validation as string)
+          || (data?.thesis as string)
+          || '';
+        const executionPlan = (data?.execution_plan as string) || '';
+
+        const summaryLines = [
+          `**Decision${action ? `: ${action}` : ''}**`,
+          conviction !== undefined ? `Conviction: ${conviction}/100` : '',
+          rationale ? `Rationale: ${rationale}` : '',
+          executionPlan ? `Plan: ${executionPlan}` : '',
+        ].filter(Boolean);
+
+        const step = {
+          id: `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          type: 'message',
+          content: summaryLines.join('\n'),
+          timestamp: Date.now()
+        };
+
+        // Build a fallback plan from the structured decision payload.
+        const decisionPlan: AiExecutionPlan | null =
+          (conviction !== undefined || rationale || executionPlan)
+            ? {
+                conviction_score: conviction ?? 75,
+                setup_validation: rationale,
+                execution_plan: executionPlan,
+              }
+            : null;
+
+        set((state) => ({
+          reasoningSteps: [...state.reasoningSteps, step],
+          // Only seed when not already populated — never clobber a richer
+          // plan already parsed from the model's JSON output.
+          finalTrade: state.finalTrade ?? decisionPlan,
+          aiPlan: state.aiPlan ?? decisionPlan,
+        }));
         break;
       }
       case 'TOOL_CALL_START': {
@@ -832,13 +904,16 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
           break;
         }
 
-        set({
+        set((state) => ({
           sessionStatus: 'complete',
-          finalTrade: tradePlan,
-          aiPlan: tradePlan, // Synchronize with existing UI
+          // Prefer a freshly-parsed JSON plan, but fall back to whatever was
+          // already set (e.g. seeded by a DECISION event) so the plan panel is
+          // never blanked out at the end of a run.
+          finalTrade: tradePlan ?? state.finalTrade,
+          aiPlan: tradePlan ?? state.aiPlan, // Synchronize with existing UI
           isAnalyzing: false,
           _runFinishedProcessed: true,
-        });
+        }));
         break;
       }
       case 'ERROR': {

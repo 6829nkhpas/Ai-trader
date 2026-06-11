@@ -397,6 +397,9 @@ def build_decision_event(decision: Any) -> Optional[dict]:
         "action": decision.get("action"),
         "conviction_score": decision.get("conviction_score"),
         "rationale": decision.get("setup_validation") or decision.get("reason"),
+        # Carry the execution plan so the UI can populate the trade card directly
+        # from the stream (in addition to the rationale).
+        "execution_plan": decision.get("execution_plan"),
     }
 
 

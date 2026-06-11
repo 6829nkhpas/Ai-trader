@@ -118,40 +118,11 @@ export default function AgentTerminal() {
   const [executed, setExecuted] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
 
-  // Register the deep-quant-stream listener ONCE on mount.
-  // Uses `cancelled` flag to handle React Strict Mode double-mount:
-  // In dev, React mounts→unmounts→remounts. The async `listen()` call
-  // may resolve AFTER the cleanup runs, leaving a leaked listener.
-  // With `cancelled`, we immediately unregister if cleanup already ran.
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    
-    (async () => {
-      try {
-        const { listen } = await import('@tauri-apps/api/event');
-        if (cancelled) return; // Component unmounted during import
-        const unlistenFn = await listen<any>('deep-quant-stream', (event) => {
-          if (!cancelled) {
-            useQuantStore.getState().handleStreamEvent(event.payload);
-          }
-        });
-        if (cancelled) {
-          // Component unmounted while we were awaiting listen() — clean up immediately
-          unlistenFn();
-        } else {
-          unlisten = unlistenFn;
-        }
-      } catch (err) {
-        console.error('Failed to register deep-quant-stream listener:', err);
-      }
-    })();
-    
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
+  // NOTE: the `deep-quant-stream` listener is registered once at the panel
+  // level in DeepQuantPanel (which is always mounted), so AgentTerminal no
+  // longer registers it here — doing so would double-register the listener and
+  // duplicate every reasoning step. AgentTerminal only mounts after a run has
+  // started, which also raced the backend stream.
 
   // Auto-scroll to bottom of terminal when reasoningSteps changes
   useEffect(() => {
