@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 import httpx
 from langchain_core.tools import tool
 from langgraph.types import interrupt
@@ -575,33 +576,54 @@ def watch_price_condition(
 
 @tool
 def declare_trade(
-    action: str, 
-    conviction_score: int, 
-    setup_validation: str, 
-    execution_plan: str
+    action: str,
+    conviction_score: int,
+    setup_validation: str,
+    execution_plan: str,
+    entry: Optional[float] = None,
+    stop_loss: Optional[float] = None,
+    take_profit: Optional[float] = None,
+    atr_14: Optional[float] = None,
 ) -> str:
     """
-    Declares the final trading decision for the current analysis session.
-    Specify 'action' as 'BUY', 'SELL', or 'HOLD'. Provide the conviction score (0-100), 
-    setup validation notes, and final entry/SL/TP execution parameters.
-    Call this tool to commit the final plan before completing your run.
-    
+    Declares the final trading decision for the current analysis session and
+    commits it through the authoritative Trade_Validator on the Rust Tool Server.
+
+    For a BUY or SELL you MUST provide the numeric `entry`, `stop_loss`, and
+    `take_profit` levels (and `atr_14` from the consensus report). The server
+    validates the trade and only commits it when ALL risk rules pass:
+      - all three levels present and finite,
+      - direction consistency (BUY: stop_loss < entry < take_profit;
+        SELL: take_profit < entry < stop_loss),
+      - Risk:Reward >= 1:2,
+      - stop distance >= 1.5 x ATR (when atr_14 is supplied).
+    If validation fails the trade is REJECTED (not committed) and you MUST revise
+    the levels and call declare_trade again. A HOLD may omit the numeric levels.
+
     Args:
         action (str): The final decision, one of: "BUY", "SELL", "HOLD".
         conviction_score (int): Score representing risk confidence (0 to 100).
         setup_validation (str): 2-sentence synthesis of findings or warnings.
-        execution_plan (str): Actionable entry/stop-loss/take-profit plan.
-        
+        execution_plan (str): Actionable entry/stop-loss/take-profit plan (prose).
+        entry (float, optional): Proposed entry price (REQUIRED for BUY/SELL).
+        stop_loss (float, optional): Proposed stop-loss price (REQUIRED for BUY/SELL).
+        take_profit (float, optional): Proposed take-profit price (REQUIRED for BUY/SELL).
+        atr_14 (float, optional): Current ATR(14) used for the stop-distance check.
+
     Returns:
-        str: Confirmation message.
+        str: Confirmation message, or a rejection message stating the reason when
+             the Trade_Validator rejects the trade.
     """
-    print(f"\n[Tool Call] >>> declare_trade: action={action}, conviction={conviction_score}%")
+    print(f"\n[Tool Call] >>> declare_trade: action={action}, conviction={conviction_score}%, "
+          f"entry={entry}, stop_loss={stop_loss}, take_profit={take_profit}, atr_14={atr_14}")
     print(f"[Tool Detail] Setup Validation: {setup_validation}")
     print(f"[Tool Detail] Execution Plan: {execution_plan}")
 
-    # Persist the final decision to the Rust tool server so the desktop UI
-    # records a real, structured plan (emits `final_analysis_ready`). Without
-    # this the declaration was a no-op and nothing was committed anywhere.
+    # Persist the final decision to the Rust tool server, which runs the
+    # authoritative Trade_Validator and emits `final_analysis_ready` ONLY when
+    # validation passes (R6.6/R6.7). The structured levels are forwarded so a
+    # BUY/SELL can actually be validated and committed (without them every
+    # directional trade is rejected as MissingLevels).
     try:
         response = httpx.post(
             f"{RUST_SERVER_URL}/tools/declare_trade",
@@ -610,11 +632,25 @@ def declare_trade(
                 "conviction_score": int(conviction_score),
                 "setup_validation": setup_validation,
                 "execution_plan": execution_plan,
+                "entry": entry,
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
+                "atr_14": atr_14,
             },
             timeout=10.0
         )
         response.raise_for_status()
-        print(f"[Tool Success] <<< declare_trade committed to Rust server: {response.json()}")
+        body = response.json()
+        print(f"[Tool Success] <<< declare_trade server response: {body}")
+        if isinstance(body, dict) and str(body.get("status")).lower() == "rejected":
+            reason = body.get("reason", "unknown")
+            # Surface the rejection so the agent revises the levels and re-declares.
+            # The graph treats a TRADE_REJECTED result as a non-finalizing turn.
+            return (
+                f"TRADE_REJECTED: the Trade_Validator rejected this {action} because "
+                f"'{reason}'. Revise the entry/stop_loss/take_profit so Risk:Reward "
+                f">= 1:2 and the stop is >= 1.5x ATR, then call declare_trade again."
+            )
     except Exception as e:
         # Don't fail the agent run if persistence fails — the JSON is still
         # surfaced via the SSE stream — but make the failure visible.

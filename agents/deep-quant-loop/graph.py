@@ -127,6 +127,7 @@ Ask yourself:
 - Does volume flow (OBV, CMF) confirm my direction?
 If the answer to ANY of the first 3 checks is YES, you must scrap the trade. You must either analyze a different timeframe to find a better entry, or call `watch_price_condition` to wait for a safer pullback. 
 ONLY call `declare_trade` if you are 100% confident you could defend this trade against rigorous critique.
+For a BUY or SELL you MUST pass the numeric `entry`, `stop_loss`, and `take_profit` arguments to `declare_trade` (and `atr_14` from the consensus report). The Trade_Validator rejects directional trades that omit these or that fail Risk:Reward >= 1:2 / stop >= 1.5x ATR; if rejected, revise the levels and call `declare_trade` again. A HOLD may omit the numeric levels.
 </self_verification_protocol>
 
 <setup_validation_disclosure>
@@ -598,6 +599,9 @@ def _decision_from_declare(ok_calls) -> Optional[dict]:
 
     The declared trade's structured arguments — not any prose — are the
     authoritative completion signal read by ``should_continue`` (R2.2, R2.7).
+    The structured execution levels (entry/stop_loss/take_profit/atr_14) are
+    carried through so the defensibility record can cite them directly rather
+    than re-parsing them out of the plan prose.
     """
     for tc in ok_calls:
         if tc.get("name") == "declare_trade":
@@ -607,9 +611,30 @@ def _decision_from_declare(ok_calls) -> Optional[dict]:
                 "conviction_score": args.get("conviction_score"),
                 "setup_validation": args.get("setup_validation"),
                 "execution_plan": args.get("execution_plan"),
+                "entry": args.get("entry"),
+                "stop_loss": args.get("stop_loss"),
+                "take_profit": args.get("take_profit"),
+                "atr_14": args.get("atr_14"),
                 "source": "declare_trade",
             }
     return None
+
+
+def _declare_was_rejected(messages) -> bool:
+    """True when a declare_trade tool result indicates the server rejected it.
+
+    The declare_trade tool returns a ``TRADE_REJECTED: ...`` marker when the
+    authoritative Trade_Validator on the Rust server refuses to commit the trade
+    (R6.7). When rejected, the run must NOT finalize on that declaration — the
+    bounded loop continues so the agent can revise the levels and re-declare.
+    """
+    for m in messages:
+        if _is_tool_message(m) and getattr(m, "name", None) == "declare_trade":
+            content = getattr(m, "content", None)
+            text = content if isinstance(content, str) else str(content)
+            if "TRADE_REJECTED" in text:
+                return True
+    return False
 
 
 # ── Trade Defensibility Record (Requirement 7) ───────────────────────────────
@@ -778,6 +803,17 @@ def _resolve_action_and_levels(decision, mode, manual_trade):
                 levels[k] = float(v)
         return action, (levels or None)
     action = _normalize_action((decision or {}).get("action"))
+    # Prefer the structured execution levels the agent passed to declare_trade
+    # (entry/stop_loss/take_profit); only fall back to parsing the plan prose
+    # when they are not all present.
+    d = decision or {}
+    structured = {}
+    for k in ("entry", "stop_loss", "take_profit"):
+        v = d.get(k)
+        if _is_finite_num(v):
+            structured[k] = float(v)
+    if len(structured) == 3:
+        return action, structured
     text = " ".join(
         part for part in [
             (decision or {}).get("execution_plan"),
@@ -1233,8 +1269,14 @@ def tool_node(state: AgentState):
     # A validated declare_trade (only reachable once market data has been seen)
     # is the authoritative completion signal: record its structured result as
     # state["decision"] so should_continue terminates the run without ever
-    # matching keywords in reasoning prose (R2.2, R2.7).
+    # matching keywords in reasoning prose (R2.2, R2.7). If the Rust
+    # Trade_Validator REJECTED the declaration (R6.7), do NOT finalize — leave
+    # the decision unset so the bounded loop lets the agent revise the levels
+    # and re-declare.
     decision = _decision_from_declare(ok_calls)
+    if decision is not None and _declare_was_rejected(out_messages):
+        print("[Deep Quant Tools] declare_trade was REJECTED by the validator; continuing loop for revision.")
+        decision = None
     if decision is not None:
         print(f"[Deep Quant Tools] declare_trade committed decision: action={decision.get('action')}")
         # Attach the defensibility record assembled from the tool results seen
