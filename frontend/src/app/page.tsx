@@ -338,24 +338,23 @@ export default function Home() {
                   }`
             }>
               <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border-default px-2.5 bg-surface rounded-t-lg">
-                <div className="flex min-w-0 items-center gap-2">
-                  <div className="truncate text-sm font-semibold text-text-primary">{symbol}</div>
+                <div className="flex min-w-0 shrink items-center gap-1.5 overflow-hidden">
                   {symbolQuote ? (
                     <>
-                      <div className="text-sm font-semibold text-text-primary tabular-nums">
+                      <div className="shrink-0 text-sm font-semibold text-text-primary tabular-nums">
                         ₹{symbolQuote.last_price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
-                      <div className={`flex items-center gap-0.5 text-xs font-medium tabular-nums ${symbolQuote.change >= 0 ? 'text-bull' : 'text-bear'}`}>
+                      <div className={`flex shrink-0 items-center gap-0.5 text-xs font-medium tabular-nums ${symbolQuote.change >= 0 ? 'text-bull' : 'text-bear'}`}>
                         {symbolQuote.change >= 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
                         {symbolQuote.change >= 0 ? '+' : ''}{symbolQuote.change.toFixed(2)}%
                       </div>
                     </>
                   ) : (
-                    <div className="text-xs text-text-muted">Loading...</div>
+                    <div className="truncate text-sm font-semibold text-text-primary">{symbol}</div>
                   )}
                 </div>
 
-                <div className="flex items-center gap-1.5">
+                <div className="flex shrink-0 items-center gap-1.5">
                   {/* Chart-mode toggle (Standard / Volume Profile / Footprint) */}
                   <ChartModeToggle />
 

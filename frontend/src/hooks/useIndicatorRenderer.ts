@@ -28,6 +28,7 @@ import {
 
 import type { ChartRefs, ChartCandle } from '../utils/chartTypes';
 import type { ActiveIndicator } from '../store/useChartUIStore';
+import { DEFAULT_INDICATOR_STYLE } from '../store/useChartUIStore';
 import { createPaneManager, type PaneManager } from '../charting/paneManager';
 import { getIndicator, type IndicatorPlot } from '../charting/engines';
 import type { LinePoint, LineStyleSpec } from '../charting/types';
@@ -190,20 +191,34 @@ export function useIndicatorRenderer(
         ? paneIndexById.get(render.paneId) ?? 0
         : 0;
 
-      const baseStyle = {
-        color: ind.style.color,
-        lineWidth: ind.style.lineWidth as 1 | 2 | 3 | 4,
-        lineStyle: toLineStyle(ind.style.lineStyle),
-        visible: ind.visible,
-        priceLineVisible: false,
-        lastValueVisible: false,
-        crosshairMarkerVisible: false,
-      };
+      // Color resolution (Requirement 2.8 — every constituent line is drawn):
+      //   · multi-line indicators (Ichimoku, ADX/DMI, Bollinger…) use each
+      //     line's own engine-designed color so they stay visually distinct
+      //     instead of collapsing into one flat color;
+      //   · single-line indicators honor a user's per-instance color override
+      //     from the Indicator Manager, falling back to the engine color.
+      const isSingleLine = plot.lines.length === 1;
+      const userOverrodeColor = ind.style.color !== DEFAULT_INDICATOR_STYLE.color;
 
       // Render every constituent line the indicator defines (Requirement 2.8).
       const seenLineIds = new Set<string>();
       for (const ln of plot.lines) {
         seenLineIds.add(ln.id);
+
+        // Prefer the engine's per-line style; let an explicit single-line user
+        // override win for color/width/dash.
+        const spec: LineStyleSpec =
+          isSingleLine && userOverrodeColor ? ind.style : ln.style;
+        const baseStyle = {
+          color: spec.color ?? ln.style.color,
+          lineWidth: ((spec.lineWidth ?? ln.style.lineWidth ?? 2) as 1 | 2 | 3 | 4),
+          lineStyle: toLineStyle(spec.lineStyle ?? ln.style.lineStyle),
+          visible: ind.visible,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        };
+
         let series = render.lines.get(ln.id);
         if (!series) {
           try {
