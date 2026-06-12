@@ -5,6 +5,68 @@ import type { PredictiveSignal } from '../store/useTradeStore';
 import type { ChartCandle, VolumeBar, EmaPoint, ChartRefs, Timeframe } from '../utils/chartTypes';
 import { TIMEFRAME_MS } from '../utils/chartTypes';
 import { useChartUIStore } from '../store/useChartUIStore';
+import { applyLatestCandleUpdate } from '../charting/engines/canonicalCandles';
+
+// ── Realtime change classification (Requirements 9.3, 9.5, 9.6) ───────────────
+//
+// `chartData` arriving here is already canonical (sorted ascending and
+// de-duplicated by `aggregateCandles`). To honor the realtime requirements we
+// only need to decide HOW to paint each new snapshot relative to the one we
+// last painted:
+//
+//   - 'update'  — only the most-recent candle changed in place → `series.update()`
+//                 (Requirement 9.3: no re-render of the earlier candles);
+//   - 'append'  — exactly one newer candle was added → `series.update()` plus a
+//                 right-edge follow when the view was already at the latest bar
+//                 (Requirement 9.5);
+//   - 'repaint' — anything else (an out-of-order/earlier candle changed, a
+//                 reorder, or a shrink) → full `setData()` from the canonical
+//                 series, which can never raise (Requirement 9.6).
+
+/** Structural candle equality on the fields the chart renders. */
+function sameCandle(a: ChartCandle, b: ChartCandle): boolean {
+  return (
+    a.time === b.time &&
+    a.open === b.open &&
+    a.high === b.high &&
+    a.low === b.low &&
+    a.close === b.close
+  );
+}
+
+type RealtimePaintKind = 'update' | 'append' | 'repaint';
+
+/**
+ * Classify the transition from the previously painted series to the next one.
+ *
+ * The leading candles must be unchanged for an in-place `update`/`append`;
+ * otherwise an out-of-order or historical change occurred and we repaint from
+ * the canonical series. The tail decision (update vs append vs repaint) is
+ * delegated to the canonical `applyLatestCandleUpdate` helper.
+ */
+function classifyRealtimePaint(prev: ChartCandle[], next: ChartCandle[]): RealtimePaintKind {
+  if (prev.length === 0 || next.length === 0) return 'repaint';
+
+  const delta = next.length - prev.length;
+
+  // Only a same-length (in-place) change or a single append can be incremental;
+  // any other size change is a structural repaint.
+  if (delta !== 0 && delta !== 1) return 'repaint';
+
+  // Verify the shared prefix is byte-for-byte unchanged. A change anywhere but
+  // the tail means an earlier candle was rewritten (out-of-order tick) and must
+  // trigger a repaint (Requirement 9.6).
+  const prefixLen = delta === 0 ? prev.length - 1 : prev.length;
+  for (let i = 0; i < prefixLen; i++) {
+    if (!sameCandle(prev[i], next[i])) return 'repaint';
+  }
+
+  // The prefix is intact — let the canonical helper classify the tail candle.
+  const { kind } = applyLatestCandleUpdate(prev, next[next.length - 1]);
+  if (kind === 'update' && delta !== 0) return 'repaint';
+  if (kind === 'append' && delta !== 1) return 'repaint';
+  return kind;
+}
 
 // ── Dual-Engine IPC Types ────────────────────────────────────────────────────
 
@@ -44,6 +106,9 @@ export function useChartDataSync(
   const lastPaintedCandleCountRef = useRef<number>(0);
   const lastPaintedTimeframeRef = useRef<string>('');
   const lastPaintedSymbolRef = useRef<string>('');
+  // The exact series we last pushed to the chart, used to classify each new
+  // snapshot as an in-place update, an append, or an out-of-order repaint.
+  const lastPaintedSeriesRef = useRef<ChartCandle[]>([]);
 
   // ── Clear chart immediately when symbol changes (before new data arrives) ─
   // Without this, the old symbol's candles stay visible during the async
@@ -59,6 +124,7 @@ export function useChartDataSync(
       if (ghostLineRef.current) ghostLineRef.current.setData([]);
       // Reset the painted-count so the next data arrival triggers a full setData
       lastPaintedCandleCountRef.current = 0;
+      lastPaintedSeriesRef.current = [];
       lastPaintedSymbolRef.current = activeSymbol;
     }
   }, [activeSymbol, candleSeriesRef, volumeSeriesRef, ema9SeriesRef, ema21SeriesRef, ghostLineRef]);
@@ -87,51 +153,23 @@ export function useChartDataSync(
         lastPaintedTimeframeRef.current = effectiveTimeframe;
         lastPaintedSymbolRef.current = activeSymbol;
         lastPaintedCandleCountRef.current = 0;
+        lastPaintedSeriesRef.current = [];
       }
       return;
     }
 
-    const newCandleArrived = chartData.length !== prevCount;
+    const isReset = timeframeChanged || symbolChanged || prevCount === 0;
 
-    if (timeframeChanged || symbolChanged || newCandleArrived) {
-      // ── DIAGNOSTIC TRACER — Final Mile (chartData → setData boundary) ──
-      // This is the very last gate before lightweight-charts. If Rust and
-      // React Parse logs both look healthy but THIS shows an integrity
-      // failure or zero items, the breakage is in the aggregation /
-      // merge layer (mergedCandles → aggregateCandles → chartData).
+    if (isReset) {
+      // ── FULL RESET PATH ────────────────────────────────────────────
+      // Symbol/timeframe switch or first data load: replace the whole series
+      // and snap the viewport to the most-recent candles. The symbol-switch
+      // case also satisfies Requirement 9.4 (no candle from the previous
+      // symbol remains visible) because we overwrite via setData().
       console.log(
         `🎨 [CHART RENDER] Calling setData with ${chartData.length} items ` +
         `(symbol=${activeSymbol}, tf=${effectiveTimeframe}).`
       );
-      if (chartData.length > 0) {
-        const isValid = chartData.every(
-          (c) =>
-            c.time !== undefined &&
-            c.time !== null &&
-            !Number.isNaN(c.open) &&
-            !Number.isNaN(c.high) &&
-            !Number.isNaN(c.low) &&
-            !Number.isNaN(c.close)
-        );
-        console.log(`🎨 [CHART RENDER] Data Integrity Check Passed? : ${isValid}`);
-        console.log("🎨 [CHART RENDER] Sample First:", JSON.stringify(chartData[0]));
-        console.log(
-          "🎨 [CHART RENDER] Sample Last :",
-          JSON.stringify(chartData[chartData.length - 1])
-        );
-        if (!isValid) {
-          const bad = chartData.find(
-            (c) =>
-              c.time === undefined ||
-              c.time === null ||
-              Number.isNaN(c.open) ||
-              Number.isNaN(c.high) ||
-              Number.isNaN(c.low) ||
-              Number.isNaN(c.close)
-          );
-          console.error("🎨 [CHART RENDER ERROR] Malformed candle detected!", bad);
-        }
-      }
 
       candleSeriesRef.current.setData(
         chartData as Array<{ time: Time; open: number; high: number; low: number; close: number }>
@@ -149,31 +187,53 @@ export function useChartDataSync(
       lastPaintedTimeframeRef.current = effectiveTimeframe;
       lastPaintedSymbolRef.current = activeSymbol;
       lastPaintedCandleCountRef.current = chartData.length;
+      lastPaintedSeriesRef.current = chartData;
 
-      if (timeframeChanged || symbolChanged || prevCount === 0) {
-        // Traditional chart viewport: show the latest ~100 candles with the
-        // newest candle on the right edge + rightOffset breathing room.
-        // This matches TradingView / Zerodha Kite / any professional chart.
-        //
-        // scrollToRealTime() alone doesn't work on first data load (no prior
-        // visible range). Setting an explicit visible logical range ensures
-        // the chart always opens at the latest data.
-        const ts = chartRef.current?.timeScale();
-        if (ts && chartData.length > 0) {
-          const visibleBars = Math.min(chartData.length, 100);
-          const fromIndex = chartData.length - visibleBars;
-          ts.setVisibleLogicalRange({
-            from: fromIndex,
-            to: chartData.length + 10, // +10 = rightOffset breathing room
-          });
-        }
+      // Traditional chart viewport: show the latest ~100 candles with the
+      // newest candle on the right edge + rightOffset breathing room.
+      const ts = chartRef.current?.timeScale();
+      if (ts && chartData.length > 0) {
+        const visibleBars = Math.min(chartData.length, 100);
+        const fromIndex = chartData.length - visibleBars;
+        ts.setVisibleLogicalRange({
+          from: fromIndex,
+          to: chartData.length + 10, // +10 = rightOffset breathing room
+        });
       }
+      return;
+    }
+
+    // ── INCREMENTAL PATH (Requirements 9.3, 9.5, 9.6) ──────────────────
+    const prevSeries = lastPaintedSeriesRef.current;
+    const kind = classifyRealtimePaint(prevSeries, chartData);
+
+    // Capture whether the user is parked at the right edge BEFORE we mutate the
+    // series, so an append can keep the newest candle in view (Requirement 9.5).
+    const timeScale = chartRef.current?.timeScale();
+    let wasAtRightEdge = false;
+    if (timeScale) {
+      const range = timeScale.getVisibleLogicalRange();
+      // The last data index is prevCount - 1; treat "within one bar of the end"
+      // as being at the right edge to tolerate the rightOffset breathing room.
+      if (range) wasAtRightEdge = range.to >= prevCount - 1;
+    }
+
+    if (kind === 'repaint') {
+      // ── OUT-OF-ORDER / STRUCTURAL REPAINT ──────────────────────────
+      // An earlier candle changed, a reorder occurred, or the series shrank.
+      // Repaint from the canonical series; setData never raises, satisfying
+      // Requirement 9.6. The viewport is left untouched so the user keeps their
+      // current scroll position.
+      candleSeriesRef.current.setData(chartData as Array<{ time: Time; open: number; high: number; low: number; close: number }>);
+      volumeSeriesRef.current.setData(volumeData as Array<{ time: Time; value: number; color: string }>);
+      if (ema9SeriesRef.current) ema9SeriesRef.current.setData(ema9Data as Array<{ time: Time; value: number }>);
+      if (ema21SeriesRef.current) ema21SeriesRef.current.setData(ema21Data as Array<{ time: Time; value: number }>);
     } else {
-      // ── SMOOTH UPDATE PATH ─────────────────────────────────────────
-      // BUG-6: Wrapped in try-catch. series.update() throws when the new
-      // candle's timestamp is earlier than the last painted one — this happens
-      // when a live WS tick is superseded by a historical candle at a slightly
-      // different ms boundary. Full setData() is always safe as a fallback.
+      // ── SMOOTH UPDATE / APPEND ─────────────────────────────────────
+      // `kind` is 'update' (last candle changed in place — Requirement 9.3) or
+      // 'append' (one newer candle). `series.update()` handles both without
+      // touching the earlier candles. The try/catch keeps a safe repaint
+      // fallback for any timestamp edge case lightweight-charts rejects.
       const lastCandle = chartData[chartData.length - 1];
       const lastVolume = volumeData[volumeData.length - 1];
       const lastEma9 = ema9Data[ema9Data.length - 1];
@@ -181,18 +241,28 @@ export function useChartDataSync(
 
       try {
         candleSeriesRef.current.update(lastCandle as { time: Time; open: number; high: number; low: number; close: number });
-        volumeSeriesRef.current.update(lastVolume as { time: Time; value: number; color: string });
+        if (lastVolume) volumeSeriesRef.current.update(lastVolume as { time: Time; value: number; color: string });
         if (ema9SeriesRef.current && lastEma9) ema9SeriesRef.current.update(lastEma9 as { time: Time; value: number });
         if (ema21SeriesRef.current && lastEma21) ema21SeriesRef.current.update(lastEma21 as { time: Time; value: number });
+
+        // Right-edge follow: keep the freshly appended candle visible only when
+        // the view was already pinned to the latest bar (Requirement 9.5).
+        if (kind === 'append' && wasAtRightEdge && timeScale) {
+          timeScale.scrollToRealTime();
+        }
       } catch (_err) {
         // Fallback: full repaint is safe and produces no visual artifacts.
         candleSeriesRef.current.setData(chartData as Array<{ time: Time; open: number; high: number; low: number; close: number }>);
         volumeSeriesRef.current.setData(volumeData as Array<{ time: Time; value: number; color: string }>);
         if (ema9SeriesRef.current) ema9SeriesRef.current.setData(ema9Data as Array<{ time: Time; value: number }>);
         if (ema21SeriesRef.current) ema21SeriesRef.current.setData(ema21Data as Array<{ time: Time; value: number }>);
-        lastPaintedCandleCountRef.current = chartData.length;
       }
     }
+
+    lastPaintedTimeframeRef.current = effectiveTimeframe;
+    lastPaintedSymbolRef.current = activeSymbol;
+    lastPaintedCandleCountRef.current = chartData.length;
+    lastPaintedSeriesRef.current = chartData;
   }, [chartData, volumeData, ema9Data, ema21Data, effectiveTimeframe, activeSymbol, candleSeriesRef, volumeSeriesRef, ema9SeriesRef, ema21SeriesRef, chartRef]);
 
   // ── Ghost Line (predictive forward projection) ──────────────────────

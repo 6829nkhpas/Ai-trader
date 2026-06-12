@@ -1,13 +1,71 @@
 'use client';
 
+// Feature: professional-charting-suite
+//
+// VolumeProfileOverlay — canvas rendering adapter for the pure
+// `VolumeProfileEngine`.
+//
+// All binning / POC / Value_Area math lives in
+// `charting/engines/volumeProfileEngine.ts`. This component is a thin renderer:
+// it slices the candle series for the selected profile range, asks the engine
+// to build the profile, caches the result, and draws the rows, markers and
+// developing value area to a supersampled canvas.
+//
+// Behaviours implemented here:
+//  - Per-row volume bars aligned to the price scale (Req 7.6).
+//  - Distinct value-area row styling (Req 7.7).
+//  - POC / VAH / VAL markers, omitted on an empty profile (Req 7.9).
+//  - Developing value area for the active session (Req 7.8).
+//  - Empty-profile indication when total volume is zero (Req 7.9).
+//  - Debounced (200 ms) recompute on visible-range pan/zoom (Req 7.5).
+//  - Visible / session / fixed-range anchor handling (Req 7.1).
+
 import React, { useEffect, useRef, useCallback } from 'react';
 import type { ChartCandle, VolumeBar } from '../../utils/chartTypes';
+import {
+  buildProfile,
+  DEFAULT_PROFILE_ROWS,
+  DEFAULT_VALUE_AREA_PERCENT,
+  type ProfileRange,
+  type ProfileRangeSpec,
+  type VolumeProfile,
+} from '../../charting/engines';
+
+/** Debounce window for visible-range recompute (Requirement 7.5). */
+const VISIBLE_RECOMPUTE_DEBOUNCE_MS = 200;
 
 interface VolumeProfileOverlayProps {
   chartRef: React.RefObject<any>;
   candleSeriesRef: React.RefObject<any>;
   chartData: ChartCandle[];
   volumeData: VolumeBar[];
+  /** Profile range mode (Requirement 7.1). Defaults to `visible`. */
+  range?: ProfileRange;
+  /** Number of price-level rows (Requirement 7.2). Defaults to 24. */
+  rows?: number;
+  /** Value-area target percentage (Requirement 7.4). Defaults to 70. */
+  valuePercent?: number;
+  /**
+   * Render the developing value area for the active session in addition to the
+   * main profile (Requirement 7.8).
+   */
+  showDevelopingValueArea?: boolean;
+  /**
+   * Inclusive `[start, end]` time anchors for the `fixed` range
+   * (Requirement 7.1 / 7.6). Required when `range === 'fixed'`.
+   */
+  fixedRange?: { start: number; end: number };
+  /**
+   * Explicit session start time. When omitted, the active session is derived as
+   * the UTC-day span of the most recent candle.
+   */
+  sessionStartTime?: number;
+  /**
+   * Notified when a fixed range is accepted (`false`) or rejected as invalid
+   * (`true`) so the host can present an invalid-anchor indication
+   * (Requirement 7.10).
+   */
+  onInvalidFixedRange?: (invalid: boolean) => void;
 }
 
 export default function VolumeProfileOverlay({
@@ -15,24 +73,158 @@ export default function VolumeProfileOverlay({
   candleSeriesRef,
   chartData,
   volumeData,
+  range = 'visible',
+  rows = DEFAULT_PROFILE_ROWS,
+  valuePercent = DEFAULT_VALUE_AREA_PERCENT,
+  showDevelopingValueArea = false,
+  fixedRange,
+  sessionStartTime,
+  onInvalidFixedRange,
 }: VolumeProfileOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
   const needsRedrawRef = useRef(true);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Keep latest data accessible to the rAF loop via a ref (avoids stale closures)
-  const dataRef = useRef({ chartData, volumeData });
-  dataRef.current = { chartData, volumeData };
+  // Latest props accessible to the rAF loop without stale closures.
+  const propsRef = useRef({
+    chartData,
+    volumeData,
+    range,
+    rows,
+    valuePercent,
+    showDevelopingValueArea,
+    fixedRange,
+    sessionStartTime,
+    onInvalidFixedRange,
+  });
+  propsRef.current = {
+    chartData,
+    volumeData,
+    range,
+    rows,
+    valuePercent,
+    showDevelopingValueArea,
+    fixedRange,
+    sessionStartTime,
+    onInvalidFixedRange,
+  };
 
-  // ── Core Drawing Function ──────────────────────────────────────────────────
+  // Cached engine output. Retained across invalid fixed ranges (Req 7.10) and
+  // re-projected to current price coordinates every frame.
+  const profileRef = useRef<VolumeProfile | null>(null);
+  const developingProfileRef = useRef<VolumeProfile | null>(null);
+
+  // ── Derive the active-session candle slice (Req 7.8) ──────────────────────
+  const sessionCandles = useCallback(
+    (cData: ChartCandle[], explicitStart?: number): ChartCandle[] => {
+      if (cData.length === 0) return [];
+      let start = explicitStart;
+      if (typeof start !== 'number' || !Number.isFinite(start)) {
+        // Derive the UTC-day start of the most recent candle. `time` is a UNIX
+        // timestamp in seconds (lightweight-charts) or milliseconds; detect the
+        // unit by magnitude so the same logic works for both.
+        const last = cData[cData.length - 1].time;
+        const isMs = last > 1e12;
+        const dayMs = 86_400_000;
+        const ms = isMs ? last : last * 1000;
+        const dayStartMs = Math.floor(ms / dayMs) * dayMs;
+        start = isMs ? dayStartMs : Math.floor(dayStartMs / 1000);
+      }
+      return cData.filter((c) => c.time >= (start as number));
+    },
+    [],
+  );
+
+  // ── Recompute the cached profile(s) via the engine ───────────────────────
+  const recompute = useCallback(() => {
+    try {
+      const chart = chartRef.current;
+      const p = propsRef.current;
+      const cData = p.chartData;
+      const vData = p.volumeData;
+      if (!chart || cData.length === 0) {
+        profileRef.current = null;
+        developingProfileRef.current = null;
+        return;
+      }
+
+      const opts = { rows: p.rows, valuePercent: p.valuePercent };
+
+      // ── Select candles + range spec for the requested mode (Req 7.1) ──────
+      let ranged: ChartCandle[] = cData;
+      let spec: ProfileRangeSpec = { kind: 'visible' };
+
+      if (p.range === 'fixed') {
+        const fr = p.fixedRange;
+        const invalid =
+          !fr ||
+          !Number.isFinite(fr.start) ||
+          !Number.isFinite(fr.end) ||
+          fr.end <= fr.start;
+        // Notify the host of the validity transition (Req 7.10).
+        p.onInvalidFixedRange?.(invalid);
+        if (invalid) {
+          // Retain the previously computed profile unchanged (Req 7.10).
+          return;
+        }
+        ranged = cData; // engine filters to the inclusive [start, end] span.
+        spec = { kind: 'fixed', start: fr.start, end: fr.end };
+      } else if (p.range === 'session') {
+        ranged = sessionCandles(cData, p.sessionStartTime);
+        spec = { kind: 'session' };
+      } else {
+        // Visible range: slice to the chart's current visible logical range.
+        let logicalRange: any;
+        try {
+          logicalRange = chart.timeScale().getVisibleLogicalRange();
+        } catch {
+          logicalRange = null;
+        }
+        if (
+          logicalRange &&
+          logicalRange.from != null &&
+          logicalRange.to != null &&
+          !isNaN(logicalRange.from) &&
+          !isNaN(logicalRange.to)
+        ) {
+          const fromIdx = Math.max(0, Math.floor(logicalRange.from));
+          const toIdx = Math.min(cData.length - 1, Math.ceil(logicalRange.to));
+          ranged = fromIdx <= toIdx ? cData.slice(fromIdx, toIdx + 1) : [];
+        }
+        spec = { kind: 'visible' };
+      }
+
+      profileRef.current = buildProfile(ranged, vData, {
+        ...opts,
+        range: spec,
+        previousProfile: profileRef.current,
+      });
+
+      // ── Developing value area over the accumulated session (Req 7.8) ──────
+      if (p.showDevelopingValueArea) {
+        const sess = sessionCandles(cData, p.sessionStartTime);
+        developingProfileRef.current = buildProfile(sess, vData, {
+          ...opts,
+          range: { kind: 'session' },
+        });
+      } else {
+        developingProfileRef.current = null;
+      }
+
+      needsRedrawRef.current = true;
+    } catch {
+      // Ignore transient recompute errors; keep the last good profile.
+    }
+  }, [chartRef, sessionCandles]);
+
+  // ── Core Drawing Function (pure projection of the cached profile) ─────────
   const draw = useCallback(() => {
     try {
       const canvas = canvasRef.current;
       const chart = chartRef.current;
       const series = candleSeriesRef.current;
-      const { chartData: cData, volumeData: vData } = dataRef.current;
-
-      if (!canvas || !chart || !series || cData.length === 0) return;
+      if (!canvas || !chart || !series) return;
 
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
@@ -47,157 +239,117 @@ export default function VolumeProfileOverlay({
       const dpr = (window.devicePixelRatio || 1) * 2;
       const bw = Math.floor(rect.width * dpr);
       const bh = Math.floor(rect.height * dpr);
-
       if (canvas.width !== bw || canvas.height !== bh) {
         canvas.width = bw;
         canvas.height = bh;
       }
 
-      // Always reset transform before drawing to prevent accumulation
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, rect.width, rect.height);
 
       const w = rect.width;
-
-      // ── Visible Range ────────────────────────────────────────────────────
-      let logicalRange: any;
-      try {
-        logicalRange = chart.timeScale().getVisibleLogicalRange();
-      } catch {
-        return;
-      }
-      if (
-        !logicalRange ||
-        logicalRange.from == null ||
-        logicalRange.to == null ||
-        isNaN(logicalRange.from) ||
-        isNaN(logicalRange.to)
-      )
-        return;
-
-      const fromIdx = Math.max(0, Math.floor(logicalRange.from));
-      const toIdx = Math.min(cData.length - 1, Math.ceil(logicalRange.to));
-      if (isNaN(fromIdx) || isNaN(toIdx) || fromIdx > toIdx) return;
-
-      const visible = cData.slice(fromIdx, toIdx + 1);
-      if (visible.length === 0) return;
-
-      // ── Price Range ──────────────────────────────────────────────────────
-      let minP = Infinity,
-        maxP = -Infinity;
-      for (const c of visible) {
-        if (c.low < minP) minP = c.low;
-        if (c.high > maxP) maxP = c.high;
-      }
-      if (minP >= maxP) return;
-
-      // ── Bin Volume into 50 price levels ──────────────────────────────────
-      const BIN_COUNT = 50;
-      const binSize = (maxP - minP) / BIN_COUNT;
-      const bins = new Float64Array(BIN_COUNT);
-
-      // O(1) volume lookup map (avoid .find() per candle)
-      const volMap = new Map<any, number>();
-      for (const v of vData) volMap.set(v.time, v.value);
-
-      for (const c of visible) {
-        const vol = volMap.get(c.time) || 0;
-        const lo = Math.max(0, Math.floor((c.low - minP) / binSize));
-        const hi = Math.min(BIN_COUNT - 1, Math.floor((c.high - minP) / binSize));
-        if (lo === hi) {
-          bins[lo] += vol;
-        } else {
-          const share = vol / (hi - lo + 1);
-          for (let i = lo; i <= hi; i++) bins[i] += share;
-        }
-      }
-
-      // ── Point of Control (POC) ───────────────────────────────────────────
-      let maxVol = 0,
-        pocIdx = 0;
-      for (let i = 0; i < BIN_COUNT; i++) {
-        if (bins[i] > maxVol) {
-          maxVol = bins[i];
-          pocIdx = i;
-        }
-      }
-      if (maxVol === 0) return;
-
-      // ── Value Area (70% of total volume, expanding from POC) ─────────────
-      const totalVol = bins.reduce((s, v) => s + v, 0);
-      const vaTarget = totalVol * 0.7;
-      const vaSet = new Set<number>();
-      vaSet.add(pocIdx);
-      let vaVol = bins[pocIdx];
-      let vaLo = pocIdx,
-        vaHi = pocIdx;
-      while (vaVol < vaTarget) {
-        const below = vaLo > 0 ? bins[vaLo - 1] : 0;
-        const above = vaHi < BIN_COUNT - 1 ? bins[vaHi + 1] : 0;
-        if (below === 0 && above === 0) break;
-        if (below >= above) {
-          vaLo--;
-          vaSet.add(vaLo);
-          vaVol += below;
-        } else {
-          vaHi++;
-          vaSet.add(vaHi);
-          vaVol += above;
-        }
-      }
-
-      // ── Draw Bars from RIGHT side (professional volume profile layout) ───
       const rightMargin = 65; // lightweight-charts right price scale
-      const profileMaxW = w * 0.30;
+      const profileMaxW = w * 0.3;
       const barAnchorX = w - rightMargin;
 
-      for (let i = 0; i < BIN_COUNT; i++) {
-        const pLo = minP + i * binSize;
-        const pHi = minP + (i + 1) * binSize;
+      const profile = profileRef.current;
+      if (!profile) return;
 
-        let yHi: number | null, yLo: number | null;
+      // ── Empty-profile indication, no POC/VAH/VAL markers (Req 7.9) ────────
+      if (profile.totalVolume <= 0 || profile.poc == null) {
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.55)';
+        ctx.font = '11px monospace';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        ctx.fillText('No volume in range', barAnchorX, 8);
+        return;
+      }
+
+      // Greatest row volume scales bar width.
+      let maxVol = 0;
+      for (const r of profile.rows) if (r.volume > maxVol) maxVol = r.volume;
+      if (maxVol <= 0) return;
+
+      // ── Developing value-area band (drawn behind the bars) (Req 7.8) ──────
+      const developing = developingProfileRef.current;
+      if (developing && developing.vah != null && developing.val != null) {
+        let yVah: number | null = null;
+        let yVal: number | null = null;
         try {
-          yHi = series.priceToCoordinate(pHi);
-          yLo = series.priceToCoordinate(pLo);
+          yVah = series.priceToCoordinate(developing.vah);
+          yVal = series.priceToCoordinate(developing.val);
+        } catch {
+          yVah = null;
+        }
+        if (yVah != null && yVal != null && !isNaN(yVah) && !isNaN(yVal)) {
+          const top = Math.min(yVah, yVal);
+          const h = Math.max(1, Math.abs(yVal - yVah));
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.07)'; // sky tint
+          ctx.fillRect(0, top, barAnchorX, h);
+        }
+        if (developing.poc != null) {
+          let yDevPoc: number | null = null;
+          try {
+            yDevPoc = series.priceToCoordinate(developing.poc);
+          } catch {
+            yDevPoc = null;
+          }
+          if (yDevPoc != null && !isNaN(yDevPoc)) {
+            const yp = Math.round(yDevPoc) + 0.5;
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([2, 3]);
+            ctx.beginPath();
+            ctx.moveTo(0, yp);
+            ctx.lineTo(barAnchorX, yp);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+        }
+      }
+
+      // ── Per-row volume bars (Req 7.6) w/ distinct VA styling (Req 7.7) ────
+      for (const row of profile.rows) {
+        let yHi: number | null;
+        let yLo: number | null;
+        try {
+          yHi = series.priceToCoordinate(row.priceHigh);
+          yLo = series.priceToCoordinate(row.priceLow);
         } catch {
           continue;
         }
         if (yHi == null || yLo == null || isNaN(yHi) || isNaN(yLo)) continue;
 
         const barH = Math.max(1, Math.abs(yLo - yHi));
-        const barW = (bins[i] / maxVol) * profileMaxW;
+        const barW = (row.volume / maxVol) * profileMaxW;
         const yTop = Math.round(Math.min(yHi, yLo));
         const xStart = Math.round(barAnchorX - barW);
         const roundedBarW = Math.round(barW);
         const roundedBarH = Math.round(barH);
 
-        const isVA = vaSet.has(i);
-
-        // VA bars: warm amber/orange. Non-VA: cool slate gray
-        ctx.fillStyle = isVA
+        // VA rows: warm amber. Non-VA: cool slate. (Req 7.7)
+        ctx.fillStyle = row.inValueArea
           ? 'rgba(245, 158, 11, 0.35)'
           : 'rgba(148, 163, 184, 0.12)';
         ctx.fillRect(xStart, yTop, roundedBarW, roundedBarH);
 
-        // Subtle edge border
-        ctx.strokeStyle = isVA
+        ctx.strokeStyle = row.inValueArea
           ? 'rgba(245, 158, 11, 0.18)'
           : 'rgba(148, 163, 184, 0.06)';
         ctx.lineWidth = 0.5;
         ctx.strokeRect(xStart + 0.5, yTop + 0.5, roundedBarW, roundedBarH);
       }
 
-      // ── POC Line (pink, dashed, full width) ──────────────────────────────
-      const pocPrice = minP + (pocIdx + 0.5) * binSize;
+      // ── POC marker (pink, dashed, full width) (Req 7.3) ───────────────────
       let yPoc: number | null;
       try {
-        yPoc = series.priceToCoordinate(pocPrice);
+        yPoc = series.priceToCoordinate(profile.poc);
       } catch {
-        return;
+        yPoc = null;
       }
       if (yPoc != null && !isNaN(yPoc)) {
-        const yP = Math.round(yPoc) + 0.5; // +0.5 → crisp 1px line
-        ctx.strokeStyle = '#ec4899'; // pink-500
+        const yP = Math.round(yPoc) + 0.5;
+        ctx.strokeStyle = '#ec4899';
         ctx.lineWidth = 1.5;
         ctx.setLineDash([6, 3]);
         ctx.beginPath();
@@ -206,22 +358,20 @@ export default function VolumeProfileOverlay({
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // POC label
         ctx.fillStyle = '#ec4899';
         ctx.font = 'bold 10px monospace';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
-        ctx.fillText(`POC ${pocPrice.toFixed(2)}`, 8, yP - 10);
+        ctx.fillText(`POC ${profile.poc.toFixed(2)}`, 8, yP - 10);
       }
 
-      // ── VAH / VAL Reference Lines (purple, dashed) ──────────────────────
-      const vahPrice = minP + (vaHi + 1) * binSize;
-      const valPrice = minP + vaLo * binSize;
-
-      for (const { price, label } of [
-        { price: vahPrice, label: 'VAH' },
-        { price: valPrice, label: 'VAL' },
-      ]) {
+      // ── VAH / VAL markers (purple, dashed) (Req 7.4) ──────────────────────
+      const markers: { price: number | null; label: string }[] = [
+        { price: profile.vah, label: 'VAH' },
+        { price: profile.val, label: 'VAL' },
+      ];
+      for (const { price, label } of markers) {
+        if (price == null) continue;
         let yLine: number | null;
         try {
           yLine = series.priceToCoordinate(price);
@@ -231,7 +381,7 @@ export default function VolumeProfileOverlay({
         if (yLine == null || isNaN(yLine)) continue;
 
         const yL = Math.round(yLine) + 0.5;
-        ctx.strokeStyle = 'rgba(168, 85, 247, 0.5)'; // purple
+        ctx.strokeStyle = 'rgba(168, 85, 247, 0.5)';
         ctx.lineWidth = 1;
         ctx.setLineDash([4, 4]);
         ctx.beginPath();
@@ -247,15 +397,13 @@ export default function VolumeProfileOverlay({
         ctx.fillText(`${label} ${price.toFixed(2)}`, 8, yL - 8);
       }
     } catch {
-      // Silently swallow any transient drawing errors
+      // Silently swallow any transient drawing errors.
     }
   }, [chartRef, candleSeriesRef]);
 
-  // ── requestAnimationFrame Render Loop ───────────────────────────────────────
-  // Only draws when the dirty flag is set, avoiding wasted GPU cycles.
+  // ── requestAnimationFrame Render Loop ──────────────────────────────────────
   useEffect(() => {
     let active = true;
-
     const loop = () => {
       if (!active) return;
       if (needsRedrawRef.current) {
@@ -264,58 +412,83 @@ export default function VolumeProfileOverlay({
       }
       rafRef.current = requestAnimationFrame(loop);
     };
-
     rafRef.current = requestAnimationFrame(loop);
-
     return () => {
       active = false;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
   }, [draw]);
 
-  // ── Chart Event Subscriptions (only set dirty flag, never draw directly) ───
+  // ── Chart event subscriptions ──────────────────────────────────────────────
+  // Visible-range changes are debounced (Req 7.5): each pan/zoom event schedules
+  // a recompute 200 ms in the future, while still repainting immediately so the
+  // cached profile re-projects smoothly to the new price coordinates.
   useEffect(() => {
     let active = true;
     let unsubFn: (() => void) | null = null;
 
-    const markDirty = () => {
+    const onVisibleRangeChange = () => {
+      needsRedrawRef.current = true; // reposition cached profile this frame
+      if (propsRef.current.range !== 'visible') return; // only visible debounces
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = setTimeout(() => {
+        recompute();
+      }, VISIBLE_RECOMPUTE_DEBOUNCE_MS);
+    };
+
+    const onResize = () => {
       needsRedrawRef.current = true;
     };
 
-    // Retry subscription until chart ref is available
     const trySubscribe = () => {
       const chart = chartRef.current;
       if (!chart) {
         if (active) setTimeout(trySubscribe, 100);
         return;
       }
-
       try {
-        chart.timeScale().subscribeVisibleLogicalRangeChange(markDirty);
+        chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleRangeChange);
         unsubFn = () => {
           try {
-            chart.timeScale().unsubscribeVisibleLogicalRangeChange(markDirty);
+            chart
+              .timeScale()
+              .unsubscribeVisibleLogicalRangeChange(onVisibleRangeChange);
           } catch {}
         };
       } catch {}
     };
 
     trySubscribe();
-    window.addEventListener('resize', markDirty);
+    window.addEventListener('resize', onResize);
 
     return () => {
       active = false;
       unsubFn?.();
-      window.removeEventListener('resize', markDirty);
+      window.removeEventListener('resize', onResize);
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     };
-  }, [chartRef]);
+  }, [chartRef, recompute]);
 
-  // ── Mark dirty on data changes ─────────────────────────────────────────────
+  // ── Recompute immediately on data / configuration changes ──────────────────
+  // Data changes (incl. each new session interval) and config changes recompute
+  // without debounce; developing value area thus tracks the session (Req 7.8).
   useEffect(() => {
+    recompute();
     needsRedrawRef.current = true;
-  }, [chartData, volumeData]);
+  }, [
+    recompute,
+    chartData,
+    volumeData,
+    range,
+    rows,
+    valuePercent,
+    showDevelopingValueArea,
+    fixedRange?.start,
+    fixedRange?.end,
+    sessionStartTime,
+  ]);
 
-  // ── Inline styles guarantee pixel-perfect sizing (no CSS class issues) ─────
+  // ── Inline styles guarantee pixel-perfect sizing ───────────────────────────
   return (
     <canvas
       ref={canvasRef}

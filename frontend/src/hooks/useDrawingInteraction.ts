@@ -74,6 +74,7 @@ export function useDrawingInteraction(
 ) {
   const activeDrawingTool = useChartUIStore((s) => s.activeDrawingTool);
   const drawingsLocked = useChartUIStore((s) => s.drawingsLocked);
+  const activeCursor = useChartUIStore((s) => s.activeCursor);
 
   // Maintain refs to chartData to keep pixelToPoint hook reference stable
   const chartDataRef = useRef(chartData);
@@ -219,10 +220,56 @@ export function useDrawingInteraction(
     const chart = chartRef.current;
     if (!container || !chart || activeDrawingTool || drawingsLocked) return;
 
+    const isEraser = activeCursor === 'eraser';
+
     const getLocal = (e: MouseEvent) => {
       const rect = container.getBoundingClientRect();
       return { x: e.clientX - rect.left, y: e.clientY - rect.top };
     };
+
+    // ── Eraser mode: a click on a drawing deletes it (Requirement 10.7) ──
+    if (isEraser) {
+      const onEraserClick = (e: MouseEvent) => {
+        if (e.button !== 0) return;
+        const { x, y } = getLocal(e);
+        const hit = findDrawingAt(x, y);
+        if (!hit) return;
+        e.stopPropagation();
+        const store = useChartUIStore.getState();
+        const drawing = store.drawings.find((d) => d.id === hit.id);
+        if (drawing?.locked) {
+          // Locked drawings cannot be deleted (Requirement 5.7).
+          console.warn(`[DRAW] Cannot erase locked drawing ${hit.id}`);
+          return;
+        }
+        store.removeDrawing(hit.id);
+      };
+
+      const onEraserMove = (e: MouseEvent) => {
+        const { x, y } = getLocal(e);
+        const hit = findDrawingAt(x, y);
+        // Highlight the drawing under the eraser so it reads as deletable.
+        useChartUIStore.getState().setHoveredDrawing(hit?.id ?? null);
+        container.style.cursor = hit ? 'pointer' : '';
+      };
+
+      const onEraserLeave = () => {
+        useChartUIStore.getState().setHoveredDrawing(null);
+        container.style.cursor = '';
+      };
+
+      container.addEventListener('mousedown', onEraserClick, true);
+      container.addEventListener('mousemove', onEraserMove);
+      container.addEventListener('mouseleave', onEraserLeave);
+
+      return () => {
+        container.removeEventListener('mousedown', onEraserClick, true);
+        container.removeEventListener('mousemove', onEraserMove);
+        container.removeEventListener('mouseleave', onEraserLeave);
+        useChartUIStore.getState().setHoveredDrawing(null);
+        container.style.cursor = '';
+      };
+    }
 
     const onMouseDown = (e: MouseEvent) => {
       if (e.button !== 0) return;
@@ -238,6 +285,12 @@ export function useDrawingInteraction(
 
         const drawing = store.drawings.find((d) => d.id === hit.id);
         if (!drawing) return;
+
+        // Locked drawings are immutable — do not start a drag (Requirement 5.7).
+        if (drawing.locked) {
+          console.warn(`[DRAW] Drawing ${hit.id} is locked and cannot be edited`);
+          return;
+        }
 
         originalPoints.current = [...drawing.points];
         dragStartPixel.current = { x, y };
@@ -264,6 +317,8 @@ export function useDrawingInteraction(
         // Update cursor based on hover
         const { x, y } = getLocal(e);
         const hit = findDrawingAt(x, y);
+        // Track the hovered drawing so the renderer can highlight it (Req 10.5).
+        useChartUIStore.getState().setHoveredDrawing(hit?.id ?? null);
         if (hit) {
           if (hit.hitType === 'body') {
             container.style.cursor = 'grab';
@@ -411,7 +466,7 @@ export function useDrawingInteraction(
       container.style.cursor = '';
       chart.applyOptions({ handleScroll: true, handleScale: true });
     };
-  }, [activeDrawingTool, drawingsLocked, chartRef, candleSeriesRef, 
+  }, [activeDrawingTool, drawingsLocked, activeCursor, chartRef, candleSeriesRef, 
       containerRef, pixelToPoint, findDrawingAt]);
 }
 
