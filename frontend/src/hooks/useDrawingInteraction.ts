@@ -149,7 +149,11 @@ export function useDrawingInteraction(
   const findDrawingAt = useCallback(
     (px: number, py: number): { id: string; hitType: string } | null => {
       const { drawings } = useChartUIStore.getState();
-      for (const drawing of drawings) {
+      // Iterate topmost-first (array order is paint order; last = front) and
+      // skip hidden drawings so selection matches what the user sees.
+      for (let di = drawings.length - 1; di >= 0; di--) {
+        const drawing = drawings[di];
+        if (drawing.hidden) continue;
         if (drawing.points.length < 2) continue;
 
         const p1px = pointToPixel(drawing.points[0]);

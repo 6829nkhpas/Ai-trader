@@ -40,6 +40,8 @@ import { NO_VALUE, DEFAULT_PRICE_PRECISION } from '../../charting/crosshair';
 import { useDrawingEngine } from '../../hooks/useDrawingEngine';
 import { useDrawingInteraction } from '../../hooks/useDrawingInteraction';
 import { DrawingOverlays } from './DrawingOverlays';
+import DrawingContextToolbar from './DrawingContextToolbar';
+import DrawingLayersPanel from './DrawingLayersPanel';
 import { useDrawingRenderer } from '../../hooks/useDrawingRenderer';
 import { useTauriLiveData } from '../../hooks/useTauriLiveData';
 import { useConnectionStatus } from '../../hooks/useConnectionStatus';
@@ -89,6 +91,7 @@ export default function ChartRenderer({
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
 
   const { activeCursor, activeDrawingTool, drawings } = useChartUIStore();
+  const showLayersPanel = useChartUIStore((s) => s.showLayersPanel);
 
   const activeSymbol = useMemo(() => {
     if (selectedSymbol) return selectedSymbol.toUpperCase();
@@ -362,6 +365,16 @@ export default function ChartRenderer({
 
       {/* ── HTML Drawing Overlays ──────────────────────────────── */}
       <DrawingOverlays chartRef={refs.chartRef} candleSeriesRef={refs.candleSeriesRef} />
+
+      {/* ── Floating per-drawing context toolbar (on selection) ─── */}
+      <DrawingContextToolbar chartRef={refs.chartRef} candleSeriesRef={refs.candleSeriesRef} />
+
+      {/* ── Drawing Layers panel (toggled from the drawing toolbar) ─ */}
+      {showLayersPanel && (
+        <div className="absolute right-3 top-3 z-40">
+          <DrawingLayersPanel />
+        </div>
+      )}
     </div>
   );
 }

@@ -125,7 +125,8 @@ export const toolDescriptions: Record<string, string> = {
   'magnet-off': 'Disables snapping behaviors. Drawing anchors place strictly on cursor coordinates.',
   'lock': 'Locks all active chart drawings to prevent accidental drag movements.',
   'visible': 'Toggle visibility: hide or show all drawings and markers instantly.',
-  'clear': 'Permanently delete all active chart drawing overlays.'
+  'clear': 'Permanently delete all active chart drawing overlays.',
+  'layers': 'Open the Layers panel to select, reorder, hide, lock, or delete each drawing individually.'
 };
 
 // ── GENERAL PURPOSE PREMIUM TOOLTIP WRAPPER ─────────────────────────────

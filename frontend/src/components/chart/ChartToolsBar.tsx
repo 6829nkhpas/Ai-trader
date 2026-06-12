@@ -110,6 +110,8 @@ export default function ChartToolsBar({ className = '' }: ChartToolsBarProps) {
     drawingColor,
     setDrawingColor
   } = useChartUIStore();
+  const showLayersPanel = useChartUIStore((s) => s.showLayersPanel);
+  const toggleLayersPanel = useChartUIStore((s) => s.toggleLayersPanel);
 
   // Generate a unique id per instance so multiple <ChartToolsBar /> mounts
   // (e.g. one in TerminalLayout and another inside a fullscreen overlay)
@@ -333,6 +335,19 @@ export default function ChartToolsBar({ className = '' }: ChartToolsBarProps) {
 
       {/* Standalone bottom buttons */}
       <div className="flex flex-col items-center gap-1.5 pt-2">
+        <PremiumTooltip title="Layers" content={toolDescriptions['layers']}>
+          <button
+            type="button"
+            onClick={toggleLayersPanel}
+            className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${showLayersPanel
+                ? 'text-primary bg-primary/10'
+                : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
+              }`}
+          >
+            <Layers size={15} />
+          </button>
+        </PremiumTooltip>
+
         <PremiumTooltip title={`Magnet Mode: ${magnetMode.toUpperCase()}`} content={toolDescriptions[`magnet-${magnetMode}`] || toolDescriptions['magnet-off']}>
           <button
             type="button"

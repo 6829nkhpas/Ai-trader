@@ -61,7 +61,7 @@ export function DrawingOverlays({ chartRef, candleSeriesRef }: DrawingOverlaysPr
 
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
-      {drawings.filter((d) => textTools.has(d.tool) || d.tool === 'measure').map((drawing) => {
+      {drawings.filter((d) => !d.hidden && (textTools.has(d.tool) || d.tool === 'measure')).map((drawing) => {
         
         // ── MEASURE TOOL ──────────────────────────────────────────
         if (drawing.tool === 'measure') {

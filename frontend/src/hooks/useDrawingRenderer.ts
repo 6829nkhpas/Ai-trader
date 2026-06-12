@@ -62,8 +62,10 @@ export function useDrawingRenderer(
     const activeMap = drawingSeriesMapRef.current;
     const activePriceLinesMap = drawingPriceLinesMapRef.current;
 
-    // 1. Identify deleted drawings and clean them up
-    const currentDrawingIds = new Set(drawings.map(d => d.id));
+    // 1. Identify deleted/hidden drawings and clean them up. Hidden drawings
+    // are treated like removed ones (their series are torn down) and skipped in
+    // the draw loop, so per-drawing visibility works without leaking series.
+    const currentDrawingIds = new Set(drawings.filter((d) => !d.hidden).map(d => d.id));
     for (const [id, seriesList] of activeMap.entries()) {
       if (!currentDrawingIds.has(id)) {
         for (const series of seriesList) {
@@ -193,6 +195,9 @@ export function useDrawingRenderer(
     // selected, its lines/price-lines render thicker so it reads as
     // selectable (Requirement 10.5).
     let currentHighlight = false;
+    // Per-drawing stroke-width override (set from `drawing.lineWidth`); when
+    // present it replaces every line's default width for that drawing.
+    let currentWidthOverride: number | undefined;
 
     // Batch: collect all setData calls, flush them in one rAF
     const pendingBatch: PendingSetData[] = [];
@@ -237,7 +242,10 @@ export function useDrawingRenderer(
 
       const opts = {
         color,
-        lineWidth: (currentHighlight ? Math.min(4, lineWidth + 1) : lineWidth) as 1 | 2 | 3 | 4,
+        lineWidth: (() => {
+          const baseW = currentWidthOverride ?? lineWidth;
+          return (currentHighlight ? Math.min(4, baseW + 1) : baseW) as 1 | 2 | 3 | 4;
+        })(),
         lineStyle,
         title: title || '',
       };
@@ -296,6 +304,7 @@ export function useDrawingRenderer(
     };
 
     for (const drawing of drawings) {
+      if (drawing.hidden) continue;
       if (drawing.points.length < 2) continue;
 
       const color = drawing.color || TOOL_COLORS[drawing.tool] || '#2962FF';
@@ -308,6 +317,7 @@ export function useDrawingRenderer(
         color,
         tool: drawing.tool,
         text: drawing.text,
+        lineWidth: drawing.lineWidth,
         highlighted: isHighlighted,
       });
 
@@ -322,6 +332,7 @@ export function useDrawingRenderer(
 
       // Drive the per-line/price-line width boost for this drawing.
       currentHighlight = isHighlighted;
+      currentWidthOverride = drawing.lineWidth;
 
       // Load or initialize series and price line lists for this drawing
       if (!activeMap.has(drawing.id)) {

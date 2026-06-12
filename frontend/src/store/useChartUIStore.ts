@@ -21,6 +21,11 @@ export type Drawing = {
   points: Point[];
   color?: string;
   text?: string;
+  /** Per-drawing stroke width override (px). Falls back to the tool default. */
+  lineWidth?: number;
+  /** Per-drawing visibility. When true the drawing is hidden but retained
+   *  (distinct from the global `drawingsVisible` flag). */
+  hidden?: boolean;
   /** When true, the drawing is immutable and survives a "clear drawings" action. */
   locked?: boolean;
   /** The symbol the drawing belongs to, enabling per-symbol persistence. */
@@ -139,6 +144,8 @@ interface ChartUIState {
   strategyParams: StrategyParams;
   /** Whether the indicator-manager panel is visible. */
   showIndicatorManager: boolean;
+  /** Whether the drawing Layers panel is visible. */
+  showLayersPanel: boolean;
 
   setActiveCursor: (cursor: CursorMode) => void;
   setActiveDrawingTool: (tool: string | null) => void;
@@ -154,6 +161,17 @@ interface ChartUIState {
   setHoveredDrawing: (id: string | null) => void;
   /** Lock or unlock a single drawing, making it immutable (Req 5.7). */
   toggleDrawingLock: (id: string) => void;
+  /** Toggle a single drawing's visibility without deleting it. */
+  toggleDrawingHidden: (id: string) => void;
+  /** Set a single drawing's stroke width (px). */
+  setDrawingLineWidth: (id: string, width: number) => void;
+  /** Duplicate a drawing (slightly offset) and place the clone on top. */
+  duplicateDrawing: (id: string) => void;
+  /** Z-order controls (array order = paint order; last = front). */
+  bringDrawingToFront: (id: string) => void;
+  sendDrawingToBack: (id: string) => void;
+  bringDrawingForward: (id: string) => void;
+  sendDrawingBackward: (id: string) => void;
   clearDrawings: () => void;
   setDrawingColor: (color: string) => void;
   setGhostLineMode: (mode: GhostLineMode) => void;
@@ -166,6 +184,8 @@ interface ChartUIState {
   setStrategyParams: (params: StrategyParams) => void;
   setShowIndicatorManager: (value: boolean | ((prev: boolean) => boolean)) => void;
   toggleIndicatorManager: () => void;
+  setShowLayersPanel: (value: boolean) => void;
+  toggleLayersPanel: () => void;
 
   // ── Workspace Persistence ──────────────────────────────────────────
   loadWorkspaceFromDB: (symbol: string) => Promise<void>;
@@ -214,6 +234,7 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
   activeStrategyId: null,
   strategyParams: {},
   showIndicatorManager: false,
+  showLayersPanel: false,
   activeIndicators: {},
   setActiveCursor: (cursor) => set({ activeCursor: cursor, activeDrawingTool: null }),
   setActiveDrawingTool: (tool) => set({ activeDrawingTool: tool, selectedDrawingId: null }),
@@ -252,6 +273,74 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
         d.id === id ? { ...d, locked: !d.locked } : d,
       ),
     })),
+  toggleDrawingHidden: (id) =>
+    set((state) => ({
+      drawings: state.drawings.map((d) =>
+        d.id === id ? { ...d, hidden: !d.hidden } : d,
+      ),
+    })),
+  setDrawingLineWidth: (id, width) =>
+    set((state) => {
+      const w = Math.max(1, Math.min(4, Math.round(width)));
+      return {
+        drawings: state.drawings.map((d) =>
+          d.id === id ? { ...d, lineWidth: w } : d,
+        ),
+      };
+    }),
+  // Clone a drawing with a small time/price nudge and place the copy on top
+  // (end of the array = front). The clone is selected so it can be moved.
+  duplicateDrawing: (id) =>
+    set((state) => {
+      const src = state.drawings.find((d) => d.id === id);
+      if (!src) return state;
+      const newId = `draw-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+      const priceNudge =
+        src.points.length > 0 ? Math.abs(src.points[0].price) * 0.004 || 0.5 : 0;
+      const clone: Drawing = {
+        ...src,
+        id: newId,
+        locked: false,
+        points: src.points.map((p) => ({ time: p.time, price: +(p.price - priceNudge).toFixed(2) })),
+      };
+      return { drawings: [...state.drawings, clone], selectedDrawingId: newId };
+    }),
+  // Z-order: the array order is the paint order, so the last entry renders on
+  // top. "Front" = move to the end; "back" = move to the start.
+  bringDrawingToFront: (id) =>
+    set((state) => {
+      const idx = state.drawings.findIndex((d) => d.id === id);
+      if (idx === -1 || idx === state.drawings.length - 1) return state;
+      const next = [...state.drawings];
+      const [d] = next.splice(idx, 1);
+      next.push(d);
+      return { drawings: next };
+    }),
+  sendDrawingToBack: (id) =>
+    set((state) => {
+      const idx = state.drawings.findIndex((d) => d.id === id);
+      if (idx <= 0) return state;
+      const next = [...state.drawings];
+      const [d] = next.splice(idx, 1);
+      next.unshift(d);
+      return { drawings: next };
+    }),
+  bringDrawingForward: (id) =>
+    set((state) => {
+      const idx = state.drawings.findIndex((d) => d.id === id);
+      if (idx === -1 || idx === state.drawings.length - 1) return state;
+      const next = [...state.drawings];
+      [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+      return { drawings: next };
+    }),
+  sendDrawingBackward: (id) =>
+    set((state) => {
+      const idx = state.drawings.findIndex((d) => d.id === id);
+      if (idx <= 0) return state;
+      const next = [...state.drawings];
+      [next[idx], next[idx - 1]] = [next[idx - 1], next[idx]];
+      return { drawings: next };
+    }),
   // Clear removes only unlocked drawings, retaining locked ones (Requirement 5.9).
   clearDrawings: () =>
     set((state) => {
@@ -285,6 +374,8 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
     })),
   toggleIndicatorManager: () =>
     set((s) => ({ showIndicatorManager: !s.showIndicatorManager })),
+  setShowLayersPanel: (value) => set({ showLayersPanel: value }),
+  toggleLayersPanel: () => set((s) => ({ showLayersPanel: !s.showLayersPanel })),
 
   // ── Workspace Persistence Actions ──────────────────────────────────
 
