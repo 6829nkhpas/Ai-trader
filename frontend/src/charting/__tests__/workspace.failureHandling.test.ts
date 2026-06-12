@@ -42,7 +42,7 @@ function makeState(overrides: Partial<WorkspaceState> = {}): WorkspaceState {
   return {
     version: 1,
     chartType: 'line',
-    chartTypeParams: { period: 14 },
+    chartTypeParams: {},
     activeIndicators: [],
     drawings: [
       // A representative drawing; shape is opaque to the persistence layer.
@@ -117,7 +117,7 @@ describe('workspace persist-failure handling (Requirements 11.5, 5.12)', () => {
 
   it('debounced saveWorkspace retains the latest state immediately and after the debounce window', async () => {
     vi.useFakeTimers();
-    const latest = makeState({ chartType: 'area', chartTypeParams: { period: 21 } });
+    const latest = makeState({ chartType: 'area', chartTypeParams: { renkoBoxSize: 21 } });
 
     saveWorkspace('AMD', makeState({ chartType: 'line' }));
     saveWorkspace('AMD', latest); // collapses with the first into one write
