@@ -69,6 +69,10 @@ import {
   type StrategyParams,
 } from '../../charting/engines';
 import type { NumericRange } from '../../charting/types';
+import {
+  planFullscreenToggle,
+  fullscreenFailureFallback,
+} from './fullscreenFallback';
 import { TIMEFRAME_GROUPS, type Timeframe } from '../../utils/chartTypes';
 import type { ChartTimeframe } from '../../store/useTradeStore';
 
@@ -168,33 +172,38 @@ export default function ChartSurface({
 
   const handleToggleFullscreen = useCallback(async () => {
     const el = surfaceRef.current;
+    const hasDocument = typeof document !== 'undefined';
+    const isNativeFullscreen = hasDocument && !!document.fullscreenElement;
+    const action = planFullscreenToggle({
+      isNativeFullscreen,
+      inAppFallbackActive: fullscreenUnavailable && isFullscreen,
+      canRequestFullscreen: !!el && typeof el?.requestFullscreen === 'function',
+    });
     try {
-      // Exiting fullscreen.
-      if (typeof document !== 'undefined' && document.fullscreenElement) {
-        await document.exitFullscreen();
-        setFullscreenUnavailable(false);
-        return;
+      switch (action) {
+        case 'exit-native':
+          await document.exitFullscreen();
+          setFullscreenUnavailable(false);
+          return;
+        case 'exit-fallback':
+          setFullscreenUnavailable(false);
+          toggleFullscreen();
+          return;
+        case 'request-native':
+          await el!.requestFullscreen();
+          setFullscreenUnavailable(false);
+          return;
+        default:
+          // No Fullscreen API in this environment.
+          throw new Error('Fullscreen API unavailable');
       }
-      // If we are in the in-app fallback, just toggle it back off.
-      if (fullscreenUnavailable && isFullscreen) {
-        setFullscreenUnavailable(false);
-        toggleFullscreen();
-        return;
-      }
-      // Request native fullscreen on the surface.
-      if (el && typeof el.requestFullscreen === 'function') {
-        await el.requestFullscreen();
-        setFullscreenUnavailable(false);
-        return;
-      }
-      // No Fullscreen API in this environment.
-      throw new Error('Fullscreen API unavailable');
     } catch {
       // Requirement 12.5: request failed/unsupported → fall back to the in-app
       // maximized overlay state and indicate that native fullscreen is
       // unavailable. The chart stays interactive, just maximized in-app.
-      setFullscreenUnavailable(true);
-      if (!isFullscreen) toggleFullscreen();
+      const fallback = fullscreenFailureFallback(isFullscreen);
+      setFullscreenUnavailable(fallback.fullscreenUnavailable);
+      if (fallback.shouldMaximize) toggleFullscreen();
     }
   }, [fullscreenUnavailable, isFullscreen, toggleFullscreen]);
 
