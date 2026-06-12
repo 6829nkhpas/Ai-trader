@@ -41,6 +41,11 @@ env/
 *.egg-info/
 *.egg
 
+# ----- Trade Journal (local measurement DB, not source) -----
+trade_journal.db
+*.sqlite
+*.sqlite3
+
 # ----- Environment & Secrets -----
 .env
 .env.local

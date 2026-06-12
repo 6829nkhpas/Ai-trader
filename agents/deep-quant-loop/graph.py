@@ -80,11 +80,17 @@ from tools import (
     get_multi_tf_trend,
     get_chart_patterns,
     get_support_resistance,
+    get_volume_profile,
     get_news_context,
     get_prediction,
+    get_trade_performance,
     watch_price_condition,
     declare_trade
 )
+
+# Trade_Journal — measurement & feedback loop (Phase 2). Records every committed
+# decision and scores it later, so the agent can audit its realized edge.
+import journal
 
 # ── State Definition ────────────────────────────────────────────────────────
 
@@ -145,6 +151,15 @@ You must follow this exact loop until a perfect setup is found or registered:
    For intraday timeframes it returns BOTH micro S/R levels (from that timeframe's candles) AND daily macro levels.
    It also includes the Opening Range (first 3 candles) high/low — a key intraday reference.
    Use S3/S2/S1/Pivot/R1/R2/R3 for precise entry, stop-loss, and target placement.
+3b. AUCTION STRUCTURE: Call `get_volume_profile` on the timeframe you're analyzing to see WHERE volume actually traded.
+   This is often stronger than pivot-based S/R because it reveals institutional acceptance/rejection by price. You MUST read:
+   - poc (Point of Control): the highest-volume price — a fair-value magnet price tends to revert toward.
+   - vah / val (Value_Area High/Low): the edges of the ~70%-volume range. Inside = balance (favor mean-reversion);
+     a decisive break and acceptance beyond VAH/VAL signals imbalance (favor trend continuation/breakout).
+   - price_vs_value_area: whether price is above/inside/below value — sets your bias (above value = bullish control).
+   - hvn_levels (High-Volume Nodes): acceptance shelves — strong support/resistance and good stop-loss anchors.
+   - lvn_levels (Low-Volume Nodes): rejection gaps — price moves through them fast; good momentum targets, poor entries.
+   Cross-reference POC/VAH/VAL with the pivot S/R and chart patterns: confluence between them is high-conviction.
 4. STRUCTURAL PATTERNS: Call `get_chart_patterns` on relevant timeframes to detect institutional-grade chart formations.
    The engine identifies 19 patterns across three categories:
    - Reversal (8): Head & Shoulders, Inverse H&S, Double Top/Bottom, Triple Top/Bottom, Rising/Falling Wedge
@@ -156,6 +171,10 @@ You must follow this exact loop until a perfect setup is found or registered:
 5. PRICE ACTION: Optionally call `get_candles` for specific timeframes. Candles include timestamps — use them to identify gap opens, session boundaries, and time-based patterns.
 6. PREDICTIVE CROSS-CHECK: Call `get_prediction` with the analyzed symbol and timeframe to obtain a forward price projection (projected_direction Up/Down/Flat, projected_value, confidence) from the Predictive_Engine. Use it to cross-check your directional bias. If the projection is unavailable, proceed with the remaining inputs and note it as unavailable.
 7. NEWS CATALYST: Call `get_news_context` to obtain the dedicated Sentiment_Service classification (recent headlines + directional label). If sentiment is Unavailable, treat it as a missing — but non-blocking — input and continue.
+8. TRACK-RECORD CALIBRATION: Call `get_trade_performance` for the symbol to review YOUR OWN realized results — win rate and expectancy (in R) overall and per setup type. This is your edge audit, not market data. Use it to calibrate conviction:
+   - If a comparable setup (same direction / macro alignment / value-area location) historically shows NEGATIVE expectancy_r or a win rate that does not support its Risk:Reward, you MUST lower your conviction_score, tighten your criteria, or HOLD.
+   - If the matching setup has strong positive expectancy over a real sample, you may raise conviction accordingly.
+   - When `low_sample` is true, treat the stats as a weak prior only — do not over-fit to a handful of trades.
 
 CRITICAL: You must execute at least one tool call (e.g., `get_multi_tf_trend`) on your very first turn. Do not output text reasoning without calling a tool in the same turn.
 </order_of_operations>
@@ -167,8 +186,10 @@ Ask yourself:
 - Am I trading against the Macro Trend from `get_multi_tf_trend`?
 - Is the Risk:Reward ratio worse than 1:2?
 - Does my entry price align with S/R levels from `get_support_resistance`?
+- Does my entry respect the Volume Profile from `get_volume_profile`? (Avoid buying into a High-Volume Node overhead or selling into one below; prefer entries at VAL/VAH or HVN support, and use Low-Volume Nodes as fast-move targets. Stops are safer beyond an HVN shelf than inside a thin Low-Volume Node.)
 - Is price above or below VWAP? (Buy setups stronger above VWAP, sell setups stronger below)
 - Does volume flow (OBV, CMF) confirm my direction?
+- What does my TRACK RECORD say? Have I checked `get_trade_performance` for this setup type? If a comparable setup has negative expectancy or a win rate too low for its R:R (and the sample is not tiny), I must scrap or downgrade this trade.
 If the answer to ANY of the first 3 checks is YES, you must scrap the trade. You must either analyze a different timeframe to find a better entry, or call `watch_price_condition` to wait for a safer pullback. 
 ONLY call `declare_trade` if you are 100% confident you could defend this trade against rigorous critique.
 For a BUY or SELL you MUST pass the numeric `entry`, `stop_loss`, and `take_profit` arguments to `declare_trade` (and `atr_14` from the consensus report). The Trade_Validator rejects directional trades that omit these or that fail Risk:Reward >= 1:2 / stop >= 1.5x ATR; if rejected, revise the levels and call `declare_trade` again. A HOLD may omit the numeric levels.
@@ -179,6 +200,8 @@ Your `setup_validation` is the defensibility record for the trade and MUST expli
 - HIGH-CONFIDENCE PATTERNS: Name every chart pattern from `get_chart_patterns` with confidence > 0.6 that informed your thesis (e.g., "Inverse H&S (conf 0.71) confirms").
 - PREDICTIVE CONFLICT: If the `get_prediction` projected_direction conflicts with your directional bias, state the conflict explicitly (e.g., "Predictive projects Down, conflicting with my long bias"). If they agree, note the agreement.
 - MACRO-TREND CONFLICT: If your trade direction opposes the 1D trend bias from `get_multi_tf_trend`, state the macro-trend conflict explicitly before committing (e.g., "Trade is long against a bearish 1D macro trend").
+- VOLUME PROFILE: State where the entry sits relative to the auction structure from `get_volume_profile` (POC / VAH / VAL and whether price is above/inside/below value), and which HVN/LVN levels back the stop and target.
+- TRACK RECORD: State the realized stat from `get_trade_performance` that informed your conviction (e.g., "This BUY-aligned-above-value setup is 7/10 with +1.3R expectancy" or "downgraded: comparable setup is -0.4R over 14 trades"). If low_sample, say so.
 Always include the multi-timeframe bias, the key S/R levels used, the volatility (ATR) basis for the stop, and the Risk:Reward ratio in your setup_validation.
 </setup_validation_disclosure>
 
@@ -210,7 +233,7 @@ User Notes: {user_analysis}
 
 Your job is to verify this trade using the EXACT same <self_verification_protocol> you use for your own trades:
 1. Call `get_multi_tf_trend` and `get_consensus_report`.
-2. Check the R:R ratio. Check if the SL is placed safely beyond live volatility bands. Check macro alignment.
+2. Check the R:R ratio. Check if the SL is placed safely beyond live volatility bands. Check macro alignment. Cross-check the entry against the Volume Profile (`get_volume_profile`) and the realized track record for this setup type (`get_trade_performance`).
 3. Do not invent red flags if the trade is genuinely an A+ setup. If it fits the protocol, approve it and defend it.
 4. If it fails the protocol, explain exactly why, and suggest a better entry using `watch_price_condition`.
 
@@ -313,8 +336,10 @@ tools = [
     get_multi_tf_trend,
     get_chart_patterns,
     get_support_resistance,
+    get_volume_profile,
     get_news_context,
     get_prediction,
+    get_trade_performance,
     watch_price_condition,
     declare_trade
 ]
@@ -340,8 +365,10 @@ REGISTERED_TOOL_NAMES = {
     "get_multi_tf_trend",
     "get_chart_patterns",
     "get_support_resistance",
+    "get_volume_profile",
     "get_news_context",
     "get_prediction",
+    "get_trade_performance",
     "watch_price_condition",
     "declare_trade",
 }
@@ -355,6 +382,7 @@ MARKET_DATA_TOOL_NAMES = {
     "get_multi_tf_trend",
     "get_chart_patterns",
     "get_support_resistance",
+    "get_volume_profile",
     "get_news_context",
     "get_prediction",
 }
@@ -1110,6 +1138,29 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
     news = results.get("get_news_context")
     news_sentiment = news.get("sentiment_summary") if isinstance(news, dict) else None
 
+    # ── Volume Profile auction evidence (Phase 1 → cited here) ───────────────
+    vp = results.get("get_volume_profile")
+    vp = vp if isinstance(vp, dict) else None
+    volume_profile = None
+    if vp:
+        volume_profile = {
+            "poc": vp.get("poc"),
+            "vah": vp.get("vah"),
+            "val": vp.get("val"),
+            "price_vs_value_area": vp.get("price_vs_value_area"),
+            "hvn_levels": vp.get("hvn_levels"),
+            "lvn_levels": vp.get("lvn_levels"),
+        }
+
+    # ── Realized track record used to calibrate conviction (Phase 2) ─────────
+    perf = results.get("get_trade_performance")
+    track_record = None
+    if isinstance(perf, dict):
+        track_record = {
+            "overall": perf.get("overall"),
+            "low_sample": perf.get("low_sample"),
+        }
+
     named = ", ".join(
         f"{p['pattern_type']} (conf {p['confidence']:.2f})" for p in patterns
     ) or "none >0.6"
@@ -1125,6 +1176,8 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
         "levels": levels,
         "risk_reward": risk_reward,
         "patterns": patterns,
+        "volume_profile": volume_profile,
+        "track_record": track_record,
         "predictive_conflict": predictive_conflict,
         "macro_trend_conflict": macro_conflict,
         "news_sentiment": news_sentiment,
@@ -1141,6 +1194,32 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
         record["validator_checks"] = _verify_mode_validator_checks(action, levels, atr)
 
     return record
+
+
+def _finalize_decision(state: AgentState, decision: dict) -> dict:
+    """Attach the defensibility record AND persist the decision to the journal.
+
+    Single chokepoint for every finalize path (validated declare_trade, the
+    data-gating HOLD, and the forced HOLD) so each committed decision is both
+    defensible (R7) and recorded for the measurement feedback loop (Phase 2).
+    Journaling is best-effort and never raises into the run.
+    """
+    decision["defensibility"] = build_defensibility_record(
+        state["messages"],
+        decision,
+        mode=state.get("mode"),
+        manual_trade=state.get("manual_trade"),
+    )
+    try:
+        journal.record_decision(
+            decision,
+            symbol=state.get("symbol"),
+            timeframe=state.get("timeframe"),
+            mode=state.get("mode"),
+        )
+    except Exception as e:
+        print(f"[Deep Quant] WARN: journal.record_decision failed: {e}")
+    return decision["defensibility"]
 
 
 def call_model(state: AgentState):
@@ -1321,12 +1400,7 @@ def tool_node(state: AgentState):
                 "execution_plan": "HOLD — no trade taken due to a data limitation.",
                 "source": "data_gating",
             }
-            hold_decision["defensibility"] = build_defensibility_record(
-                state["messages"],
-                hold_decision,
-                mode=state.get("mode"),
-                manual_trade=state.get("manual_trade"),
-            )
+            hold_decision["defensibility"] = _finalize_decision(state, hold_decision)
             out_messages.append(
                 AIMessage(
                     content=json.dumps(
@@ -1359,13 +1433,9 @@ def tool_node(state: AgentState):
     if decision is not None:
         print(f"[Deep Quant Tools] declare_trade committed decision: action={decision.get('action')}")
         # Attach the defensibility record assembled from the tool results seen
-        # so far so the committed trade carries the evidence behind it (R7).
-        decision["defensibility"] = build_defensibility_record(
-            state["messages"],
-            decision,
-            mode=state.get("mode"),
-            manual_trade=state.get("manual_trade"),
-        )
+        # so far so the committed trade carries the evidence behind it (R7), and
+        # record it to the Trade_Journal for the measurement loop (Phase 2).
+        _finalize_decision(state, decision)
         update["decision"] = decision
 
     return update
@@ -1444,12 +1514,7 @@ def force_hold(state: AgentState):
         "execution_plan": "HOLD — no trade taken.",
         "source": "forced_hold",
     }
-    decision["defensibility"] = build_defensibility_record(
-        state["messages"],
-        decision,
-        mode=state.get("mode"),
-        manual_trade=state.get("manual_trade"),
-    )
+    decision["defensibility"] = _finalize_decision(state, decision)
     final_message = AIMessage(
         content=json.dumps(
             {

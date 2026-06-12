@@ -1,6 +1,11 @@
 import os
+import math
 from typing import Optional
 import httpx
+
+# Local aliases used by the pure volume-profile helpers below.
+math_isfinite = math.isfinite
+math_floor = math.floor
 from langchain_core.tools import tool
 from langgraph.types import interrupt
 from langchain_core.runnables import RunnableConfig
@@ -171,6 +176,24 @@ def validate_contract(tool_name, payload):
                 return _contract_error("prediction missing numeric 'projected_value'")
             if not _is_number(payload.get("confidence")):
                 return _contract_error("prediction missing numeric 'confidence'")
+            return payload
+
+        if tool_name == "get_volume_profile":
+            if not isinstance(payload, dict):
+                return _contract_error(
+                    f"get_volume_profile expected an object, got {type(payload).__name__}"
+                )
+            # poc/vah/val are numeric-or-null (null only on an empty profile,
+            # i.e. zero traded volume over the range — a valid honest result).
+            for field in ("poc", "vah", "val"):
+                if field not in payload:
+                    return _contract_error(f"volume profile missing field '{field}'")
+                if not _is_number_or_null(payload[field]):
+                    return _contract_error(
+                        f"volume profile field '{field}' is neither numeric nor null"
+                    )
+            if not _is_number(payload.get("total_volume")):
+                return _contract_error("volume profile missing numeric 'total_volume'")
             return payload
 
         if tool_name == "get_multi_tf_trend":
@@ -731,3 +754,336 @@ def declare_trade(
         print(f"[Tool Warning] <<< declare_trade could not be persisted to Rust server: {str(e)}")
 
     return f"Trade declared successfully: {action} with {conviction_score}% conviction."
+
+
+# ── Volume Profile (Market Auction Structure) ────────────────────────────────
+# Phase 1 high-impact addition: expose the volume-by-price auction structure to
+# the agent so it can reason about WHERE volume actually traded — the Point of
+# Control (POC, the fair-value magnet), the Value_Area edges (VAH/VAL, the
+# mean-reversion / breakout boundaries), high-volume nodes (HVN, acceptance
+# shelves that act as support/resistance) and low-volume nodes (LVN, rejection
+# gaps price tends to move through quickly).
+#
+# The binning math MIRRORS the frontend's authoritative
+# `frontend/src/charting/engines/volumeProfileEngine.ts` so the levels the agent
+# reasons about are identical to what the trader sees rendered on the chart:
+#   * volume is distributed across each candle's high–low span, split evenly
+#     across the rows it touches (full volume conserved, remainder to the top row),
+#   * POC is the centre price of the single greatest-volume row (lowest index on
+#     a tie),
+#   * the Value_Area grows outward from the POC, always absorbing the larger of
+#     the two adjacent rows (preferring the lower row on a tie) until it reaches
+#     the target percentage of total volume (default 70%).
+
+DEFAULT_PROFILE_ROWS = 24
+MIN_PROFILE_ROWS = 1
+MAX_PROFILE_ROWS = 1000
+DEFAULT_VALUE_AREA_PERCENT = 70.0
+
+
+def _normalize_rows(rows) -> int:
+    """Default to 24, round to int, clamp into [1, 1000] (mirrors the TS engine)."""
+    try:
+        if rows is None or not math_isfinite(float(rows)):
+            return DEFAULT_PROFILE_ROWS
+        rounded = int(round(float(rows)))
+    except (TypeError, ValueError):
+        return DEFAULT_PROFILE_ROWS
+    return max(MIN_PROFILE_ROWS, min(MAX_PROFILE_ROWS, rounded))
+
+
+def _normalize_value_percent(pct) -> float:
+    """Default to 70, clamp into [1, 100] (mirrors the TS engine)."""
+    try:
+        if pct is None or not math_isfinite(float(pct)):
+            return DEFAULT_VALUE_AREA_PERCENT
+        v = float(pct)
+    except (TypeError, ValueError):
+        return DEFAULT_VALUE_AREA_PERCENT
+    return max(1.0, min(100.0, v))
+
+
+def _value_area_bounds(row_volumes, poc_index, value_percent):
+    """Grow the Value_Area outward from the POC (mirrors TS ``valueArea``).
+
+    Returns inclusive (lo_index, hi_index) into ``row_volumes``.
+    """
+    n = len(row_volumes)
+    if n == 0:
+        return 0, 0
+    poc = max(0, min(poc_index, n - 1))
+    lo = hi = poc
+    total = sum(row_volumes)
+    if total <= 0:
+        return lo, hi
+    target = total * (_normalize_value_percent(value_percent) / 100.0)
+    acc = row_volumes[poc]
+    neg_inf = float("-inf")
+    while acc < target and (lo > 0 or hi < n - 1):
+        below = row_volumes[lo - 1] if lo > 0 else neg_inf
+        above = row_volumes[hi + 1] if hi < n - 1 else neg_inf
+        if below == neg_inf and above == neg_inf:
+            break
+        # Absorb the larger adjacent row; on a tie prefer the lower (below) row.
+        if below >= above:
+            lo -= 1
+            acc += row_volumes[lo]
+        else:
+            hi += 1
+            acc += row_volumes[hi]
+    return lo, hi
+
+
+def _compute_volume_profile(candles, rows=DEFAULT_PROFILE_ROWS, value_area_percent=DEFAULT_VALUE_AREA_PERCENT):
+    """Pure volume-profile computation from OHLCV candles (mirrors the TS engine).
+
+    ``candles`` is a list of dicts with at least high/low/volume (and, for the
+    interpretive ``current_price``, close). Returns a structured dict with the
+    POC, VAH, VAL, value-area %, total volume, current price, where price sits
+    relative to the value area, and the high/low-volume nodes. The function is
+    pure and never raises on ordinary numeric data.
+    """
+    rows = _normalize_rows(rows)
+    value_area_percent = _normalize_value_percent(value_area_percent)
+
+    def _num(v):
+        return v if isinstance(v, (int, float)) and not isinstance(v, bool) and math_isfinite(v) else None
+
+    cleaned = []
+    for c in candles or []:
+        if not isinstance(c, dict):
+            continue
+        hi = _num(c.get("high"))
+        lo = _num(c.get("low"))
+        vol = _num(c.get("volume"))
+        if hi is None or lo is None:
+            continue
+        cleaned.append((lo, hi, vol if vol is not None else 0.0, _num(c.get("close"))))
+
+    current_price = None
+    for entry in reversed(cleaned):
+        if entry[3] is not None:
+            current_price = entry[3]
+            break
+
+    empty = {
+        "rows": rows,
+        "poc": None,
+        "vah": None,
+        "val": None,
+        "value_area_percent": value_area_percent,
+        "total_volume": 0.0,
+        "current_price": current_price,
+        "price_vs_value_area": "unknown",
+        "hvn_levels": [],
+        "lvn_levels": [],
+    }
+
+    if not cleaned:
+        return empty
+
+    min_p = min(c[0] for c in cleaned)
+    max_p = max(c[1] for c in cleaned)
+    if not (math_isfinite(min_p) and math_isfinite(max_p)):
+        return empty
+
+    bin_size = (max_p - min_p) / rows
+
+    def bin_index(price):
+        if bin_size <= 0:
+            return 0
+        idx = int(math_floor((price - min_p) / bin_size))
+        return max(0, min(rows - 1, idx))
+
+    bin_volumes = [0.0] * rows
+    for lo, hi, vol, _close in cleaned:
+        if vol <= 0:
+            continue
+        lo_i = bin_index(lo)
+        hi_i = bin_index(hi)
+        if lo_i == hi_i:
+            bin_volumes[lo_i] += vol
+        else:
+            span = hi_i - lo_i + 1
+            share = vol / span
+            distributed = 0.0
+            for i in range(lo_i, hi_i):
+                bin_volumes[i] += share
+                distributed += share
+            # Remainder to the top row so each candle's volume is conserved.
+            bin_volumes[hi_i] += vol - distributed
+
+    total_volume = sum(bin_volumes)
+    if total_volume <= 0:
+        return {**empty, "total_volume": 0.0}
+
+    # POC: single greatest-volume row (lowest index on a tie).
+    poc_index = 0
+    poc_vol = bin_volumes[0]
+    for i in range(1, rows):
+        if bin_volumes[i] > poc_vol:
+            poc_vol = bin_volumes[i]
+            poc_index = i
+
+    lo_index, hi_index = _value_area_bounds(bin_volumes, poc_index, value_area_percent)
+
+    def row_low(i):
+        return min_p + i * bin_size
+
+    def row_high(i):
+        return min_p + (i + 1) * bin_size
+
+    def row_center(i):
+        return (row_low(i) + row_high(i)) / 2.0
+
+    poc = row_center(poc_index)
+    val = row_low(lo_index)
+    vah = row_high(hi_index)
+
+    # Where does the latest price sit relative to the value area?
+    if current_price is None:
+        price_loc = "unknown"
+    elif current_price > vah:
+        price_loc = "above_value_area"
+    elif current_price < val:
+        price_loc = "below_value_area"
+    else:
+        price_loc = "inside_value_area"
+
+    # High-volume nodes (acceptance shelves → S/R) and low-volume nodes
+    # (rejection gaps → fast-move zones). Report representative centre prices.
+    indexed = [(i, bin_volumes[i]) for i in range(rows)]
+    hvn = sorted(indexed, key=lambda t: t[1], reverse=True)[:3]
+    nonzero = [t for t in indexed if t[1] > 0]
+    lvn = sorted(nonzero, key=lambda t: t[1])[:3]
+
+    hvn_levels = [{"price": round(row_center(i), 4), "volume": round(v, 4)} for i, v in hvn]
+    lvn_levels = [{"price": round(row_center(i), 4), "volume": round(v, 4)} for i, v in lvn]
+
+    return {
+        "rows": rows,
+        "poc": round(poc, 4),
+        "vah": round(vah, 4),
+        "val": round(val, 4),
+        "value_area_percent": value_area_percent,
+        "total_volume": round(total_volume, 4),
+        "current_price": round(current_price, 4) if current_price is not None else None,
+        "price_vs_value_area": price_loc,
+        "hvn_levels": hvn_levels,
+        "lvn_levels": lvn_levels,
+    }
+
+
+@tool
+def get_volume_profile(
+    symbol: str,
+    timeframe: str,
+    limit: int = 200,
+    rows: int = DEFAULT_PROFILE_ROWS,
+    value_area_percent: float = DEFAULT_VALUE_AREA_PERCENT,
+) -> dict:
+    """
+    Computes the Volume Profile (market auction structure) for a symbol/timeframe:
+    where traded volume actually concentrated by price. Use this to locate
+    institutional acceptance and rejection zones for precise entry, stop-loss,
+    and target placement — these levels are often stronger than pivot-based S/R.
+
+    Returns:
+      - poc (float): Point of Control — the highest-volume price (fair-value
+        magnet). Price tends to gravitate back toward the POC.
+      - vah / val (float): Value_Area High / Low — the edges of the range that
+        held ~70% of volume. Inside = balance/mean-reversion; a decisive break
+        of VAH/VAL signals imbalance/trend continuation.
+      - price_vs_value_area (str): "above_value_area" | "inside_value_area" |
+        "below_value_area" — where the latest price sits (key context).
+      - hvn_levels (list): High-Volume Nodes — acceptance shelves that act as
+        support/resistance.
+      - lvn_levels (list): Low-Volume Nodes — rejection gaps price moves through
+        quickly (good for momentum targets, poor for resting orders).
+      - current_price, total_volume, value_area_percent, rows.
+
+    The bins are computed from the SAME authoritative candle source used by every
+    other tool, so the levels stay consistent across the system.
+
+    Args:
+        symbol (str): The trading symbol (e.g., "RELIANCE").
+        timeframe (str): The candle timeframe (e.g., "1m", "5m", "10m", "15m", "1h", "4h", "1d").
+        limit (int): Number of recent candles to profile (default 200).
+        rows (int): Number of price-level bins (default 24, clamped 1–1000).
+        value_area_percent (float): Value_Area target percentage (default 70, clamped 1–100).
+    """
+    print(f"\n[Tool Call] >>> get_volume_profile: symbol={symbol}, timeframe={timeframe}, limit={limit}, rows={rows}, va%={value_area_percent}")
+    try:
+        response = httpx.post(
+            f"{RUST_SERVER_URL}/tools/get_candles",
+            json={"symbol": symbol, "timeframe": timeframe, "limit": limit},
+            timeout=10.0
+        )
+        if response.status_code != 200:
+            print(f"[Tool Error] Server returned {response.status_code}: {response.text}")
+        response.raise_for_status()
+        candles = response.json()
+        if isinstance(candles, dict) and "error" in candles:
+            return {"error": f"Failed to retrieve candles for volume profile: {candles.get('error')}"}
+        if not isinstance(candles, list):
+            return {"error": f"Unexpected candle payload for volume profile: {type(candles).__name__}"}
+        profile = _compute_volume_profile(candles, rows=rows, value_area_percent=value_area_percent)
+        profile["symbol"] = symbol
+        profile["timeframe"] = timeframe
+        print(f"[Tool Success] <<< get_volume_profile: symbol={symbol}, poc={profile.get('poc')}, vah={profile.get('vah')}, val={profile.get('val')}, price_loc={profile.get('price_vs_value_area')}")
+        return validate_contract("get_volume_profile", profile)
+    except Exception as e:
+        print(f"[Tool Error] <<< get_volume_profile FAIL: {str(e)}")
+        return {"error": f"Failed to compute volume profile: {str(e)}"}
+
+
+# ── Trade Performance / Track Record (measurement feedback loop) ─────────────
+# Phase 2: lets the agent consult its OWN realized track record before
+# committing, so conviction is calibrated against what has actually worked
+# rather than the model's in-the-moment confidence. Backed by journal.py, which
+# records every committed decision and scores open trades against later candles.
+import journal as _journal
+
+
+@tool
+def get_trade_performance(symbol: str) -> dict:
+    """
+    Returns the agent's OWN realized trading track record for calibrating
+    conviction — win rate and expectancy (in R multiples) overall and broken
+    down by setup type. Open trades are scored against the latest candle data
+    before the stats are returned, so the numbers are current.
+
+    Use this during analysis (after establishing your bias and the setup type)
+    to sanity-check your edge: if a comparable setup historically has NEGATIVE
+    expectancy or a win rate that does not support its Risk:Reward, you MUST
+    reduce conviction, tighten the criteria, or HOLD. Treat the stats as a weak
+    prior when ``low_sample`` is true (too few trades to be significant).
+
+    Returns:
+      - overall: {trades_scored, wins, losses, open, expired, win_rate, expectancy_r}
+      - by_setup: list of the same stats grouped by a coarse setup fingerprint
+        (``setup_key`` encodes direction, macro alignment, predictive agreement,
+        and value-area location), most-traded first.
+      - low_sample (bool): true when too few scored trades exist to rely on.
+
+    Args:
+        symbol (str): The trading symbol to report on (e.g., "RELIANCE").
+    """
+    print(f"\n[Tool Call] >>> get_trade_performance: symbol={symbol}")
+    try:
+        stats = _journal.get_stats(symbol)
+        stats["symbol"] = symbol
+        ov = stats.get("overall", {})
+        print(f"[Tool Success] <<< get_trade_performance: symbol={symbol}, scored={ov.get('trades_scored')}, win_rate={ov.get('win_rate')}, expectancy_r={ov.get('expectancy_r')}, low_sample={stats.get('low_sample')}")
+        return stats
+    except Exception as e:
+        print(f"[Tool Warning] <<< get_trade_performance FAIL: {str(e)}")
+        # Non-blocking: the track record is a calibration aid, not a hard input.
+        return {
+            "symbol": symbol,
+            "overall": {"trades_scored": 0, "win_rate": None, "expectancy_r": None},
+            "by_setup": [],
+            "low_sample": True,
+            "unavailable": True,
+            "error": f"Failed to load trade performance: {str(e)}",
+        }

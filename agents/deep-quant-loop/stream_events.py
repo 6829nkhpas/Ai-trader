@@ -350,6 +350,45 @@ def _derive_find_mode_steps(record: dict) -> List[dict]:
     else:
         steps.append({"check": "level-alignment", "outcome": "not-evaluable — S/R unavailable"})
 
+    # ── Volume Profile auction check (Phase 1 evidence) ──────────────────────
+    vp = record.get("volume_profile")
+    if isinstance(vp, dict) and vp.get("poc") is not None:
+        loc = str(vp.get("price_vs_value_area") or "unknown").replace("_", " ")
+        steps.append({
+            "check": "volume-profile",
+            "outcome": "informational",
+            "detail": f"POC={vp.get('poc')}, VAH={vp.get('vah')}, VAL={vp.get('val')}; price {loc}.",
+        })
+    else:
+        steps.append({"check": "volume-profile", "outcome": "not-evaluable — volume profile unavailable"})
+
+    # ── Track-record calibration check (Phase 2 feedback loop) ───────────────
+    tr = record.get("track_record")
+    if isinstance(tr, dict) and isinstance(tr.get("overall"), dict):
+        ov = tr["overall"]
+        scored = ov.get("trades_scored")
+        exp = ov.get("expectancy_r")
+        wr = ov.get("win_rate")
+        if scored:
+            if _is_number(exp):
+                outcome = "pass" if exp > 0 else "fail"
+            else:
+                outcome = "informational"
+            low = " (low sample — weak prior)" if tr.get("low_sample") else ""
+            steps.append({
+                "check": "track-record",
+                "outcome": outcome,
+                "detail": f"win_rate={wr}, expectancy_r={exp} over {scored} scored trade(s){low}.",
+            })
+        else:
+            steps.append({
+                "check": "track-record",
+                "outcome": "informational",
+                "detail": "No scored trades yet — no realized edge to calibrate against.",
+            })
+    else:
+        steps.append({"check": "track-record", "outcome": "not-evaluable — track record unavailable"})
+
     return steps
 
 
