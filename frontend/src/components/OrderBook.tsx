@@ -8,6 +8,9 @@ interface OrderBookLevel {
   price: number;
   size: number;
   total: number;
+  /** True for extrapolated padding levels that fill the panel beyond the
+   *  real feed depth (rendered dimmed so they aren't read as real liquidity). */
+  synthetic?: boolean;
 }
 
 interface OrderBookState {
@@ -20,6 +23,9 @@ interface OrderBookState {
 
 // ── Constants ──────────────────────────────────────────────────────────
 const LEVEL_COUNT = 10;
+/** Extend each side of the ladder up to this many rows so the tall panel
+ *  doesn't leave large blank gaps at the outer edges (Order book depth fill). */
+const PADDED_LEVEL_COUNT = 14;
 
 // ── Empty initial book (no mock data) ──────────────────────────────────
 function createEmptyBook(): OrderBookState {
@@ -45,6 +51,49 @@ function formatSize(size: number): string {
   return size >= 100 ? Math.round(size).toString() : size.toFixed(1);
 }
 
+// ── Tick step inference ────────────────────────────────────────────────
+// Infer the price increment between adjacent levels from the real feed so any
+// synthetic padding rows continue the ladder on the correct grid.
+function inferStep(prices: number[]): number {
+  const diffs: number[] = [];
+  for (let i = 1; i < prices.length; i++) {
+    const d = Math.abs(prices[i] - prices[i - 1]);
+    if (d > 1e-9) diffs.push(d);
+  }
+  if (diffs.length === 0) return 0.05;
+  diffs.sort((a, b) => a - b);
+  return diffs[Math.floor(diffs.length / 2)]; // median step
+}
+
+// ── Ladder extrapolation ───────────────────────────────────────────────
+// Continue the price ladder outward (away from the spread) with a few
+// synthetic levels so the panel fills instead of showing blank gaps. Sizes
+// continue the observed deepening trend; totals keep accumulating. Levels are
+// flagged `synthetic` so the UI can dim them. `dir` is +1 for asks (prices
+// rise away from spread) and -1 for bids (prices fall away from spread).
+function extendLadder(
+  levels: OrderBookLevel[],
+  step: number,
+  dir: 1 | -1,
+  target: number,
+): OrderBookLevel[] {
+  if (levels.length === 0 || levels.length >= target) return levels;
+  const out = [...levels];
+  let last = out[out.length - 1];
+  let runningTotal = last.total;
+  let size = Math.max(1, last.size);
+  for (let i = out.length; i < target; i++) {
+    const price = parseFloat((last.price + dir * step).toFixed(2));
+    // Deeper book levels typically hold more resting size; grow gently.
+    size = Math.max(1, Math.round(size * 1.1));
+    runningTotal = parseFloat((runningTotal + size).toFixed(2));
+    const level: OrderBookLevel = { price, size, total: runningTotal, synthetic: true };
+    out.push(level);
+    last = level;
+  }
+  return out;
+}
+
 // ── Build order book from market depth data ────────────────────────────
 // This function constructs book state from real market depth arrays
 // received via IPC/WebSocket from the backend.
@@ -66,7 +115,6 @@ function buildBookFromDepth(
     askRunningTotal += size;
     asks.push({ price, size, total: parseFloat(askRunningTotal.toFixed(2)) });
   }
-  asks.reverse(); // highest at top, lowest near spread
 
   // Build bid levels (descending: highest first, closest to spread at top)
   let bidRunningTotal = 0;
@@ -78,13 +126,21 @@ function buildBookFromDepth(
     bids.push({ price, size, total: parseFloat(bidRunningTotal.toFixed(2)) });
   }
 
-  const bestAsk = asks.length > 0 ? asks[asks.length - 1].price : 0;
+  // Spread/mid are derived from the real best bid/ask only (before synthetic
+  // padding) so the headline numbers reflect genuine top-of-book liquidity.
+  const bestAsk = asks.length > 0 ? asks[0].price : 0;
   const bestBid = bids.length > 0 ? bids[0].price : 0;
   const spread = bestAsk > 0 && bestBid > 0 ? parseFloat((bestAsk - bestBid).toFixed(2)) : 0;
   const spreadPct = bestAsk > 0 ? ((spread / bestAsk) * 100).toFixed(3) : '0.000';
   const midPrice = bestAsk > 0 && bestBid > 0 ? parseFloat(((bestAsk + bestBid) / 2).toFixed(2)) : 0;
 
-  return { asks, bids, spread, spreadPct, midPrice };
+  // Extend each side outward with a few synthetic levels to fill the panel.
+  const askLadder = extendLadder(asks, inferStep(askPrices), 1, PADDED_LEVEL_COUNT);
+  const bidLadder = extendLadder(bids, inferStep(bidPrices), -1, PADDED_LEVEL_COUNT);
+
+  askLadder.reverse(); // highest at top, lowest near spread
+
+  return { asks: askLadder, bids: bidLadder, spread, spreadPct, midPrice };
 }
 
 // ── Component ──────────────────────────────────────────────────────────
@@ -155,13 +211,16 @@ export default function OrderBook() {
     };
   }, []);
 
-  // Compute max size across all levels for depth bar scaling
-  const maxAskSize = book.asks.length > 0 ? Math.max(...book.asks.map((l) => l.size), 0.01) : 0.01;
-  const maxBidSize = book.bids.length > 0 ? Math.max(...book.bids.map((l) => l.size), 0.01) : 0.01;
+  // Depth-bar scaling and the bid/ask ratio use REAL levels only so synthetic
+  // padding never distorts the liquidity picture.
+  const realAsks = book.asks.filter((l) => !l.synthetic);
+  const realBids = book.bids.filter((l) => !l.synthetic);
+  const maxAskSize = realAsks.length > 0 ? Math.max(...realAsks.map((l) => l.size), 0.01) : 0.01;
+  const maxBidSize = realBids.length > 0 ? Math.max(...realBids.map((l) => l.size), 0.01) : 0.01;
   const globalMaxSize = Math.max(maxAskSize, maxBidSize);
 
-  const totalAskVol = book.asks.reduce((s, l) => s + l.size, 0);
-  const totalBidVol = book.bids.reduce((s, l) => s + l.size, 0);
+  const totalAskVol = realAsks.reduce((s, l) => s + l.size, 0);
+  const totalBidVol = realBids.reduce((s, l) => s + l.size, 0);
   const totalVol = totalAskVol + totalBidVol || 1;
   const askVolPct = (totalAskVol / totalVol) * 100;
   const bidVolPct = (totalBidVol / totalVol) * 100;
@@ -202,7 +261,7 @@ export default function OrderBook() {
           {book.asks.map((level, i) => (
             <div
               key={`ask-${i}`}
-              className="group relative grid grid-cols-3 gap-0 px-3 py-[2px] hover:bg-red-500/5"
+              className={`group relative grid grid-cols-3 gap-0 px-3 py-[2px] hover:bg-red-500/5 ${level.synthetic ? 'opacity-40' : ''}`}
             >
               {/* Depth bar background */}
               <div
@@ -249,7 +308,7 @@ export default function OrderBook() {
           {book.bids.map((level, i) => (
             <div
               key={`bid-${i}`}
-              className="group relative grid grid-cols-3 gap-0 px-3 py-[2px] hover:bg-emerald-500/5"
+              className={`group relative grid grid-cols-3 gap-0 px-3 py-[2px] hover:bg-emerald-500/5 ${level.synthetic ? 'opacity-40' : ''}`}
             >
               {/* Depth bar background */}
               <div
