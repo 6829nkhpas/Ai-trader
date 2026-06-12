@@ -251,14 +251,25 @@ export default function ChartRenderer({
   }, [activeCursor, activeDrawingTool]);
 
   const activeOhlcCandle = latestCandle;
-  // Prefer the synchronized crosshair readout (already formatted to the
-  // instrument precision with no-value placeholders). When the crosshair is off
-  // the chart, fall back to the latest candle so the watermark stays populated.
-  const ohlcLabel = readout.hasCandle
-    ? `O ${readout.ohlc.open}  H ${readout.ohlc.high}  L ${readout.ohlc.low}  C ${readout.ohlc.close}`
+  // Structured OHLC parts (hover-aware) so each value can be color-coded in the
+  // on-chart legend. Prefers the synchronized crosshair readout (already
+  // formatted to instrument precision); falls back to the latest candle when
+  // the crosshair is off the chart.
+  const ohlcParts = readout.hasCandle
+    ? {
+        o: readout.ohlc.open,
+        h: readout.ohlc.high,
+        l: readout.ohlc.low,
+        c: readout.ohlc.close,
+      }
     : activeOhlcCandle
-      ? `O ${activeOhlcCandle.open.toFixed(DEFAULT_PRICE_PRECISION)}  H ${activeOhlcCandle.high.toFixed(DEFAULT_PRICE_PRECISION)}  L ${activeOhlcCandle.low.toFixed(DEFAULT_PRICE_PRECISION)}  C ${activeOhlcCandle.close.toFixed(DEFAULT_PRICE_PRECISION)}`
-      : '';
+      ? {
+          o: activeOhlcCandle.open.toFixed(DEFAULT_PRICE_PRECISION),
+          h: activeOhlcCandle.high.toFixed(DEFAULT_PRICE_PRECISION),
+          l: activeOhlcCandle.low.toFixed(DEFAULT_PRICE_PRECISION),
+          c: activeOhlcCandle.close.toFixed(DEFAULT_PRICE_PRECISION),
+        }
+      : null;
 
   // Indicator readouts for the hovered time (placeholders during warm-up).
   const indicatorLabel = readout.hasCandle
@@ -312,8 +323,13 @@ export default function ChartRenderer({
           <span className="font-semibold text-text-secondary">{activeSymbol}</span>
           <span className="text-text-muted/70">· {effectiveTimeframe}</span>
         </div>
-        {ohlcLabel && (
-          <div className="font-mono text-[10px] text-text-secondary/80">{ohlcLabel}</div>
+        {ohlcParts && (
+          <div className="flex items-center gap-2 font-mono text-[10px]">
+            <span className="text-text-muted/60">O <span className="text-sky-300">{ohlcParts.o}</span></span>
+            <span className="text-text-muted/60">H <span className="text-emerald-400">{ohlcParts.h}</span></span>
+            <span className="text-text-muted/60">L <span className="text-rose-400">{ohlcParts.l}</span></span>
+            <span className="text-text-muted/60">C <span className="text-amber-300">{ohlcParts.c}</span></span>
+          </div>
         )}
         {indicatorLabel && (
           <div className="font-mono text-[10px] text-text-muted/70">{indicatorLabel}</div>

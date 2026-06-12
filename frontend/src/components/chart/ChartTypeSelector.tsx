@@ -38,7 +38,7 @@ export default function ChartTypeSelector({ value, onSelect }: ChartTypeSelector
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-label="Chart type"
-        className="flex h-7 items-center gap-1.5 rounded-md border border-border-default bg-surface px-2.5 text-[11px] font-semibold text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
+        className="flex h-7 items-center gap-1 rounded-md border border-border-default bg-surface px-2 text-[11px] font-semibold text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
       >
         <CandlestickChart size={13} className="text-text-muted" />
         <span>{CHART_TYPE_LABELS[value]}</span>

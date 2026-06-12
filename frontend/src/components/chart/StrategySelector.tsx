@@ -35,7 +35,7 @@ export default function StrategySelector({
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-label="Strategy"
-          className={`flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-semibold transition-colors ${active
+          className={`flex h-7 items-center gap-1 rounded-md border px-2 text-[11px] font-semibold transition-colors ${active
               ? 'border-primary/40 bg-primary/10 text-primary'
               : 'border-border-default bg-surface text-text-secondary hover:bg-elevated hover:text-text-primary'
             }`}
