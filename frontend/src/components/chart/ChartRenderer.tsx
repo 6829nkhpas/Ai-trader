@@ -303,15 +303,22 @@ export default function ChartRenderer({
         />
       )}
 
-      {/* ── OHLC watermark ───────────────────── */}
-      {ohlcLabel && (
-        <div className="pointer-events-none absolute left-3 top-2 text-[10px] font-mono text-text-muted/60 select-none">
-          {ohlcLabel}
-          {indicatorLabel && (
-            <span className="ml-3 text-text-muted/50">{indicatorLabel}</span>
-          )}
+      {/* ── On-chart legend: symbol · timeframe + OHLC (hover-aware) ─────
+          The OHLC tracks the hovered candle and falls back to the latest
+          candle when the crosshair is off the chart. Lives on the graph so the
+          header bar stays uncluttered. */}
+      <div className="pointer-events-none absolute left-3 top-2 z-10 flex flex-col gap-0.5 select-none">
+        <div className="flex items-center gap-2 font-mono text-[11px]">
+          <span className="font-semibold text-text-secondary">{activeSymbol}</span>
+          <span className="text-text-muted/70">· {effectiveTimeframe}</span>
         </div>
-      )}
+        {ohlcLabel && (
+          <div className="font-mono text-[10px] text-text-secondary/80">{ohlcLabel}</div>
+        )}
+        {indicatorLabel && (
+          <div className="font-mono text-[10px] text-text-muted/70">{indicatorLabel}</div>
+        )}
+      </div>
 
       {/* ── Index Volume Proxy Label ──────────────────────────────── */}
       {isIndexVolume && chartData.length > 0 && (

@@ -6,6 +6,7 @@ import ChartToolsBar from '../components/chart/ChartToolsBar';
 import ChartModeToggle from '../components/chart/ChartHeader';
 import ChartTypeSelector from '../components/chart/ChartTypeSelector';
 import StrategySelector from '../components/chart/StrategySelector';
+import GhostLineToggle from '../components/chart/GhostLineToggle';
 import { CHART_TYPE_PARAM_SPEC } from '../charting/engines';
 import TerminalLayout from '../components/layout/TerminalLayout';
 import LeftPanel from '../components/panels/LeftPanel';
@@ -66,7 +67,6 @@ export default function Home() {
   const setActiveStrategyId = useChartUIStore((s) => s.setActiveStrategyId);
   const showIndicatorManager = useChartUIStore((s) => s.showIndicatorManager);
   const toggleIndicatorManager = useChartUIStore((s) => s.toggleIndicatorManager);
-  const hoverOhlc = useChartUIStore((s) => s.hoverOhlc);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('profile');
 
@@ -349,12 +349,6 @@ export default function Home() {
                         {symbolQuote.change >= 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
                         {symbolQuote.change >= 0 ? '+' : ''}{symbolQuote.change.toFixed(2)}%
                       </div>
-                      <div className="hidden sm:flex items-center gap-2 text-[10px] text-text-muted tabular-nums">
-                        <span>O <span className="text-text-secondary">{(hoverOhlc?.open ?? symbolQuote.open).toFixed(2)}</span></span>
-                        <span>H <span className="text-text-secondary">{(hoverOhlc?.high ?? symbolQuote.high).toFixed(2)}</span></span>
-                        <span>L <span className="text-text-secondary">{(hoverOhlc?.low ?? symbolQuote.low).toFixed(2)}</span></span>
-                        <span>C <span className="text-text-secondary">{(hoverOhlc?.close ?? symbolQuote.close).toFixed(2)}</span></span>
-                      </div>
                     </>
                   ) : (
                     <div className="text-xs text-text-muted">Loading...</div>
@@ -397,6 +391,9 @@ export default function Home() {
                     onSelect={setActiveStrategyId}
                     onOpenSettings={() => {}}
                   />
+
+                  {/* Projection engine toggle (OLS / VWEPR ghost line) */}
+                  <GhostLineToggle />
 
                   {/* Divider */}
                   <div className="h-5 w-px bg-border-default/50" />
