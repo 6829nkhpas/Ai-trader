@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { getIndicator, validateParams, clearUnlocked } from '../charting/engines';
 import type { IndicatorId, IndicatorParams } from '../charting/engines';
 import type { LineStyleSpec } from '../charting/types';
+import type { ChartType, ChartTypeParams, StrategyParams } from '../charting/engines';
 import {
   saveWorkspace,
   loadWorkspace,
@@ -127,6 +128,18 @@ interface ChartUIState {
    *  Positive = accelerating up, negative = accelerating down, ≈0 = linear. */
   accelerationCoefficient: number;
 
+  // ── Chart Control-Bar State (lifted from ChartSurface) ────────────
+  /** The active chart-type (candlestick, line, heikin-ashi, etc.). */
+  chartType: ChartType;
+  /** Numeric parameters for parametric chart types (renko, kagi, etc.). */
+  chartTypeParams: ChartTypeParams;
+  /** The currently applied strategy id, or null when none is applied. */
+  activeStrategyId: string | null;
+  /** Numeric parameters for the applied strategy. */
+  strategyParams: StrategyParams;
+  /** Whether the indicator-manager panel is visible. */
+  showIndicatorManager: boolean;
+
   setActiveCursor: (cursor: CursorMode) => void;
   setActiveDrawingTool: (tool: string | null) => void;
   setMagnetMode: (mode: MagnetMode) => void;
@@ -147,6 +160,12 @@ interface ChartUIState {
   setAccelerationCoefficient: (value: number) => void;
   setIsFullscreen: (value: boolean) => void;
   toggleFullscreen: () => void;
+  setChartType: (type: ChartType) => void;
+  setChartTypeParams: (params: ChartTypeParams) => void;
+  setActiveStrategyId: (id: string | null) => void;
+  setStrategyParams: (params: StrategyParams) => void;
+  setShowIndicatorManager: (value: boolean | ((prev: boolean) => boolean)) => void;
+  toggleIndicatorManager: () => void;
 
   // ── Workspace Persistence ──────────────────────────────────────────
   loadWorkspaceFromDB: (symbol: string) => Promise<void>;
@@ -190,6 +209,11 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
   ghostLineMode: 'curved',
   accelerationCoefficient: 0.0,
   isFullscreen: false,
+  chartType: 'candlestick',
+  chartTypeParams: {},
+  activeStrategyId: null,
+  strategyParams: {},
+  showIndicatorManager: false,
   activeIndicators: {},
   setActiveCursor: (cursor) => set({ activeCursor: cursor, activeDrawingTool: null }),
   setActiveDrawingTool: (tool) => set({ activeDrawingTool: tool, selectedDrawingId: null }),
@@ -250,6 +274,17 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
   setAccelerationCoefficient: (value) => set({ accelerationCoefficient: value }),
   setIsFullscreen: (value) => set({ isFullscreen: value }),
   toggleFullscreen: () => set((s) => ({ isFullscreen: !s.isFullscreen })),
+  setChartType: (type) => set({ chartType: type }),
+  setChartTypeParams: (params) => set({ chartTypeParams: params }),
+  setActiveStrategyId: (id) => set({ activeStrategyId: id, strategyParams: {} }),
+  setStrategyParams: (params) => set({ strategyParams: params }),
+  setShowIndicatorManager: (value) =>
+    set((s) => ({
+      showIndicatorManager:
+        typeof value === 'function' ? value(s.showIndicatorManager) : value,
+    })),
+  toggleIndicatorManager: () =>
+    set((s) => ({ showIndicatorManager: !s.showIndicatorManager })),
 
   // ── Workspace Persistence Actions ──────────────────────────────────
 

@@ -89,7 +89,7 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
   return (
     <div className="flex h-screen flex-col bg-background font-sans text-text-primary">
       {/* Header */}
-      <header className="z-30 flex shrink-0 items-center gap-3 border-b border-border-default bg-surface px-3 py-1.5 panel-shadow-sm">
+      <header className="z-30 flex shrink-0 items-center gap-3 border-b border-border-default bg-surface px-3 py-1 panel-shadow-sm">
         <div className="flex flex-1 items-center gap-3">
           <img src="/strat.svg" alt="Strat Ai Logo" className="h-[22px] w-[22px] object-contain" />
           <div>
@@ -168,7 +168,7 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
       </header>
 
       {/* Main Content */}
-      <div className="flex flex-1 min-h-0 min-w-0 overflow-visible bg-background p-2 gap-2">
+      <div className="flex flex-1 min-h-0 min-w-0 overflow-visible bg-background p-1.5 gap-1.5">
         {/* Watchlist */}
         <aside 
           className="relative flex shrink-0 min-h-0 flex-col overflow-visible border border-border-default rounded-lg bg-surface panel-shadow"
@@ -194,8 +194,8 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
           </div>
         </aside>
 
-        {/* Tools Bar — hidden in fullscreen so the chart card can mount its own
-            without colliding on shared DOM ids (e.g. <input id="color-picker-component">). */}
+        {/* Drawing Tools Bar — hidden in fullscreen because ChartSurface
+            mounts its own copy inside the fullscreen overlay. */}
         {!isFullscreen && (
           <ChartToolsBar className="border border-border-default rounded-lg bg-surface py-2 panel-shadow" />
         )}

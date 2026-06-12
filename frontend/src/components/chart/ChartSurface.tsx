@@ -21,33 +21,38 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  CandlestickChart,
-  LineChart as LineChartIcon,
   Settings2,
+<<<<<<< HEAD
   Activity,
   ChevronDown,
+=======
+  AlertTriangle,
+>>>>>>> 4aeceb23beff91c217cd1fc438b0517d325f99a5
   X,
 } from 'lucide-react';
 
 import ChartRenderer from './ChartRenderer';
+<<<<<<< HEAD
+=======
+import ChartToolsBar from './ChartToolsBar';
+>>>>>>> 4aeceb23beff91c217cd1fc438b0517d325f99a5
 import IndicatorManagerPanel from './IndicatorManagerPanel';
 import FootprintChart from './FootprintChart';
+import { CHART_TYPE_LABELS } from './ChartTypeSelector';
 
 import { useTradeStore } from '../../store/useTradeStore';
 import {
-  CHART_TYPES,
   CHART_TYPE_PARAM_SPEC,
   CHART_TYPE_PARAM_DEFAULTS,
   validateChartTypeParams,
-  listStrategies,
   getStrategy,
   validateParams,
   type ChartType,
   type ChartTypeParams,
-  type StrategyDef,
   type StrategyParams,
 } from '../../charting/engines';
 import type { NumericRange } from '../../charting/types';
+<<<<<<< HEAD
 import type { Timeframe } from '../../utils/chartTypes';
 
 // ── Display labels ────────────────────────────────────────────────────────
@@ -65,6 +70,13 @@ const CHART_TYPE_LABELS: Record<ChartType, string> = {
   'point-figure': 'Point & Figure',
   'line-break': 'Line Break',
 };
+=======
+import {
+  planFullscreenToggle,
+  fullscreenFailureFallback,
+} from './fullscreenFallback';
+import type { Timeframe } from '../../utils/chartTypes';
+>>>>>>> 4aeceb23beff91c217cd1fc438b0517d325f99a5
 
 /** Friendly labels for the numeric parameters surfaced in settings dialogs. */
 const PARAM_LABELS: Record<string, string> = {
@@ -88,10 +100,6 @@ type OpenDialog = 'none' | 'chart-type' | 'strategy';
 
 export interface ChartSurfaceProps {
   className?: string;
-  /** Initial chart type; defaults to candlestick (Requirement 1.4 fallback). */
-  initialChartType?: ChartType;
-  /** Initial applied strategy id, or null when none is applied. */
-  initialStrategyId?: string | null;
 }
 
 /**
@@ -102,20 +110,19 @@ export interface ChartSurfaceProps {
  */
 export default function ChartSurface({
   className = '',
-  initialChartType = 'candlestick',
-  initialStrategyId = null,
 }: ChartSurfaceProps) {
-  // ── Selection state (passed down to ChartRenderer) ────────────────────
-  const [chartType, setChartType] = useState<ChartType>(initialChartType);
-  const [chartTypeParams, setChartTypeParams] = useState<ChartTypeParams>({});
-  const [activeStrategyId, setActiveStrategyId] = useState<string | null>(
-    initialStrategyId,
-  );
-  const [strategyParams, setStrategyParams] = useState<StrategyParams>({});
+  // ── Selection state (from shared store) ────────────────────────────────
+  const chartType = useChartUIStore((s) => s.chartType);
+  const chartTypeParams = useChartUIStore((s) => s.chartTypeParams);
+  const setChartTypeParams = useChartUIStore((s) => s.setChartTypeParams);
+  const activeStrategyId = useChartUIStore((s) => s.activeStrategyId);
+  const strategyParams = useChartUIStore((s) => s.strategyParams);
+  const setStrategyParams = useChartUIStore((s) => s.setStrategyParams);
+  const showIndicatorManager = useChartUIStore((s) => s.showIndicatorManager);
+  const setShowIndicatorManager = useChartUIStore((s) => s.setShowIndicatorManager);
 
   // ── Transient UI state: which overlay/panel is open ───────────────────
   const [openDialog, setOpenDialog] = useState<OpenDialog>('none');
-  const [showIndicatorManager, setShowIndicatorManager] = useState(false);
 
   // ── Chart-mode + timeframe (owned by the page header; read-only here) ──
   const chartMode = useTradeStore((s) => s.chartMode);
@@ -124,34 +131,20 @@ export default function ChartSurface({
   // ── Dialog handlers ────────────────────────────────────────────────────
   const closeDialog = useCallback(() => setOpenDialog('none'), []);
 
-  const handleSelectChartType = useCallback((next: ChartType) => {
-    setChartType(next);
-    // Reset params when switching to a non-parametric type so stale params do
-    // not leak into the renderer.
-    if (Object.keys(CHART_TYPE_PARAM_SPEC[next]).length === 0) {
-      setChartTypeParams({});
-    }
-  }, []);
-
   const handleApplyChartTypeParams = useCallback(
     (next: ChartTypeParams) => {
       setChartTypeParams(next);
       closeDialog();
     },
-    [closeDialog],
+    [closeDialog, setChartTypeParams],
   );
-
-  const handleSelectStrategy = useCallback((id: string | null) => {
-    setActiveStrategyId(id);
-    setStrategyParams({});
-  }, []);
 
   const handleApplyStrategyParams = useCallback(
     (next: StrategyParams) => {
       setStrategyParams(next);
       closeDialog();
     },
-    [closeDialog],
+    [closeDialog, setStrategyParams],
   );
 
   const chartTypeHasParams =
@@ -164,6 +157,7 @@ export default function ChartSurface({
   const effectiveTimeframe = (activeTimeframe as Timeframe) ?? '1m';
 
   return (
+<<<<<<< HEAD
     <div className={`relative flex h-full w-full flex-col overflow-hidden bg-background ${className}`}>
       {/* ── Suite-unique control row (no duplicated mode/timeframe/fullscreen) ── */}
       <div className="flex shrink-0 items-center gap-2 border-b border-border-default bg-surface/60 px-2 py-1.5">
@@ -204,10 +198,26 @@ export default function ChartSurface({
           onOpenSettings={() => setOpenDialog('strategy')}
         />
       </div>
+=======
+    <div
+      ref={surfaceRef}
+      className={`flex flex-col overflow-hidden bg-background ${containerClass} ${className}`}
+    >
+      {/* Control bar removed — chart controls are in the page-level OHLC header */}
+>>>>>>> 4aeceb23beff91c217cd1fc438b0517d325f99a5
 
       {/* ── Chart body: renderer (drawing toolbar is owned by the terminal
           chrome — TerminalLayout in normal mode, the page in fullscreen) ─── */}
       <div className="relative flex min-h-0 flex-1">
+<<<<<<< HEAD
+=======
+        {/* Drawing toolbar — only rendered inside fullscreen overlay;
+            in normal mode the toolbar lives in TerminalLayout. */}
+        {isFullscreen && (
+          <ChartToolsBar className="border-r border-border-default bg-surface/40" />
+        )}
+
+>>>>>>> 4aeceb23beff91c217cd1fc438b0517d325f99a5
         {/* Price renderer / footprint surface */}
         <div className="relative min-w-0 flex-1">
           {isFootprint ? (
@@ -277,6 +287,7 @@ export default function ChartSurface({
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+<<<<<<< HEAD
 // Chart-type selector
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -421,6 +432,8 @@ function StrategySelector({
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+=======
+>>>>>>> 4aeceb23beff91c217cd1fc438b0517d325f99a5
 // Generic numeric-parameter settings dialog (overlay)
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -521,9 +534,8 @@ function NumericParamDialog({
                   value={raw[k] ?? ''}
                   onChange={(e) => setRaw((prev) => ({ ...prev, [k]: e.target.value }))}
                   step={range.integer ? 1 : 'any'}
-                  className={`w-full rounded-md border bg-elevated px-2 py-1.5 text-sm text-text-primary outline-none transition-colors focus:border-primary ${
-                    hasError ? 'border-red-500/60' : 'border-border-default'
-                  }`}
+                  className={`w-full rounded-md border bg-elevated px-2 py-1.5 text-sm text-text-primary outline-none transition-colors focus:border-primary ${hasError ? 'border-red-500/60' : 'border-border-default'
+                    }`}
                 />
               </label>
             );
@@ -558,22 +570,4 @@ function NumericParamDialog({
       </div>
     </div>
   );
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// Small hook: close a popover on outside click
-// ───────────────────────────────────────────────────────────────────────────
-
-function useOutsideClose<T extends HTMLElement>(onClose: () => void) {
-  const ref = useRef<T>(null);
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        onClose();
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [onClose]);
-  return ref;
 }
