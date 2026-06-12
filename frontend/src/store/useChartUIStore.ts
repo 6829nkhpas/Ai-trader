@@ -1,28 +1,104 @@
 import { create } from 'zustand';
+import { getIndicator, validateParams, clearUnlocked } from '../charting/engines';
+import type { IndicatorId, IndicatorParams } from '../charting/engines';
+import type { LineStyleSpec } from '../charting/types';
+import {
+  saveWorkspace,
+  loadWorkspace,
+  DEFAULT_WORKSPACE,
+  type WorkspaceState,
+} from '../charting/workspace';
 
 type CursorMode = 'cross' | 'dot' | 'arrow' | 'eraser';
 type MagnetMode = 'off' | 'weak' | 'strong';
 export type GhostLineMode = 'linear' | 'curved';
 
 export type Point = { time: number; price: number };
-export type Drawing = { id: string; tool: string; points: Point[]; color?: string; text?: string };
+export type Drawing = {
+  id: string;
+  tool: string;
+  points: Point[];
+  color?: string;
+  text?: string;
+  /** When true, the drawing is immutable and survives a "clear drawings" action. */
+  locked?: boolean;
+  /** The symbol the drawing belongs to, enabling per-symbol persistence. */
+  symbol?: string;
+};
 
-// ── Tauri IPC Bridge ──────────────────────────────────────────────────
-// Lazy-import to avoid crashing in browser-only (non-Tauri) dev mode.
-// When running `npm run dev` without Tauri, `window.__TAURI__` is undefined.
-let tauriInvoke: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null = null;
+// ── Active Indicator Model (Indicator Manager store slice) ─────────────
+//
+// An `ActiveIndicator` is one configured instance of a registered indicator
+// applied to a symbol's chart. It carries a unique `instanceId`, the registry
+// `indicatorId`, the per-instance `params`, a `style` override, a `visible`
+// flag, and the `paneId` it renders into (null = price pane / overlay).
+//
+// The slice below keeps the active list per-symbol (`Record<symbol, list>`)
+// and enforces the invariants required by Requirements 4.3–4.5, 4.7, 4.8, 4.11.
 
-async function getInvoke() {
-  if (tauriInvoke) return tauriInvoke;
-  try {
-    // Tauri v2 uses @tauri-apps/api/core
-    const mod = await import('@tauri-apps/api/core');
-    tauriInvoke = mod.invoke;
-    return tauriInvoke;
-  } catch {
-    // Not running inside Tauri — fall back to no-op
-    return null;
-  }
+export type ActiveIndicator = {
+  /** Unique id for this active instance (distinct from `indicatorId`). */
+  instanceId: string;
+  /** The registered indicator this instance is an instance of. */
+  indicatorId: IndicatorId;
+  /** Per-instance numeric parameters (seeded from the registry defaults). */
+  params: IndicatorParams;
+  /** Per-instance visual style override. */
+  style: LineStyleSpec;
+  /** Whether the indicator's output is currently rendered. */
+  visible: boolean;
+  /** The pane the indicator renders into; null = price pane (overlay). */
+  paneId: string | null;
+};
+
+/** Maximum number of active indicators allowed per symbol (Requirement 4.5). */
+export const MAX_INDICATORS_PER_SYMBOL = 50;
+
+/** Default style applied to a newly added active indicator. */
+export const DEFAULT_INDICATOR_STYLE: LineStyleSpec = {
+  color: '#2962FF',
+  lineWidth: 1,
+  lineStyle: 'solid',
+};
+
+/** Reason an `addIndicator` call was rejected. */
+export type AddIndicatorError = 'duplicate' | 'at-capacity' | 'unknown-indicator';
+
+/** Result of an `addIndicator` call. */
+export type AddIndicatorResult =
+  | { ok: true; instanceId: string }
+  | { ok: false; error: AddIndicatorError; message: string };
+
+/** Result of a `setIndicatorParams` call. */
+export type SetIndicatorParamsResult =
+  | { ok: true }
+  | { ok: false; errorParam: string; message: string };
+
+// Monotonic counter backing unique instance ids. A counter (rather than a
+// random source) keeps instance-id generation deterministic and collision-free
+// even when many indicators are added in a tight loop.
+let indicatorInstanceCounter = 0;
+function nextInstanceId(indicatorId: IndicatorId): string {
+  indicatorInstanceCounter += 1;
+  return `${indicatorId}-${indicatorInstanceCounter}`;
+}
+
+/** Shallow structural equality for two indicator parameter bags. */
+function sameParams(a: IndicatorParams, b: IndicatorParams): boolean {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((k) => a[k] === b[k]);
+}
+
+// Workspace persistence (serialization, debounce, Tauri IPC bridge, and the
+// in-memory fallback outside Tauri) lives in `charting/workspace.ts` so the
+// serialization functions stay pure and property-testable. The store collects
+// the live, persistable slice of state into a `WorkspaceState` and delegates.
+
+/** Drawings created by system visualizations are transient and not persisted. */
+function isPersistableDrawing(d: Drawing): boolean {
+  return !d.id.startsWith('radar-') && !d.id.startsWith('realtime-pattern-');
 }
 
 interface ChartUIState {
@@ -33,6 +109,9 @@ interface ChartUIState {
   drawingsLocked: boolean;
   drawings: Drawing[];
   selectedDrawingId: string | null;
+  /** The drawing currently under the pointer, used to render a hover state
+   *  (Requirement 10.5). Null when the pointer is not over any drawing. */
+  hoveredDrawingId: string | null;
   drawingColor: string;
 
   /** Whether the chart card is rendered as a viewport-filling overlay.
@@ -58,6 +137,10 @@ interface ChartUIState {
   updateDrawingPoints: (id: string, points: Point[]) => void;
   removeDrawing: (id: string) => void;
   setSelectedDrawing: (id: string | null) => void;
+  /** Set the drawing under the pointer for hover highlighting (Req 10.5). */
+  setHoveredDrawing: (id: string | null) => void;
+  /** Lock or unlock a single drawing, making it immutable (Req 5.7). */
+  toggleDrawingLock: (id: string) => void;
   clearDrawings: () => void;
   setDrawingColor: (color: string) => void;
   setGhostLineMode: (mode: GhostLineMode) => void;
@@ -68,6 +151,30 @@ interface ChartUIState {
   // ── Workspace Persistence ──────────────────────────────────────────
   loadWorkspaceFromDB: (symbol: string) => Promise<void>;
   saveWorkspaceToDB: (symbol: string) => Promise<void>;
+
+  // ── Indicator Manager (per-symbol active indicators) ───────────────
+  /** Active indicators keyed by symbol; unknown symbols are an empty list. */
+  activeIndicators: Record<string, ActiveIndicator[]>;
+  /** Read the active-indicator list for a symbol (empty for unknown symbols). */
+  getActiveIndicators: (symbol: string) => ActiveIndicator[];
+  /** Add an indicator instance; rejects duplicates and at-capacity adds. */
+  addIndicator: (symbol: string, id: IndicatorId) => AddIndicatorResult;
+  /** Remove an indicator instance by its instance id. */
+  removeIndicator: (symbol: string, instanceId: string) => void;
+  /** Update an instance's params after validation against its paramSpec. */
+  setIndicatorParams: (
+    symbol: string,
+    instanceId: string,
+    params: IndicatorParams,
+  ) => SetIndicatorParamsResult;
+  /** Update an instance's visual style (partial merge). */
+  setIndicatorStyle: (
+    symbol: string,
+    instanceId: string,
+    style: Partial<LineStyleSpec>,
+  ) => void;
+  /** Flip an instance's visibility without discarding its configuration. */
+  toggleIndicatorVisible: (symbol: string, instanceId: string) => void;
 }
 
 export const useChartUIStore = create<ChartUIState>((set, get) => ({
@@ -78,11 +185,12 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
   drawingsLocked: false,
   drawings: [],
   selectedDrawingId: null,
+  hoveredDrawingId: null,
   drawingColor: '#FF5722',
   ghostLineMode: 'curved',
   accelerationCoefficient: 0.0,
   isFullscreen: false,
-
+  activeIndicators: {},
   setActiveCursor: (cursor) => set({ activeCursor: cursor, activeDrawingTool: null }),
   setActiveDrawingTool: (tool) => set({ activeDrawingTool: tool, selectedDrawingId: null }),
   setMagnetMode: (mode) => set({ magnetMode: mode }),
@@ -95,15 +203,48 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
   })),
   updateDrawingPoints: (id, points) =>
     set((state) => ({
-      drawings: state.drawings.map((d) => (d.id === id ? { ...d, points } : d)),
+      // Locked drawings are immutable: reject geometry edits (Requirement 5.7).
+      drawings: state.drawings.map((d) =>
+        d.id === id && !d.locked ? { ...d, points } : d,
+      ),
     })),
   removeDrawing: (id) =>
-    set((state) => ({
-      drawings: state.drawings.filter((d) => d.id !== id),
-      selectedDrawingId: state.selectedDrawingId === id ? null : state.selectedDrawingId,
-    })),
+    set((state) => {
+      // Locked drawings cannot be deleted (Requirement 5.7); leave state intact.
+      const target = state.drawings.find((d) => d.id === id);
+      if (target?.locked) return state;
+      return {
+        drawings: state.drawings.filter((d) => d.id !== id),
+        selectedDrawingId: state.selectedDrawingId === id ? null : state.selectedDrawingId,
+        hoveredDrawingId: state.hoveredDrawingId === id ? null : state.hoveredDrawingId,
+      };
+    }),
   setSelectedDrawing: (id) => set({ selectedDrawingId: id }),
-  clearDrawings: () => set({ drawings: [], selectedDrawingId: null }),
+  setHoveredDrawing: (id) =>
+    set((state) => (state.hoveredDrawingId === id ? state : { hoveredDrawingId: id })),
+  toggleDrawingLock: (id) =>
+    set((state) => ({
+      drawings: state.drawings.map((d) =>
+        d.id === id ? { ...d, locked: !d.locked } : d,
+      ),
+    })),
+  // Clear removes only unlocked drawings, retaining locked ones (Requirement 5.9).
+  clearDrawings: () =>
+    set((state) => {
+      const kept = clearUnlocked(state.drawings);
+      const keptIds = new Set(kept.map((d) => d.id));
+      return {
+        drawings: kept,
+        selectedDrawingId:
+          state.selectedDrawingId && keptIds.has(state.selectedDrawingId)
+            ? state.selectedDrawingId
+            : null,
+        hoveredDrawingId:
+          state.hoveredDrawingId && keptIds.has(state.hoveredDrawingId)
+            ? state.hoveredDrawingId
+            : null,
+      };
+    }),
   setDrawingColor: (color) => set({ drawingColor: color }),
   setGhostLineMode: (mode) => set({ ghostLineMode: mode }),
   setAccelerationCoefficient: (value) => set({ accelerationCoefficient: value }),
@@ -113,50 +254,194 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
   // ── Workspace Persistence Actions ──────────────────────────────────
 
   /**
-   * Load a symbol's persisted workspace from the local SQLite database
-   * via Tauri IPC. Hydrates the `drawings` array from the stored JSON.
-   * Gracefully no-ops when running outside of Tauri (browser-only dev).
+   * Load a symbol's persisted workspace and hydrate the live store from it.
+   * Restores the per-symbol drawings and active indicators. Outside Tauri this
+   * resolves from the in-memory session store; a missing or malformed blob
+   * yields {@link DEFAULT_WORKSPACE} (Requirements 1.4, 11.3, 11.4).
    */
   loadWorkspaceFromDB: async (symbol: string) => {
     try {
-      const invoke = await getInvoke();
-      if (!invoke) return; // Not running in Tauri
-
-      const raw = (await invoke('load_workspace', { symbol })) as string;
-      if (!raw || raw === '{}') {
-        // No saved workspace — start with a blank canvas
-        set({ drawings: [], selectedDrawingId: null });
-        return;
-      }
-
-      const parsed = JSON.parse(raw);
-      const drawings: Drawing[] = Array.isArray(parsed.drawings) ? parsed.drawings : [];
-      set({ drawings, selectedDrawingId: null });
-      console.log(`[Workspace] Loaded ${drawings.length} drawings for ${symbol}`);
+      const ws: WorkspaceState = await loadWorkspace(symbol);
+      const drawings = Array.isArray(ws.drawings) ? ws.drawings : [];
+      set((state) => ({
+        drawings,
+        selectedDrawingId: null,
+        hoveredDrawingId: null,
+        activeIndicators: {
+          ...state.activeIndicators,
+          [symbol]: Array.isArray(ws.activeIndicators) ? ws.activeIndicators : [],
+        },
+      }));
     } catch (err) {
+      // Restore failure: keep on-screen state, fall back to defaults silently.
       console.warn(`[Workspace] Failed to load workspace for ${symbol}:`, err);
-      // Don't wipe existing drawings on load failure
+      set((state) => ({
+        activeIndicators: {
+          ...state.activeIndicators,
+          [symbol]: DEFAULT_WORKSPACE.activeIndicators,
+        },
+      }));
     }
   },
 
   /**
-   * Persist the current drawings to the local SQLite database via
-   * Tauri IPC. Serializes the full drawings array as a JSON blob.
-   * Gracefully no-ops when running outside of Tauri (browser-only dev).
+   * Persist the current workspace for a symbol via the debounced writer. The
+   * full {@link WorkspaceState} (chart type + params, active indicators,
+   * persistable drawings, pane layout) is collected and handed off; transient
+   * system drawings are filtered out. Outside Tauri the state is retained in
+   * the in-memory session store (Requirements 4.9, 4.10, 5.11, 11.6).
    */
   saveWorkspaceToDB: async (symbol: string) => {
-    try {
-      const invoke = await getInvoke();
-      if (!invoke) return; // Not running in Tauri
-
-      const { drawings } = get();
-      // Filter out temporary radar/system visualization drawings before saving
-      const userDrawings = drawings.filter((d) => !d.id.startsWith('radar-') && !d.id.startsWith('realtime-pattern-'));
-      const stateJson = JSON.stringify({ drawings: userDrawings });
-      await invoke('save_workspace', { symbol, stateJson });
-      console.log(`[Workspace] Saved ${userDrawings.length} drawings for ${symbol}`);
-    } catch (err) {
-      console.warn(`[Workspace] Failed to save workspace for ${symbol}:`, err);
-    }
+    const { drawings, activeIndicators } = get();
+    const ws: WorkspaceState = {
+      ...DEFAULT_WORKSPACE,
+      drawings: drawings.filter(isPersistableDrawing),
+      activeIndicators: activeIndicators[symbol] ?? [],
+    };
+    saveWorkspace(symbol, ws);
   },
+
+  // ── Indicator Manager Actions ──────────────────────────────────────
+
+  /**
+   * Read the active-indicator list for a symbol. Unknown symbols resolve to an
+   * empty list rather than `undefined` (Requirement 4.11), so callers can treat
+   * the result as an array unconditionally.
+   */
+  getActiveIndicators: (symbol) => get().activeIndicators[symbol] ?? [],
+
+  /**
+   * Add an indicator instance to a symbol's active list using the registry
+   * defaults for params. Enforces:
+   *  - unknown-indicator rejection (id not in the registry)
+   *  - duplicate rejection: an instance with the same indicatorId AND identical
+   *    params already exists for the symbol (Requirement 4.4)
+   *  - 50-entry cap per symbol (Requirement 4.5)
+   * Rejected adds leave the existing list unchanged. Unknown symbols start from
+   * an empty list (Requirement 4.11).
+   */
+  addIndicator: (symbol, id) => {
+    const def = getIndicator(id);
+    if (!def) {
+      return { ok: false, error: 'unknown-indicator', message: `Unknown indicator: ${id}` };
+    }
+
+    const list = get().activeIndicators[symbol] ?? [];
+    const params: IndicatorParams = { ...def.defaults };
+
+    const isDuplicate = list.some(
+      (ind) => ind.indicatorId === id && sameParams(ind.params, params),
+    );
+    if (isDuplicate) {
+      return { ok: false, error: 'duplicate', message: `${def.name} is already active` };
+    }
+
+    if (list.length >= MAX_INDICATORS_PER_SYMBOL) {
+      return {
+        ok: false,
+        error: 'at-capacity',
+        message: `Maximum of ${MAX_INDICATORS_PER_SYMBOL} indicators reached`,
+      };
+    }
+
+    const instance: ActiveIndicator = {
+      instanceId: nextInstanceId(id),
+      indicatorId: id,
+      params,
+      style: { ...DEFAULT_INDICATOR_STYLE },
+      visible: true,
+      paneId: null,
+    };
+
+    set((state) => ({
+      activeIndicators: {
+        ...state.activeIndicators,
+        [symbol]: [...(state.activeIndicators[symbol] ?? []), instance],
+      },
+    }));
+
+    return { ok: true, instanceId: instance.instanceId };
+  },
+
+  /** Remove an indicator instance from a symbol's active list (Requirement 4.8). */
+  removeIndicator: (symbol, instanceId) =>
+    set((state) => {
+      const list = state.activeIndicators[symbol];
+      if (!list) return {};
+      return {
+        activeIndicators: {
+          ...state.activeIndicators,
+          [symbol]: list.filter((ind) => ind.instanceId !== instanceId),
+        },
+      };
+    }),
+
+  /**
+   * Update an instance's params after validating them against the indicator's
+   * `paramSpec`. Invalid values are rejected and the existing params are
+   * retained unchanged (Requirement 4 / validation), returning the offending
+   * parameter name.
+   */
+  setIndicatorParams: (symbol, instanceId, params) => {
+    const list = get().activeIndicators[symbol] ?? [];
+    const target = list.find((ind) => ind.instanceId === instanceId);
+    if (!target) {
+      return { ok: false, errorParam: '', message: 'Indicator instance not found' };
+    }
+
+    const def = getIndicator(target.indicatorId);
+    if (!def) {
+      return { ok: false, errorParam: '', message: 'Unknown indicator' };
+    }
+
+    const result = validateParams(params, def.paramSpec);
+    if (!result.ok) {
+      return { ok: false, errorParam: result.errorParam, message: result.message };
+    }
+
+    set((state) => ({
+      activeIndicators: {
+        ...state.activeIndicators,
+        [symbol]: (state.activeIndicators[symbol] ?? []).map((ind) =>
+          ind.instanceId === instanceId ? { ...ind, params: result.value } : ind,
+        ),
+      },
+    }));
+
+    return { ok: true };
+  },
+
+  /** Update an instance's visual style with a partial merge (Requirement 4.8). */
+  setIndicatorStyle: (symbol, instanceId, style) =>
+    set((state) => {
+      const list = state.activeIndicators[symbol];
+      if (!list) return {};
+      return {
+        activeIndicators: {
+          ...state.activeIndicators,
+          [symbol]: list.map((ind) =>
+            ind.instanceId === instanceId ? { ...ind, style: { ...ind.style, ...style } } : ind,
+          ),
+        },
+      };
+    }),
+
+  /**
+   * Flip an instance's `visible` flag while preserving every other field
+   * (params, style, paneId), so toggling visibility never discards the
+   * indicator's configuration (Requirement 4.7).
+   */
+  toggleIndicatorVisible: (symbol, instanceId) =>
+    set((state) => {
+      const list = state.activeIndicators[symbol];
+      if (!list) return {};
+      return {
+        activeIndicators: {
+          ...state.activeIndicators,
+          [symbol]: list.map((ind) =>
+            ind.instanceId === instanceId ? { ...ind, visible: !ind.visible } : ind,
+          ),
+        },
+      };
+    }),
 }));
