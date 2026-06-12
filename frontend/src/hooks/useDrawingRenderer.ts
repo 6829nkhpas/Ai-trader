@@ -33,6 +33,8 @@ export function useDrawingRenderer(
   const { chartRef, candleSeriesRef, drawingSeriesRef } = refs;
   const drawings = useChartUIStore((s) => s.drawings);
   const drawingsVisible = useChartUIStore((s) => s.drawingsVisible);
+  const hoveredDrawingId = useChartUIStore((s) => s.hoveredDrawingId);
+  const selectedDrawingId = useChartUIStore((s) => s.selectedDrawingId);
 
   const drawingSeriesMapRef = useRef<Map<string, any[]>>(new Map());
   const drawingPriceLinesMapRef = useRef<Map<string, any[]>>(new Map());
@@ -187,6 +189,10 @@ export function useDrawingRenderer(
     let currentPriceLinesList: any[] = [];
     let lineIdx = 0;
     let plIdx = 0;
+    // Hover/selection highlight: when the current drawing is hovered or
+    // selected, its lines/price-lines render thicker so it reads as
+    // selectable (Requirement 10.5).
+    let currentHighlight = false;
 
     // Batch: collect all setData calls, flush them in one rAF
     const pendingBatch: PendingSetData[] = [];
@@ -231,7 +237,7 @@ export function useDrawingRenderer(
 
       const opts = {
         color,
-        lineWidth,
+        lineWidth: (currentHighlight ? Math.min(4, lineWidth + 1) : lineWidth) as 1 | 2 | 3 | 4,
         lineStyle,
         title: title || '',
       };
@@ -273,14 +279,14 @@ export function useDrawingRenderer(
       if (plIdx < currentPriceLinesList.length) {
         // Reuse existing price line
         const existingPl = currentPriceLinesList[plIdx];
-        existingPl.applyOptions({ price, color });
+        existingPl.applyOptions({ price, color, lineWidth: currentHighlight ? 2 : 1 });
         plIdx++;
       } else {
         // Create new price line
         const pl = mainSeries.createPriceLine({
           price,
           color,
-          lineWidth: 1,
+          lineWidth: currentHighlight ? 2 : 1,
           lineStyle: 2,
           axisLabelVisible: true,
         });
@@ -293,6 +299,8 @@ export function useDrawingRenderer(
       if (drawing.points.length < 2) continue;
 
       const color = drawing.color || TOOL_COLORS[drawing.tool] || '#2962FF';
+      // Hovered or selected drawings render with a thicker stroke (Req 10.5).
+      const isHighlighted = drawing.id === hoveredDrawingId || drawing.id === selectedDrawingId;
 
       // ── Caching logic ──────────────────────────────────────────────────
       const stateStr = JSON.stringify({
@@ -300,6 +308,7 @@ export function useDrawingRenderer(
         color,
         tool: drawing.tool,
         text: drawing.text,
+        highlighted: isHighlighted,
       });
 
       const lastState = lastDrawnStateRef.current.get(drawing.id);
@@ -310,6 +319,9 @@ export function useDrawingRenderer(
 
       // Update cache
       lastDrawnStateRef.current.set(drawing.id, stateStr);
+
+      // Drive the per-line/price-line width boost for this drawing.
+      currentHighlight = isHighlighted;
 
       // Load or initialize series and price line lists for this drawing
       if (!activeMap.has(drawing.id)) {
@@ -1971,5 +1983,5 @@ export function useDrawingRenderer(
     return () => {
       cancelAnimationFrame(rafIdRef.current);
     };
-  }, [drawings, drawingsVisible, chartRef, candleSeriesRef, drawingSeriesRef]);
+  }, [drawings, drawingsVisible, hoveredDrawingId, selectedDrawingId, chartRef, candleSeriesRef, drawingSeriesRef]);
 }

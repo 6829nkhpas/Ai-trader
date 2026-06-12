@@ -8,6 +8,13 @@ import { useHistoricalData } from '../hooks/useHistoricalData';
 import type { Timeframe, AlphaPredictiveChartProps } from '../utils/chartTypes';
 import { RANGE_DAYS, KITE_INTERVAL_MAP } from '../utils/chartTypes';
 export type { Timeframe };
+
+// The generalized engine-driven renderer (Professional Charting Suite). It
+// consumes ChartTypeEngine / IndicatorEngine / StrategyEngine output via the
+// PaneManager. `AlphaPredictiveChart` (below) is preserved unchanged for
+// existing callers; new surfaces should prefer `ChartRenderer`.
+export { default as ChartRenderer } from './chart/ChartRenderer';
+export type { ChartRendererProps } from './chart/ChartRenderer';
 import { aggregateCandles } from '../utils/chartAggregation';
 
 import { useChartInit } from '../hooks/useChartInit';
