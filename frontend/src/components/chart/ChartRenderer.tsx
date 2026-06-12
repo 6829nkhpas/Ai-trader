@@ -43,6 +43,7 @@ import { DrawingOverlays } from './DrawingOverlays';
 import DrawingContextToolbar from './DrawingContextToolbar';
 import DrawingLayersPanel from './DrawingLayersPanel';
 import { useDrawingRenderer } from '../../hooks/useDrawingRenderer';
+import { useRadarOverlay } from '../../hooks/useRadarOverlay';
 import { useTauriLiveData } from '../../hooks/useTauriLiveData';
 import { useConnectionStatus } from '../../hooks/useConnectionStatus';
 import VolumeProfileOverlay from './VolumeProfileOverlay';
@@ -190,6 +191,12 @@ export default function ChartRenderer({
   useDrawingEngine(refs.chartRef, refs.candleSeriesRef, containerRef, chartData);
   useDrawingInteraction(refs.chartRef, refs.candleSeriesRef, containerRef, chartData);
   useDrawingRenderer(refs, chartData);
+
+  // ── Quant Radar on-chart visualization ────────────────────────────────
+  // Draws the user-selected radar detection (pattern highlight box or strategy
+  // marker/level line) when a scan result is clicked. Subscribes to the radar
+  // store imperatively so toggling/clicking a detection redraws instantly.
+  useRadarOverlay(refs, chartData);
 
   // ── Synchronized Crosshair Readouts (Requirements 10.1–10.4, 10.8) ────
   // The CrosshairController reads the hovered candle's OHLC plus every active
