@@ -30,6 +30,7 @@ import { RANGE_DAYS, KITE_INTERVAL_MAP } from '../../utils/chartTypes';
 import { aggregateCandles } from '../../utils/chartAggregation';
 
 import { useChartInit } from '../../hooks/useChartInit';
+import { useZoomClamp } from '../../hooks/useZoomClamp';
 import { useChartDataSync } from '../../hooks/useChartDataSync';
 import { useChartTypeRenderer } from '../../hooks/useChartTypeRenderer';
 import { useIndicatorRenderer } from '../../hooks/useIndicatorRenderer';
@@ -160,6 +161,16 @@ export default function ChartRenderer({
   // ── Chart Initialization & DOM Container ─────────────────────────────
   const containerRef = React.useRef<HTMLDivElement>(null);
   const refs = useChartInit(containerRef);
+
+  // ── Wheel-zoom clamp (Requirement 10.6) ──────────────────────────────
+  // Constrains the visible candle count to [5, 5000] on every zoom/pan,
+  // preserving the cursor-centered midpoint. The price pane is rendered by
+  // `lightweight-charts`, which scales its canvas backing store by
+  // `window.devicePixelRatio` natively (Requirement 12.6, ratios 1.0–4.0); the
+  // footprint and volume-profile canvas overlays apply their own DPR-aware
+  // backing stores. The price-range-proxy label for zero-volume index
+  // instruments is rendered below (gated on `isIndexVolume`, Requirement 12.7).
+  useZoomClamp(refs.chartRef);
 
   // ── Base price pipeline (candlestick + volume + EMA + ghost) ──────────
   useChartDataSync(refs, chartData, volumeData, ema9Data, ema21Data, effectiveTimeframe, activeSymbol, predictiveSignals, isExpanded);

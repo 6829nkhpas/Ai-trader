@@ -243,7 +243,7 @@ All file paths are relative to `frontend/src`. Existing components (`AlphaPredic
     - In-place last-candle update, clear-on-symbol-switch, right-edge follow, out-of-order repaint from canonical series, and the disconnected-feed indicator
     - _Requirements: 9.2, 9.3, 9.4, 9.5, 9.6, 9.7, 9.8_
 
-  - [ ] 12.3 Implement zoom clamping, DPR rendering, and volume proxy label
+  - [x] 12.3 Implement zoom clamping, DPR rendering, and volume proxy label
     - Clamp wheel zoom to 5–5000 visible candles, render DPR-aware for ratios 1.0–4.0, and show the price-range-proxy label for zero-volume indices
     - _Requirements: 10.6, 12.6, 12.7_
 
@@ -264,11 +264,11 @@ All file paths are relative to `frontend/src`. Existing components (`AlphaPredic
     - Subscribe to crosshair moves; read OHLC + active-indicator values, format to instrument precision, broadcast a synced vertical crosshair across panes, and show no-value placeholders for warm-up/out-of-range positions
     - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.8_
 
-  - [ ]* 13.2 Write property test for value formatting precision
+  - [x]* 13.2 Write property test for value formatting precision
     - **Property 31: Values are formatted to the instrument's configured precision**
     - **Validates: Requirements 10.1, 10.2**
 
-  - [ ]* 13.3 Write property test for no-value placeholder
+  - [x]* 13.3 Write property test for no-value placeholder
     - **Property 32: Out-of-range or warm-up positions yield a no-value placeholder**
     - **Validates: Requirements 10.3, 10.8**
 
@@ -277,11 +277,11 @@ All file paths are relative to `frontend/src`. Existing components (`AlphaPredic
     - Implement `WorkspaceState`, `serializeWorkspace`, `deserializeWorkspace`, `DEFAULT_WORKSPACE`; wire debounced `save_workspace`/`load_workspace` IPC with in-memory fallback outside Tauri
     - _Requirements: 1.3, 1.4, 4.9, 4.10, 5.11, 11.1, 11.2, 11.3, 11.6_
 
-  - [ ]* 14.2 Write property test for serialization round-trip
+  - [x]* 14.2 Write property test for serialization round-trip
     - **Property 33: Workspace serialization round-trips**
     - **Validates: Requirements 1.3, 4.9, 4.10, 5.11, 11.1, 11.2**
 
-  - [ ]* 14.3 Write property test for absent persisted workspace
+  - [x]* 14.3 Write property test for absent persisted workspace
     - **Property 34: Absent persisted workspace yields defaults**
     - **Validates: Requirements 1.4, 4.11, 11.3**
 
