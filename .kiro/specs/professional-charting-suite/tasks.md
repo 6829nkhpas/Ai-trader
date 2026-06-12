@@ -153,7 +153,7 @@ All file paths are relative to `frontend/src`. Existing components (`AlphaPredic
     - Test drag updates geometry, eraser deletes clicked drawing, hover state differs
     - _Requirements: 5.5, 10.5, 10.7_
 
-- [ ] 7. Checkpoint - core geometry and indicator engines
+- [x] 7. Checkpoint - core geometry and indicator engines
   - Ensure all tests pass, ask the user if questions arise.
 
 - [x] 8. Implement FootprintEngine
@@ -231,10 +231,10 @@ All file paths are relative to `frontend/src`. Existing components (`AlphaPredic
     - Assert ≥3 strategies incl. the three named, insufficient-data indication, and marker removal on strategy remove
     - _Requirements: 8.1, 8.3, 8.8_
 
-- [ ] 11. Checkpoint - order-flow and strategy engines
+- [x] 11. Checkpoint - order-flow and strategy engines
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 12. Implement ChartRenderer and ChartSurface
+- [x] 12. Implement ChartRenderer and ChartSurface
   - [x] 12.1 Generalize the renderer to consume engine output
     - Generalize `AlphaPredictiveChart` into `ChartRenderer` that renders `ChartTypeEngine` series, overlay indicator series, and oscillator panes via `PaneManager`
     - _Requirements: 2.2, 2.4, 2.8, 3.5, 8.4_
@@ -255,11 +255,11 @@ All file paths are relative to `frontend/src`. Existing components (`AlphaPredic
     - **Property 30: Wheel zoom keeps the visible candle count within bounds**
     - **Validates: Requirements 10.6**
 
-  - [ ]* 12.6 Write unit/integration tests for renderer behaviors
+  - [x]* 12.6 Write unit/integration tests for renderer behaviors
     - Test symbol-switch clear, right-edge follow, disconnect/reconnect indicator, fullscreen failure, and DPR backing-store scaling
     - _Requirements: 9.4, 9.5, 9.7, 9.8, 12.5, 12.6_
 
-- [ ] 13. Implement CrosshairController
+- [x] 13. Implement CrosshairController
   - [x] 13.1 Implement synchronized crosshair and readouts
     - Subscribe to crosshair moves; read OHLC + active-indicator values, format to instrument precision, broadcast a synced vertical crosshair across panes, and show no-value placeholders for warm-up/out-of-range positions
     - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.8_
@@ -289,16 +289,16 @@ All file paths are relative to `frontend/src`. Existing components (`AlphaPredic
     - Test restore-failure applies defaults and retains on-screen state; persist-failure retains in-memory state and retries on next change
     - _Requirements: 5.12, 11.4, 11.5_
 
-- [ ] 15. Integration and wiring
+- [x] 15. Integration and wiring
   - [x] 15.1 Wire the full charting suite into MainTerminalChart
     - Connect engines, stores, renderer, pane manager, crosshair, and persistence through `ChartSurface` mounted in `MainTerminalChart`, fed by the canonical candle selector
     - _Requirements: 9.1, 11.1, 12.1_
 
-  - [ ]* 15.2 Write integration and performance tests
+  - [x]* 15.2 Write integration and performance tests
     - Test pane time-bound sync and pan/zoom follow, synchronized crosshair across panes, persistence round-trip through the real SQLite IPC, and latency/frame-budget targets
     - _Requirements: 3.3, 3.4, 9.1, 9.2, 10.4, 11.1, 11.2_
 
-- [ ] 16. Final checkpoint - full suite verification
+- [x] 16. Final checkpoint - full suite verification
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
