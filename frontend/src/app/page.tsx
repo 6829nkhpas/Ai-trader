@@ -362,6 +362,9 @@ export default function Home() {
                 </div>
 
                 <div className="flex items-center gap-1.5">
+                  {/* Chart-mode toggle (Standard / Volume Profile / Footprint) */}
+                  <ChartModeToggle />
+
                   {/* Chart-type selector (Candlestick dropdown) */}
                   <ChartTypeSelector
                     value={chartType}
