@@ -2,7 +2,6 @@
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Maximize2, Minimize2, Clock, LineChart as LineChartIcon } from 'lucide-react';
-import TradingChart from '../components/TradingChart';
 import ChartToolsBar from '../components/chart/ChartToolsBar';
 import ChartModeToggle from '../components/chart/ChartHeader';
 import ChartTypeSelector from '../components/chart/ChartTypeSelector';
@@ -15,12 +14,10 @@ import IntradayLayout from '../components/layouts/IntradayLayout';
 import SwingLayout, { SwingConfluencePanel } from '../components/layouts/SwingLayout';
 import InvestorLayout, { MacroSentimentPanel } from '../components/layouts/InvestorLayout';
 import OrderBook from '../components/OrderBook';
-import SystemConsole from '../components/SystemConsole';
 
 import DeepQuantPanel from '../components/quant/DeepQuantPanel';
 import ActivePositions from '../components/quant/ActivePositions';
 import PortfolioDashboard from '../components/quant/PortfolioDashboard';
-import TerminalDashboard from '../components/TerminalDashboard';
 import { useTradeStore, TradeProfile, ChartTimeframe, hydratePaperPortfolio } from '../store/useTradeStore';
 import { useQuantStore } from '../store/useQuantStore';
 import { useChartUIStore } from '../store/useChartUIStore';
@@ -69,6 +66,7 @@ export default function Home() {
   const setActiveStrategyId = useChartUIStore((s) => s.setActiveStrategyId);
   const showIndicatorManager = useChartUIStore((s) => s.showIndicatorManager);
   const toggleIndicatorManager = useChartUIStore((s) => s.toggleIndicatorManager);
+  const hoverOhlc = useChartUIStore((s) => s.hoverOhlc);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('profile');
 
@@ -352,10 +350,10 @@ export default function Home() {
                         {symbolQuote.change >= 0 ? '+' : ''}{symbolQuote.change.toFixed(2)}%
                       </div>
                       <div className="hidden sm:flex items-center gap-2 text-[10px] text-text-muted tabular-nums">
-                        <span>O <span className="text-text-secondary">{symbolQuote.open.toFixed(2)}</span></span>
-                        <span>H <span className="text-text-secondary">{symbolQuote.high.toFixed(2)}</span></span>
-                        <span>L <span className="text-text-secondary">{symbolQuote.low.toFixed(2)}</span></span>
-                        <span>C <span className="text-text-secondary">{symbolQuote.close.toFixed(2)}</span></span>
+                        <span>O <span className="text-text-secondary">{(hoverOhlc?.open ?? symbolQuote.open).toFixed(2)}</span></span>
+                        <span>H <span className="text-text-secondary">{(hoverOhlc?.high ?? symbolQuote.high).toFixed(2)}</span></span>
+                        <span>L <span className="text-text-secondary">{(hoverOhlc?.low ?? symbolQuote.low).toFixed(2)}</span></span>
+                        <span>C <span className="text-text-secondary">{(hoverOhlc?.close ?? symbolQuote.close).toFixed(2)}</span></span>
                       </div>
                     </>
                   ) : (

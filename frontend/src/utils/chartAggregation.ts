@@ -42,11 +42,15 @@ export function aggregateCandles(
   // BUG-3: Guard against zero/negative timestamps and invalid OHLC values.
   // lightweight-charts throws "Data must be in ascending order" if any candle
   // has time <= 0, and NaN prices cause invisible (zero-height) candles.
+  //
+  // We only require open/close to be finite and positive here. high/low are
+  // intentionally NOT used as a drop criterion: live "forming" candles often
+  // arrive with stale, missing, or not-yet-consistent high/low, and dropping
+  // them would make the latest candle flicker or vanish. Instead we normalize
+  // high/low below so every emitted candle is well-formed.
   const valid = filtered.filter((c) =>
     c.start_timestamp_ms > 0 &&
     Number.isFinite(c.open) && c.open > 0 &&
-    Number.isFinite(c.high) && c.high >= c.open &&
-    Number.isFinite(c.low)  && c.low  > 0 &&
     Number.isFinite(c.close) && c.close > 0
   );
 
@@ -59,19 +63,30 @@ export function aggregateCandles(
 
   for (const candle of sorted) {
     const bucketKey = Math.floor(candle.start_timestamp_ms / intervalMs) * intervalMs;
+
+    // Normalize this candle's high/low so they always enclose its open & close.
+    // Missing/non-finite extremes fall back to the open/close range; a recorded
+    // high below the body (or low above it) is widened to the body. This is the
+    // core "candles not forming well" fix — without it lightweight-charts draws
+    // a body that pokes past its wick whenever the source OHLC is inconsistent.
+    const rawHigh = Number.isFinite(candle.high) ? candle.high : -Infinity;
+    const rawLow = Number.isFinite(candle.low) ? candle.low : Infinity;
+    const cHigh = Math.max(candle.open, candle.close, rawHigh);
+    const cLow = Math.min(candle.open, candle.close, rawLow);
+
     const existing = buckets.get(bucketKey);
     if (existing) {
-      existing.high = Math.max(existing.high, candle.high);
-      existing.low = Math.min(existing.low, candle.low);
+      existing.high = Math.max(existing.high, cHigh);
+      existing.low = Math.min(existing.low, cLow);
       existing.close = candle.close;
-      existing.volume += candle.volume;
+      existing.volume += Number.isFinite(candle.volume) ? candle.volume : 0;
     } else {
       buckets.set(bucketKey, {
         open: candle.open,
-        high: candle.high,
-        low: candle.low,
+        high: cHigh,
+        low: cLow,
         close: candle.close,
-        volume: candle.volume,
+        volume: Number.isFinite(candle.volume) ? candle.volume : 0,
       });
     }
   }

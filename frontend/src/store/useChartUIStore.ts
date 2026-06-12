@@ -14,6 +14,17 @@ type CursorMode = 'cross' | 'dot' | 'arrow' | 'eraser';
 type MagnetMode = 'off' | 'weak' | 'strong';
 export type GhostLineMode = 'linear' | 'curved';
 
+/** The OHLC of the candle currently under the crosshair, or null when the
+ *  pointer is off the chart / over empty space. Raw numeric values (unformatted)
+ *  so any consumer (e.g. the header readout) can format to its own precision. */
+export type HoverOhlc = {
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  time: number;
+} | null;
+
 export type Point = { time: number; price: number };
 export type Drawing = {
   id: string;
@@ -139,6 +150,10 @@ interface ChartUIState {
   strategyParams: StrategyParams;
   /** Whether the indicator-manager panel is visible. */
   showIndicatorManager: boolean;
+  /** OHLC of the candle under the crosshair (null when not hovering a candle).
+   *  Written by the crosshair controller, read by the header OHLC readout so it
+   *  updates live as the user hovers candles (Requirement 10.1). */
+  hoverOhlc: HoverOhlc;
 
   setActiveCursor: (cursor: CursorMode) => void;
   setActiveDrawingTool: (tool: string | null) => void;
@@ -166,6 +181,8 @@ interface ChartUIState {
   setStrategyParams: (params: StrategyParams) => void;
   setShowIndicatorManager: (value: boolean | ((prev: boolean) => boolean)) => void;
   toggleIndicatorManager: () => void;
+  /** Publish (or clear) the crosshair-hovered candle's OHLC. */
+  setHoverOhlc: (value: HoverOhlc) => void;
 
   // ── Workspace Persistence ──────────────────────────────────────────
   loadWorkspaceFromDB: (symbol: string) => Promise<void>;
@@ -214,6 +231,7 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
   activeStrategyId: null,
   strategyParams: {},
   showIndicatorManager: false,
+  hoverOhlc: null,
   activeIndicators: {},
   setActiveCursor: (cursor) => set({ activeCursor: cursor, activeDrawingTool: null }),
   setActiveDrawingTool: (tool) => set({ activeDrawingTool: tool, selectedDrawingId: null }),
@@ -285,6 +303,25 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
     })),
   toggleIndicatorManager: () =>
     set((s) => ({ showIndicatorManager: !s.showIndicatorManager })),
+  // Equality-gated so repeated crosshair moves over the same candle (or over
+  // empty space) keep the same `hoverOhlc` reference and never re-render the
+  // header. Returning `{}` is a no-op merge that leaves the slice identity intact.
+  setHoverOhlc: (value) =>
+    set((s) => {
+      const prev = s.hoverOhlc;
+      if (value === null) return prev === null ? {} : { hoverOhlc: null };
+      if (
+        prev &&
+        prev.time === value.time &&
+        prev.open === value.open &&
+        prev.high === value.high &&
+        prev.low === value.low &&
+        prev.close === value.close
+      ) {
+        return {};
+      }
+      return { hoverOhlc: value };
+    }),
 
   // ── Workspace Persistence Actions ──────────────────────────────────
 

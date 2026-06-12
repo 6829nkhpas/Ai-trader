@@ -24,9 +24,11 @@ import type { MouseEventParams } from 'lightweight-charts';
 
 import type { ChartRefs, ChartCandle } from '../utils/chartTypes';
 import type { ActiveIndicator } from '../store/useChartUIStore';
+import { useChartUIStore } from '../store/useChartUIStore';
 import { getIndicator, type IndicatorPlot } from '../charting/engines';
 import {
   buildCrosshairReadout,
+  findCandleAt,
   EMPTY_CROSSHAIR_READOUT,
   DEFAULT_PRICE_PRECISION,
   type CrosshairReadout,
@@ -126,6 +128,22 @@ export function useCrosshairController(
           precision: precisionRef.current,
         });
 
+        // Publish the hovered candle's raw OHLC so the page header readout
+        // tracks the crosshair live (Requirement 10.1). Cleared to null when the
+        // crosshair is over empty space / off the chart.
+        const hovered = findCandleAt(candlesRef.current, time);
+        useChartUIStore.getState().setHoverOhlc(
+          hovered
+            ? {
+                open: hovered.open,
+                high: hovered.high,
+                low: hovered.low,
+                close: hovered.close,
+                time: hovered.time,
+              }
+            : null,
+        );
+
         // Avoid redundant state churn when the resolved time is unchanged and
         // there is still no candle (crosshair hovering empty space).
         setReadout((prev) =>
@@ -140,6 +158,8 @@ export function useCrosshairController(
 
     return () => {
       clearInterval(interval);
+      // Clear any lingering hover readout when the chart unmounts.
+      useChartUIStore.getState().setHoverOhlc(null);
       if (activeChart && handler) {
         try {
           activeChart.unsubscribeCrosshairMove(handler);
