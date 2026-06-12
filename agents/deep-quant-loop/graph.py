@@ -84,8 +84,15 @@ from tools import (
     get_news_context,
     get_prediction,
     get_trade_performance,
+    get_market_regime,
     watch_price_condition,
-    declare_trade
+    declare_trade,
+    # Regime_Label enum sets — reused to recognise a usable get_market_regime
+    # label (vs an Unavailable_Marker) when building the defensibility record.
+    REGIME_TREND_STATES,
+    REGIME_VOLATILITY_STATES,
+    REGIME_FAVORABILITY,
+    _REGIME_MEASURE_FIELDS,
 )
 
 # Trade_Journal — measurement & feedback loop (Phase 2). Records every committed
@@ -147,6 +154,11 @@ You must follow this exact loop until a perfect setup is found or registered:
    - ATR (atr_14) for stop-loss sizing relative to volatility
    - VWAP for intraday institutional fair value
    - OBV and CMF for volume confirmation
+2b. MARKET REGIME GATE: Call `get_market_regime` with the analyzed symbol and the SAME timeframe currently under analysis to label the current regime. The result reports:
+   - trend_state (trending / ranging / transitional) — the directional structure,
+   - volatility_state (low / normal / high) — the realized-volatility state,
+   - favorability (favorable / unfavorable / neutral) — whether this regime favors trend/momentum setups.
+   Use favorability as a calibration filter, NOT a trade generator: a `favorable` regime does NOT force a trade, and the regime never blocks or overrides your decision. If the regime is unavailable (insufficient data / unavailable marker), treat it as a missing optional input — note it as unavailable and proceed with the remaining analysis; do NOT fabricate a regime and do NOT abort the decision on that basis.
 3. KEY LEVELS: Call `get_support_resistance` with the timeframe you're analyzing (e.g., '15m' for intraday).
    For intraday timeframes it returns BOTH micro S/R levels (from that timeframe's candles) AND daily macro levels.
    It also includes the Opening Range (first 3 candles) high/low — a key intraday reference.
@@ -190,6 +202,7 @@ Ask yourself:
 - Is price above or below VWAP? (Buy setups stronger above VWAP, sell setups stronger below)
 - Does volume flow (OBV, CMF) confirm my direction?
 - What does my TRACK RECORD say? Have I checked `get_trade_performance` for this setup type? If a comparable setup has negative expectancy or a win rate too low for its R:R (and the sample is not tiny), I must scrap or downgrade this trade.
+- WHAT IS THE MARKET REGIME? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `favorability` from `get_market_regime`. If the favorability is `unfavorable` for the proposed setup type (e.g. a trend/momentum entry in a ranging or volatility-extreme regime), you MUST take exactly one of these actions: lower your conviction_score, wait for a better setup (e.g. via `watch_price_condition`), or HOLD. If the regime is unavailable, note it as unavailable and proceed — do NOT block the trade solely because the regime could not be computed.
 If the answer to ANY of the first 3 checks is YES, you must scrap the trade. You must either analyze a different timeframe to find a better entry, or call `watch_price_condition` to wait for a safer pullback. 
 ONLY call `declare_trade` if you are 100% confident you could defend this trade against rigorous critique.
 For a BUY or SELL you MUST pass the numeric `entry`, `stop_loss`, and `take_profit` arguments to `declare_trade` (and `atr_14` from the consensus report). The Trade_Validator rejects directional trades that omit these or that fail Risk:Reward >= 1:2 / stop >= 1.5x ATR; if rejected, revise the levels and call `declare_trade` again. A HOLD may omit the numeric levels.
@@ -202,6 +215,7 @@ Your `setup_validation` is the defensibility record for the trade and MUST expli
 - MACRO-TREND CONFLICT: If your trade direction opposes the 1D trend bias from `get_multi_tf_trend`, state the macro-trend conflict explicitly before committing (e.g., "Trade is long against a bearish 1D macro trend").
 - VOLUME PROFILE: State where the entry sits relative to the auction structure from `get_volume_profile` (POC / VAH / VAL and whether price is above/inside/below value), and which HVN/LVN levels back the stop and target.
 - TRACK RECORD: State the realized stat from `get_trade_performance` that informed your conviction (e.g., "This BUY-aligned-above-value setup is 7/10 with +1.3R expectancy" or "downgraded: comparable setup is -0.4R over 14 trades"). If low_sample, say so.
+- MARKET REGIME: State the Trend_State, the Volatility_State, and the Favorability taken from the `get_market_regime` result (e.g., "Regime: trending / normal vol / favorable"). If the favorability was unfavorable, state how you responded (lowered conviction / waited / HOLD). If the regime was unavailable, state that it was unavailable and that you proceeded without it.
 Always include the multi-timeframe bias, the key S/R levels used, the volatility (ATR) basis for the stop, and the Risk:Reward ratio in your setup_validation.
 </setup_validation_disclosure>
 
@@ -234,6 +248,7 @@ User Notes: {user_analysis}
 Your job is to verify this trade using the EXACT same <self_verification_protocol> you use for your own trades:
 1. Call `get_multi_tf_trend` and `get_consensus_report`.
 2. Check the R:R ratio. Check if the SL is placed safely beyond live volatility bands. Check macro alignment. Cross-check the entry against the Volume Profile (`get_volume_profile`) and the realized track record for this setup type (`get_trade_performance`).
+2b. Consult `get_market_regime` for the symbol and timeframe while verifying. If the user-proposed trade is a directional (BUY/SELL) trade being taken in an `unfavorable` regime, you MUST include an explicit warning statement in your verification output that the proposed trade is being taken in an unfavorable market regime (state the trend_state, volatility_state, and favorability). If the regime is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because the regime could not be computed.
 3. Do not invent red flags if the trade is genuinely an A+ setup. If it fits the protocol, approve it and defend it.
 4. If it fails the protocol, explain exactly why, and suggest a better entry using `watch_price_condition`.
 
@@ -340,6 +355,7 @@ tools = [
     get_news_context,
     get_prediction,
     get_trade_performance,
+    get_market_regime,
     watch_price_condition,
     declare_trade
 ]
@@ -369,6 +385,7 @@ REGISTERED_TOOL_NAMES = {
     "get_news_context",
     "get_prediction",
     "get_trade_performance",
+    "get_market_regime",
     "watch_price_condition",
     "declare_trade",
 }
@@ -385,6 +402,7 @@ MARKET_DATA_TOOL_NAMES = {
     "get_volume_profile",
     "get_news_context",
     "get_prediction",
+    "get_market_regime",
 }
 
 # DeepSeek/HuggingFace custom-token markup boundaries.
@@ -1049,6 +1067,70 @@ def _verify_mode_validator_checks(action, levels, atr_14):
     return checks
 
 
+def _regime_entry(results) -> dict:
+    """Build the defensibility regime entry from the most recent get_market_regime
+    result already present in message history (R7.1-R7.3).
+
+    ``results`` is the ``_latest_tool_results`` map, so ``results['get_market_regime']``
+    is the most-recent successfully-parsed, non-error regime result (a usable
+    Regime_Label or an Unavailable_Marker). This function:
+
+      * copies the Trend_State, Volatility_State, Favorability, and the named
+        Regime_Measures VERBATIM from that result — it never infers or substitutes
+        a value not present in the tool output (R7.2);
+      * records the entry as unavailable, with NO fabricated trend/volatility/
+        favorability, when no usable Regime_Label is present — none in history, or
+        only an error / Unavailable_Marker result (R7.3).
+
+    It is a pure read of tool output and never touches the committed decision
+    (R12.5, R12.6); the regime is a filter/defensibility surface, not a gate.
+    """
+    regime = results.get("get_market_regime")
+
+    # No regime result at all, a non-dict result, or an explicit Unavailable_Marker
+    # → unavailable. We carry the marker's own reason when present, but NEVER
+    # populate trend/volatility/favorability or measures with substitute values.
+    if not isinstance(regime, dict):
+        return {"available": False, "reason": "no get_market_regime result present in message history"}
+    if regime.get("unavailable") is True:
+        return {"available": False, "reason": regime.get("reason") or "regime unavailable"}
+
+    trend_state = regime.get("trend_state")
+    volatility_state = regime.get("volatility_state")
+    favorability = regime.get("favorability")
+
+    # A usable Regime_Label must carry all three categorical states drawn from
+    # their fixed enums; anything missing means we have no usable label, and we
+    # must not fabricate one (R7.3).
+    if (
+        trend_state not in REGIME_TREND_STATES
+        or volatility_state not in REGIME_VOLATILITY_STATES
+        or favorability not in REGIME_FAVORABILITY
+    ):
+        return {"available": False, "reason": "no usable get_market_regime label present in message history"}
+
+    # Copy the named Regime_Measures verbatim (each is already a finite number or
+    # null per the tool contract); never infer a measure that was not reported.
+    src_measures = regime.get("measures")
+    measures = {}
+    if isinstance(src_measures, dict):
+        for field in _REGIME_MEASURE_FIELDS:
+            measures[field] = src_measures.get(field)
+
+    entry = {
+        "available": True,
+        "trend_state": trend_state,
+        "volatility_state": volatility_state,
+        "favorability": favorability,
+        "measures": measures,
+    }
+    # Carry symbol/timeframe/candles_used context verbatim when present.
+    for k in ("symbol", "timeframe", "candles_used"):
+        if k in regime:
+            entry[k] = regime[k]
+    return entry
+
+
 def build_defensibility_record(messages, decision, mode=None, manual_trade=None) -> dict:
     """Assemble the trade defensibility record from tool results in history (R7).
 
@@ -1165,6 +1247,26 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
         f"{p['pattern_type']} (conf {p['confidence']:.2f})" for p in patterns
     ) or "none >0.6"
 
+    # ── Regime entry (R4.4, R7.1-R7.4) ───────────────────────────────────────
+    # Mirror the most-recent get_market_regime result verbatim (or record it as
+    # unavailable). The regime is a defensibility surface only: it NEVER modifies,
+    # overrides, or blocks the committed decision's action or execution levels
+    # (R12.5, R12.6) — we merely add an explicit opposition statement when an
+    # unfavorable regime is committed against with a directional (BUY/SELL) trade
+    # (R7.4).
+    regime = _regime_entry(results)
+    if (
+        regime.get("available")
+        and regime.get("favorability") == "unfavorable"
+        and action in ("BUY", "SELL")
+    ):
+        regime["trade_opposes_regime"] = (
+            f"REGIME CONFLICT: the committed {action} trade opposes the regime "
+            f"assessment (favorability=unfavorable, trend_state="
+            f"{regime.get('trend_state')}, volatility_state="
+            f"{regime.get('volatility_state')})."
+        )
+
     record = {
         "mode": mode,
         "action": action,
@@ -1181,11 +1283,14 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
         "predictive_conflict": predictive_conflict,
         "macro_trend_conflict": macro_conflict,
         "news_sentiment": news_sentiment,
+        "regime": regime,
         "summary": (
             f"Multi-TF 1D bias: {bias_1d_raw or 'n/a'}. "
             f"RR: {risk_reward if risk_reward is not None else 'n/a'}. "
             f"High-confidence patterns: {named}. "
+            f"Regime: {regime.get('favorability') if regime.get('available') else 'unavailable'}. "
             f"{macro_conflict} {predictive_conflict}"
+            + (f" {regime['trade_opposes_regime']}" if regime.get("trade_opposes_regime") else "")
         ),
     }
 

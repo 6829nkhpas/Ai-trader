@@ -35,12 +35,13 @@ import argparse
 import json
 import math
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import List, Optional
 
 import httpx
 
 import journal
+import regime
 # Reuse the AUTHORITATIVE volume-profile math and EMA helper so seeded levels
 # match what the live agent and the UI compute.
 from tools import _compute_volume_profile, calculate_ema
@@ -72,6 +73,7 @@ class BacktestConfig:
     profile_rows: int = 24
     value_area_percent: float = 70.0
     record_unresolved: bool = False  # skip trades that never hit stop/target
+    regime_gate_enabled: bool = False  # with-gate run drops unfavorable signals (gate logic: task 13.2)
 
 
 def _is_num(v) -> bool:
@@ -223,6 +225,61 @@ def _signal_for_bar(window: List[dict], created_at: float, cfg: BacktestConfig) 
     return None
 
 
+# ── Regime labeling (point-in-time, look-ahead-free) ─────────────────────────
+
+def _regime_defensibility_entry(regime_result: Optional[dict]) -> dict:
+    """Map a ``regime.classify_regime`` result to the defensibility regime entry.
+
+    Mirrors the shape ``graph._regime_entry`` writes and ``journal._regime_tag``
+    reads, so seeded trades are tagged identically to live LLM decisions:
+
+      * a usable Regime_Label  -> ``{"available": True, trend_state,
+        volatility_state, favorability, measures, [symbol/timeframe/candles_used]}``
+        — copied VERBATIM from the classifier output (no inference, R10.3).
+      * an Unavailable_Marker / non-dict / label missing any categorical state
+        -> ``{"available": False, "reason": ...}`` with NO fabricated states (R7.3/AD-4).
+    """
+    if not isinstance(regime_result, dict):
+        return {"available": False, "reason": "no regime result"}
+    # Honest Unavailable_Marker from the classifier — never fabricate states.
+    if regime_result.get("unavailable") is True:
+        return {"available": False, "reason": regime_result.get("reason") or "regime unavailable"}
+
+    trend_state = regime_result.get("trend_state")
+    volatility_state = regime_result.get("volatility_state")
+    favorability = regime_result.get("favorability")
+    if trend_state is None or volatility_state is None or favorability is None:
+        return {"available": False, "reason": "no usable regime label"}
+
+    src_measures = regime_result.get("measures")
+    measures = dict(src_measures) if isinstance(src_measures, dict) else {}
+    entry = {
+        "available": True,
+        "trend_state": trend_state,
+        "volatility_state": volatility_state,
+        "favorability": favorability,
+        "measures": measures,
+    }
+    for k in ("symbol", "timeframe", "candles_used"):
+        if k in regime_result:
+            entry[k] = regime_result[k]
+    return entry
+
+
+def _signal_is_unfavorable(decision: dict) -> bool:
+    """Return True only when the signal carries an AVAILABLE ``unfavorable`` label.
+
+    This is the with-gate drop predicate (R10.2): a directional signal whose
+    regime favorability is the available label ``unfavorable`` for its setup type
+    is dropped. A signal whose regime is an Unavailable_Marker is reported as
+    ``{"available": False, ...}`` by ``_regime_defensibility_entry`` and is
+    RETAINED — never excluded on the basis of regime (R10.6). ``favorable`` and
+    ``neutral`` signals are likewise retained.
+    """
+    regime_entry = decision.get("defensibility", {}).get("regime") or {}
+    return regime_entry.get("available") is True and regime_entry.get("favorability") == "unfavorable"
+
+
 # ── Scoring against future candles (mirrors journal._score_one) ───────────────
 
 def _score_signal(decision: dict, future: List[dict], cfg: BacktestConfig):
@@ -278,6 +335,11 @@ def generate_and_score(candles: List[dict], symbol: str, timeframe: str,
     if n < cfg.lookback + 2:
         return results
 
+    # Resolve the regime thresholds ONCE, reusing the SAME resolver the live
+    # get_market_regime tool uses (R10.5, R11.6) — the seeder never reimplements
+    # the regime math.
+    regime_config = regime.resolve_regime_config()
+
     cooldown_until = -1
     for i in range(cfg.lookback - 1, n - 1):
         if i < cooldown_until:
@@ -288,11 +350,34 @@ def generate_and_score(candles: List[dict], symbol: str, timeframe: str,
         decision = _signal_for_bar(window, created_at, cfg)
         if decision is None:
             continue
+
+        # Classify the signal's regime using ONLY candles at or before the
+        # signal's candle (index ``i``) — the point-in-time slice ``candles[:i+1]``
+        # carries no later candles, so there is no look-ahead (R10.1). The same
+        # classifier as the live tool path produces the label (R10.5).
+        regime_result = regime.classify_regime(
+            candles[: i + 1], regime_config, symbol=symbol, timeframe=timeframe
+        )
+        # Label the seeded trade with its Regime_Label so journal._regime_tag can
+        # tag it (R10.3); shape mirrors graph._regime_entry.
+        decision.setdefault("defensibility", {})["regime"] = _regime_defensibility_entry(regime_result)
+
         scored = _score_signal(decision, candles[i + 1:], cfg)
         if scored is None:
             continue
         status, out_price, out_at, r_mult = scored
-        if status == "expired" and not cfg.record_unresolved:
+
+        # ── Regime gate (with-gate run only) ─────────────────────────────────
+        # When the gate is enabled, DROP a signal whose regime favorability is an
+        # AVAILABLE "unfavorable" label for its setup type (R10.2). Signals whose
+        # regime is an Unavailable_Marker are RETAINED — never excluded on the
+        # basis of regime (R10.6) — as are favorable/neutral signals. The drop
+        # still advances the cooldown exactly as a taken signal would, so the
+        # with-gate run walks the IDENTICAL history/rules as the without-gate run
+        # and its seeded set is a strict SUBSET of the without-gate set (R10.4).
+        gated_out = cfg.regime_gate_enabled and _signal_is_unfavorable(decision)
+
+        if gated_out or (status == "expired" and not cfg.record_unresolved):
             cooldown_until = i + cfg.cooldown_bars
             continue
         results.append({
@@ -443,6 +528,76 @@ def seed(symbol: str, timeframe: str, limit: int = 3000,
     summary["written"] = written
     summary["stats"] = journal.get_stats(symbol=symbol, source="backtest")
     return summary
+
+
+# ── With-gate / without-gate comparison (R10.4, R10.7) ───────────────────────
+
+def _run_metrics(results: List[dict]) -> dict:
+    """Compute a single run's win-rate and expectancy over its CLOSED trades.
+
+    A trade is *closed* when it resolved by hitting its stop or target — i.e.
+    ``status`` is ``win`` or ``loss`` and carries a realized R-multiple. Expired
+    (unresolved) trades are NOT closed and are excluded from both metrics.
+
+      * win_rate   = winning closed trades / closed trades
+      * expectancy = mean realized R-multiple per closed trade
+
+    When a run has ZERO closed trades, BOTH metrics are reported as ``"n/a"``
+    rather than computing a division by zero (R10.7).
+    """
+    closed = [r for r in results if r["status"] in ("win", "loss") and _is_num(r.get("r_multiple"))]
+    n_closed = len(closed)
+    if n_closed == 0:
+        return {
+            "closed_trades": 0,
+            "winning_closed_trades": 0,
+            "win_rate": "n/a",
+            "expectancy": "n/a",
+        }
+    winning = sum(1 for r in closed if r["status"] == "win")
+    expectancy = sum(r["r_multiple"] for r in closed) / n_closed
+    return {
+        "closed_trades": n_closed,
+        "winning_closed_trades": winning,
+        "win_rate": round(winning / n_closed, 4),
+        "expectancy": round(expectancy, 4),
+    }
+
+
+def compare(symbol: str, timeframe: str, limit: int = 3000,
+            candles: Optional[List[dict]] = None, cfg: Optional[BacktestConfig] = None,
+            source: str = "auto") -> dict:
+    """Run the backtest WITH and WITHOUT the regime gate and compare them (R10.4).
+
+    Both runs use the IDENTICAL candle history and IDENTICAL setup rules — only
+    ``regime_gate_enabled`` differs — so the two runs are directly comparable and
+    the with-gate seeded set is a strict subset of the without-gate set (the gate
+    only removes signals whose regime favorability is the available ``unfavorable``
+    label; Unavailable_Marker signals are retained — R10.2, R10.6).
+
+    Returns a summary reporting, for EACH run, the win-rate (winning closed /
+    closed) and expectancy (mean realized R per closed trade), with ``"n/a"`` when
+    a run produced zero closed trades (R10.7). Pure given ``candles`` — no journal
+    writes are performed.
+    """
+    base = cfg or BacktestConfig()
+    if candles is None:
+        candles = _resolve_candles(symbol, timeframe, limit, source)
+
+    # Identical history + identical rules; the gate flag is the ONLY difference.
+    gated_cfg = replace(base, regime_gate_enabled=True)
+    ungated_cfg = replace(base, regime_gate_enabled=False)
+
+    with_gate = generate_and_score(candles, symbol, timeframe, gated_cfg)
+    without_gate = generate_and_score(candles, symbol, timeframe, ungated_cfg)
+
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "candles": len(candles),
+        "with_gate": {"signals_scored": len(with_gate), **_run_metrics(with_gate)},
+        "without_gate": {"signals_scored": len(without_gate), **_run_metrics(without_gate)},
+    }
 
 
 # ── Discovery & batch seeding ─────────────────────────────────────────────────

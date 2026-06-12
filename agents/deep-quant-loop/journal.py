@@ -103,6 +103,61 @@ def _init_db(conn: sqlite3.Connection) -> None:
 
 # ── Setup fingerprinting ──────────────────────────────────────────────────────
 
+# Fixed, low-cardinality regime enumeration for the setup fingerprint (R9.3).
+# The journal collapses the (Trend_State x Favorability) space into this small
+# set so the regime-extended ``setup_key`` stays groupable and individual setups
+# can accumulate enough scored trades to clear LOW_SAMPLE_THRESHOLD. At most 8
+# distinct values including ``unknown``.
+REGIME_TAG_VALUES = {
+    "trend-favorable", "trend-unfavorable", "trend-neutral",
+    "range-favorable", "range-unfavorable", "range-neutral",
+    "unknown",
+}
+
+# Trend_State -> tag family. ``trending``/``transitional`` collapse to the
+# ``trend`` family; ``ranging`` collapses to the ``range`` family (design table).
+_REGIME_TREND_FAMILY = {
+    "trending": "trend",
+    "transitional": "trend",
+    "ranging": "range",
+}
+_REGIME_FAVORABILITY = {"favorable", "unfavorable", "neutral"}
+
+
+def _regime_tag(decision: dict) -> str:
+    """Collapse the decision's regime into exactly one fixed enumeration value.
+
+    Reads the regime recorded in the defensibility record
+    (``decision['defensibility']['regime']``) and maps (Trend_State x
+    Favorability) to one of ``REGIME_TAG_VALUES``:
+      * Trend_State ``trending``/``transitional`` -> ``trend-*`` family
+      * Trend_State ``ranging``                   -> ``range-*`` family
+      * the Favorability is carried as the suffix (favorable/unfavorable/neutral)
+
+    Any missing/unavailable regime, empty value, or unrecognized combination
+    collapses to ``unknown`` (R9.2). Returns the bare value (caller prefixes
+    ``regime:``). Never raises.
+    """
+    try:
+        d = decision or {}
+        deff = d.get("defensibility") or {}
+        regime = deff.get("regime")
+        if not isinstance(regime, dict):
+            return "unknown"
+        # An explicitly unavailable regime entry carries no fabricated states.
+        if regime.get("available") is False:
+            return "unknown"
+        trend_state = str(regime.get("trend_state") or "").strip().lower()
+        favorability = str(regime.get("favorability") or "").strip().lower()
+        family = _REGIME_TREND_FAMILY.get(trend_state)
+        if family is None or favorability not in _REGIME_FAVORABILITY:
+            return "unknown"
+        value = f"{family}-{favorability}"
+        return value if value in REGIME_TAG_VALUES else "unknown"
+    except Exception:
+        return "unknown"
+
+
 def derive_setup_tags(decision: dict) -> list:
     """Derive a coarse, groupable setup fingerprint from a committed decision.
 
@@ -114,6 +169,10 @@ def derive_setup_tags(decision: dict) -> list:
       * macro       (aligned / against / neutral / unknown) vs the 1D trend
       * predictive  (aligned / conflict / na) vs the forward projection
       * value-area  (above / inside / below / unknown) from the volume profile
+      * regime      (trend/range x favorable/unfavorable/neutral, or unknown)
+                    collapsed from the regime recorded in the defensibility
+                    record; appended last at a FIXED position so ``setup_key``
+                    stays deterministic and low-cardinality.
     """
     d = decision or {}
     deff = d.get("defensibility") or {}
@@ -147,6 +206,10 @@ def derive_setup_tags(decision: dict) -> list:
         tags.append("va:" + loc.split("_")[0])
     else:
         tags.append("va:unknown")
+
+    # Regime dimension — appended last at a FIXED position (after ``va:``) so the
+    # resulting ``setup_key`` is deterministic for identical inputs (R9.1).
+    tags.append("regime:" + _regime_tag(decision))
 
     return tags
 

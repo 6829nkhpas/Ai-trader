@@ -437,7 +437,11 @@ def compute_atr_percentile(
     ranks the most recent ATR among the last ``window`` ATR values as
     ``100 * count(atr <= latest) / sample_size``. Clamped to ``[0, 100]``
     (Requirement 2.5). Returns ``None`` when there are insufficient ATR samples
-    (Requirement 1.6 / 2.6). Never raises.
+    (Requirement 1.6 / 2.6), or when the ranked ATR sample is degenerate because
+    every ATR value in it is zero — a zero true-range / zero price range over the
+    window means the dispersion (denominator) is zero, so the measure is null per
+    Requirement 2.6. A non-flat window with varied ATRs still yields a valid
+    percentile. Never raises.
     """
     if not _valid_period(atr_period) or not _valid_period(window):
         return None
@@ -454,6 +458,12 @@ def compute_atr_percentile(
         return None
 
     sample = atrs[-window:]
+    # Degenerate / zero-denominator case: a flat, zero-range window produces an
+    # all-zero ATR series, so there is no dispersion to rank against. Per R2.6
+    # this measure is null rather than a spurious 100th percentile.
+    if all(v == 0 for v in sample):
+        return None
+
     latest = sample[-1]
     count_le = sum(1 for v in sample if v <= latest)
     pctl = 100.0 * count_le / len(sample)
@@ -465,9 +475,13 @@ def compute_bb_width(candles: Any, period: Any) -> Optional[float]:
 
     ``width = (upper - lower) / mid`` where ``mid = SMA(close, period)`` and the
     bands are ``mid +/- 2 * stddev(close, period)``, i.e. ``width = 4*stddev/mid``.
-    Returns ``None`` when ``mid == 0`` (denominator is zero — Requirement 2.6) or
-    when there are too few valid candles. Not a bounded measure, so it is not
-    clamped; the returned value is finite when not ``None``. Never raises.
+    Returns ``None`` when ``mid == 0`` (denominator is zero — Requirement 2.6),
+    when the closes have zero dispersion (``stddev == 0``, e.g. a flat, zero-range
+    window — the relative band width is degenerate/undefined, so the measure is
+    null per Requirement 2.6), or when there are too few valid candles. A non-flat
+    window with non-zero stddev returns the finite width as before. Not a bounded
+    measure, so it is not clamped; the returned value is finite when not ``None``.
+    Never raises.
     """
     if not _valid_period(period):
         return None
@@ -476,6 +490,14 @@ def compute_bb_width(candles: Any, period: Any) -> Optional[float]:
         return None
 
     closes = [r[3] for r in rows[-period:]]
+    # Zero-dispersion / zero-range case: when every close in the window is the
+    # same value the closes have no spread, so the relative band width is
+    # degenerate/undefined. Detect this exactly via ``max == min`` (robust to the
+    # tiny floating-point residual that ``sqrt(variance)`` would otherwise leave),
+    # and report the measure as null per Requirement 2.6.
+    if max(closes) == min(closes):
+        return None
+
     mid = sum(closes) / len(closes)
     if mid == 0:
         return None  # mid == 0 -> denominator is zero (Requirement 2.6)

@@ -299,6 +299,58 @@ def _outcome_from_macro(statement: str) -> str:
     return "informational"
 
 
+def _regime_step(record: dict) -> dict:
+    """Map the defensibility regime entry to a single regime ``VERIFICATION_STEP`` (R8).
+
+    The defensibility record's ``regime`` entry (built by ``graph._regime_entry``)
+    is either a usable label — ``{"available": True, "favorability": ..., ...}`` —
+    or an Unavailable_Marker — ``{"available": False, "reason": ...}``. The recorded
+    Favorability maps to a stable outcome under the fixed check id ``market-regime``:
+
+      * ``favorable``   → ``pass``                       (R8.2)
+      * ``unfavorable`` → ``fail``                       (R8.3)
+      * ``neutral``     → ``informational``              (R8.4)
+      * unavailable     → ``not-evaluable`` (with an 'unavailable' indication, R8.5)
+
+    When the regime is unavailable — no entry, a non-dict entry, ``available`` is
+    falsy, or the Favorability is missing/unrecognized — the step reports
+    ``not-evaluable`` with an explicit unavailable indication and NEVER substitutes
+    a fabricated Favorability (R8.5). Pure; never raises.
+    """
+    regime = record.get("regime")
+
+    if not isinstance(regime, dict) or not regime.get("available"):
+        reason = regime.get("reason") if isinstance(regime, dict) else None
+        detail = "Regime unavailable" + (f": {reason}" if reason else "") + "."
+        return {
+            "check": "market-regime",
+            "outcome": "not-evaluable — regime unavailable",
+            "detail": detail,
+        }
+
+    favorability = regime.get("favorability")
+    outcome = {
+        "favorable": "pass",
+        "unfavorable": "fail",
+        "neutral": "informational",
+    }.get(favorability)
+
+    if outcome is None:
+        # An available entry without a recognized favorability is treated as
+        # unavailable rather than fabricating an outcome (R8.5).
+        return {
+            "check": "market-regime",
+            "outcome": "not-evaluable — regime unavailable",
+            "detail": "Regime favorability missing or unrecognized.",
+        }
+
+    detail = (
+        f"favorability={favorability}, trend_state={regime.get('trend_state')}, "
+        f"volatility_state={regime.get('volatility_state')}."
+    )
+    return {"check": "market-regime", "outcome": outcome, "detail": detail}
+
+
 def _derive_find_mode_steps(record: dict) -> List[dict]:
     """Derive the four self-verification checks from a FIND-mode record (R16.6).
 
@@ -389,6 +441,10 @@ def _derive_find_mode_steps(record: dict) -> List[dict]:
     else:
         steps.append({"check": "track-record", "outcome": "not-evaluable — track record unavailable"})
 
+    # ── Market-regime gate check (regime-detection-gate, R8) ─────────────────
+    # Exactly one regime step, derived from the defensibility regime entry.
+    steps.append(_regime_step(record))
+
     return steps
 
 
@@ -416,6 +472,11 @@ def build_verification_steps(decision: Any) -> List[dict]:
                 if c.get("detail"):
                     step["detail"] = c["detail"]
                 steps.append(step)
+        # Surface exactly one regime step in VERIFY mode too: append the derived
+        # regime step only when the validator checks don't already carry one
+        # (R8.1 — exactly one regime VERIFICATION_STEP).
+        if not any(s.get("check") == "market-regime" for s in steps):
+            steps.append(_regime_step(record))
         return steps
 
     return _derive_find_mode_steps(record)

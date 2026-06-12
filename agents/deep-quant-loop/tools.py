@@ -10,6 +10,12 @@ from langchain_core.tools import tool
 from langgraph.types import interrupt
 from langchain_core.runnables import RunnableConfig
 
+# Regime_Classifier — the single source of truth for the regime math. The
+# get_market_regime tool delegates threshold resolution and classification to
+# this pure module (AD-1, AD-2); the tool itself only fetches candles and
+# re-validates the contract.
+import regime
+
 RUST_SERVER_URL = "http://localhost:8084"
 
 # ── Price-watch registration retry policy (Requirement 14.3) ─────────────────
@@ -52,6 +58,25 @@ _SR_REQUIRED_FIELDS = ("pivot", "s1", "s2", "s3", "r1", "r2", "r3")
 _MULTI_TF_REQUIRED_FIELDS = ("trend_1h", "trend_4h", "trend_1d")
 _PATTERN_REQUIRED_FIELDS = ("pattern_type", "sentiment", "confidence", "description")
 _VALID_PROJECTION_DIRECTIONS = {"Up", "Down", "Flat"}
+
+# ── Market_Regime_Tool contract (regime-detection-gate) ──────────────────────
+# The supported candle timeframes accepted by get_market_regime (and the wider
+# tool surface). A get_market_regime Regime_Label must carry a trend_state, a
+# volatility_state, and a favorability each drawn from its fixed enum, plus the
+# named Regime_Measures each present as a finite number or null. An
+# Unavailable_Marker ({"unavailable": true, ...}) is an honest non-fatal result
+# handled by the existing _has_honest_marker pass-through.
+SUPPORTED_TIMEFRAMES = {"1m", "5m", "10m", "15m", "1h", "4h", "1d"}
+REGIME_TREND_STATES = {"trending", "ranging", "transitional"}
+REGIME_VOLATILITY_STATES = {"low", "normal", "high"}
+REGIME_FAVORABILITY = {"favorable", "unfavorable", "neutral"}
+_REGIME_MEASURE_FIELDS = (
+    "directional_strength",
+    "choppiness",
+    "efficiency_ratio",
+    "atr_percentile",
+    "bb_width",
+)
 
 
 def _is_number(v) -> bool:
@@ -224,6 +249,46 @@ def validate_contract(tool_name, payload):
                 if not _is_number(conf) or not (0.0 <= conf <= 1.0):
                     return _contract_error(
                         f"pattern[{i}].confidence is not a number in [0.0, 1.0]"
+                    )
+            return payload
+
+        if tool_name == "get_market_regime":
+            if not isinstance(payload, dict):
+                return _contract_error(
+                    f"get_market_regime expected an object, got {type(payload).__name__}"
+                )
+            # A conforming Regime_Label carries the three categorical states in
+            # their fixed enums plus each named measure as finite-number-or-null.
+            # (An Unavailable_Marker was already passed through above by
+            # _has_honest_marker, so anything reaching here must be a full label.)
+            trend_state = payload.get("trend_state")
+            if trend_state not in REGIME_TREND_STATES:
+                return _contract_error(
+                    f"trend_state '{trend_state}' not in "
+                    "{trending, ranging, transitional}"
+                )
+            volatility_state = payload.get("volatility_state")
+            if volatility_state not in REGIME_VOLATILITY_STATES:
+                return _contract_error(
+                    f"volatility_state '{volatility_state}' not in {{low, normal, high}}"
+                )
+            favorability = payload.get("favorability")
+            if favorability not in REGIME_FAVORABILITY:
+                return _contract_error(
+                    f"favorability '{favorability}' not in "
+                    "{favorable, unfavorable, neutral}"
+                )
+            # The named Regime_Measures live under a 'measures' object; each must
+            # be present as a finite number or null.
+            measures = payload.get("measures")
+            if not isinstance(measures, dict):
+                return _contract_error("regime 'measures' field is not an object")
+            for field in _REGIME_MEASURE_FIELDS:
+                if field not in measures:
+                    return _contract_error(f"regime measures missing field '{field}'")
+                if not _is_number_or_null(measures[field]):
+                    return _contract_error(
+                        f"regime measure '{field}' is neither numeric nor null"
                     )
             return payload
 
@@ -498,6 +563,145 @@ def get_prediction(symbol: str, timeframe: str = "1d") -> dict:
             "unavailable": True,
             "reason": f"Failed to fetch prediction from predictive engine: {str(e)}"
         }
+
+
+def _regime_unavailable(symbol, timeframe, reason: str) -> dict:
+    """Build a get_market_regime Unavailable_Marker (regime's marker shape).
+
+    Mirrors ``regime._unavailable``: it carries the symbol/timeframe context,
+    the ``unavailable: true`` flag, and a ``reason`` citing the cause, and it
+    *omits* trend_state / volatility_state / favorability entirely — an
+    unavailable regime is a missing optional input, never a fabricated label
+    (AD-4, Requirements 4.3, 4.6). Recognized as an honest, non-fatal marker by
+    ``_has_honest_marker`` so ``validate_contract`` passes it through unchanged.
+    """
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "unavailable": True,
+        "reason": reason,
+    }
+
+
+@tool
+def get_market_regime(symbol: str, timeframe: str) -> dict:
+    """
+    Classify the current market regime (trend + volatility) for a symbol/timeframe.
+
+    Use this BEFORE committing a directional (BUY/SELL) setup to gauge whether the
+    market currently favors trend/momentum trades. The regime is GUIDANCE only — it
+    never generates a trade, never blocks one, and never overrides your decision.
+    When the regime is unfavorable for the proposed setup type, bias toward HOLD,
+    lower conviction, or waiting; when it is unavailable, proceed with the remaining
+    analysis and note it as unavailable.
+
+    The classifier is pure math over the same authoritative OHLCV candles every
+    other tool uses (fetched from the Rust Tool_Server). Valid timeframes:
+    '1m', '5m', '10m', '15m', '1h', '4h', '1d'.
+
+    Args:
+        symbol (str): The trading symbol (e.g. "RELIANCE").
+        timeframe (str): The candle timeframe (e.g. "1m", "5m", "15m", "1h", "4h", "1d").
+
+    Returns:
+        dict: A Regime_Label with:
+              - trend_state ("trending" | "ranging" | "transitional")
+              - volatility_state ("low" | "normal" | "high")
+              - favorability ("favorable" | "unfavorable" | "neutral")
+              - measures: directional_strength, choppiness, efficiency_ratio,
+                atr_percentile, bb_width (each a finite number or null)
+              When the regime cannot be computed (retrieval failure/timeout,
+              insufficient data, or any processing error) it returns an
+              Unavailable_Marker {"unavailable": true, "reason": ...} with NO
+              trend/volatility/favorability — treat that as a missing, non-blocking
+              input. Never raises.
+    """
+    print(f"\n[Tool Call] >>> get_market_regime: symbol={symbol}, timeframe={timeframe}")
+    try:
+        # 1. Validate arguments — empty/whitespace symbol or unsupported timeframe
+        #    is a structured error result (NOT an exception, R3.3).
+        if not isinstance(symbol, str) or not symbol.strip():
+            print("[Tool Error] <<< get_market_regime: empty/whitespace symbol")
+            return {
+                "error": "get_market_regime requires a non-empty symbol",
+            }
+        if timeframe not in SUPPORTED_TIMEFRAMES:
+            print(f"[Tool Error] <<< get_market_regime: unsupported timeframe '{timeframe}'")
+            return {
+                "error": (
+                    f"get_market_regime received unsupported timeframe '{timeframe}'; "
+                    f"supported timeframes are {sorted(SUPPORTED_TIMEFRAMES)}"
+                ),
+            }
+
+        # 2. Resolve thresholds (single source of truth; never raises).
+        config = regime.resolve_regime_config()
+
+        # 3. Fetch candles from the authoritative Rust Tool_Server, exactly like
+        #    journal.py / backtest.py. Request enough candles to cover the largest
+        #    lookback AND the minimum-candle gate, plus a margin (the percentile
+        #    window) so excluding any non-finite candles still leaves enough.
+        required = max(config.min_candles, config.largest_lookback)
+        limit = required + config.vol_pctl_window
+        try:
+            response = httpx.post(
+                f"{RUST_SERVER_URL}/tools/get_candles",
+                json={"symbol": symbol, "timeframe": timeframe, "limit": limit},
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            candles = response.json()
+        except Exception as fetch_exc:
+            # Retrieval timeout / failure -> Unavailable_Marker citing the cause
+            # (R4.1). NEVER propagate the exception into the agent loop.
+            print(f"[Tool Warning] <<< get_market_regime: candle retrieval failed: {fetch_exc}")
+            return _regime_unavailable(
+                symbol,
+                timeframe,
+                f"candle retrieval failed: {fetch_exc}",
+            )
+
+        # The candle payload may itself be an error list (get_candles' error path
+        # returns ``[{"error": ...}]``); treat a non-list / error payload as a
+        # retrieval failure -> Unavailable_Marker.
+        if not isinstance(candles, list) or (
+            candles and isinstance(candles[0], dict) and "error" in candles[0]
+        ):
+            reason = "candle retrieval returned no usable data"
+            if isinstance(candles, list) and candles and isinstance(candles[0], dict):
+                reason = f"candle retrieval failed: {candles[0].get('error')}"
+            print(f"[Tool Warning] <<< get_market_regime: {reason}")
+            return _regime_unavailable(symbol, timeframe, reason)
+
+        # 4. Classify via the pure Regime_Classifier. It returns either a
+        #    Regime_Label or an Unavailable_Marker, and never raises.
+        result = regime.classify_regime(
+            candles, config, symbol=symbol, timeframe=timeframe
+        )
+
+        # 5. Re-validate against the Tool_Result_Contract on receipt (AD-3) and
+        #    return. validate_contract passes an Unavailable_Marker through
+        #    unchanged and never raises.
+        validated = validate_contract("get_market_regime", result)
+        if validated.get("unavailable"):
+            print(f"[Tool Success] <<< get_market_regime: symbol={symbol}, unavailable ({validated.get('reason')})")
+        else:
+            print(
+                f"[Tool Success] <<< get_market_regime: symbol={symbol}, "
+                f"trend={validated.get('trend_state')}, vol={validated.get('volatility_state')}, "
+                f"favorability={validated.get('favorability')}"
+            )
+        return validated
+    except Exception as e:
+        # Defensive catch-all: any processing error degrades to an honest
+        # Unavailable_Marker rather than raising into the agent loop (R4.5).
+        print(f"[Tool Warning] <<< get_market_regime FAIL: {str(e)}")
+        return _regime_unavailable(
+            symbol if isinstance(symbol, str) else None,
+            timeframe if isinstance(timeframe, str) else None,
+            f"regime processing error: {str(e)}",
+        )
+
 
 @tool
 def watch_price_condition(
