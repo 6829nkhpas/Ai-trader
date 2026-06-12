@@ -1,36 +1,37 @@
 'use client';
 
+// Feature: professional-charting-suite (Task 15.1)
+//
+// MainTerminalChart is the single mount point for the charting suite inside the
+// three terminal layouts (Swing / Investor / Intraday). It now hosts the
+// engine-driven {@link ChartSurface} shell, which wires the full suite together
+// end-to-end:
+//   - the pure engines (chart-type, indicator, footprint, volume-profile,
+//     strategy) feed the renderer through the canonical candle selector
+//     consumed by ChartRenderer (Requirement 9.1 — live data via the canonical
+//     selector);
+//   - the persistent control bar exposes chart type, indicators, drawing tools,
+//     the chart-mode toggle, timeframe, strategy, and fullscreen
+//     (Requirement 12.1);
+//   - workspace persistence is wired inside ChartRenderer (Requirement 11.1);
+//   - the crosshair controller and pane manager are composed by ChartRenderer.
+//
+// ChartSurface owns chart mode (Standard / Volume Profile / Footprint) and the
+// active timeframe (read from useTradeStore.activeTimeframe), so it also renders
+// the footprint surface itself when chartMode === 'FOOTPRINT'. MainTerminalChart
+// therefore does NOT mount FootprintChart separately — that would double-mount
+// the footprint surface.
+//
+// The {@link AlphaPredictiveChartProps} signature is preserved so the existing
+// layout call sites (SwingLayout, InvestorLayout, IntradayLayout) keep working
+// unchanged. ChartSurface manages chart mode and timeframe internally, so the
+// passed-through `timeframe` is handled by ChartRenderer's fallback to the
+// store's activeTimeframe.
+
 import React from 'react';
-import { useTradeStore } from '../store/useTradeStore';
-import AlphaPredictiveChart from './AlphaPredictiveChart';
-import FootprintChart from './chart/FootprintChart';
+import ChartSurface from './chart/ChartSurface';
 import type { AlphaPredictiveChartProps } from '../utils/chartTypes';
 
-export default function MainTerminalChart(props: AlphaPredictiveChartProps) {
-  const chartMode = useTradeStore((s) => s.chartMode);
-
-  const isFootprint = chartMode === 'FOOTPRINT';
-  const showVolumeProfile = chartMode === 'VOLUME_PROFILE';
-
-  return (
-    <div className="relative h-full w-full">
-      {/* Footprint Chart Container */}
-      {isFootprint && (
-        <div className="absolute inset-0 h-full w-full z-10">
-          <FootprintChart {...props} />
-        </div>
-      )}
-
-      {/* Standard Chart Container (hidden using display: none when Footprint is active to prevent unmounting/bridge drop) */}
-      <div
-        className="h-full w-full"
-        style={{ display: isFootprint ? 'none' : 'block' }}
-      >
-        <AlphaPredictiveChart
-          {...props}
-          showVolumeProfile={showVolumeProfile}
-        />
-      </div>
-    </div>
-  );
+export default function MainTerminalChart(_props: AlphaPredictiveChartProps) {
+  return <ChartSurface className="h-full w-full" />;
 }

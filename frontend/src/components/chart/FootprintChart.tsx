@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { useTradeStore, type OhlcCandle, type OrderFlowTick } from '../../store/useTradeStore';
+import { useTradeStore, type OhlcCandle } from '../../store/useTradeStore';
 import { useHistoricalData } from '../../hooks/useHistoricalData';
-import { RANGE_DAYS, KITE_INTERVAL_MAP, TIMEFRAME_MS, type Timeframe } from '../../utils/chartTypes';
+import { KITE_INTERVAL_MAP, type Timeframe } from '../../utils/chartTypes';
 import { aggregateCandles } from '../../utils/chartAggregation';
+import { buildFootprint, cumulativeDelta, type FootprintCandle } from '../../charting/engines';
 
 // ── Adaptive Tick Size ──────────────────────────────────────────────────────
 // Returns a tick increment that produces ~8-18 price rows per candle, keeping
@@ -25,6 +26,12 @@ function fmtVol(v: number): string {
   if (v >= 10_000) return `${(v / 1000).toFixed(0)}k`;
   if (v >= 1_000) return `${(v / 1000).toFixed(1)}k`;
   return v.toString();
+}
+
+// Signed delta formatter for the per-candle footer (Requirement 6.8).
+function fmtDelta(v: number): string {
+  const sign = v > 0 ? '+' : v < 0 ? '-' : '';
+  return `${sign}${fmtVol(Math.abs(v))}`;
 }
 
 export default function FootprintChart({
@@ -110,7 +117,7 @@ export default function FootprintChart({
     return Array.from(candleMap.values()).sort((a, b) => a.start_timestamp_ms - b.start_timestamp_ms);
   }, [historicalCandles, ohlcCandles, activeSymbol]);
 
-  const { candles: chartDataRaw, volumes: volumeData } = useMemo(
+  const { candles: chartDataRaw } = useMemo(
     () => aggregateCandles(mergedCandles, effectiveTimeframe, activeSymbol),
     [mergedCandles, effectiveTimeframe, activeSymbol]
   );
@@ -134,8 +141,6 @@ export default function FootprintChart({
     }
   }, [zoomX, chartData, dimensions.width, scrollX]);
 
-  const intervalMs = useMemo(() => TIMEFRAME_MS[effectiveTimeframe] || 60000, [effectiveTimeframe]);
-
   // ── Auto-center Y-axis on latest close on first load ───────────────────
   const initialCenterSet = useRef<string | null>(null);
   useEffect(() => {
@@ -154,83 +159,40 @@ export default function FootprintChart({
     return autoTickSize(avgPrice);
   }, [chartData]);
 
-  // ── Build Volume Map for O(1) Lookup ──────────────────────────────────
-  const volMap = useMemo(() => {
-    const m = new Map<number, number>();
-    for (const v of volumeData) m.set(v.time, v.value);
+  // ── Build Footprint Candles via the pure FootprintEngine ──────────────
+  // All aggregation (tick-size clustering, delta, POC, imbalance detection,
+  // synthetic fallback) lives in the engine. The component only consumes its
+  // output and draws it. Recomputes when the candle series, order-flow ticks,
+  // or tick size change — satisfying regroup-on-tick-size-change (Req 6.9).
+  const footprintCandles = useMemo<FootprintCandle[]>(
+    () => buildFootprint(chartData, orderFlowData, { tickSize }),
+    [chartData, orderFlowData, tickSize]
+  );
+
+  // Running Cumulative_Delta aligned to the footprint candle order (Req 6.5).
+  const cumDeltas = useMemo(() => cumulativeDelta(footprintCandles), [footprintCandles]);
+
+  // Index footprint candles by candle time (seconds) for O(1) render lookup.
+  const fpByTime = useMemo(() => {
+    const m = new Map<number, { fp: FootprintCandle; cumDelta: number }>();
+    footprintCandles.forEach((fp, i) => {
+      m.set(fp.time, { fp, cumDelta: cumDeltas[i] ?? 0 });
+    });
     return m;
-  }, [volumeData]);
-
-  // ── Group Real-Time L2 + Historical Volume by Candle & Price Level ─────
-  const footprintData = useMemo(() => {
-    const grouped = new Map<string, { bid: number; ask: number; delta: number }>();
-
-    // Track candle timestamps that have real L2 data
-    const activeLiveCandles = new Set<number>();
-
-    orderFlowData.forEach((tick) => {
-      const candleTime = Math.floor(tick.timestamp / intervalMs) * intervalMs;
-      activeLiveCandles.add(candleTime);
-
-      const roundedPrice = Math.round(tick.price_level / tickSize) * tickSize;
-      const key = `${candleTime}_${roundedPrice.toFixed(2)}`;
-      const current = grouped.get(key) || { bid: 0, ask: 0, delta: 0 };
-      current.bid += tick.bid_volume;
-      current.ask += tick.ask_volume;
-      current.delta += tick.delta;
-      grouped.set(key, current);
-    });
-
-    // Historical fallback: distribute candle volume with a bell-curve weight
-    chartData.forEach((candle, idx) => {
-      const candleTime = candle.time * 1000;
-      if (activeLiveCandles.has(candleTime)) return;
-
-      const startTick = Math.round(candle.low / tickSize) * tickSize;
-      const endTick = Math.round(candle.high / tickSize) * tickSize;
-      const levelsCount = Math.max(1, Math.round((endTick - startTick) / tickSize) + 1);
-
-      // Use Map for O(1) volume lookup, with a generous fallback
-      const totalVol = volMap.get(candle.time) || 1000;
-      const baseVolPerLevel = totalVol / levelsCount;
-      const midPrice = (candle.high + candle.low) / 2;
-      const priceRange = Math.max(tickSize, candle.high - candle.low);
-      const isBullish = candle.close >= candle.open;
-
-      for (let pr = startTick; pr <= endTick + tickSize * 0.01; pr += tickSize) {
-        const rounded = Math.round(pr / tickSize) * tickSize;
-        const key = `${candleTime}_${rounded.toFixed(2)}`;
-
-        const dist = Math.abs(rounded - midPrice) / priceRange;
-        const weight = Math.max(0.25, 1.3 * (1.0 - dist));
-        const levelVol = baseVolPerLevel * weight;
-
-        const bidRatio = isBullish ? 0.45 : 0.55;
-        const askRatio = 1 - bidRatio;
-
-        grouped.set(key, {
-          bid: Math.round(levelVol * bidRatio),
-          ask: Math.round(levelVol * askRatio),
-          delta: Math.round(levelVol * (askRatio - bidRatio)),
-        });
-      }
-    });
-
-    return grouped;
-  }, [orderFlowData, chartData, volMap, intervalMs, tickSize]);
+  }, [footprintCandles, cumDeltas]);
 
 
 
   // ── requestAnimationFrame Drawing Loop ────────────────────────────────
   const stateRef = useRef({
     scrollX, scrollY, zoomX, zoomY,
-    chartData, orderFlowData, footprintData,
+    chartData, fpByTime,
     histLoading, activeSymbol, dimensions, tickSize,
   });
 
   stateRef.current = {
     scrollX, scrollY, zoomX, zoomY,
-    chartData, orderFlowData, footprintData,
+    chartData, fpByTime,
     histLoading, activeSymbol, dimensions, tickSize,
   };
 
@@ -244,7 +206,7 @@ export default function FootprintChart({
 
       const {
         scrollX: sX, scrollY: sY, zoomX: zX, zoomY: zY,
-        chartData: cData, footprintData: fpData,
+        chartData: cData, fpByTime: fpData,
         histLoading: isLoading, activeSymbol: symbol,
         dimensions: dims, tickSize: ts,
       } = stateRef.current;
@@ -287,7 +249,10 @@ export default function FootprintChart({
 
       // ── Layout ────────────────────────────────────────────────────────
       const rightMargin = 72;
-      const bottomMargin = 28;
+      // Footer hosts two stacked lines per candle: delta + total volume
+      // (Requirement 6.8), then the time label.
+      const footerHeight = 30;
+      const bottomMargin = 28 + footerHeight;
       const chartWidth = width - rightMargin;
       const chartHeight = height - bottomMargin;
 
@@ -379,38 +344,31 @@ export default function FootprintChart({
         const fpW = colW - 14;
         const fpMid = fpLeft + fpW / 2;
 
-        if (fpW > 10) {
-          // ── Find Per-Candle POC ─────────────────────────────────────────
-          let maxCandleVol = 0;
-          let candlePocPrice = -1;
-          const startTick = Math.round(candle.low / ts) * ts;
-          const endTick = Math.round(candle.high / ts) * ts;
-          const candleTimeMs = candle.time * 1000;
+        // Engine output for this candle (clusters, delta, POC, imbalances).
+        const entry = fpData.get(candle.time);
+        const fp = entry?.fp;
+        const candleCumDelta = entry?.cumDelta ?? 0;
 
-          for (let pr = startTick; pr <= endTick + ts * 0.01; pr += ts) {
-            const rounded = Math.round(pr / ts) * ts;
-            const key = `${candleTimeMs}_${rounded.toFixed(2)}`;
-            const tv = fpData.get(key);
-            if (tv) {
-              const tot = tv.bid + tv.ask;
-              if (tot > maxCandleVol) { maxCandleVol = tot; candlePocPrice = rounded; }
-            }
+        if (fp && fpW > 10) {
+          // Greatest-volume level scales the bid/ask bar widths.
+          let maxCandleVol = 0;
+          for (const cell of fp.cells) {
+            const tot = cell.bid + cell.ask;
+            if (tot > maxCandleVol) maxCandleVol = tot;
           }
 
-          // ── Draw Footprint Cells ────────────────────────────────────────
-          for (let pr = startTick; pr <= endTick + ts * 0.01; pr += ts) {
-            const rounded = Math.round(pr / ts) * ts;
-            const yTop = priceToY(rounded + ts);
-            const yBot = priceToY(rounded);
+          const imbalanceSet = new Set(fp.imbalances);
+
+          // ── Draw Footprint Cells from engine cells ──────────────────────
+          for (const cell of fp.cells) {
+            if (cell.bid === 0 && cell.ask === 0) continue;
+
+            const yTop = priceToY(cell.price + ts);
+            const yBot = priceToY(cell.price);
             if (yBot < -zY || yTop > chartHeight + zY) continue;
 
             const cellH = Math.max(1, Math.abs(yBot - yTop));
-            const key = `${candleTimeMs}_${rounded.toFixed(2)}`;
-            const tv = fpData.get(key);
-
-            if (!tv || (tv.bid === 0 && tv.ask === 0)) continue;
-
-            const { bid, ask } = tv;
+            const { bid, ask } = cell;
 
             // ── Split Bid/Ask Horizontal Volume Profiles ───────────────────
             // Scale bar widths outward from the middle relative to maxCandleVol
@@ -433,8 +391,17 @@ export default function FootprintChart({
             ctx.lineTo(fpMid, yBot);
             ctx.stroke();
 
+            // ── Imbalance Highlight (amber, distinct from POC) ─────────────
+            if (imbalanceSet.has(cell.price)) {
+              ctx.fillStyle = 'rgba(251, 191, 36, 0.18)';
+              ctx.fillRect(fpLeft, yTop + 1, fpW, cellH - 2);
+              ctx.strokeStyle = 'rgba(251, 191, 36, 0.9)';
+              ctx.lineWidth = 1;
+              ctx.strokeRect(fpLeft + 0.5, yTop + 0.5, fpW - 1, cellH - 1);
+            }
+
             // ── POC Highlight ─────────────────────────────────────────────
-            if (rounded === candlePocPrice) {
+            if (fp.poc !== null && cell.price === fp.poc) {
               ctx.strokeStyle = candleColor;
               ctx.lineWidth = 1.5;
               ctx.strokeRect(fpLeft + 0.5, yTop + 0.5, fpW - 1, cellH - 1);
@@ -447,19 +414,45 @@ export default function FootprintChart({
               ctx.textBaseline = 'middle';
               const yMid = Math.round(yTop + cellH / 2);
 
-              const bidStr = fmtVol(bid);
-              const askStr = fmtVol(ask);
-
               // Left aligned to center line for Ask, right aligned for Bid
               ctx.textAlign = 'right';
               ctx.fillStyle = '#ffffff';
-              ctx.fillText(bidStr, fpMid - 4, yMid);
+              ctx.fillText(fmtVol(bid), fpMid - 4, yMid);
 
               ctx.textAlign = 'left';
               ctx.fillStyle = '#ffffff';
-              ctx.fillText(askStr, fpMid + 4, yMid);
+              ctx.fillText(fmtVol(ask), fpMid + 4, yMid);
             }
           }
+
+          // ── Synthetic-distribution indication (Requirement 6.3) ─────────
+          if (fp.synthetic && fpW > 24) {
+            ctx.fillStyle = 'rgba(251, 191, 36, 0.85)';
+            ctx.font = '8px "JetBrains Mono", monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText('≈ EST', fpMid, 4);
+          }
+        }
+
+        // ── Per-Candle Footer: Delta / Cumulative Delta / Total Volume ──
+        // (Requirements 6.4, 6.5, 6.8)
+        if (fp && fpW > 24) {
+          const footerTop = chartHeight + 3;
+          const deltaPositive = fp.delta >= 0;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'top';
+
+          ctx.font = 'bold 9px "JetBrains Mono", monospace';
+          ctx.fillStyle = deltaPositive ? '#22c55e' : '#f87171';
+          ctx.fillText(`Δ ${fmtDelta(fp.delta)}`, fpMid, footerTop);
+
+          ctx.font = '8px "JetBrains Mono", monospace';
+          ctx.fillStyle = candleCumDelta >= 0 ? 'rgba(34,197,94,0.7)' : 'rgba(248,113,113,0.7)';
+          ctx.fillText(`Σ ${fmtDelta(candleCumDelta)}`, fpMid, footerTop + 11);
+
+          ctx.fillStyle = 'rgba(148, 163, 184, 0.7)';
+          ctx.fillText(`V ${fmtVol(fp.totalVolume)}`, fpMid, footerTop + 21);
         }
 
         // ── Time Label (aligned to footprints center) ──────────────────
@@ -469,7 +462,7 @@ export default function FootprintChart({
         ctx.font = '9px "JetBrains Mono", "Fira Code", monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
-        ctx.fillText(timeStr, fpMid, chartHeight + 6);
+        ctx.fillText(timeStr, fpMid, chartHeight + footerHeight + 2);
 
         currentX = nextX;
       }
