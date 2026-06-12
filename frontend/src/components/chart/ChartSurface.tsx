@@ -35,37 +35,27 @@ import React, {
   useState,
 } from 'react';
 import {
-  CandlestickChart,
-  LineChart as LineChartIcon,
   Settings2,
-  Maximize2,
-  Minimize2,
-  Clock,
-  Activity,
-  ChevronDown,
   AlertTriangle,
   X,
 } from 'lucide-react';
 
 import ChartRenderer from './ChartRenderer';
 import ChartToolsBar from './ChartToolsBar';
-import ChartModeToggle from './ChartHeader';
 import IndicatorManagerPanel from './IndicatorManagerPanel';
 import FootprintChart from './FootprintChart';
+import { CHART_TYPE_LABELS } from './ChartTypeSelector';
 
 import { useTradeStore } from '../../store/useTradeStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
 import {
-  CHART_TYPES,
   CHART_TYPE_PARAM_SPEC,
   CHART_TYPE_PARAM_DEFAULTS,
   validateChartTypeParams,
-  listStrategies,
   getStrategy,
   validateParams,
   type ChartType,
   type ChartTypeParams,
-  type StrategyDef,
   type StrategyParams,
 } from '../../charting/engines';
 import type { NumericRange } from '../../charting/types';
@@ -73,24 +63,7 @@ import {
   planFullscreenToggle,
   fullscreenFailureFallback,
 } from './fullscreenFallback';
-import { TIMEFRAME_GROUPS, type Timeframe } from '../../utils/chartTypes';
-import type { ChartTimeframe } from '../../store/useTradeStore';
-
-// ── Display labels ────────────────────────────────────────────────────────
-
-const CHART_TYPE_LABELS: Record<ChartType, string> = {
-  candlestick: 'Candlestick',
-  'hollow-candle': 'Hollow Candle',
-  'ohlc-bar': 'OHLC Bar',
-  line: 'Line',
-  area: 'Area',
-  baseline: 'Baseline',
-  'heikin-ashi': 'Heikin Ashi',
-  renko: 'Renko',
-  kagi: 'Kagi',
-  'point-figure': 'Point & Figure',
-  'line-break': 'Line Break',
-};
+import type { Timeframe } from '../../utils/chartTypes';
 
 /** Friendly labels for the numeric parameters surfaced in settings dialogs. */
 const PARAM_LABELS: Record<string, string> = {
@@ -114,10 +87,6 @@ type OpenDialog = 'none' | 'chart-type' | 'strategy';
 
 export interface ChartSurfaceProps {
   className?: string;
-  /** Initial chart type; defaults to candlestick (Requirement 1.4 fallback). */
-  initialChartType?: ChartType;
-  /** Initial applied strategy id, or null when none is applied. */
-  initialStrategyId?: string | null;
 }
 
 /**
@@ -127,20 +96,19 @@ export interface ChartSurfaceProps {
  */
 export default function ChartSurface({
   className = '',
-  initialChartType = 'candlestick',
-  initialStrategyId = null,
 }: ChartSurfaceProps) {
-  // ── Selection state (passed down to ChartRenderer) ────────────────────
-  const [chartType, setChartType] = useState<ChartType>(initialChartType);
-  const [chartTypeParams, setChartTypeParams] = useState<ChartTypeParams>({});
-  const [activeStrategyId, setActiveStrategyId] = useState<string | null>(
-    initialStrategyId,
-  );
-  const [strategyParams, setStrategyParams] = useState<StrategyParams>({});
+  // ── Selection state (from shared store) ────────────────────────────────
+  const chartType = useChartUIStore((s) => s.chartType);
+  const chartTypeParams = useChartUIStore((s) => s.chartTypeParams);
+  const setChartTypeParams = useChartUIStore((s) => s.setChartTypeParams);
+  const activeStrategyId = useChartUIStore((s) => s.activeStrategyId);
+  const strategyParams = useChartUIStore((s) => s.strategyParams);
+  const setStrategyParams = useChartUIStore((s) => s.setStrategyParams);
+  const showIndicatorManager = useChartUIStore((s) => s.showIndicatorManager);
+  const setShowIndicatorManager = useChartUIStore((s) => s.setShowIndicatorManager);
 
   // ── Transient UI state: which overlay/panel is open ───────────────────
   const [openDialog, setOpenDialog] = useState<OpenDialog>('none');
-  const [showIndicatorManager, setShowIndicatorManager] = useState(false);
 
   // ── Chart-mode + timeframe (shared store state) ───────────────────────
   const chartMode = useTradeStore((s) => s.chartMode);
@@ -210,34 +178,20 @@ export default function ChartSurface({
   // ── Dialog handlers ────────────────────────────────────────────────────
   const closeDialog = useCallback(() => setOpenDialog('none'), []);
 
-  const handleSelectChartType = useCallback((next: ChartType) => {
-    setChartType(next);
-    // Reset params when switching to a non-parametric type so stale params do
-    // not leak into the renderer.
-    if (Object.keys(CHART_TYPE_PARAM_SPEC[next]).length === 0) {
-      setChartTypeParams({});
-    }
-  }, []);
-
   const handleApplyChartTypeParams = useCallback(
     (next: ChartTypeParams) => {
       setChartTypeParams(next);
       closeDialog();
     },
-    [closeDialog],
+    [closeDialog, setChartTypeParams],
   );
-
-  const handleSelectStrategy = useCallback((id: string | null) => {
-    setActiveStrategyId(id);
-    setStrategyParams({});
-  }, []);
 
   const handleApplyStrategyParams = useCallback(
     (next: StrategyParams) => {
       setStrategyParams(next);
       closeDialog();
     },
-    [closeDialog],
+    [closeDialog, setStrategyParams],
   );
 
   const chartTypeHasParams =
@@ -258,66 +212,7 @@ export default function ChartSurface({
       ref={surfaceRef}
       className={`flex flex-col overflow-hidden bg-background ${containerClass} ${className}`}
     >
-      {/* ── Persistent control bar (Requirement 12.1) ──────────────────── */}
-      <div className="flex shrink-0 items-center gap-2 border-b border-border-default bg-surface/60 px-2 py-1.5">
-        {/* Chart-type selector */}
-        <ChartTypeSelector value={chartType} onSelect={handleSelectChartType} />
-
-        {/* Chart-type settings entry (only for parametric types) */}
-        {chartTypeHasParams && (
-          <button
-            type="button"
-            onClick={() => setOpenDialog('chart-type')}
-            aria-label="Chart type settings"
-            className="flex h-7 items-center gap-1 rounded-md border border-border-default bg-surface px-2 text-[11px] text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
-          >
-            <Settings2 size={13} />
-          </button>
-        )}
-
-        {/* Indicator-manager entry point */}
-        <button
-          type="button"
-          onClick={() => setShowIndicatorManager((v) => !v)}
-          aria-label="Indicators"
-          className={`flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-semibold transition-colors ${
-            showIndicatorManager
-              ? 'border-primary/40 bg-primary/10 text-primary'
-              : 'border-border-default bg-surface text-text-secondary hover:bg-elevated hover:text-text-primary'
-          }`}
-        >
-          <LineChartIcon size={13} />
-          <span>Indicators</span>
-        </button>
-
-        {/* Strategy entry point */}
-        <StrategySelector
-          activeStrategyId={activeStrategyId}
-          onSelect={handleSelectStrategy}
-          onOpenSettings={() => setOpenDialog('strategy')}
-        />
-
-        <div className="ml-auto flex items-center gap-2">
-          {/* Timeframe selector */}
-          <TimeframeSelector
-            value={effectiveTimeframe}
-            onSelect={(tf) => setActiveTimeframe(tf as ChartTimeframe)}
-          />
-
-          {/* Chart-mode toggle (Standard / Volume Profile / Footprint) */}
-          <ChartModeToggle />
-
-          {/* Fullscreen control */}
-          <button
-            type="button"
-            onClick={handleToggleFullscreen}
-            aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-            className="flex h-7 w-7 items-center justify-center rounded-md border border-border-default bg-surface text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
-          >
-            {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-          </button>
-        </div>
-      </div>
+      {/* Control bar removed — chart controls are in the page-level OHLC header */}
 
       {/* ── Fullscreen-unavailable indication (Requirement 12.5) ───────── */}
       {fullscreenUnavailable && (
@@ -335,8 +230,11 @@ export default function ChartSurface({
 
       {/* ── Chart body: toolbar + renderer ─────────────────────────────── */}
       <div className="relative flex min-h-0 flex-1">
-        {/* Drawing toolbar (reused) */}
-        <ChartToolsBar className="border-r border-border-default bg-surface/40" />
+        {/* Drawing toolbar — only rendered inside fullscreen overlay;
+            in normal mode the toolbar lives in TerminalLayout. */}
+        {isFullscreen && (
+          <ChartToolsBar className="border-r border-border-default bg-surface/40" />
+        )}
 
         {/* Price renderer / footprint surface */}
         <div className="relative min-w-0 flex-1">
@@ -403,209 +301,6 @@ export default function ChartSurface({
           />
         );
       })()}
-    </div>
-  );
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// Chart-type selector
-// ───────────────────────────────────────────────────────────────────────────
-
-function ChartTypeSelector({
-  value,
-  onSelect,
-}: {
-  value: ChartType;
-  onSelect: (t: ChartType) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useOutsideClose<HTMLDivElement>(() => setOpen(false));
-
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-label="Chart type"
-        className="flex h-7 items-center gap-1.5 rounded-md border border-border-default bg-surface px-2.5 text-[11px] font-semibold text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
-      >
-        <CandlestickChart size={13} className="text-text-muted" />
-        <span>{CHART_TYPE_LABELS[value]}</span>
-        <ChevronDown size={11} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
-      </button>
-      {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 w-44 rounded-lg border border-border-default bg-surface/95 p-1 shadow-2xl backdrop-blur-xl">
-          {CHART_TYPES.map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => {
-                onSelect(t);
-                setOpen(false);
-              }}
-              className={`flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-[11px] transition-colors ${
-                t === value
-                  ? 'bg-primary/10 font-semibold text-primary'
-                  : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
-              }`}
-            >
-              <span>{CHART_TYPE_LABELS[t]}</span>
-              {t === value && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// Timeframe selector
-// ───────────────────────────────────────────────────────────────────────────
-
-function TimeframeSelector({
-  value,
-  onSelect,
-}: {
-  value: Timeframe;
-  onSelect: (tf: Timeframe) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useOutsideClose<HTMLDivElement>(() => setOpen(false));
-
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-label="Timeframe"
-        className="flex h-7 items-center gap-1.5 rounded-md border border-border-default bg-surface px-2.5 text-[11px] font-semibold text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
-      >
-        <Clock size={12} className="text-text-muted" />
-        <span className="uppercase">{value}</span>
-        <ChevronDown size={11} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 max-h-80 w-40 overflow-y-auto rounded-lg border border-border-default bg-surface/95 p-1 shadow-2xl backdrop-blur-xl">
-          {TIMEFRAME_GROUPS.map((group) => (
-            <div key={group.label}>
-              <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-text-muted">
-                {group.label}
-              </div>
-              {group.items.map(({ tf, display }) => (
-                <button
-                  key={tf}
-                  type="button"
-                  onClick={() => {
-                    onSelect(tf);
-                    setOpen(false);
-                  }}
-                  className={`flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-[11px] transition-colors ${
-                    tf === value
-                      ? 'bg-primary/10 font-semibold text-primary'
-                      : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
-                  }`}
-                >
-                  <span>{display}</span>
-                  <span className="font-mono text-[10px] uppercase text-text-muted">{tf}</span>
-                </button>
-              ))}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// Strategy selector + settings entry
-// ───────────────────────────────────────────────────────────────────────────
-
-function StrategySelector({
-  activeStrategyId,
-  onSelect,
-  onOpenSettings,
-}: {
-  activeStrategyId: string | null;
-  onSelect: (id: string | null) => void;
-  onOpenSettings: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useOutsideClose<HTMLDivElement>(() => setOpen(false));
-  const strategies = useMemo<StrategyDef[]>(
-    () => listStrategies().map((id) => getStrategy(id)).filter((d): d is StrategyDef => !!d),
-    [],
-  );
-  const active = activeStrategyId ? getStrategy(activeStrategyId) : undefined;
-
-  return (
-    <div className="flex items-center gap-1">
-      <div className="relative" ref={ref}>
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-label="Strategy"
-          className={`flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-semibold transition-colors ${
-            active
-              ? 'border-primary/40 bg-primary/10 text-primary'
-              : 'border-border-default bg-surface text-text-secondary hover:bg-elevated hover:text-text-primary'
-          }`}
-        >
-          <Activity size={13} className={active ? 'text-primary' : 'text-text-muted'} />
-          <span>{active ? active.name : 'Strategy'}</span>
-          <ChevronDown size={11} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
-        </button>
-        {open && (
-          <div className="absolute left-0 top-full z-50 mt-1 w-48 rounded-lg border border-border-default bg-surface/95 p-1 shadow-2xl backdrop-blur-xl">
-            <button
-              type="button"
-              onClick={() => {
-                onSelect(null);
-                setOpen(false);
-              }}
-              className={`flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-[11px] transition-colors ${
-                !activeStrategyId
-                  ? 'bg-primary/10 font-semibold text-primary'
-                  : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
-              }`}
-            >
-              None
-            </button>
-            {strategies.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => {
-                  onSelect(s.id);
-                  setOpen(false);
-                }}
-                className={`flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-[11px] transition-colors ${
-                  s.id === activeStrategyId
-                    ? 'bg-primary/10 font-semibold text-primary'
-                    : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
-                }`}
-              >
-                <span>{s.name}</span>
-                {s.id === activeStrategyId && (
-                  <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                )}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {active && (
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          aria-label="Strategy settings"
-          className="flex h-7 w-7 items-center justify-center rounded-md border border-border-default bg-surface text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
-        >
-          <Settings2 size={13} />
-        </button>
-      )}
     </div>
   );
 }
@@ -711,9 +406,8 @@ function NumericParamDialog({
                   value={raw[k] ?? ''}
                   onChange={(e) => setRaw((prev) => ({ ...prev, [k]: e.target.value }))}
                   step={range.integer ? 1 : 'any'}
-                  className={`w-full rounded-md border bg-elevated px-2 py-1.5 text-sm text-text-primary outline-none transition-colors focus:border-primary ${
-                    hasError ? 'border-red-500/60' : 'border-border-default'
-                  }`}
+                  className={`w-full rounded-md border bg-elevated px-2 py-1.5 text-sm text-text-primary outline-none transition-colors focus:border-primary ${hasError ? 'border-red-500/60' : 'border-border-default'
+                    }`}
                 />
               </label>
             );
@@ -748,22 +442,4 @@ function NumericParamDialog({
       </div>
     </div>
   );
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// Small hook: close a popover on outside click
-// ───────────────────────────────────────────────────────────────────────────
-
-function useOutsideClose<T extends HTMLElement>(onClose: () => void) {
-  const ref = useRef<T>(null);
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        onClose();
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [onClose]);
-  return ref;
 }

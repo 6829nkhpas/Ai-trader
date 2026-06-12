@@ -1,10 +1,13 @@
 'use client';
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Maximize2, Minimize2, Clock } from 'lucide-react';
+import { PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Maximize2, Minimize2, Clock, LineChart as LineChartIcon } from 'lucide-react';
 import TradingChart from '../components/TradingChart';
 import ChartToolsBar from '../components/chart/ChartToolsBar';
 import ChartModeToggle from '../components/chart/ChartHeader';
+import ChartTypeSelector from '../components/chart/ChartTypeSelector';
+import StrategySelector from '../components/chart/StrategySelector';
+import { CHART_TYPE_PARAM_SPEC } from '../charting/engines';
 import TerminalLayout from '../components/layout/TerminalLayout';
 import LeftPanel from '../components/panels/LeftPanel';
 import OrderExecutionPanel from '../components/panels/OrderExecutionPanel';
@@ -60,6 +63,13 @@ export default function Home() {
   const isFullscreen = useChartUIStore((s) => s.isFullscreen);
   const setIsFullscreen = useChartUIStore((s) => s.setIsFullscreen);
   const toggleFullscreen = useChartUIStore((s) => s.toggleFullscreen);
+  const chartType = useChartUIStore((s) => s.chartType);
+  const setChartType = useChartUIStore((s) => s.setChartType);
+  const setChartTypeParams = useChartUIStore((s) => s.setChartTypeParams);
+  const activeStrategyId = useChartUIStore((s) => s.activeStrategyId);
+  const setActiveStrategyId = useChartUIStore((s) => s.setActiveStrategyId);
+  const showIndicatorManager = useChartUIStore((s) => s.showIndicatorManager);
+  const toggleIndicatorManager = useChartUIStore((s) => s.toggleIndicatorManager);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('profile');
 
@@ -325,13 +335,13 @@ export default function Home() {
             {/* ── Left: Chart + Order Execution ──────────────── */}
             <div className={
               isFullscreen
-                ? "fixed inset-0 z-[150] flex flex-col bg-background p-4"
+                ? "fixed inset-0 z-[150] flex flex-col bg-background p-2"
                 : `flex min-h-0 min-w-0 flex-col rounded-lg border border-border-default bg-surface panel-shadow-lg ${
                     sidebarOpen ? 'flex-1' : 'w-full'
                   }`
             }>
-              <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-border-default px-3 bg-surface rounded-t-lg">
-                <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border-default px-2.5 bg-surface rounded-t-lg">
+                <div className="flex min-w-0 items-center gap-2">
                   <div className="truncate text-sm font-semibold text-text-primary">{symbol}</div>
                   {symbolQuote ? (
                     <>
@@ -354,9 +364,42 @@ export default function Home() {
                   )}
                 </div>
 
-                <div className="flex items-center gap-2">
-                  {/* Chart Mode Toggle */}
-                  <ChartModeToggle />
+                <div className="flex items-center gap-1.5">
+                  {/* Chart-type selector (Candlestick dropdown) */}
+                  <ChartTypeSelector
+                    value={chartType}
+                    onSelect={(next) => {
+                      setChartType(next);
+                      // Reset params for non-parametric types
+                      if (Object.keys(CHART_TYPE_PARAM_SPEC[next]).length === 0) {
+                        setChartTypeParams({});
+                      }
+                    }}
+                  />
+
+                  {/* Indicators toggle */}
+                  <button
+                    type="button"
+                    onClick={toggleIndicatorManager}
+                    aria-label="Indicators"
+                    className={`flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-semibold transition-colors ${showIndicatorManager
+                        ? 'border-primary/40 bg-primary/10 text-primary'
+                        : 'border-border-default bg-surface text-text-secondary hover:bg-elevated hover:text-text-primary'
+                      }`}
+                  >
+                    <LineChartIcon size={13} />
+                    <span>Indicators</span>
+                  </button>
+
+                  {/* Strategy selector */}
+                  <StrategySelector
+                    activeStrategyId={activeStrategyId}
+                    onSelect={setActiveStrategyId}
+                    onOpenSettings={() => {}}
+                  />
+
+                  {/* Divider */}
+                  <div className="h-5 w-px bg-border-default/50" />
 
                   {/* Timeframe dropdown */}
                   <div className="relative" ref={tfDropdownRef}>
@@ -413,6 +456,19 @@ export default function Home() {
                     )}
                   </div>
 
+                  {/* Divider */}
+                  <div className="h-5 w-px bg-border-default/50" />
+
+                  {/* Fullscreen toggle */}
+                  <button
+                    type="button"
+                    onClick={toggleFullscreen}
+                    aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+                    className="flex h-7 w-7 items-center justify-center rounded-md border border-border-default bg-surface text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
+                  >
+                    {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                  </button>
+
                   {/* Sidebar toggle button */}
                   {!isFullscreen && (
                     <button
@@ -427,19 +483,6 @@ export default function Home() {
                       {sidebarOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
                     </button>
                   )}
-
-                  {/* Fullscreen Toggle Button */}
-                  <button
-                    type="button"
-                    onClick={toggleFullscreen}
-                    className={`rounded-md p-1.5 text-xs font-semibold transition-colors ${isFullscreen
-                        ? 'bg-emerald-500/15 text-emerald-400 font-bold border border-emerald-500/30'
-                        : 'bg-surface text-text-secondary hover:bg-elevated border border-border-default'
-                      }`}
-                    title={isFullscreen ? "Exit Fullscreen (Esc)" : "Fullscreen Chart"}
-                  >
-                    {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-                  </button>
                 </div>
               </div>
 
@@ -448,7 +491,7 @@ export default function Home() {
                 {isFullscreen && (
                   <ChartToolsBar className="border-r border-border-default/50 mr-1.5 py-2 bg-surface" />
                 )}
-                <div className="min-h-0 flex-1 bg-surface relative flex flex-col p-1.5 overflow-hidden">
+                <div className="min-h-0 flex-1 bg-surface relative flex flex-col p-1 overflow-hidden">
                   {renderProfileContent()}
                 </div>
               </div>
@@ -460,11 +503,11 @@ export default function Home() {
               {/* Simulated Paper Trading Dashboard */}
               {!isFullscreen && (
                 paperPortfolioOpen ? (
-                  <div className="p-3 border-t border-border-default bg-surface/30">
+                  <div className="p-2 border-t border-border-default bg-surface/30">
                     <PortfolioDashboard onCollapse={() => setPaperPortfolioOpen(false)} />
                   </div>
                 ) : (
-                  <div className="px-4 py-2 border-t border-border-default bg-surface/40 backdrop-blur-sm flex items-center justify-between transition-all duration-300">
+                  <div className="px-3 py-1.5 border-t border-border-default bg-surface/40 backdrop-blur-sm flex items-center justify-between transition-all duration-300">
                     <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
                       {/* Live indicator and Title */}
                       <div className="flex items-center gap-2">
@@ -526,7 +569,7 @@ export default function Home() {
               className={`
                 flex flex-col min-h-0 overflow-hidden transition-all duration-300 ease-out
                 ${sidebarOpen
-                  ? 'w-[300px] min-w-[260px] max-w-[340px] opacity-100 ml-2'
+                  ? 'w-[300px] min-w-[260px] max-w-[340px] opacity-100 ml-1.5'
                   : 'w-0 min-w-0 max-w-0 opacity-0 ml-0 pointer-events-none'
                 }
               `}
