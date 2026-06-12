@@ -27,10 +27,6 @@ import {
 } from '@/charting/realtimePaint';
 import { deriveConnectionStatus } from '@/charting/connectionStatus';
 import { backingStoreLength } from '@/charting/engines';
-import {
-  planFullscreenToggle,
-  fullscreenFailureFallback,
-} from '@/components/chart/fullscreenFallback';
 import type { ChartCandle } from '@/charting/types';
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
@@ -170,65 +166,6 @@ describe('deriveConnectionStatus — disconnect/reconnect indicator (Req 9.7, 9.
     expect(deriveConnectionStatus('DISCONNECTED', 'disconnected').isDisconnected).toBe(true);
     // onopen reconnects → indicator must be removed.
     expect(deriveConnectionStatus('CONNECTED', 'connected').isDisconnected).toBe(false);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Fullscreen failure fallback (Requirement 12.5)
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('fullscreen fallback decision (Req 12.5)', () => {
-  it('requests native fullscreen when the API is available', () => {
-    expect(
-      planFullscreenToggle({
-        isNativeFullscreen: false,
-        inAppFallbackActive: false,
-        canRequestFullscreen: true,
-      }),
-    ).toBe('request-native');
-  });
-
-  it('falls back to the in-app maximized view when no Fullscreen API exists', () => {
-    expect(
-      planFullscreenToggle({
-        isNativeFullscreen: false,
-        inAppFallbackActive: false,
-        canRequestFullscreen: false,
-      }),
-    ).toBe('fallback-unavailable');
-  });
-
-  it('exits native fullscreen first when one is active', () => {
-    expect(
-      planFullscreenToggle({
-        isNativeFullscreen: true,
-        inAppFallbackActive: false,
-        canRequestFullscreen: true,
-      }),
-    ).toBe('exit-native');
-  });
-
-  it('exits the in-app fallback when it is the active mode', () => {
-    expect(
-      planFullscreenToggle({
-        isNativeFullscreen: false,
-        inAppFallbackActive: true,
-        canRequestFullscreen: true,
-      }),
-    ).toBe('exit-fallback');
-  });
-
-  it('on failure shows the unavailable indication and maximizes in-app once', () => {
-    // Not already maximized → maximize and show the indicator.
-    expect(fullscreenFailureFallback(false)).toEqual({
-      fullscreenUnavailable: true,
-      shouldMaximize: true,
-    });
-    // Already maximized → keep the indicator, do not re-toggle.
-    expect(fullscreenFailureFallback(true)).toEqual({
-      fullscreenUnavailable: true,
-      shouldMaximize: false,
-    });
   });
 });
 

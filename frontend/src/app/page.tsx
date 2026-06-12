@@ -8,7 +8,6 @@ import ChartModeToggle from '../components/chart/ChartHeader';
 import TerminalLayout from '../components/layout/TerminalLayout';
 import LeftPanel from '../components/panels/LeftPanel';
 import OrderExecutionPanel from '../components/panels/OrderExecutionPanel';
-import AlphaPredictiveChart from '../components/AlphaPredictiveChart';
 import IntradayLayout from '../components/layouts/IntradayLayout';
 import SwingLayout, { SwingConfluencePanel } from '../components/layouts/SwingLayout';
 import InvestorLayout, { MacroSentimentPanel } from '../components/layouts/InvestorLayout';
@@ -445,6 +444,8 @@ export default function Home() {
 
               {/* Chart area - takes full width */}
               <div className="flex flex-1 min-h-0 w-full overflow-hidden">
+                {/* Fullscreen drawing toolbar (TerminalLayout owns it in
+                    normal mode; the page owns it while fullscreen). */}
                 {isFullscreen && (
                   <ChartToolsBar className="border-r border-border-default/50 mr-1.5 py-2 bg-surface" />
                 )}
