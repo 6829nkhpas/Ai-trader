@@ -33,22 +33,25 @@ export interface ConnectionStatus {
 }
 
 /**
- * Derive the realtime-feed connection status from the trade store.
+ * Pure reducer: map the raw store connection signals to the normalized
+ * realtime-feed connection view used by the renderer (Requirements 9.7, 9.8).
  *
- * Reuses the existing `connectionStatus` / `wsStatus` store state rather than
- * opening a separate socket, so the indicator stays in lock-step with the
- * actual feed lifecycle.
+ * Rules:
+ *   - the feed is `connected` when either signal reports an open link;
+ *   - an explicit handshake (`CONNECTING`/`connecting`) is treated as transient
+ *     `connecting` — NOT disconnected — so the indicator does not flicker
+ *     during reconnect backoff;
+ *   - anything else is `disconnected`, which drives the visible indicator.
+ *
+ * Side-effect free so it can be unit-tested without a store or socket.
  */
-export function useConnectionStatus(): ConnectionStatus {
-  const connectionStatus = useTradeStore((s) => s.connectionStatus);
-  const wsStatus = useTradeStore((s) => s.wsStatus);
-
-  // The feed is "connected" when either signal reports an open link.
+export function deriveConnectionStatus(
+  connectionStatus: string | null | undefined,
+  wsStatus: string | null | undefined,
+): ConnectionStatus {
   const isConnected =
     connectionStatus === 'CONNECTED' || wsStatus === 'connected';
 
-  // Treat an explicit connecting handshake as transient (not disconnected) so
-  // the indicator does not flash during reconnect backoff.
   const isConnecting =
     !isConnected &&
     (connectionStatus === 'CONNECTING' || wsStatus === 'connecting');
@@ -64,4 +67,18 @@ export function useConnectionStatus(): ConnectionStatus {
     isConnected,
     isDisconnected: status === 'disconnected',
   };
+}
+
+/**
+ * Derive the realtime-feed connection status from the trade store.
+ *
+ * Reuses the existing `connectionStatus` / `wsStatus` store state rather than
+ * opening a separate socket, so the indicator stays in lock-step with the
+ * actual feed lifecycle.
+ */
+export function useConnectionStatus(): ConnectionStatus {
+  const connectionStatus = useTradeStore((s) => s.connectionStatus);
+  const wsStatus = useTradeStore((s) => s.wsStatus);
+
+  return deriveConnectionStatus(connectionStatus, wsStatus);
 }

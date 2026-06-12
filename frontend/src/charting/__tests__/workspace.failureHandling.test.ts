@@ -20,6 +20,13 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+// Simulate running OUTSIDE the Tauri runtime: the lazy `@tauri-apps/api/core`
+// bridge is unavailable, so `getInvoke()` resolves to a falsy value and the
+// persistence layer uses its in-memory session fallback (Requirement 11.6).
+// This mocks only the IPC boundary — the persistence logic under test (memory
+// retention, flush-failure reporting, retry-on-next-change) is the real code.
+vi.mock('@tauri-apps/api/core', () => ({ invoke: undefined }));
+
 import {
   DEFAULT_WORKSPACE,
   SAVE_DEBOUNCE_MS,

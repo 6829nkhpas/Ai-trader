@@ -5,6 +5,8 @@
 // drawingEngine, validation) are added by subsequent tasks and re-exported
 // here so consumers import from a single `charting/engines` entry point.
 
+export { backingStoreLength } from './rendering';
+
 export { validateNumeric, validateParams } from './validation';
 
 export {

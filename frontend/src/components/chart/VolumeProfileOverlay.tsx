@@ -24,6 +24,7 @@ import React, { useEffect, useRef, useCallback } from 'react';
 import type { ChartCandle, VolumeBar } from '../../utils/chartTypes';
 import {
   buildProfile,
+  backingStoreLength,
   DEFAULT_PROFILE_ROWS,
   DEFAULT_VALUE_AREA_PERCENT,
   type ProfileRange,
@@ -237,8 +238,8 @@ export default function VolumeProfileOverlay({
 
       // ── 4K Supersampling ─────────────────────────────────────────────────
       const dpr = (window.devicePixelRatio || 1) * 2;
-      const bw = Math.floor(rect.width * dpr);
-      const bh = Math.floor(rect.height * dpr);
+      const bw = backingStoreLength(rect.width, dpr);
+      const bh = backingStoreLength(rect.height, dpr);
       if (canvas.width !== bw || canvas.height !== bh) {
         canvas.width = bw;
         canvas.height = bh;

@@ -34,7 +34,33 @@ function sameCandle(a: ChartCandle, b: ChartCandle): boolean {
   );
 }
 
-type RealtimePaintKind = 'update' | 'append' | 'repaint';
+export type RealtimePaintKind = 'update' | 'append' | 'repaint';
+
+/**
+ * Decide whether the viewport was parked at the right edge before a mutation.
+ *
+ * `rangeTo` is the (logical) index of the right-most visible bar and
+ * `lastIndex` is the index of the latest candle currently painted. We treat
+ * "within one bar of the end" as the right edge so the `rightOffset` breathing
+ * room kept by the time scale still counts as following the latest bar
+ * (Requirement 9.5).
+ */
+export function isViewAtRightEdge(rangeTo: number, lastIndex: number): boolean {
+  return rangeTo >= lastIndex;
+}
+
+/**
+ * Decide whether the renderer should scroll to keep a freshly appended candle
+ * visible. We only follow on an `append` and only when the view was already
+ * pinned to the latest bar before the append (Requirement 9.5). In-place
+ * updates and repaints never move the viewport.
+ */
+export function shouldFollowRightEdge(
+  kind: RealtimePaintKind,
+  wasAtRightEdge: boolean,
+): boolean {
+  return kind === 'append' && wasAtRightEdge;
+}
 
 /**
  * Classify the transition from the previously painted series to the next one.
@@ -44,7 +70,7 @@ type RealtimePaintKind = 'update' | 'append' | 'repaint';
  * the canonical series. The tail decision (update vs append vs repaint) is
  * delegated to the canonical `applyLatestCandleUpdate` helper.
  */
-function classifyRealtimePaint(prev: ChartCandle[], next: ChartCandle[]): RealtimePaintKind {
+export function classifyRealtimePaint(prev: ChartCandle[], next: ChartCandle[]): RealtimePaintKind {
   if (prev.length === 0 || next.length === 0) return 'repaint';
 
   const delta = next.length - prev.length;
@@ -215,7 +241,7 @@ export function useChartDataSync(
       const range = timeScale.getVisibleLogicalRange();
       // The last data index is prevCount - 1; treat "within one bar of the end"
       // as being at the right edge to tolerate the rightOffset breathing room.
-      if (range) wasAtRightEdge = range.to >= prevCount - 1;
+      if (range) wasAtRightEdge = isViewAtRightEdge(range.to, prevCount - 1);
     }
 
     if (kind === 'repaint') {
@@ -247,7 +273,7 @@ export function useChartDataSync(
 
         // Right-edge follow: keep the freshly appended candle visible only when
         // the view was already pinned to the latest bar (Requirement 9.5).
-        if (kind === 'append' && wasAtRightEdge && timeScale) {
+        if (shouldFollowRightEdge(kind, wasAtRightEdge) && timeScale) {
           timeScale.scrollToRealTime();
         }
       } catch (_err) {

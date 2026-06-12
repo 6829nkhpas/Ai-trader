@@ -251,7 +251,7 @@ All file paths are relative to `frontend/src`. Existing components (`AlphaPredic
     - Mount persistent controls (chart-type selector, indicator-manager entry, drawing toolbar, chart-mode toggle, timeframe selector, strategy entry) and overlay settings dialogs; implement fullscreen with failure fallback
     - _Requirements: 12.1, 12.2, 12.3, 12.4, 12.5_
 
-  - [ ]* 12.5 Write property test for wheel zoom bounds
+  - [x]* 12.5 Write property test for wheel zoom bounds
     - **Property 30: Wheel zoom keeps the visible candle count within bounds**
     - **Validates: Requirements 10.6**
 
@@ -285,12 +285,12 @@ All file paths are relative to `frontend/src`. Existing components (`AlphaPredic
     - **Property 34: Absent persisted workspace yields defaults**
     - **Validates: Requirements 1.4, 4.11, 11.3**
 
-  - [ ]* 14.4 Write unit tests for persist/restore failure handling
+  - [x]* 14.4 Write unit tests for persist/restore failure handling
     - Test restore-failure applies defaults and retains on-screen state; persist-failure retains in-memory state and retries on next change
     - _Requirements: 5.12, 11.4, 11.5_
 
 - [ ] 15. Integration and wiring
-  - [ ] 15.1 Wire the full charting suite into MainTerminalChart
+  - [x] 15.1 Wire the full charting suite into MainTerminalChart
     - Connect engines, stores, renderer, pane manager, crosshair, and persistence through `ChartSurface` mounted in `MainTerminalChart`, fed by the canonical candle selector
     - _Requirements: 9.1, 11.1, 12.1_
 
