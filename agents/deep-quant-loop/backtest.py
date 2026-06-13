@@ -44,6 +44,7 @@ import forecaster
 import journal
 import regime
 import rs
+import trade_manager
 # Reuse the AUTHORITATIVE volume-profile math and EMA helper so seeded levels
 # match what the live agent and the UI compute.
 from tools import _compute_volume_profile, calculate_ema
@@ -78,6 +79,7 @@ class BacktestConfig:
     regime_gate_enabled: bool = False  # with-gate run drops unfavorable signals (gate logic: task 13.2)
     rs_filter_enabled: bool = False  # with-filter run drops misaligned signals (filter logic: task 13.2)
     forecast_filter_enabled: bool = False  # with-forecast run drops forecast-misaligned signals (filter logic: task 14.2)
+    manage_trades: bool = False  # managed run: seed trades carry the default Management_Plan, scored via the Trade_Manager (R7.1)
 
 
 def _is_num(v) -> bool:
@@ -481,6 +483,128 @@ def _score_signal(decision: dict, future: List[dict], cfg: BacktestConfig):
     return "expired", None, (last_ts / 1000.0 if _is_num(last_ts) else None), None
 
 
+# ── Managed scoring via the Trade_Manager (R7.1, R7.2) ───────────────────────
+# A managed seeded trade is scored by the SINGLE source of truth for the
+# exit-simulation math — ``trade_manager.simulate_plan`` — never by reimplementing
+# the multi-leg fill / breakeven / trail logic here (R7.2, AD-2). The backtest
+# path and the live journal-scoring path both call back into the same simulator,
+# feeding only different candle windows. A single-target seeded trade keeps using
+# the legacy ``_score_signal`` path above so its outcome is byte-for-byte today's.
+
+def _managed_outcome(result, horizon: List[dict]):
+    """Map a ``SimulationResult`` onto ``_score_signal``'s outcome tuple.
+
+    Returns (status, outcome_price, outcome_at_seconds, r_multiple) or None,
+    matching the shape ``_score_signal`` returns so the seeding path stays
+    uniform across managed and single-target trades:
+
+      * ``invalid`` (zero initial-stop distance) -> None (skip, as ``_score_signal``
+        skips a zero-risk bracket).
+      * ``open``    (no candle reached the stop and never fully scaled out within
+        the horizon) -> ("expired", None, last-bar-ts, None).
+      * ``resolved`` with a positive fraction-weighted ``Realized_R`` -> a "win"
+        at the final fill price / time and that R; a non-positive ``Realized_R``
+        -> a "loss" (R6.4 win/loss convention: positive R is a win).
+    """
+    if result.status == "invalid":
+        return None
+    if result.status == "open":
+        last_ts = None
+        for c in horizon:
+            ts = c.get("timestamp_ms") if isinstance(c, dict) else None
+            if _is_num(ts):
+                last_ts = ts
+        return "expired", None, (last_ts / 1000.0 if _is_num(last_ts) else None), None
+
+    # resolved — derive the binary status from the multi-leg Realized_R and report
+    # the final fill (the last recorded exit in the Exit_Breakdown) as the outcome.
+    realized_r = result.realized_r
+    status = "win" if (_is_num(realized_r) and realized_r > 0) else "loss"
+    last_fill = result.fills[-1] if result.fills else None
+    out_price = last_fill.price if last_fill is not None else None
+    out_at = (last_fill.timestamp_ms / 1000.0) if (last_fill is not None and _is_num(last_fill.timestamp_ms)) else None
+    r_mult = round(realized_r, 4) if _is_num(realized_r) else None
+    return status, out_price, out_at, r_mult
+
+
+def _score_signal_managed(plan, future: List[dict], cfg: BacktestConfig, tm_config):
+    """Score a managed ``ManagementPlan`` against the bars that follow the signal.
+
+    Invokes ``trade_manager.simulate_plan`` against the candles at or after the
+    signal's entry candle (the caller passes ``candles[i + 1:]`` — the bars after
+    the entry bar's close, the same window the single-target ``_score_signal``
+    uses, capped to ``max_horizon_bars``), reusing the Trade_Manager functions
+    rather than reimplementing the exit logic (R7.1, R7.2). Returns
+    ``(outcome_tuple_or_None, simulation_result_or_None)`` so the caller can both
+    record the outcome and cite the simulated ``Exit_Breakdown`` in the
+    defensibility record. Never raises — ``simulate_plan`` reports degeneracy as
+    data (open / invalid), not exceptions.
+    """
+    horizon = future[: cfg.max_horizon_bars]
+    if not horizon:
+        return None, None
+    result = trade_manager.simulate_plan(plan, horizon, tm_config)
+    return _managed_outcome(result, horizon), result
+
+
+def _management_defensibility_entry(plan, sim_result) -> dict:
+    """Map a Management_Plan (+ optional simulation) to the defensibility entry.
+
+    Labels a seeded trade with its management style so the journal's
+    management-style fingerprint can tag it (``tm:<value>``) and per-management-
+    style win-rate / expectancy become measurable (R7.3). Mirrors the shape
+    ``graph._management_entry`` (task 12) writes and the journal management-style
+    derivation (task 9.2) reads, so seeded trades are labelled identically to live
+    LLM decisions — exactly as ``_regime_defensibility_entry`` /
+    ``_relative_strength_defensibility_entry`` / ``_forecast_defensibility_entry``
+    mirror their live counterparts.
+
+    Cites ONLY the declared plan and the Trade_Manager output — never fabricates
+    an exit: the simulated ``Exit_Breakdown`` + ``Realized_R`` are included only
+    when a ``sim_result`` is supplied (managed trades); a single-target trade
+    records the plan as single-target with no fabricated scale-out legs.
+    """
+    legs = [{"target": leg.target, "fraction": leg.fraction} for leg in (plan.legs or ())]
+    breakeven = None
+    if plan.breakeven is not None:
+        breakeven = {"price": plan.breakeven.price, "r_multiple": plan.breakeven.r_multiple}
+    trailing = None
+    if plan.trailing is not None:
+        trailing = {"atr_multiple": plan.trailing.atr_multiple, "r_increment": plan.trailing.r_increment}
+
+    entry = {
+        "available": True,
+        # The single fixed-enumeration management-style value (R7.3, R11.2); the
+        # journal namespaces it as ``tm:<style>`` at its fixed tag position.
+        "style": trade_manager.management_style_tag(plan),
+        "action": plan.action,
+        "entry": plan.entry,
+        "initial_stop": plan.initial_stop,
+        "legs": legs,
+        "breakeven": breakeven,
+        "trailing": trailing,
+        "atr_14": plan.atr_14,
+    }
+    # Where the plan was simulated (managed trades), cite the real Exit_Breakdown
+    # + Realized_R verbatim from the Trade_Manager output (no fabrication).
+    if sim_result is not None:
+        entry["status"] = sim_result.status
+        entry["realized_r"] = sim_result.realized_r
+        entry["residual_fraction"] = sim_result.residual_fraction
+        entry["exit_breakdown"] = [
+            {
+                "index": f.index,
+                "price": f.price,
+                "fraction": f.fraction,
+                "leg_r": f.leg_r,
+                "timestamp_ms": f.timestamp_ms,
+                "kind": f.kind,
+            }
+            for f in sim_result.fills
+        ]
+    return entry
+
+
 # ── Orchestration ─────────────────────────────────────────────────────────────
 
 def generate_and_score(candles: List[dict], symbol: str, timeframe: str,
@@ -522,6 +646,13 @@ def generate_and_score(candles: List[dict], symbol: str, timeframe: str,
     # forecast math. Each signal's forecast is computed point-in-time from this
     # single resolved config.
     forecaster_config = forecaster.resolve_forecaster_config()
+
+    # Resolve the Trade_Manager parameters ONCE, reusing the SAME resolver the
+    # live journal-scoring path uses (R13.5) — the seeder never reimplements the
+    # exit-simulation math nor its parameter resolution. Managed seeded trades are
+    # scored by feeding this single resolved config (and the default plan built
+    # from it) to ``trade_manager.simulate_plan`` (R7.1, R7.2, AD-2).
+    trade_manager_config = trade_manager.resolve_trade_manager_config()
 
     cooldown_until = -1
     for i in range(cfg.lookback - 1, n - 1):
@@ -582,12 +713,42 @@ def generate_and_score(candles: List[dict], symbol: str, timeframe: str,
         # (R11.4); shape mirrors graph._forecast_entry.
         decision["defensibility"]["forecast"] = _forecast_defensibility_entry(fc_result)
 
-        scored = _score_signal(decision, candles[i + 1:], cfg)
+        # ── Score the signal (managed via the Trade_Manager, else single-target) ─
+        # A managed run (``cfg.manage_trades``) attaches the uniform default
+        # Management_Plan built from the resolved Trade_Manager config and scores
+        # it with ``trade_manager.simulate_plan`` against the candles after the
+        # entry bar (R7.1) — reusing the SINGLE source of truth for the exit math
+        # rather than reimplementing it (R7.2). A single-target run keeps the
+        # legacy ``_score_signal`` path so its outcome is byte-for-byte today's.
+        future = candles[i + 1:]
+        if cfg.manage_trades:
+            plan = trade_manager.default_management_plan(
+                decision["action"], decision["entry"], decision["stop_loss"],
+                decision.get("atr_14"), trade_manager_config,
+            )
+            scored, sim_result = _score_signal_managed(plan, future, cfg, trade_manager_config)
+        else:
+            # Single_Target_Trade: the degenerate one-leg plan models today's
+            # bracket purely for the management-style label; scoring stays on the
+            # existing conservative ``_score_signal`` path (R3.6 / R14.5).
+            plan = trade_manager.single_target_plan(
+                decision["entry"], decision["stop_loss"], decision["take_profit"],
+            )
+            sim_result = None
+            scored = _score_signal(decision, future, cfg)
         if scored is None:
             continue
         status, out_price, out_at, r_mult = scored
 
-        # ── Regime gate (with-gate run only) ─────────────────────────────────
+        # Label the seeded trade with its management style (R7.3) and cite the
+        # plan (and, for a managed trade, the simulated Exit_Breakdown + Realized_R)
+        # in the defensibility record. The journal's public seeding API
+        # (``record_backtest_trade``) receives this whole ``decision`` dict, so the
+        # management style/tag is threaded into the journal's management-style
+        # fingerprint without editing journal.py.
+        decision["defensibility"]["management"] = _management_defensibility_entry(plan, sim_result)
+        decision["management_plan"] = trade_manager.plan_to_json(plan)
+
         # When the gate is enabled, DROP a signal whose regime favorability is an
         # AVAILABLE "unfavorable" label for its setup type (R10.2). Signals whose
         # regime is an Unavailable_Marker are RETAINED — never excluded on the
@@ -991,6 +1152,129 @@ def compare_forecast(symbol: str, timeframe: str, limit: int = 3000,
         "candles": len(candles),
         "with_forecast": {"signals_scored": len(with_forecast), **_run_metrics(with_forecast)},
         "without_forecast": {"signals_scored": len(without_forecast), **_run_metrics(without_forecast)},
+    }
+
+
+# ── Managed / unmanaged comparison (R12.1–R12.5) ─────────────────────────────
+
+def _management_run_metrics(results: List[dict]) -> dict:
+    """Compute a single run's win-rate, expectancy, and downside over CLOSED trades.
+
+    A trade is *closed* when it resolved by hitting a target or its stop — i.e.
+    ``status`` is ``win`` or ``loss`` and carries a realized R-multiple (for a
+    managed run this is the multi-leg ``Realized_R`` the Trade_Manager computed,
+    for an unmanaged run it is the single-target R). Expired (unresolved / open)
+    trades are NOT closed and are excluded from every metric.
+
+      * win_rate   = positive-Realized_R closed trades / closed trades (R12.2)
+      * expectancy = mean Realized_R per closed trade (R12.2)
+      * downside   = mean Realized_R of the LOSING closed trades — the risk-shape
+        measure so management's effect on the downside is visible, not only the
+        mean (R12.3). Reported as ``"n/a"`` when a run has closed trades but none
+        of them are losers (no losing population to average).
+
+    When a run has ZERO closed trades, ALL metrics are reported as the ``"n/a"``
+    sentinel rather than dividing by zero (R12.4) — the same convention as
+    ``_run_metrics``. A *winner* is a strictly-positive Realized_R and a *loser*
+    is a non-positive Realized_R, matching the journal/backtest win/loss
+    convention (R6.4).
+    """
+    closed = [r for r in results if r["status"] in ("win", "loss") and _is_num(r.get("r_multiple"))]
+    n_closed = len(closed)
+    if n_closed == 0:
+        return {
+            "closed_trades": 0,
+            "winning_closed_trades": 0,
+            "losing_closed_trades": 0,
+            "win_rate": "n/a",
+            "expectancy": "n/a",
+            "downside": "n/a",
+        }
+    winners = [r for r in closed if r["r_multiple"] > 0]
+    losers = [r for r in closed if r["r_multiple"] <= 0]
+    expectancy = sum(r["r_multiple"] for r in closed) / n_closed
+    # Mean Realized_R of the losing population — "n/a" when there are no losers
+    # (an empty population has no mean; never divide by zero).
+    downside = (sum(r["r_multiple"] for r in losers) / len(losers)) if losers else "n/a"
+    return {
+        "closed_trades": n_closed,
+        "winning_closed_trades": len(winners),
+        "losing_closed_trades": len(losers),
+        "win_rate": round(len(winners) / n_closed, 4),
+        "expectancy": round(expectancy, 4),
+        "downside": round(downside, 4) if _is_num(downside) else downside,
+    }
+
+
+def compare_management(symbol: str, timeframe: str, limit: int = 3000,
+                       candles: Optional[List[dict]] = None,
+                       benchmark_candles: Optional[List[dict]] = None,
+                       cfg: Optional[BacktestConfig] = None,
+                       benchmark: Optional[str] = None,
+                       source: str = "auto") -> dict:
+    """Run the backtest UNMANAGED and MANAGED over identical signals and compare (R12.1).
+
+    Both runs walk the IDENTICAL candle history with the IDENTICAL setup rules and
+    the IDENTICAL Benchmark_Index series — only ``manage_trades`` differs — so the
+    two runs score the SAME generated signal set twice (R12.1):
+
+      * the unmanaged run (``manage_trades=False``) scores every signal as a
+        Single_Target_Trade on the legacy conservative ``_score_signal`` path, and
+      * the managed run (``manage_trades=True``) attaches the uniform default
+        Management_Plan built from the configured ``trade_manager`` defaults to
+        every signal and scores it with ``trade_manager.simulate_plan`` (R12.5) —
+
+    both via the SAME ``generate_and_score`` / SAME ``Trade_Manager`` (AD-2): the
+    managed-vs-unmanaged math is never reimplemented here, only the candle window
+    and the plan differ.
+
+    The Benchmark_Index and its candle series are resolved ONCE for the run (or
+    supplied by the caller) because ``generate_and_score`` labels relative strength
+    for every signal regardless of management; passing the identical benchmark
+    window to both runs keeps each run well-formed and identical apart from the
+    ``manage_trades`` flag (R11.1, mirrors ``compare_forecast`` /
+    ``compare_relative_strength``).
+
+    Returns a summary reporting, for EACH run, the win-rate (positive-Realized_R
+    closed trades / closed trades), the expectancy (mean Realized_R per closed
+    trade), and a downside measure (mean Realized_R of losing closed trades), with
+    ``"n/a"`` when a run produced zero closed trades (R12.2, R12.3, R12.4). Pure
+    given ``candles`` / ``benchmark_candles`` — no journal writes are performed.
+    """
+    base = cfg or BacktestConfig()
+    if candles is None:
+        candles = _resolve_candles(symbol, timeframe, limit, source)
+
+    # Resolve the Benchmark_Index and its candles ONCE so BOTH runs label
+    # relative strength against the IDENTICAL benchmark window (R11.1).
+    if benchmark is None:
+        benchmark = rs.resolve_benchmark(symbol)
+    if benchmark_candles is None:
+        benchmark_candles = _resolve_benchmark_candles(benchmark, timeframe, limit, source)
+
+    # Identical history + identical rules; the manage_trades flag is the ONLY
+    # difference. The managed run's plan is the uniform configured default applied
+    # to every signal by generate_and_score (R12.5); the unmanaged run keeps the
+    # single-target bracket. Both score via the SAME Trade_Manager (AD-2).
+    managed_cfg = replace(base, manage_trades=True)
+    unmanaged_cfg = replace(base, manage_trades=False)
+
+    unmanaged = generate_and_score(
+        candles, symbol, timeframe, unmanaged_cfg,
+        benchmark_candles=benchmark_candles, benchmark=benchmark,
+    )
+    managed = generate_and_score(
+        candles, symbol, timeframe, managed_cfg,
+        benchmark_candles=benchmark_candles, benchmark=benchmark,
+    )
+
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "candles": len(candles),
+        "benchmark": benchmark,
+        "unmanaged": {"signals_scored": len(unmanaged), **_management_run_metrics(unmanaged)},
+        "managed": {"signals_scored": len(managed), **_management_run_metrics(managed)},
     }
 
 

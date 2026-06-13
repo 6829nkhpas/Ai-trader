@@ -90,6 +90,11 @@ from tools import (
     get_forecast,
     watch_price_condition,
     declare_trade,
+    # Reused to build the committed Management_Plan for the defensibility record
+    # from the declared ``management_plan`` dict, merging the committed bracket as
+    # defaults exactly as ``declare_trade`` did when it validated the plan — so the
+    # management entry cites the SAME plan that was committed (R9.1, R9.2).
+    _coerce_management_plan,
     # Regime_Label enum sets — reused to recognise a usable get_market_regime
     # label (vs an Unavailable_Marker) when building the defensibility record.
     REGIME_TREND_STATES,
@@ -113,6 +118,13 @@ from tools import (
 # Trade_Journal — measurement & feedback loop (Phase 2). Records every committed
 # decision and scores it later, so the agent can audit its realized edge.
 import journal
+
+# Trade_Manager — the single source of truth for the exit-simulation math
+# (trade-management). The defensibility management entry sources the committed
+# Management_Plan and, where candles are available, cites the simulated
+# Exit_Breakdown + Realized_R from ``trade_manager.simulate_plan`` — never
+# reimplementing the multi-leg fill / breakeven / trail logic (R9.1, R9.2, AD-2).
+import trade_manager
 
 # ── State Definition ────────────────────────────────────────────────────────
 
@@ -231,9 +243,11 @@ Ask yourself:
 - WHAT IS THE MARKET REGIME? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `favorability` from `get_market_regime`. If the favorability is `unfavorable` for the proposed setup type (e.g. a trend/momentum entry in a ranging or volatility-extreme regime), you MUST take exactly one of these actions: lower your conviction_score, wait for a better setup (e.g. via `watch_price_condition`), or HOLD. If the regime is unavailable, note it as unavailable and proceed — do NOT block the trade solely because the regime could not be computed.
 - AM I FIGHTING THE INDEX? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `index_direction` and `relative_strength_state` for `alignment` from `get_relative_strength`. If the alignment is `misaligned` (for example a BUY in a `laggard` against a `down` index, or a SELL in a `leader` against an `up` index), you MUST take exactly one of these actions: lower your conviction_score, wait for a better setup (e.g. via `watch_price_condition`), or HOLD. If relative strength is unavailable, note it as unavailable and proceed — do NOT block the trade solely because relative strength could not be computed.
 - WHAT DOES THE FORECAST SAY? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `Forecast_Alignment` and the `Up_Probability` from `get_forecast`. If the Forecast_Alignment is `misaligned` OR the Up_Probability does not support your direction (a BUY needs Up_Probability >= 0.5; a SELL needs Up_Probability <= 0.5), you MUST take exactly one of these actions: lower your conviction_score, wait for a better setup (e.g. via `watch_price_condition`), or HOLD. If the forecast is unavailable, note it as unavailable and proceed — do NOT block the trade solely because the forecast could not be computed.
+- IS MY MANAGEMENT PLAN SOUND? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), confirm the Management_Plan you will attach to `declare_trade`: (a) every scale-out leg fraction lies in (0.0, 1.0] and the leg fractions sum to <= 1.0; (b) the scale-out targets are ordered on the profit side (strictly beyond entry, non-decreasing for a BUY and non-increasing for a SELL); (c) the breakeven trigger sits strictly between the entry and the first scale-out target on the profit side; and (d) the blended (fraction-weighted) Risk:Reward still meets the configured minimum. If any of these fail, revise the plan before committing rather than declaring an inconsistent plan.
 If the answer to ANY of the first 3 checks is YES, you must scrap the trade. You must either analyze a different timeframe to find a better entry, or call `watch_price_condition` to wait for a safer pullback. 
 ONLY call `declare_trade` if you are 100% confident you could defend this trade against rigorous critique.
 For a BUY or SELL you MUST pass the numeric `entry`, `stop_loss`, and `take_profit` arguments to `declare_trade` (and `atr_14` from the consensus report). The Trade_Validator rejects directional trades that omit these or that fail Risk:Reward >= 1:2 / stop >= 1.5x ATR; if rejected, revise the levels and call `declare_trade` again. A HOLD may omit the numeric levels.
+For a directional BUY or SELL you SHOULD also provide a Management_Plan to `declare_trade` describing how the position is worked after entry: at minimum a scale-out target (a partial-exit target price paired with the size fraction closed there) and a breakeven move (advance the stop to the entry price once the breakeven trigger is reached), in addition to the entry and the initial stop. You MAY add an optional trailing-stop rule to let the remainder run. A plain Single_Target_Trade (one take-profit, no scale-out / breakeven / trail) is still fully accepted and scores exactly as today — management is strongly recommended but NEVER forced, so do not withhold an A+ trade solely because you did not attach a management plan.
 </self_verification_protocol>
 
 <setup_validation_disclosure>
@@ -246,6 +260,7 @@ Your `setup_validation` is the defensibility record for the trade and MUST expli
 - MARKET REGIME: State the Trend_State, the Volatility_State, and the Favorability taken from the `get_market_regime` result (e.g., "Regime: trending / normal vol / favorable"). If the favorability was unfavorable, state how you responded (lowered conviction / waited / HOLD). If the regime was unavailable, state that it was unavailable and that you proceeded without it.
 - RELATIVE STRENGTH: State the Index_Direction, the Relative_Strength_State, and the Alignment taken from the `get_relative_strength` result (e.g., "Relative strength: up index / leader / aligned"). If the alignment was misaligned, state how you responded (lowered conviction / waited / HOLD). If relative strength was unavailable, state that it was unavailable and that you proceeded without it.
 - FORECAST: State the Projected_Direction, the Up_Probability, the Expected_Move_ATR, and the Forecast_Alignment taken from the `get_forecast` result (e.g., "Forecast: Projected_Direction up / Up_Probability 0.63 / Expected_Move_ATR +0.41 / aligned"). If the Forecast_Alignment was misaligned or the Up_Probability did not support the direction, state how you responded (lowered conviction / waited / HOLD). If the forecast was unavailable, state that it was unavailable and that you proceeded without it.
+- MANAGEMENT PLAN: When you attach a Management_Plan, state the scale-out targets and their size fractions, the breakeven trigger, and the trailing-stop rule in your setup_validation (e.g., "Scale 50% at 1R, move stop to breakeven after the first target, trail the remainder by 1.5x ATR"). If the trade is a single-target trade with no active management, state that it is single-target.
 Always include the multi-timeframe bias, the key S/R levels used, the volatility (ATR) basis for the stop, and the Risk:Reward ratio in your setup_validation.
 </setup_validation_disclosure>
 
@@ -281,6 +296,7 @@ Your job is to verify this trade using the EXACT same <self_verification_protoco
 2b. Consult `get_market_regime` for the symbol and timeframe while verifying. If the user-proposed trade is a directional (BUY/SELL) trade being taken in an `unfavorable` regime, you MUST include an explicit warning statement in your verification output that the proposed trade is being taken in an unfavorable market regime (state the trend_state, volatility_state, and favorability). If the regime is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because the regime could not be computed.
 2c. Consult `get_relative_strength` for the symbol and timeframe while verifying. If the user-proposed trade is a directional (BUY/SELL) trade that is `misaligned` with the index/relative-strength context (for example a BUY in a `laggard` against a `down` index, or a SELL in a `leader` against an `up` index), you MUST include an explicit warning statement in your verification output that the proposed trade fights the index / trades a laggard against its benchmark (state the index_direction, relative_strength_state, and alignment). If relative strength is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because relative strength could not be computed.
 2d. Consult `get_forecast` for the symbol and timeframe while verifying. If the user-proposed trade is a directional (BUY/SELL) trade that is `misaligned` with the forecast (Forecast_Alignment is `misaligned`, or the Up_Probability does not support the proposed direction — a BUY needs Up_Probability >= 0.5, a SELL needs Up_Probability <= 0.5), you MUST include an explicit warning statement in your verification output that the proposed trade is misaligned with the volatility-aware forecast (state the Projected_Direction, the Up_Probability, the Expected_Move_ATR, and the Forecast_Alignment). If the forecast is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because the forecast could not be computed.
+2e. Evaluate the proposed trade's MANAGEMENT, or its absence. If the user supplied scale-out targets, a breakeven move, or a trailing rule, critique whether the leg fractions are in range and sum to at most the full position, the targets are ordered on the profit side, the breakeven trigger sits between entry and the first target, and the blended Risk:Reward is sound — and state any management red flags. If the user proposed a single static bracket with no management, recommend a concrete management plan where appropriate: for example scale out a fraction at the first target, move the stop to breakeven after that target, and trail the remainder, so the trade can scratch at breakeven instead of taking a full stop and let a runner extend. Management is a recommendation, not a hard requirement — do NOT reject an otherwise A+ trade solely because it is single-target.
 3. Do not invent red flags if the trade is genuinely an A+ setup. If it fits the protocol, approve it and defend it.
 4. If it fails the protocol, explain exactly why, and suggest a better entry using `watch_price_condition`.
 
@@ -781,6 +797,10 @@ def _decision_from_declare(ok_calls) -> Optional[dict]:
                 "stop_loss": args.get("stop_loss"),
                 "take_profit": args.get("take_profit"),
                 "atr_14": args.get("atr_14"),
+                # The optional multi-leg Management_Plan dict (legs / breakeven /
+                # trailing) the agent attached to declare_trade, carried through so
+                # build_defensibility_record can cite the committed plan (R9.1).
+                "management_plan": args.get("management_plan"),
                 "source": "declare_trade",
             }
     return None
@@ -1320,6 +1340,115 @@ def _forecast_entry(results) -> dict:
     return entry
 
 
+def _management_entry(decision, action, levels, results, atr_14) -> Optional[dict]:
+    """Build the defensibility management entry for a committed directional trade
+    (R9.1-R9.3).
+
+    Only a committed BUY/SELL with usable execution levels carries a management
+    entry; a HOLD or a decision with no usable entry/stop levels yields ``None``
+    (no ``management`` key in the record), so the trade-management verification
+    step maps it to ``not-evaluable`` (R10.4). The committed plan is sourced from
+    the declared decision:
+
+      * the declare_trade ``management_plan`` when present — a JSON string is
+        reconstructed via ``trade_manager.plan_from_json``; a dict is coerced via
+        the SAME ``_coerce_management_plan`` merge ``declare_trade`` used to
+        validate it (so the entry cites the exact committed plan) — yielding a
+        managed plan; otherwise
+      * the degenerate single-target plan built from the committed bracket via
+        ``trade_manager.single_target_plan`` (R9.3) — recorded as single-target
+        WITHOUT fabricating scale-out legs.
+
+    Where candles are available in scope (a ``get_candles`` tool result in
+    history), the plan is scored by ``trade_manager.simulate_plan`` and the
+    resulting Exit_Breakdown + Realized_R are cited VERBATIM (no fabrication,
+    R9.2); otherwise only the plan (legs / breakeven / trailing / style) is
+    recorded. Mirrors the shape ``backtest._management_defensibility_entry``
+    writes and the journal management-style derivation reads, and — like the
+    sibling regime / relative-strength / forecast entries — never touches the
+    committed decision's action or execution levels.
+    """
+    # A HOLD (or any non-directional action) is never managed.
+    if action not in ("BUY", "SELL"):
+        return None
+    if not isinstance(levels, dict):
+        return None
+    entry_px = levels.get("entry")
+    stop_px = levels.get("stop_loss")
+    take_px = levels.get("take_profit")
+    # The committed bracket needs at least a finite entry and initial stop to
+    # express any plan; without them there are no usable levels to manage.
+    if not (_is_finite_num(entry_px) and _is_finite_num(stop_px)):
+        return None
+
+    # ── Source the committed plan: declared management_plan, else single-target ─
+    raw_plan = (decision or {}).get("management_plan")
+    plan = None
+    if isinstance(raw_plan, str):
+        plan = trade_manager.plan_from_json(raw_plan)
+    elif isinstance(raw_plan, dict):
+        plan = _coerce_management_plan(raw_plan, action, entry_px, stop_px, atr_14)
+    if plan is None:
+        # No usable declared plan -> the degenerate single-target plan. This needs
+        # a finite take-profit; without one there is nothing to record.
+        if not _is_finite_num(take_px):
+            return None
+        plan = trade_manager.single_target_plan(entry_px, stop_px, take_px)
+
+    # ── Simulate ONLY where candles are available (R9.1) ─────────────────────
+    # The simulator is the single source of truth for the exit math; we feed it
+    # the candle series the agent already fetched (if any) and cite its output
+    # verbatim. With no candles in scope we record the plan only — never a
+    # fabricated exit (R9.2).
+    candles = results.get("get_candles")
+    sim_result = None
+    if isinstance(candles, list) and candles:
+        sim_result = trade_manager.simulate_plan(
+            plan, candles, trade_manager.resolve_trade_manager_config()
+        )
+
+    legs = [{"target": leg.target, "fraction": leg.fraction} for leg in (plan.legs or ())]
+    breakeven = None
+    if plan.breakeven is not None:
+        breakeven = {"price": plan.breakeven.price, "r_multiple": plan.breakeven.r_multiple}
+    trailing = None
+    if plan.trailing is not None:
+        trailing = {"atr_multiple": plan.trailing.atr_multiple, "r_increment": plan.trailing.r_increment}
+
+    entry = {
+        "available": True,
+        # The single fixed-enumeration management-style value (R11.2); the journal
+        # namespaces it as ``tm:<style>`` at its fixed tag position. A single-target
+        # plan collapses to ``single`` so it is recorded as single-target (R9.3).
+        "style": trade_manager.management_style_tag(plan),
+        "action": plan.action,
+        "entry": plan.entry,
+        "initial_stop": plan.initial_stop,
+        "legs": legs,
+        "breakeven": breakeven,
+        "trailing": trailing,
+        "atr_14": plan.atr_14,
+    }
+    # Where the plan was simulated, cite the real Exit_Breakdown + Realized_R
+    # verbatim from the Trade_Manager output (no fabrication, R9.2).
+    if sim_result is not None:
+        entry["status"] = sim_result.status
+        entry["realized_r"] = sim_result.realized_r
+        entry["residual_fraction"] = sim_result.residual_fraction
+        entry["exit_breakdown"] = [
+            {
+                "index": f.index,
+                "price": f.price,
+                "fraction": f.fraction,
+                "leg_r": f.leg_r,
+                "timestamp_ms": f.timestamp_ms,
+                "kind": f.kind,
+            }
+            for f in sim_result.fills
+        ]
+    return entry
+
+
 def build_defensibility_record(messages, decision, mode=None, manual_trade=None) -> dict:
     """Assemble the trade defensibility record from tool results in history (R7).
 
@@ -1498,6 +1627,16 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
             f"forecast_alignment=misaligned)."
         )
 
+    # ── Management entry (R9.1-R9.3) ─────────────────────────────────────────
+    # For a committed directional (BUY/SELL) trade with usable levels, cite the
+    # committed Management_Plan — the declared multi-leg plan, or the degenerate
+    # single-target plan built from the bracket — and, where candles are available
+    # in scope, the simulated Exit_Breakdown + Realized_R from the Trade_Manager
+    # (populated ONLY from the declared plan and simulator output, never
+    # fabricated). A HOLD or a decision with no usable levels yields no management
+    # entry, so the trade-management verification step maps to not-evaluable.
+    management = _management_entry(decision, action, levels, results, atr)
+
     record = {
         "mode": mode,
         "action": action,
@@ -1540,6 +1679,12 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
             )
         ),
     }
+
+    # Attach the management entry only when present — an absent key is what the
+    # trade-management verification step reads as "not-evaluable" (R10.4); a HOLD
+    # or a decision with no usable levels therefore carries no management key.
+    if management is not None:
+        record["management"] = management
 
     # VERIFY mode must report every Trade_Validator check outcome (R7.4).
     if mode == "VERIFY":

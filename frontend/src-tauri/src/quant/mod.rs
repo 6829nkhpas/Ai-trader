@@ -494,6 +494,22 @@ pub enum ValidatorReason {
     StopTooTight,
     /// Level ordering is inconsistent with the trade direction (R6.4 / R6.5).
     DirectionInconsistent,
+    // ── Multi-leg Management_Plan checks (trade-management R5.1–R5.4) ──────────
+    /// A scale-out leg fraction is not in `(0.0, 1.0]`, or the leg fractions sum
+    /// to more than `1.0` (R5.1). Mirrors Python `LEG_FRACTION_OUT_OF_RANGE`.
+    LegFractionOutOfRange,
+    /// The scale-out targets are inconsistent with the trade direction: for a
+    /// BUY every target must be strictly greater than entry and the targets
+    /// non-decreasing (mirror-image for SELL) (R5.2). Mirrors Python
+    /// `TARGET_ORDERING_INCONSISTENT`.
+    TargetOrderingInconsistent,
+    /// The breakeven trigger is not strictly between entry and the first
+    /// scale-out target on the trade's profit side (R5.3). Mirrors Python
+    /// `BREAKEVEN_OUT_OF_RANGE`.
+    BreakevenOutOfRange,
+    /// The fraction-weighted blended reward-to-risk is below the configured
+    /// minimum (R5.4). Mirrors Python `BLENDED_RR_TOO_LOW`.
+    BlendedRrTooLow,
 }
 
 impl ValidatorReason {
@@ -505,6 +521,10 @@ impl ValidatorReason {
             ValidatorReason::RiskRewardTooLow => "risk-reward-too-low",
             ValidatorReason::StopTooTight => "stop-too-tight",
             ValidatorReason::DirectionInconsistent => "direction-inconsistent",
+            ValidatorReason::LegFractionOutOfRange => "leg-fraction-out-of-range",
+            ValidatorReason::TargetOrderingInconsistent => "target-ordering-inconsistent",
+            ValidatorReason::BreakevenOutOfRange => "breakeven-out-of-range",
+            ValidatorReason::BlendedRrTooLow => "blended-rr-too-low",
         }
     }
 }
@@ -523,6 +543,18 @@ impl std::fmt::Display for ValidatorReason {
             }
             ValidatorReason::DirectionInconsistent => {
                 "execution levels are inconsistent with the trade direction"
+            }
+            ValidatorReason::LegFractionOutOfRange => {
+                "a scale-out leg fraction is not in (0.0, 1.0] or the fractions sum to more than 1.0"
+            }
+            ValidatorReason::TargetOrderingInconsistent => {
+                "scale-out targets are inconsistent with the trade direction or not monotonically ordered"
+            }
+            ValidatorReason::BreakevenOutOfRange => {
+                "breakeven trigger is not strictly between entry and the first target on the profit side"
+            }
+            ValidatorReason::BlendedRrTooLow => {
+                "blended reward-to-risk is below the configured minimum"
             }
         };
         write!(f, "{}", msg)
@@ -621,6 +653,231 @@ pub fn validate_trade(
     }
 
     ValidatorOutcome::Pass { risk_reward }
+}
+
+// ── Multi-leg Management_Plan validation (trade-management R5.1–R5.6) ─────────
+
+/// A single scale-out leg: a partial-exit target price and the size fraction of
+/// the position closed at that target. Mirrors the Python `ScaleOutLeg`.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ScaleOutLeg {
+    /// The target price for this partial exit.
+    pub target: f64,
+    /// The size fraction closed at this target — must be in `(0.0, 1.0]` (R5.1).
+    pub fraction: f64,
+}
+
+/// The breakeven trigger of a Management_Plan, expressed as **either** a price
+/// **or** an R-multiple of progress from entry toward the first target (R1.4).
+/// When both are present the explicit `price` takes precedence.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BreakevenTrigger {
+    /// An explicit breakeven price.
+    pub price: Option<f64>,
+    /// Or an R-multiple of progress from entry toward the first target.
+    pub r_multiple: Option<f64>,
+}
+
+/// An optional trailing-stop rule. It carries no level-ordering constraint, so
+/// it is **not** validated here; it is part of the plan only so the structure
+/// round-trips. Mirrors the Python `TrailingStop`.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TrailingStop {
+    /// Trail by N × ATR.
+    pub atr_multiple: Option<f64>,
+    /// Or trail by a fixed R increment.
+    pub r_increment: Option<f64>,
+}
+
+/// A multi-leg Management_Plan: an entry, an initial stop, an ordered list of
+/// one or more scale-out legs, an optional breakeven trigger, and an optional
+/// trailing-stop rule. This is the validation-facing mirror of the Python
+/// `ManagementPlan` (the `action` and `atr_14` are passed to
+/// [`validate_management_plan`] alongside, mirroring [`validate_trade`]).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ManagementPlan {
+    /// The entry price.
+    pub entry: f64,
+    /// The initial stop-loss price.
+    pub initial_stop: f64,
+    /// One or more scale-out legs, in declared order (R1.1).
+    pub legs: Vec<ScaleOutLeg>,
+    /// Optional breakeven trigger (R1.4).
+    pub breakeven: Option<BreakevenTrigger>,
+    /// Optional trailing-stop rule (not validated — see [`TrailingStop`]).
+    pub trailing: Option<TrailingStop>,
+}
+
+/// The minimum acceptable blended (fraction-weighted) reward-to-risk for a
+/// Management_Plan. Mirrors the documented default for
+/// `TM_MIN_BLENDED_REWARD_TO_RISK` (R5.4); a value exactly at the boundary
+/// passes, below it fails. Callers that resolve the parameter from the
+/// environment pass their resolved value to [`validate_management_plan`].
+pub const MIN_BLENDED_REWARD_TO_RISK: f64 = 2.0;
+
+/// Validate a multi-leg Management_Plan against the hard risk rules **plus** the
+/// multi-leg consistency checks (trade-management R5.1–R5.6), mirroring the
+/// Python `validator.py` so the two implementations agree on identical inputs.
+///
+/// The plan is an **optional** layer on top of [`validate_trade`]: callers that
+/// do not supply a plan keep using `validate_trade` unchanged. `HOLD` bypasses
+/// every plan check exactly as it bypasses the level checks (R5.5), and the
+/// multi-leg checks only **add** to the existing hard rules — they never relax
+/// them (R14.2).
+///
+/// For a `BUY`/`SELL` the checks are applied in this order:
+///
+/// 1. **MissingLevels (R6.1)** — `entry`/`initial_stop` must be finite, there
+///    must be at least one leg, and every leg target/fraction must be finite.
+/// 2. **LegFractionOutOfRange (R5.1)** — every leg fraction must lie in
+///    `(0.0, 1.0]` and the fractions must sum to at most `1.0`.
+/// 3. **TargetOrderingInconsistent (R5.2)** — BUY requires
+///    `initial_stop < entry`, every target strictly greater than entry, and the
+///    targets non-decreasing; SELL is the mirror image (`initial_stop > entry`,
+///    every target strictly less than entry, non-increasing).
+/// 4. **StopTooTight (R6.3)** — when `atr_14` is known/finite/positive the stop
+///    distance `|entry − initial_stop|` must be at least `1.5 × atr_14`.
+/// 5. **BreakevenOutOfRange (R5.3)** — when a breakeven trigger is present it
+///    must resolve to a price strictly between entry and the first leg's target
+///    on the profit side.
+/// 6. **BlendedRrTooLow (R5.4)** — the fraction-weighted target distance from
+///    entry over the initial stop distance must be at least
+///    `min_blended_reward_to_risk`.
+///
+/// On success the returned `risk_reward` is the blended (fraction-weighted)
+/// reward-to-risk. The function is pure: identical inputs always yield an
+/// identical outcome.
+pub fn validate_management_plan(
+    action: Action,
+    plan: &ManagementPlan,
+    atr_14: Option<f64>,
+    min_blended_reward_to_risk: f64,
+) -> ValidatorOutcome {
+    // HOLD abstains — no plan checks at all (R5.5).
+    if action == Action::Hold {
+        return ValidatorOutcome::Pass { risk_reward: 0.0 };
+    }
+
+    let entry = plan.entry;
+    let initial_stop = plan.initial_stop;
+
+    // R6.1 — base levels present and finite, at least one finite leg.
+    if !entry.is_finite() || !initial_stop.is_finite() || plan.legs.is_empty() {
+        return ValidatorOutcome::Fail { reason: ValidatorReason::MissingLevels };
+    }
+    if plan
+        .legs
+        .iter()
+        .any(|l| !l.target.is_finite() || !l.fraction.is_finite())
+    {
+        return ValidatorOutcome::Fail { reason: ValidatorReason::MissingLevels };
+    }
+
+    // R5.1 — every leg fraction in (0.0, 1.0] and the fractions sum to <= 1.0.
+    let mut fraction_sum = 0.0_f64;
+    for leg in &plan.legs {
+        if !(leg.fraction > 0.0 && leg.fraction <= 1.0) {
+            return ValidatorOutcome::Fail { reason: ValidatorReason::LegFractionOutOfRange };
+        }
+        fraction_sum += leg.fraction;
+    }
+    // Tolerate float summation drift so an exact 1.0 sum is not spuriously rejected.
+    if fraction_sum > 1.0 + 1e-9 {
+        return ValidatorOutcome::Fail { reason: ValidatorReason::LegFractionOutOfRange };
+    }
+
+    // R5.2 — direction + target ordering. BUY: stop < entry, targets strictly
+    // above entry and non-decreasing; SELL is the mirror image.
+    let direction_ok = match action {
+        Action::Buy => initial_stop < entry,
+        Action::Sell => initial_stop > entry,
+        Action::Hold => unreachable!("HOLD handled above"),
+    };
+    if !direction_ok {
+        return ValidatorOutcome::Fail { reason: ValidatorReason::TargetOrderingInconsistent };
+    }
+    let mut prev_target: Option<f64> = None;
+    for leg in &plan.legs {
+        let target_ok = match action {
+            Action::Buy => leg.target > entry,
+            Action::Sell => leg.target < entry,
+            Action::Hold => unreachable!("HOLD handled above"),
+        };
+        if !target_ok {
+            return ValidatorOutcome::Fail { reason: ValidatorReason::TargetOrderingInconsistent };
+        }
+        if let Some(prev) = prev_target {
+            let monotone_ok = match action {
+                Action::Buy => leg.target >= prev,   // non-decreasing
+                Action::Sell => leg.target <= prev,  // non-increasing
+                Action::Hold => unreachable!("HOLD handled above"),
+            };
+            if !monotone_ok {
+                return ValidatorOutcome::Fail {
+                    reason: ValidatorReason::TargetOrderingInconsistent,
+                };
+            }
+        }
+        prev_target = Some(leg.target);
+    }
+
+    let risk = (entry - initial_stop).abs();
+    // Direction consistency guarantees a non-zero risk, but guard anyway so a
+    // degenerate stop == entry can never divide by zero.
+    if risk <= 0.0 {
+        return ValidatorOutcome::Fail { reason: ValidatorReason::TargetOrderingInconsistent };
+    }
+
+    // R6.3 — stop must not be tighter than 1.5x ATR (only when ATR is known).
+    if let Some(atr) = atr_14 {
+        if atr.is_finite() && atr > 0.0 && risk < MIN_STOP_ATR_MULTIPLE * atr {
+            return ValidatorOutcome::Fail { reason: ValidatorReason::StopTooTight };
+        }
+    }
+
+    // R5.3 — breakeven (when present) strictly between entry and the first
+    // target on the profit side. A breakeven expressed as an R-multiple is
+    // converted to a price first (entry advanced toward the target by R × risk).
+    if let Some(be) = plan.breakeven {
+        let first_target = plan.legs[0].target;
+        let be_price = match (be.price, be.r_multiple) {
+            (Some(p), _) if p.is_finite() => Some(p),
+            (_, Some(r)) if r.is_finite() => {
+                let dir = match action {
+                    Action::Buy => 1.0,
+                    Action::Sell => -1.0,
+                    Action::Hold => unreachable!("HOLD handled above"),
+                };
+                Some(entry + dir * r * risk)
+            }
+            _ => None,
+        };
+        let be_ok = match be_price {
+            Some(p) => match action {
+                Action::Buy => entry < p && p < first_target,
+                Action::Sell => first_target < p && p < entry,
+                Action::Hold => unreachable!("HOLD handled above"),
+            },
+            None => false,
+        };
+        if !be_ok {
+            return ValidatorOutcome::Fail { reason: ValidatorReason::BreakevenOutOfRange };
+        }
+    }
+
+    // R5.4 — blended reward-to-risk: the fraction-weighted target distance from
+    // entry over the initial stop distance must meet the configured minimum.
+    let blended_reward: f64 = plan
+        .legs
+        .iter()
+        .map(|l| l.fraction * (l.target - entry).abs())
+        .sum();
+    let blended_rr = blended_reward / risk;
+    if blended_rr < min_blended_reward_to_risk {
+        return ValidatorOutcome::Fail { reason: ValidatorReason::BlendedRrTooLow };
+    }
+
+    ValidatorOutcome::Pass { risk_reward: blended_rr }
 }
 
 // ── SR_Engine (pure module — R9.1–R9.4) ──────────────────────────────────────
@@ -1355,12 +1612,351 @@ mod trade_validator_tests {
         assert_eq!(a, b);
     }
 
+    // ── Multi-leg Management_Plan validation (trade-management R5.1–R5.6) ──────
+
+    fn leg(target: f64, fraction: f64) -> ScaleOutLeg {
+        ScaleOutLeg { target, fraction }
+    }
+
+    fn plan(
+        entry: f64,
+        initial_stop: f64,
+        legs: Vec<ScaleOutLeg>,
+        breakeven: Option<BreakevenTrigger>,
+    ) -> ManagementPlan {
+        ManagementPlan { entry, initial_stop, legs, breakeven, trailing: None }
+    }
+
+    #[test]
+    fn plan_hold_bypasses_all_checks() {
+        // A wildly inconsistent plan still passes under HOLD (R5.5).
+        let p = plan(100.0, 200.0, vec![leg(50.0, 2.0)], None);
+        assert!(matches!(
+            validate_management_plan(Action::Hold, &p, Some(10.0), MIN_BLENDED_REWARD_TO_RISK),
+            ValidatorOutcome::Pass { risk_reward } if risk_reward == 0.0
+        ));
+    }
+
+    #[test]
+    fn plan_valid_buy_passes_with_blended_rr() {
+        // entry 100, stop 90 (risk 10). Two legs: 0.5 @ 120 (+20), 0.5 @ 140 (+40).
+        // blended reward = 0.5*20 + 0.5*40 = 30 → blended RR = 3.0.
+        let p = plan(
+            100.0,
+            90.0,
+            vec![leg(120.0, 0.5), leg(140.0, 0.5)],
+            Some(BreakevenTrigger { price: Some(110.0), r_multiple: None }),
+        );
+        assert!(matches!(
+            validate_management_plan(Action::Buy, &p, Some(5.0), MIN_BLENDED_REWARD_TO_RISK),
+            ValidatorOutcome::Pass { risk_reward } if (risk_reward - 3.0).abs() < 1e-9
+        ));
+    }
+
+    #[test]
+    fn plan_valid_sell_passes_mirror_image() {
+        // entry 100, stop 110 (risk 10). Targets below entry, non-increasing.
+        // legs: 0.5 @ 80 (+20), 0.5 @ 60 (+40) → blended RR = 3.0.
+        let p = plan(
+            100.0,
+            110.0,
+            vec![leg(80.0, 0.5), leg(60.0, 0.5)],
+            Some(BreakevenTrigger { price: None, r_multiple: Some(1.0) }),
+        );
+        assert!(validate_management_plan(
+            Action::Sell,
+            &p,
+            None,
+            MIN_BLENDED_REWARD_TO_RISK
+        )
+        .is_pass());
+    }
+
+    #[test]
+    fn plan_leg_fraction_out_of_range() {
+        // Fraction > 1.0.
+        let p = plan(100.0, 90.0, vec![leg(120.0, 1.5)], None);
+        assert_eq!(
+            validate_management_plan(Action::Buy, &p, None, MIN_BLENDED_REWARD_TO_RISK),
+            ValidatorOutcome::Fail { reason: ValidatorReason::LegFractionOutOfRange }
+        );
+        // Fraction == 0.0 is excluded by the open interval.
+        let p0 = plan(100.0, 90.0, vec![leg(120.0, 0.0)], None);
+        assert_eq!(
+            validate_management_plan(Action::Buy, &p0, None, MIN_BLENDED_REWARD_TO_RISK),
+            ValidatorOutcome::Fail { reason: ValidatorReason::LegFractionOutOfRange }
+        );
+        // Fractions summing to > 1.0.
+        let psum = plan(100.0, 90.0, vec![leg(120.0, 0.6), leg(140.0, 0.6)], None);
+        assert_eq!(
+            validate_management_plan(Action::Buy, &psum, None, MIN_BLENDED_REWARD_TO_RISK),
+            ValidatorOutcome::Fail { reason: ValidatorReason::LegFractionOutOfRange }
+        );
+        // A single full-size leg at fraction 1.0 is in range.
+        let pfull = plan(100.0, 90.0, vec![leg(130.0, 1.0)], None);
+        assert!(validate_management_plan(
+            Action::Buy,
+            &pfull,
+            None,
+            MIN_BLENDED_REWARD_TO_RISK
+        )
+        .is_pass());
+    }
+
+    #[test]
+    fn plan_target_ordering_inconsistent() {
+        // BUY with a target below entry.
+        let below = plan(100.0, 90.0, vec![leg(95.0, 1.0)], None);
+        assert_eq!(
+            validate_management_plan(Action::Buy, &below, None, MIN_BLENDED_REWARD_TO_RISK),
+            ValidatorOutcome::Fail { reason: ValidatorReason::TargetOrderingInconsistent }
+        );
+        // BUY with stop above entry.
+        let stop_above = plan(100.0, 110.0, vec![leg(130.0, 1.0)], None);
+        assert_eq!(
+            validate_management_plan(Action::Buy, &stop_above, None, MIN_BLENDED_REWARD_TO_RISK),
+            ValidatorOutcome::Fail { reason: ValidatorReason::TargetOrderingInconsistent }
+        );
+        // BUY with decreasing targets (not non-decreasing).
+        let decreasing = plan(100.0, 90.0, vec![leg(140.0, 0.5), leg(120.0, 0.5)], None);
+        assert_eq!(
+            validate_management_plan(Action::Buy, &decreasing, None, MIN_BLENDED_REWARD_TO_RISK),
+            ValidatorOutcome::Fail { reason: ValidatorReason::TargetOrderingInconsistent }
+        );
+    }
+
+    #[test]
+    fn plan_breakeven_out_of_range() {
+        // BUY breakeven below entry — not on the profit side.
+        let below = plan(
+            100.0,
+            90.0,
+            vec![leg(120.0, 0.5), leg(140.0, 0.5)],
+            Some(BreakevenTrigger { price: Some(95.0), r_multiple: None }),
+        );
+        assert_eq!(
+            validate_management_plan(Action::Buy, &below, None, MIN_BLENDED_REWARD_TO_RISK),
+            ValidatorOutcome::Fail { reason: ValidatorReason::BreakevenOutOfRange }
+        );
+        // BUY breakeven at/above the first target — not strictly between.
+        let at_target = plan(
+            100.0,
+            90.0,
+            vec![leg(120.0, 0.5), leg(140.0, 0.5)],
+            Some(BreakevenTrigger { price: Some(120.0), r_multiple: None }),
+        );
+        assert_eq!(
+            validate_management_plan(Action::Buy, &at_target, None, MIN_BLENDED_REWARD_TO_RISK),
+            ValidatorOutcome::Fail { reason: ValidatorReason::BreakevenOutOfRange }
+        );
+    }
+
+    #[test]
+    fn plan_blended_rr_too_low() {
+        // entry 100, stop 90 (risk 10). Single leg 1.0 @ 115 → blended RR 1.5 < 2.0.
+        let p = plan(100.0, 90.0, vec![leg(115.0, 1.0)], None);
+        assert_eq!(
+            validate_management_plan(Action::Buy, &p, None, MIN_BLENDED_REWARD_TO_RISK),
+            ValidatorOutcome::Fail { reason: ValidatorReason::BlendedRrTooLow }
+        );
+    }
+
+    #[test]
+    fn plan_stop_too_tight_preserved() {
+        // ATR 10 → min stop distance 15, but risk here is 10 → StopTooTight (R6.3),
+        // proving the base rule is enforced on top of the multi-leg checks.
+        let p = plan(100.0, 90.0, vec![leg(140.0, 1.0)], None);
+        assert_eq!(
+            validate_management_plan(Action::Buy, &p, Some(10.0), MIN_BLENDED_REWARD_TO_RISK),
+            ValidatorOutcome::Fail { reason: ValidatorReason::StopTooTight }
+        );
+    }
+
+    #[test]
+    fn plan_missing_levels() {
+        // No legs at all.
+        let none = plan(100.0, 90.0, vec![], None);
+        assert_eq!(
+            validate_management_plan(Action::Buy, &none, None, MIN_BLENDED_REWARD_TO_RISK),
+            ValidatorOutcome::Fail { reason: ValidatorReason::MissingLevels }
+        );
+        // Non-finite entry.
+        let nan_entry = plan(f64::NAN, 90.0, vec![leg(120.0, 1.0)], None);
+        assert_eq!(
+            validate_management_plan(Action::Buy, &nan_entry, None, MIN_BLENDED_REWARD_TO_RISK),
+            ValidatorOutcome::Fail { reason: ValidatorReason::MissingLevels }
+        );
+    }
+
+    #[test]
+    fn plan_validation_is_deterministic() {
+        let p = plan(
+            100.0,
+            90.0,
+            vec![leg(120.0, 0.5), leg(140.0, 0.5)],
+            Some(BreakevenTrigger { price: Some(110.0), r_multiple: None }),
+        );
+        let a = validate_management_plan(Action::Buy, &p, Some(5.0), MIN_BLENDED_REWARD_TO_RISK);
+        let b = validate_management_plan(Action::Buy, &p, Some(5.0), MIN_BLENDED_REWARD_TO_RISK);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn plan_new_reason_tags_are_stable() {
+        assert_eq!(ValidatorReason::LegFractionOutOfRange.as_tag(), "leg-fraction-out-of-range");
+        assert_eq!(
+            ValidatorReason::TargetOrderingInconsistent.as_tag(),
+            "target-ordering-inconsistent"
+        );
+        assert_eq!(ValidatorReason::BreakevenOutOfRange.as_tag(), "breakeven-out-of-range");
+        assert_eq!(ValidatorReason::BlendedRrTooLow.as_tag(), "blended-rr-too-low");
+    }
+
     #[test]
     fn action_parsing_is_lenient() {
         assert_eq!(Action::from_str_lenient(" buy "), Action::Buy);
         assert_eq!(Action::from_str_lenient("SELL"), Action::Sell);
         assert_eq!(Action::from_str_lenient("hold"), Action::Hold);
         assert_eq!(Action::from_str_lenient("whatever"), Action::Hold);
+    }
+
+    // ── Python <-> Rust parity fixtures (trade-management task 6.9, R5.6) ──────
+    //
+    // This is the authoritative-side half of the shared fixture table pinned by
+    // the Python `tests/test_tm_validator_parity.py::PARITY_FIXTURES`. The rows
+    // here are re-encoded VERBATIM from that table — a representative valid plan
+    // (BUY and the SELL mirror) plus exactly one fixture per rejection class and
+    // the HOLD bypass — and each is asserted to produce the SAME stable reason
+    // tag (or a pass) as the Python validator. Because every fixture isolates a
+    // single deciding condition, the differing internal check-ordering of the
+    // two implementations cannot change which tag is produced. The blended
+    // reward-to-risk floor is pinned to `MIN_BLENDED_REWARD_TO_RISK` (2.0) on
+    // both sides so the examples are deterministic.
+    #[test]
+    fn plan_parity_fixtures() {
+        // (name, action, entry, initial_stop, legs, breakeven, atr_14, expected_tag)
+        // expected_tag = None means "passes"; Some(tag) is the reason both sides
+        // must return.
+        struct Fixture {
+            name: &'static str,
+            action: Action,
+            entry: f64,
+            initial_stop: f64,
+            legs: Vec<ScaleOutLeg>,
+            breakeven: Option<BreakevenTrigger>,
+            atr_14: Option<f64>,
+            expected_tag: Option<&'static str>,
+        }
+
+        let fixtures = vec![
+            Fixture {
+                name: "valid_buy",
+                action: Action::Buy,
+                entry: 100.0,
+                initial_stop: 90.0,
+                legs: vec![leg(120.0, 0.5), leg(140.0, 0.5)],
+                breakeven: Some(BreakevenTrigger { price: Some(110.0), r_multiple: None }),
+                atr_14: None,
+                expected_tag: None,
+            },
+            Fixture {
+                name: "valid_sell",
+                action: Action::Sell,
+                entry: 100.0,
+                initial_stop: 110.0,
+                legs: vec![leg(80.0, 0.5), leg(60.0, 0.5)],
+                breakeven: Some(BreakevenTrigger { price: None, r_multiple: Some(1.0) }),
+                atr_14: None,
+                expected_tag: None,
+            },
+            Fixture {
+                name: "leg_fraction",
+                action: Action::Buy,
+                entry: 100.0,
+                initial_stop: 90.0,
+                legs: vec![leg(120.0, 1.5)],
+                breakeven: None,
+                atr_14: None,
+                expected_tag: Some("leg-fraction-out-of-range"),
+            },
+            Fixture {
+                name: "target_ordering",
+                action: Action::Buy,
+                entry: 100.0,
+                initial_stop: 90.0,
+                legs: vec![leg(140.0, 0.5), leg(120.0, 0.5)],
+                breakeven: None,
+                atr_14: None,
+                expected_tag: Some("target-ordering-inconsistent"),
+            },
+            Fixture {
+                name: "breakeven_range",
+                action: Action::Buy,
+                entry: 100.0,
+                initial_stop: 90.0,
+                legs: vec![leg(120.0, 0.5), leg(140.0, 0.5)],
+                breakeven: Some(BreakevenTrigger { price: Some(95.0), r_multiple: None }),
+                atr_14: None,
+                expected_tag: Some("breakeven-out-of-range"),
+            },
+            Fixture {
+                name: "blended_rr",
+                action: Action::Buy,
+                entry: 100.0,
+                initial_stop: 90.0,
+                legs: vec![leg(115.0, 1.0)],
+                breakeven: None,
+                atr_14: None,
+                expected_tag: Some("blended-rr-too-low"),
+            },
+            Fixture {
+                name: "stop_too_tight",
+                action: Action::Buy,
+                entry: 100.0,
+                initial_stop: 90.0,
+                legs: vec![leg(140.0, 1.0)],
+                breakeven: None,
+                atr_14: Some(10.0),
+                expected_tag: Some("stop-too-tight"),
+            },
+            Fixture {
+                name: "hold_bypass",
+                action: Action::Hold,
+                entry: 100.0,
+                initial_stop: 200.0,
+                legs: vec![leg(50.0, 2.0)],
+                breakeven: None,
+                atr_14: Some(10.0),
+                expected_tag: None,
+            },
+        ];
+
+        for f in &fixtures {
+            let p = plan(f.entry, f.initial_stop, f.legs.clone(), f.breakeven);
+            let outcome =
+                validate_management_plan(f.action, &p, f.atr_14, MIN_BLENDED_REWARD_TO_RISK);
+            match f.expected_tag {
+                None => assert!(
+                    outcome.is_pass(),
+                    "{}: expected pass, got {:?}",
+                    f.name,
+                    outcome
+                ),
+                Some(tag) => match outcome {
+                    ValidatorOutcome::Fail { reason } => assert_eq!(
+                        reason.as_tag(),
+                        tag,
+                        "{}: expected tag {}, got {}",
+                        f.name,
+                        tag,
+                        reason.as_tag()
+                    ),
+                    ValidatorOutcome::Pass { .. } => {
+                        panic!("{}: expected reject {}, got pass", f.name, tag)
+                    }
+                },
+            }
+        }
     }
 }
 

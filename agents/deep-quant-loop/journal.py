@@ -34,6 +34,14 @@ from typing import Optional
 
 import httpx
 
+# Trade_Manager (trade-management) — the SINGLE source of truth for the
+# exit-simulation math (AD-2). The journal NEVER reimplements the multi-leg
+# fill / breakeven / trail logic: a managed trade is scored by reconstructing its
+# persisted Management_Plan and calling ``trade_manager.simulate_plan`` against
+# the subsequent candles (R6.1, R6.5). Pure module, no I/O, no circular import
+# (it imports only ``regime``), so a top-level import is safe.
+import trade_manager
+
 RUST_SERVER_URL = "http://localhost:8084"
 
 # ── Configuration ─────────────────────────────────────────────────────────────
@@ -104,6 +112,15 @@ def _init_db(conn: sqlite3.Connection) -> None:
     # when the column is absent, so existing journals upgrade in place and the
     # operation never raises into the agent loop (R11.4).
     _ensure_column(conn, "forecast_up_probability", "REAL")
+    # Trade-management migrations (R6.3, R6.1): persist the serialized
+    # Management_Plan so a managed trade can be re-scored reproducibly on later
+    # candles (``management_plan`` is NULL for a single-target trade), and persist
+    # a representation of the simulated Exit_Breakdown alongside the Realized_R
+    # written to the existing ``r_multiple`` column. Both are additive, nullable,
+    # and applied via the same idempotent guarded ALTER, so existing journals
+    # upgrade in place without touching legacy single-target rows.
+    _ensure_column(conn, "management_plan", "TEXT")
+    _ensure_column(conn, "exit_breakdown", "TEXT")
     conn.commit()
 
 
@@ -318,6 +335,47 @@ def _forecast_up_probability(deff: dict) -> Optional[float]:
         return None
 
 
+# Fixed, low-cardinality management-style enumeration for the setup fingerprint
+# (R11.2). The journal collapses every committed plan into this small set so the
+# management-extended ``setup_key`` stays groupable and per-management-style
+# win-rate / expectancy can accumulate enough scored trades to clear
+# LOW_SAMPLE_THRESHOLD. The allowed values are owned by the Trade_Manager — the
+# SINGLE source of truth for the style mapping (AD-2/AD-8) — and re-exported here
+# only so this module's intent reads locally; at most 8 values including
+# ``unknown`` (``single``/``scale``/``scale-be``/``scale-trail``/``scale-be-trail``/
+# ``be``/``trail``/``unknown``).
+TM_TAG_VALUES = set(trade_manager.MANAGEMENT_STYLE_TAGS)
+
+
+def _management_style_tag(decision: dict) -> str:
+    """Collapse the decision's management style into one fixed enumeration value.
+
+    Reads the management entry recorded in the defensibility record
+    (``decision['defensibility']['management']``) — written by
+    ``graph._management_entry`` / ``backtest._management_defensibility_entry`` as
+    ``{available, style, ...}`` where ``style`` is the bare value produced by
+    ``trade_manager.management_style_tag`` (the single source of truth for the
+    style mapping, AD-2/AD-8). When the entry is present, available, and carries a
+    ``style`` in the fixed ``trade_manager.MANAGEMENT_STYLE_TAGS`` enumeration that
+    value is used verbatim; a missing/unavailable management entry, empty value,
+    or unrecognized style collapses to ``unknown`` (R11.2). Returns the bare value
+    (caller prefixes ``tm:``). Never raises.
+    """
+    try:
+        d = decision or {}
+        deff = d.get("defensibility") or {}
+        mgmt = deff.get("management")
+        if not isinstance(mgmt, dict):
+            return "unknown"
+        # An explicitly unavailable management entry carries no committed style.
+        if mgmt.get("available") is False:
+            return "unknown"
+        style = str(mgmt.get("style") or "").strip().lower()
+        return style if style in TM_TAG_VALUES else "unknown"
+    except Exception:
+        return "unknown"
+
+
 def derive_setup_tags(decision: dict) -> list:
     """Derive a coarse, groupable setup fingerprint from a committed decision.
 
@@ -344,6 +402,11 @@ def derive_setup_tags(decision: dict) -> list:
                     forecast entry recorded in the defensibility record;
                     appended last at a FIXED position (after the ``rs:`` tag) so
                     ``setup_key`` stays deterministic and low-cardinality.
+      * management  (single/scale/scale-be/scale-trail/scale-be-trail/be/trail,
+                    or unknown) — the committed plan's management style recorded
+                    in the defensibility management entry; appended last at a
+                    FIXED position (after the ``fc:`` tag) so ``setup_key`` stays
+                    deterministic and low-cardinality.
     """
     d = decision or {}
     deff = d.get("defensibility") or {}
@@ -394,6 +457,15 @@ def derive_setup_tags(decision: dict) -> list:
     # confidence band) into one fixed value (R11.1, R11.2, R11.3).
     tags.append("fc:" + _forecast_tag(decision))
 
+    # Management-style dimension — appended at a FIXED position last (after the
+    # ``fc:`` tag) so the resulting ``setup_key`` is deterministic for identical
+    # inputs and stays low-cardinality. Collapses the committed plan's style
+    # (recorded in the defensibility management entry by the graph / backtest via
+    # ``trade_manager.management_style_tag``) into one fixed ``tm:`` value; a
+    # missing/unavailable management entry defaults to ``tm:unknown`` (R11.1,
+    # R11.2, R11.3).
+    tags.append("tm:" + _management_style_tag(decision))
+
     return tags
 
 
@@ -403,11 +475,62 @@ def setup_key_from_tags(tags) -> str:
 
 # ── Recording ─────────────────────────────────────────────────────────────────
 
+def _serialize_management_plan(
+    management_plan, decision: dict, entry, stop_loss, atr_14
+) -> Optional[str]:
+    """Serialize a decision's Management_Plan to JSON for persistence, or None.
+
+    Returns the stored NULL sentinel (``None``) for a Single_Target_Trade — a
+    decision carrying no management plan — so today's single-bracket rows persist
+    a NULL ``management_plan`` column and re-score on the unchanged legacy path
+    (R6.3, backward compatibility). When a plan is present it is normalized to an
+    in-memory ``trade_manager.ManagementPlan`` and re-serialized through
+    ``trade_manager.plan_to_json`` (the single round-trip boundary, AD-2):
+
+      * an explicit ``trade_manager.ManagementPlan`` is serialized directly;
+      * a JSON-serializable plan dict (as declared on ``declare_trade``) has the
+        base bracket fields (``action`` / ``entry`` / ``initial_stop`` / ``atr_14``)
+        defaulted from the decision when the dict omits them, then is round-tripped
+        via ``trade_manager.plan_from_json`` so a malformed / out-of-shape dict
+        degrades to NULL rather than persisting a half-formed plan.
+
+    Pure and TOTAL: any unexpected shape collapses to ``None`` rather than raising,
+    keeping the journal write path defensive.
+    """
+    try:
+        raw = management_plan
+        if raw is None:
+            raw = (decision or {}).get("management_plan")
+        if raw is None:
+            return None
+        if isinstance(raw, trade_manager.ManagementPlan):
+            return trade_manager.plan_to_json(raw)
+        if isinstance(raw, dict):
+            merged = dict(raw)
+            if merged.get("action") is None:
+                merged["action"] = str((decision or {}).get("action") or "").upper()
+            if merged.get("entry") is None:
+                merged["entry"] = entry
+            if merged.get("initial_stop") is None:
+                merged["initial_stop"] = stop_loss
+            if merged.get("atr_14") is None:
+                merged["atr_14"] = atr_14
+            # Round-trip through the canonical (de)serializer so a malformed dict
+            # yields None (plan_from_json -> None -> plan_to_json(None) -> None).
+            plan = trade_manager.plan_from_json(json.dumps(merged))
+            return trade_manager.plan_to_json(plan)
+        return None
+    except Exception as e:
+        print(f"[Trade_Journal] WARN: could not serialize management plan: {e}")
+        return None
+
+
 def record_decision(
     decision: dict,
     symbol: Optional[str] = None,
     timeframe: Optional[str] = None,
     mode: Optional[str] = None,
+    management_plan=None,
 ) -> Optional[int]:
     """Persist a committed decision to the journal. Never raises into the loop.
 
@@ -415,6 +538,12 @@ def record_decision(
     everything else (HOLD, or a directional trade missing levels) is stored as
     ``hold`` and excluded from win-rate/expectancy. Returns the row id, or None
     on failure.
+
+    A Management_Plan (passed explicitly via ``management_plan`` or carried on the
+    decision under ``management_plan``) is serialized and persisted in the
+    ``management_plan`` column so a managed trade can be re-scored reproducibly on
+    later candles (R6.3); a Single_Target_Trade persists a NULL plan and is scored
+    on the unchanged legacy path.
     """
     try:
         d = decision or {}
@@ -451,6 +580,8 @@ def record_decision(
 
         fc_up_prob = _forecast_up_probability(deff)
 
+        plan_json = _serialize_management_plan(management_plan, d, entry, stop_loss, d.get("atr_14"))
+
         conn = _connect()
         try:
             _init_db(conn)
@@ -460,8 +591,8 @@ def record_decision(
                     created_at, mode, symbol, timeframe, action, entry, stop_loss,
                     take_profit, atr_14, conviction, risk_reward, setup_key,
                     setup_tags, source, status, outcome_price, outcome_at,
-                    r_multiple, scored_at, forecast_up_probability
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    r_multiple, scored_at, forecast_up_probability, management_plan
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     _now(), (mode or "FIND"), symbol, timeframe, action,
@@ -472,7 +603,7 @@ def record_decision(
                     conv,
                     rr if _is_num(rr) else None,
                     key, json.dumps(tags), d.get("source"),
-                    status, None, None, None, None, fc_up_prob,
+                    status, None, None, None, None, fc_up_prob, plan_json,
                 ),
             )
             conn.commit()
@@ -503,15 +634,158 @@ def _fetch_candles(symbol: str, timeframe: str, limit: int) -> list:
         return []
 
 
+def _row_value(row, key, default=None):
+    """Read an optional column from a sqlite3.Row without raising.
+
+    A row fetched before an additive migration may not carry a newer column;
+    ``sqlite3.Row`` raises ``IndexError`` on a missing key, so this guards the
+    access and degrades to ``default`` (keeping scoring defensive, R6.1).
+    """
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return default
+
+
+def _exit_breakdown_json(result) -> Optional[str]:
+    """Serialize a ``SimulationResult`` Exit_Breakdown to JSON, or None.
+
+    Persists a representation of HOW the managed plan resolved (per-leg fills, the
+    residual, breakeven/trail markers) alongside the Realized_R written to
+    ``r_multiple`` (R6.1). Total and non-raising — any unexpected shape degrades
+    to ``None`` so a scoring write is never aborted by serialization.
+    """
+    try:
+        fills = [
+            {
+                "index": f.index,
+                "price": f.price,
+                "fraction": f.fraction,
+                "leg_r": f.leg_r,
+                "timestamp_ms": f.timestamp_ms,
+                "kind": f.kind,
+            }
+            for f in (result.fills or ())
+        ]
+        return json.dumps(
+            {
+                "status": result.status,
+                "realized_r": result.realized_r,
+                "fills": fills,
+                "residual_fraction": result.residual_fraction,
+                "breakeven_moved_at": result.breakeven_moved_at,
+                "trailed": result.trailed,
+            }
+        )
+    except Exception:
+        return None
+
+
+def _score_managed_trade(trade: sqlite3.Row, candles: list, plan_text: str) -> Optional[dict]:
+    """Score a managed trade multi-leg via the Trade_Manager. Never raises.
+
+    Reconstructs the persisted ``Management_Plan`` and invokes
+    ``trade_manager.simulate_plan`` against the candles strictly after the trade's
+    ``created_at`` (the same conservative entry-time window the legacy path uses),
+    resolving parameters from the same ``resolve_trade_manager_config`` used on
+    every Trade_Manager path (R13.5). The simulated ``Realized_R`` is recorded in
+    the existing ``r_multiple`` column and a representation of the Exit_Breakdown
+    in ``exit_breakdown`` (R6.1, R6.5).
+
+    Outcome mapping (R6.4): a resolved plan with a positive ``Realized_R`` is a
+    ``win`` and a non-positive ``Realized_R`` is a ``loss``. An ``open`` or
+    ``invalid`` simulation is not yet scored — it expires (like the legacy path)
+    only once ``JOURNAL_EXPIRY_SECONDS`` of real time has elapsed, otherwise it
+    stays ``open``. Any reconstruction / simulation degeneracy degrades to "not
+    scored yet" (``None``) rather than raising into the loop.
+    """
+    try:
+        plan = trade_manager.plan_from_json(plan_text)
+        if plan is None:
+            # A corrupted / legacy-shaped plan column cannot be re-scored; leave
+            # the trade open rather than fabricating an outcome.
+            return None
+
+        created_at = trade["created_at"]
+        if not _is_num(created_at):
+            return None
+        created_ms = created_at * 1000.0
+
+        # Only candles strictly after entry are part of the simulation window
+        # (mirrors the legacy ``ts <= created_ms`` exclusion). simulate_plan
+        # re-sorts and excludes non-finite candles itself, so this is just the
+        # entry-time gate.
+        subsequent = [
+            c for c in candles
+            if isinstance(c, dict)
+            and _is_num(c.get("timestamp_ms"))
+            and c.get("timestamp_ms") > created_ms
+        ]
+
+        config = trade_manager.resolve_trade_manager_config()
+        result = trade_manager.simulate_plan(plan, subsequent, config)
+
+        if result.status == "resolved" and _is_num(result.realized_r):
+            status = "win" if result.realized_r > 0 else "loss"
+            last_fill = result.fills[-1] if result.fills else None
+            outcome_price = last_fill.price if last_fill is not None else None
+            outcome_at = (
+                last_fill.timestamp_ms / 1000.0
+                if (last_fill is not None and _is_num(last_fill.timestamp_ms))
+                else None
+            )
+            return {
+                "status": status,
+                "outcome_price": outcome_price if _is_num(outcome_price) else None,
+                "outcome_at": outcome_at,
+                "r_multiple": round(result.realized_r, 4),
+                "exit_breakdown": _exit_breakdown_json(result),
+            }
+
+        # Unresolved (open) or invalid: expire only when enough real time has
+        # elapsed since entry, exactly like the legacy single-target path.
+        last_ts_ms = None
+        for c in subsequent:
+            ts = c.get("timestamp_ms")
+            if _is_num(ts):
+                last_ts_ms = ts
+        if last_ts_ms is not None and (_now() - created_at) > JOURNAL_EXPIRY_SECONDS:
+            return {
+                "status": "expired",
+                "outcome_price": None,
+                "outcome_at": last_ts_ms / 1000.0,
+                "r_multiple": None,
+                "exit_breakdown": _exit_breakdown_json(result),
+            }
+        return None
+    except Exception as e:
+        print(f"[Trade_Journal] WARN: managed scoring failed (trade id={_row_value(trade, 'id')}): {e}")
+        return None
+
+
 def _score_one(trade: sqlite3.Row, candles: list) -> Optional[dict]:
     """Score a single open trade against candles. Returns an update dict or None.
 
-    Conservative fill model: the position is assumed entered at the declared
-    ``entry`` at ``created_at``; only candles strictly after that timestamp are
-    considered. The first candle whose range touches a level decides the outcome;
-    if a single candle touches BOTH the stop and the target, the loss is assumed
-    (worst-case) so the journal never flatters itself.
+    A trade carrying a persisted ``management_plan`` is scored MULTI-LEG by the
+    Trade_Manager (``_score_managed_trade``) — the journal reuses
+    ``trade_manager.simulate_plan`` rather than reimplementing the exit logic
+    (R6.1, R6.5). A Single_Target_Trade (NULL ``management_plan``) keeps the
+    EXACT legacy single-target path below, so its outcome and Realized_R are
+    byte-for-byte identical to before this feature (R6.2, backward compatibility).
+
+    Legacy conservative fill model: the position is assumed entered at the
+    declared ``entry`` at ``created_at``; only candles strictly after that
+    timestamp are considered. The first candle whose range touches a level
+    decides the outcome; if a single candle touches BOTH the stop and the target,
+    the loss is assumed (worst-case) so the journal never flatters itself.
     """
+    # Managed trades delegate to the Trade_Manager; single-target trades fall
+    # through to the unchanged legacy scoring below (R6.2). The plan column may be
+    # absent on a row read before the migration, so access it defensively.
+    plan_text = _row_value(trade, "management_plan")
+    if plan_text:
+        return _score_managed_trade(trade, candles, plan_text)
+
     action = str(trade["action"]).upper()
     entry = trade["entry"]
     sl = trade["stop_loss"]
@@ -588,8 +862,11 @@ def score_open_trades(symbol: Optional[str] = None) -> int:
                     if upd is None:
                         continue
                     conn.execute(
-                        "UPDATE trades SET status=?, outcome_price=?, outcome_at=?, r_multiple=?, scored_at=? WHERE id=?",
-                        (upd["status"], upd["outcome_price"], upd["outcome_at"], upd["r_multiple"], _now(), tr["id"]),
+                        "UPDATE trades SET status=?, outcome_price=?, outcome_at=?, r_multiple=?, exit_breakdown=?, scored_at=? WHERE id=?",
+                        (
+                            upd["status"], upd["outcome_price"], upd["outcome_at"],
+                            upd["r_multiple"], upd.get("exit_breakdown"), _now(), tr["id"],
+                        ),
                     )
                     resolved += 1
             conn.commit()
@@ -662,6 +939,14 @@ def get_stats(symbol: Optional[str] = None, setup_key: Optional[str] = None, sou
             for key, grp in by_setup_map.items():
                 agg = _aggregate(grp)
                 agg["setup_key"] = key
+                # Flag a per-setup group below LOW_SAMPLE_THRESHOLD as a weak
+                # prior so the agent does not over-fit to a thinly-traded
+                # management-extended setup_key (R11.4). The win-rate / expectancy
+                # in ``agg`` are already computed from the (multi-leg) Realized_R
+                # written to ``r_multiple`` — positive -> win, non-positive ->
+                # loss, mapped at scoring time — grouped by the now management-
+                # extended setup_key, so no recomputation is needed here.
+                agg["low_sample"] = agg["trades_scored"] < LOW_SAMPLE_THRESHOLD
                 by_setup.append(agg)
             # Most-traded setups first.
             by_setup.sort(key=lambda a: (a["trades_scored"], a["wins"] + a["losses"] + a["open"]), reverse=True)

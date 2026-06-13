@@ -1,4 +1,5 @@
 import os
+import json
 import math
 from typing import Optional
 import httpx
@@ -35,6 +36,14 @@ import order_flow
 # drift/volatility/regime-conditioned-blend classification to this pure module;
 # the tool itself only fetches the symbol candles and re-validates the contract.
 import forecaster
+
+# Trade_Validator + Trade_Manager (trade-management). declare_trade gates a
+# declared Management_Plan through the pure Python Trade_Validator
+# (validator.validate_trade(plan=...)) BEFORE forwarding to the authoritative
+# Rust Tool_Server, and reuses trade_manager.plan_from_json to parse the
+# JSON-serializable plan dict into a ManagementPlan (AD-2, AD-5; Requirement 4).
+import validator
+import trade_manager
 
 RUST_SERVER_URL = "http://localhost:8084"
 
@@ -1693,6 +1702,38 @@ def watch_price_condition(
 
     return f"Target condition met (price reached the watched level). Triggered candle: {candle}"
 
+def _coerce_management_plan(management_plan, action, entry, stop_loss, atr_14):
+    """Build a ``trade_manager.ManagementPlan`` from the optional declare_trade
+    ``management_plan`` dict (Requirement 4.1).
+
+    The dict carries the multi-leg detail (``legs`` / ``breakeven`` / ``trailing``);
+    the base bracket fields (``action`` / ``entry`` / ``initial_stop`` / ``atr_14``)
+    default to the declare_trade arguments when the dict omits them. The plan is
+    parsed by reusing ``trade_manager.plan_from_json`` (the single round-trip
+    boundary), so a malformed / out-of-shape dict yields ``None`` rather than
+    raising. Returns ``None`` when no usable plan dict is supplied.
+    """
+    if not isinstance(management_plan, dict):
+        return None
+    # Merge the declared bracket as defaults so the plan always carries the
+    # action / entry / initial_stop the Trade_Validator needs, while still
+    # allowing the dict to override them explicitly.
+    merged = dict(management_plan)
+    if merged.get("action") is None:
+        merged["action"] = action
+    if merged.get("entry") is None:
+        merged["entry"] = entry
+    if merged.get("initial_stop") is None:
+        merged["initial_stop"] = stop_loss
+    if merged.get("atr_14") is None:
+        merged["atr_14"] = atr_14
+    try:
+        return trade_manager.plan_from_json(json.dumps(merged))
+    except (TypeError, ValueError):
+        # Not JSON-serializable (e.g. an exotic value in the dict) -> no plan.
+        return None
+
+
 @tool
 def declare_trade(
     action: str,
@@ -1703,6 +1744,7 @@ def declare_trade(
     stop_loss: Optional[float] = None,
     take_profit: Optional[float] = None,
     atr_14: Optional[float] = None,
+    management_plan: Optional[dict] = None,
 ) -> str:
     """
     Declares the final trading decision for the current analysis session and
@@ -1719,6 +1761,14 @@ def declare_trade(
     If validation fails the trade is REJECTED (not committed) and you MUST revise
     the levels and call declare_trade again. A HOLD may omit the numeric levels.
 
+    Optionally you may attach a multi-leg `management_plan` describing how the
+    position is scaled out and protected (partial exits, a move to breakeven, and
+    a trailing stop). When omitted the entry/stop_loss/take_profit are committed
+    exactly as today — a single-target trade. When present the plan is validated
+    on the Python side (Trade_Validator) BEFORE the trade is forwarded to the Rust
+    Tool Server, and is committed only when validation passes; a failing plan is
+    REJECTED with the reason so you can revise and re-declare.
+
     Args:
         action (str): The final decision, one of: "BUY", "SELL", "HOLD".
         conviction_score (int): Score representing risk confidence (0 to 100).
@@ -1728,15 +1778,68 @@ def declare_trade(
         stop_loss (float, optional): Proposed stop-loss price (REQUIRED for BUY/SELL).
         take_profit (float, optional): Proposed take-profit price (REQUIRED for BUY/SELL).
         atr_14 (float, optional): Current ATR(14) used for the stop-distance check.
+        management_plan (dict, optional): A JSON-serializable multi-leg exit plan
+            with `legs` (each a `{"target": float, "fraction": float}` in
+            chronological/profit order), an optional `breakeven`
+            (`{"price": float}` or `{"r_multiple": float}`), and an optional
+            `trailing` (`{"atr_multiple": float}` or `{"r_increment": float}`).
+            The base bracket fields (action / entry / initial_stop / atr_14)
+            default to the arguments above when the dict omits them. Omit this
+            argument entirely for a single-target trade.
 
     Returns:
         str: Confirmation message, or a rejection message stating the reason when
              the Trade_Validator rejects the trade.
     """
     print(f"\n[Tool Call] >>> declare_trade: action={action}, conviction={conviction_score}%, "
-          f"entry={entry}, stop_loss={stop_loss}, take_profit={take_profit}, atr_14={atr_14}")
+          f"entry={entry}, stop_loss={stop_loss}, take_profit={take_profit}, atr_14={atr_14}, "
+          f"management_plan={'present' if management_plan else 'none'}")
     print(f"[Tool Detail] Setup Validation: {setup_validation}")
     print(f"[Tool Detail] Execution Plan: {execution_plan}")
+
+    # ── Management_Plan gate (Requirement 4) ─────────────────────────────────
+    # When a management_plan is supplied, parse it into a Trade_Manager
+    # ManagementPlan (reusing trade_manager.plan_from_json) and run the pure
+    # Python Trade_Validator BEFORE forwarding to the Rust server. The trade is
+    # committed only when this Python-side validation passes (R4.3); a malformed
+    # or risk-violating plan is REJECTED with the reason so the agent can revise
+    # and re-declare, and is NOT forwarded/committed (R4.4). When management_plan
+    # is absent the trade is a Single_Target_Trade and behavior is unchanged
+    # (R4.2) — no Python-side gate is added so the legacy path is byte-for-byte
+    # identical to before this feature.
+    if management_plan is not None:
+        plan = _coerce_management_plan(management_plan, action, entry, stop_loss, atr_14)
+        if plan is None:
+            # The plan dict was supplied but could not be parsed into a
+            # well-formed ManagementPlan (e.g. missing/malformed legs) — treat as
+            # an invalid plan rather than silently committing single-target.
+            return (
+                f"TRADE_REJECTED: the {action} management_plan could not be parsed into a "
+                f"valid multi-leg plan. Provide `legs` as a list of "
+                f"{{\"target\": float, \"fraction\": float}} entries (and optional "
+                f"`breakeven`/`trailing`), then call declare_trade again."
+            )
+        levels = validator.ExecutionLevels(
+            entry=entry, stop_loss=stop_loss, take_profit=take_profit
+        )
+        outcome = validator.validate_trade(
+            validator.Action.from_str_lenient(action),
+            levels,
+            atr_14,
+            plan=plan,
+        )
+        if not outcome.is_pass():
+            reason = outcome.reason
+            print(f"[Tool Detail] declare_trade management plan REJECTED: {reason.tag}")
+            # Match the existing TRADE_REJECTED result format so the graph treats
+            # this as a non-finalizing turn and the agent revises and re-declares.
+            return (
+                f"TRADE_REJECTED: the Trade_Validator rejected this {action} management plan "
+                f"because '{reason.message}'. Revise the management plan (leg fractions in "
+                f"(0.0, 1.0] summing to <= 1.0, scale-out targets ordered on the profit side, "
+                f"breakeven strictly between entry and the first target, and the blended "
+                f"Risk:Reward at/above the minimum), then call declare_trade again."
+            )
 
     # Persist the final decision to the Rust tool server, which runs the
     # authoritative Trade_Validator and emits `final_analysis_ready` ONLY when
@@ -1744,18 +1847,24 @@ def declare_trade(
     # BUY/SELL can actually be validated and committed (without them every
     # directional trade is rejected as MissingLevels).
     try:
+        request_body = {
+            "action": action,
+            "conviction_score": int(conviction_score),
+            "setup_validation": setup_validation,
+            "execution_plan": execution_plan,
+            "entry": entry,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "atr_14": atr_14,
+        }
+        # Forward the management plan alongside the base bracket; the Rust server
+        # ignores fields it does not consume, so this is safe and keeps the
+        # authoritative path aware of the declared plan (Requirement 4.3).
+        if management_plan is not None:
+            request_body["management_plan"] = management_plan
         response = httpx.post(
             f"{RUST_SERVER_URL}/tools/declare_trade",
-            json={
-                "action": action,
-                "conviction_score": int(conviction_score),
-                "setup_validation": setup_validation,
-                "execution_plan": execution_plan,
-                "entry": entry,
-                "stop_loss": stop_loss,
-                "take_profit": take_profit,
-                "atr_14": atr_14,
-            },
+            json=request_body,
             timeout=10.0
         )
         response.raise_for_status()
