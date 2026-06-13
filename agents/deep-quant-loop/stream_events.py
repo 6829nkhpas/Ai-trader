@@ -406,6 +406,63 @@ def _relative_strength_step(record: dict) -> dict:
     return {"check": "relative-strength", "outcome": outcome, "detail": detail}
 
 
+def _forecast_step(record: dict) -> dict:
+    """Map the defensibility forecast entry to a single ``VERIFICATION_STEP`` (R10).
+
+    The defensibility record's ``forecast`` entry (built by
+    ``graph._forecast_entry``) is either a usable label —
+    ``{"available": True, "forecast_alignment": ..., "projected_direction": ...,
+    "up_probability": ..., ...}`` — or an Unavailable_Marker —
+    ``{"available": False, "reason": ...}``. The recorded Forecast_Alignment maps
+    to a stable outcome under the fixed check id ``forecast``:
+
+      * ``aligned``    → ``pass``                       (R10.2)
+      * ``misaligned`` → ``fail``                       (R10.3)
+      * ``neutral``    → ``informational``              (R10.4)
+      * unavailable    → ``not-evaluable`` (with an 'unavailable' indication, R10.5)
+
+    When the forecast is unavailable — no entry, a non-dict entry, ``available``
+    is falsy, or the Forecast_Alignment is missing/unrecognized — the step reports
+    ``not-evaluable`` with an explicit unavailable indication and NEVER substitutes
+    a fabricated alignment (R10.5). Pure; never raises.
+    """
+    forecast = record.get("forecast")
+
+    if not isinstance(forecast, dict) or not forecast.get("available"):
+        reason = forecast.get("reason") if isinstance(forecast, dict) else None
+        detail = "Forecast unavailable" + (f": {reason}" if reason else "") + "."
+        return {
+            "check": "forecast",
+            "outcome": "not-evaluable — forecast unavailable",
+            "detail": detail,
+        }
+
+    alignment = forecast.get("forecast_alignment")
+    outcome = {
+        "aligned": "pass",
+        "misaligned": "fail",
+        "neutral": "informational",
+    }.get(alignment)
+
+    if outcome is None:
+        # An available entry without a recognized alignment is treated as
+        # unavailable rather than fabricating an outcome (R10.5).
+        return {
+            "check": "forecast",
+            "outcome": "not-evaluable — forecast unavailable",
+            "detail": "Forecast alignment missing or unrecognized.",
+        }
+
+    detail = (
+        f"forecast_alignment={alignment}, "
+        f"projected_direction={forecast.get('projected_direction')}, "
+        f"up_probability={forecast.get('up_probability')}, "
+        f"expected_move_atr={forecast.get('expected_move_atr')}, "
+        f"forecast_confidence={forecast.get('forecast_confidence')}."
+    )
+    return {"check": "forecast", "outcome": outcome, "detail": detail}
+
+
 def _derive_find_mode_steps(record: dict) -> List[dict]:
     """Derive the four self-verification checks from a FIND-mode record (R16.6).
 
@@ -505,6 +562,10 @@ def _derive_find_mode_steps(record: dict) -> List[dict]:
     # relative-strength entry.
     steps.append(_relative_strength_step(record))
 
+    # ── Forecast verification check (volatility-aware-forecaster, R10) ───────
+    # Exactly one forecast step, derived from the defensibility forecast entry.
+    steps.append(_forecast_step(record))
+
     return steps
 
 
@@ -542,6 +603,11 @@ def build_verification_steps(decision: Any) -> List[dict]:
         # (R9.1 — exactly one relative-strength VERIFICATION_STEP).
         if not any(s.get("check") == "relative-strength" for s in steps):
             steps.append(_relative_strength_step(record))
+        # Surface exactly one forecast step in VERIFY mode too: append the
+        # derived step only when the validator checks don't already carry one
+        # (R10.1 — exactly one forecast VERIFICATION_STEP).
+        if not any(s.get("check") == "forecast" for s in steps):
+            steps.append(_forecast_step(record))
         return steps
 
     return _derive_find_mode_steps(record)

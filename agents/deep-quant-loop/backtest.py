@@ -40,6 +40,7 @@ from typing import List, Optional
 
 import httpx
 
+import forecaster
 import journal
 import regime
 import rs
@@ -76,6 +77,7 @@ class BacktestConfig:
     record_unresolved: bool = False  # skip trades that never hit stop/target
     regime_gate_enabled: bool = False  # with-gate run drops unfavorable signals (gate logic: task 13.2)
     rs_filter_enabled: bool = False  # with-filter run drops misaligned signals (filter logic: task 13.2)
+    forecast_filter_enabled: bool = False  # with-forecast run drops forecast-misaligned signals (filter logic: task 14.2)
 
 
 def _is_num(v) -> bool:
@@ -311,6 +313,72 @@ def _relative_strength_defensibility_entry(rs_result: Optional[dict]) -> dict:
     return entry
 
 
+def _forecast_defensibility_entry(fc_result: Optional[dict]) -> dict:
+    """Map a ``forecaster.forecast`` result to the defensibility forecast entry.
+
+    Mirrors the shape ``graph._forecast_entry`` writes and ``journal._forecast_tag``
+    / ``journal._forecast_up_probability`` read, so seeded trades are labelled
+    identically to live LLM decisions:
+
+      * a usable Forecast_Label -> ``{"available": True, projected_direction,
+        up_probability, expected_move_atr, forecast_confidence, forecast_alignment,
+        measures, [symbol/timeframe/candles_used]}`` — copied VERBATIM from the
+        forecaster output (no inference, R9.2).
+      * an Unavailable_Marker / non-dict / label missing a categorical field or a
+        finite probability/confidence -> ``{"available": False, "reason": ...}``
+        with NO fabricated fields (AD-5/R6.3); a signal so labelled is RETAINED by
+        the with-forecast run (R13.4) and tagged ``fc:unknown`` by the journal
+        (R11.2). ``journal._forecast_up_probability`` then persists ``NULL``.
+    """
+    if not isinstance(fc_result, dict):
+        return {"available": False, "reason": "no forecast result"}
+    # Honest Unavailable_Marker from the forecaster — never fabricate fields.
+    if fc_result.get("unavailable") is True:
+        return {"available": False, "reason": fc_result.get("reason") or "forecast unavailable"}
+
+    projected_direction = fc_result.get("projected_direction")
+    up_probability = fc_result.get("up_probability")
+    expected_move_atr = fc_result.get("expected_move_atr")
+    forecast_confidence = fc_result.get("forecast_confidence")
+    forecast_alignment = fc_result.get("forecast_alignment")
+
+    # A usable Forecast_Label must carry a projected_direction and a
+    # forecast_alignment from their fixed enums, plus finite numeric
+    # up_probability and forecast_confidence; anything missing means no usable
+    # label, and we must not fabricate one (R9.3).
+    if (
+        projected_direction not in ("up", "down", "flat")
+        or forecast_alignment not in ("aligned", "misaligned", "neutral")
+        or not _is_num(up_probability)
+        or not _is_num(forecast_confidence)
+    ):
+        return {"available": False, "reason": "no usable forecast label"}
+
+    # Copy the named measures verbatim (each is a finite number or null per the
+    # forecaster contract); never infer a measure not reported.
+    src_measures = fc_result.get("measures")
+    measures = {}
+    if isinstance(src_measures, dict):
+        for k in forecaster._FORECAST_MEASURE_FIELDS:
+            measures[k] = src_measures.get(k)
+
+    entry = {
+        "available": True,
+        "projected_direction": projected_direction,
+        "up_probability": up_probability,
+        # expected_move_atr is finite-number-or-null per the contract; copy it
+        # verbatim (including null) without substituting a value.
+        "expected_move_atr": expected_move_atr,
+        "forecast_confidence": forecast_confidence,
+        "forecast_alignment": forecast_alignment,
+        "measures": measures,
+    }
+    for k in ("symbol", "timeframe", "candles_used"):
+        if k in fc_result:
+            entry[k] = fc_result[k]
+    return entry
+
+
 def _candles_at_or_before(candle_series: Optional[List[dict]], cutoff_ts) -> List[dict]:
     """Point-in-time slice: rows whose ``timestamp_ms`` is at or before ``cutoff_ts``.
 
@@ -355,6 +423,21 @@ def _signal_is_misaligned(decision: dict) -> bool:
     """
     rs_entry = decision.get("defensibility", {}).get("relative_strength") or {}
     return rs_entry.get("available") is True and rs_entry.get("alignment") == "misaligned"
+
+
+def _signal_is_forecast_misaligned(decision: dict) -> bool:
+    """Return True only when the signal carries an AVAILABLE ``misaligned`` forecast.
+
+    This is the with-forecast drop predicate (R13.2): a directional signal whose
+    Forecast_Alignment is the available label ``misaligned`` for its direction is
+    dropped. A signal whose forecast is an Unavailable_Marker is reported as
+    ``{"available": False, ...}`` by ``_forecast_defensibility_entry`` and is
+    RETAINED — never excluded on the basis of the forecast being unavailable
+    (R13.4) — as are ``aligned`` and ``neutral`` signals. Mirrors
+    ``_signal_is_misaligned`` (the relative-strength predicate).
+    """
+    fc_entry = decision.get("defensibility", {}).get("forecast") or {}
+    return fc_entry.get("available") is True and fc_entry.get("forecast_alignment") == "misaligned"
 
 
 # ── Scoring against future candles (mirrors journal._score_one) ───────────────
@@ -434,6 +517,12 @@ def generate_and_score(candles: List[dict], symbol: str, timeframe: str,
     if benchmark is None:
         benchmark = rs.resolve_benchmark(symbol)
 
+    # Resolve the forecaster parameters ONCE, reusing the SAME resolver the live
+    # get_forecast tool uses (R13.5, R14.5) — the seeder never reimplements the
+    # forecast math. Each signal's forecast is computed point-in-time from this
+    # single resolved config.
+    forecaster_config = forecaster.resolve_forecaster_config()
+
     cooldown_until = -1
     for i in range(cfg.lookback - 1, n - 1):
         if i < cooldown_until:
@@ -476,6 +565,23 @@ def generate_and_score(candles: List[dict], symbol: str, timeframe: str,
         # graph._relative_strength_entry.
         decision["defensibility"]["relative_strength"] = _relative_strength_defensibility_entry(rs_result)
 
+        # Classify the signal's forecast look-ahead-free (R13.1): the
+        # Volatility_Aware_Forecaster sees ONLY candles AT OR BEFORE the signal
+        # candle (the point-in-time slice ``candles[:i+1]`` carries no later
+        # candles), and the signal's direction (BUY/SELL) is passed as
+        # ``proposed_direction`` so the Forecast_Alignment is computed against the
+        # trade. The SAME forecaster as the live tool path produces the label
+        # (R13.5); the seeder never reimplements the forecast math.
+        fc_result = forecaster.forecast(
+            candles[: i + 1], forecaster_config,
+            proposed_direction=decision.get("action"),
+            symbol=symbol, timeframe=timeframe,
+        )
+        # Label the seeded trade with its Forecast_Label so journal._forecast_tag
+        # can tag it and journal.record_backtest_trade persists its Up_Probability
+        # (R11.4); shape mirrors graph._forecast_entry.
+        decision["defensibility"]["forecast"] = _forecast_defensibility_entry(fc_result)
+
         scored = _score_signal(decision, candles[i + 1:], cfg)
         if scored is None:
             continue
@@ -502,7 +608,18 @@ def generate_and_score(candles: List[dict], symbol: str, timeframe: str,
         # run and its seeded set is a strict SUBSET of the without-filter set.
         filtered_out = cfg.rs_filter_enabled and _signal_is_misaligned(decision)
 
-        if gated_out or filtered_out or (status == "expired" and not cfg.record_unresolved):
+        # ── Forecast filter (with-forecast run only) ─────────────────────────
+        # When the forecast filter is enabled, DROP a signal whose
+        # Forecast_Alignment is an AVAILABLE "misaligned" label for its direction
+        # (R13.2). Signals whose forecast is an Unavailable_Marker are RETAINED —
+        # never excluded on the basis of the forecast being unavailable (R13.4) —
+        # as are aligned/neutral signals. The drop advances the cooldown exactly
+        # as a taken signal would, mirroring the regime gate and RS filter, so the
+        # with-forecast run walks the IDENTICAL history/rules as the
+        # without-forecast run and its seeded set is a strict SUBSET of it.
+        forecast_filtered_out = cfg.forecast_filter_enabled and _signal_is_forecast_misaligned(decision)
+
+        if gated_out or filtered_out or forecast_filtered_out or (status == "expired" and not cfg.record_unresolved):
             cooldown_until = i + cfg.cooldown_bars
             continue
         results.append({
@@ -815,6 +932,239 @@ def compare_relative_strength(symbol: str, timeframe: str, limit: int = 3000,
         "benchmark": benchmark,
         "with_filter": {"signals_scored": len(with_filter), **_run_metrics(with_filter)},
         "without_filter": {"signals_scored": len(without_filter), **_run_metrics(without_filter)},
+    }
+
+
+# ── With-forecast / without-forecast comparison (R13.2, R13.3, R13.4) ────────
+
+def compare_forecast(symbol: str, timeframe: str, limit: int = 3000,
+                     candles: Optional[List[dict]] = None,
+                     cfg: Optional[BacktestConfig] = None,
+                     source: str = "auto") -> dict:
+    """Run the backtest WITH and WITHOUT the forecast filter and compare (R13.3).
+
+    Both runs use the IDENTICAL candle history and IDENTICAL setup rules — only
+    ``forecast_filter_enabled`` differs — so the two runs are directly comparable
+    and the with-forecast seeded set is a strict subset of the without-forecast
+    set. The filter only removes signals whose Forecast_Alignment is the available
+    ``misaligned`` label for their direction; signals whose forecast is an
+    Unavailable_Marker are RETAINED — never excluded on the basis of the forecast
+    being unavailable (R13.2, R13.4).
+
+    The forecaster needs no benchmark, but ``generate_and_score`` also labels
+    relative strength for every signal, so the Benchmark_Index and its candle
+    series are resolved ONCE for the run (as in ``compare_relative_strength``) and
+    passed to BOTH runs, keeping each run well-formed and identical apart from the
+    forecast-filter flag.
+
+    Returns a summary reporting, for EACH run, the win-rate (winning closed /
+    closed) and expectancy (mean realized R per closed trade), with ``"n/a"`` when
+    a run produced zero closed trades (R13.3). Pure given ``candles`` — no journal
+    writes are performed.
+    """
+    base = cfg or BacktestConfig()
+    if candles is None:
+        candles = _resolve_candles(symbol, timeframe, limit, source)
+
+    # The forecast filter needs no benchmark, but generate_and_score labels
+    # relative strength regardless; resolve the Benchmark_Index and its candles
+    # ONCE so BOTH runs are well-formed and identical apart from the flag.
+    benchmark = rs.resolve_benchmark(symbol)
+    benchmark_candles = _resolve_benchmark_candles(benchmark, timeframe, limit, source)
+
+    # Identical history + identical rules; the forecast-filter flag is the ONLY difference.
+    filtered_cfg = replace(base, forecast_filter_enabled=True)
+    unfiltered_cfg = replace(base, forecast_filter_enabled=False)
+
+    with_forecast = generate_and_score(
+        candles, symbol, timeframe, filtered_cfg,
+        benchmark_candles=benchmark_candles, benchmark=benchmark,
+    )
+    without_forecast = generate_and_score(
+        candles, symbol, timeframe, unfiltered_cfg,
+        benchmark_candles=benchmark_candles, benchmark=benchmark,
+    )
+
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "candles": len(candles),
+        "with_forecast": {"signals_scored": len(with_forecast), **_run_metrics(with_forecast)},
+        "without_forecast": {"signals_scored": len(without_forecast), **_run_metrics(without_forecast)},
+    }
+
+
+# ── Calibration (reliability) measurement (R12.1–R12.5) ──────────────────────
+
+# Sentinel reported for a probability bin that contains zero recorded forecasts.
+# An empty bin has no mean predicted probability and no realized fraction, so we
+# report this string rather than dividing by zero (R12.4). The scalar
+# ``calibration_error`` uses the same sentinel when EVERY bin is empty (no
+# non-empty bin to average over).
+_CALIBRATION_NA = "n/a"
+
+
+def _calibration_from_records(records, bins) -> dict:
+    """Bin (Up_Probability, realized-up) records and report reliability stats.
+
+    ``records`` is a list of ``{"up_probability": float in [0, 1],
+    "went_up": bool}`` dicts. The ``[0, 1]`` probability range is partitioned into
+    ``bins`` equal-width bins; a record is placed in bin
+    ``min(int(up_probability * bins), bins - 1)`` so the ``up_probability == 1.0``
+    edge falls in the LAST bin rather than overflowing (R12.2).
+
+    For each NON-EMPTY bin we report its ``count``, the ``mean_predicted`` (mean
+    of the bin's ``up_probability`` values), and the ``realized_up_fraction`` (the
+    fraction of the bin's records whose ``went_up`` is True) — R12.2. Each EMPTY
+    bin is reported with ``count`` 0 and ``mean_predicted`` / ``realized_up_fraction``
+    set to the ``"n/a"`` sentinel rather than dividing by zero (R12.4).
+
+    ``calibration_error`` is the mean absolute difference between
+    ``mean_predicted`` and ``realized_up_fraction`` over the NON-EMPTY bins
+    (R12.3); when every bin is empty it is the same ``"n/a"`` sentinel (no
+    non-empty bin to average). ``total_records`` is the number of valid records
+    binned.
+
+    Pure (no input mutation), never divides by zero, and never raises — a
+    non-list ``records``, malformed record dicts, out-of-range/non-finite
+    probabilities, and a non-positive/garbage ``bins`` are all tolerated by
+    coercion and skipping.
+    """
+    # Coerce the bin count to a positive integer; anything unparseable or < 1
+    # collapses to a single [0, 1] bin so the partition is always well-formed.
+    try:
+        n_bins = int(bins)
+    except (TypeError, ValueError):
+        n_bins = 0
+    if n_bins < 1:
+        n_bins = 1
+
+    counts = [0] * n_bins
+    prob_sums = [0.0] * n_bins
+    up_counts = [0] * n_bins
+    total = 0
+
+    for rec in records if isinstance(records, list) else []:
+        if not isinstance(rec, dict):
+            continue
+        p = rec.get("up_probability")
+        # Only finite probabilities inside [0, 1] are binnable.
+        if not _is_num(p) or p < 0.0 or p > 1.0:
+            continue
+        idx = int(p * n_bins)
+        if idx >= n_bins:           # the up_probability == 1.0 edge lands here
+            idx = n_bins - 1
+        elif idx < 0:               # defensive; p >= 0 already guaranteed
+            idx = 0
+        counts[idx] += 1
+        prob_sums[idx] += p
+        if bool(rec.get("went_up")):
+            up_counts[idx] += 1
+        total += 1
+
+    width = 1.0 / n_bins
+    bins_report = []
+    abs_errors = []
+    for k in range(n_bins):
+        lower = round(k * width, 10)
+        upper = round((k + 1) * width, 10)
+        if counts[k] == 0:
+            bins_report.append({
+                "lower": lower,
+                "upper": upper,
+                "count": 0,
+                "mean_predicted": _CALIBRATION_NA,
+                "realized_up_fraction": _CALIBRATION_NA,
+            })
+            continue
+        mean_predicted = prob_sums[k] / counts[k]
+        realized_up_fraction = up_counts[k] / counts[k]
+        abs_errors.append(abs(mean_predicted - realized_up_fraction))
+        bins_report.append({
+            "lower": lower,
+            "upper": upper,
+            "count": counts[k],
+            "mean_predicted": round(mean_predicted, 6),
+            "realized_up_fraction": round(realized_up_fraction, 6),
+        })
+
+    calibration_error = (
+        round(sum(abs_errors) / len(abs_errors), 6) if abs_errors else _CALIBRATION_NA
+    )
+    return {
+        "bins": bins_report,
+        "calibration_error": calibration_error,
+        "total_records": total,
+    }
+
+
+def calibrate_forecast(symbol: str, timeframe: str, limit: int = 3000,
+                       candles: Optional[List[dict]] = None,
+                       cfg: Optional[BacktestConfig] = None,
+                       bins: Optional[int] = None,
+                       source: str = "auto") -> dict:
+    """Measure whether the forecaster's Up_Probability matches realized outcomes.
+
+    Walks the candle history and, for every bar ``i`` that has a valid next bar
+    ``i + 1``, computes the forecast from ONLY ``candles[: i + 1]`` (the window at
+    or before bar ``i`` — no look-ahead, R12.1) via the SAME ``forecaster.forecast``
+    the live tool path uses (R12.5; the calibration never reimplements the forecast
+    math). When that produces a usable Forecast_Label with a finite Up_Probability,
+    the predicted probability is paired with the realized direction of the next bar
+    — ``went_up = close_{i+1} > close_i`` (R12.1) — and collected as a record.
+    Bars whose forecast is an Unavailable_Marker (e.g. insufficient early history)
+    or whose adjacent closes are non-numeric are skipped.
+
+    The records are passed to ``_calibration_from_records`` with ``bins`` (or the
+    resolved ``prob_bins`` default when not supplied), and the per-bin report,
+    scalar calibration error, and paired-record count are returned alongside the
+    run's ``symbol`` / ``timeframe`` / ``candles`` context. Pure given ``candles``
+    (no journal writes); the forecaster never touches the network.
+    """
+    cfg = cfg or BacktestConfig()
+    if candles is None:
+        candles = _resolve_candles(symbol, timeframe, limit, source)
+
+    # Resolve the forecaster parameters ONCE, reusing the SAME resolver the live
+    # get_forecast tool and the backtest comparison use (R12.5, R14.5).
+    fc_config = forecaster.resolve_forecaster_config()
+
+    n = len(candles) if isinstance(candles, list) else 0
+    records: List[dict] = []
+    for i in range(n - 1):
+        cur = candles[i]
+        nxt = candles[i + 1]
+        cur_close = cur.get("close") if isinstance(cur, dict) else None
+        nxt_close = nxt.get("close") if isinstance(nxt, dict) else None
+        # Guard non-numeric closes — the realized direction is undefined without
+        # two finite closes (R12.1).
+        if not (_is_num(cur_close) and _is_num(nxt_close)):
+            continue
+
+        # Forecast from ONLY candles at or before bar i — the point-in-time slice
+        # candles[: i + 1] carries no later candles, so there is no look-ahead
+        # (R12.1). The same forecaster as the live tool path (R12.5).
+        fc_result = forecaster.forecast(
+            candles[: i + 1], fc_config, symbol=symbol, timeframe=timeframe,
+        )
+        if not isinstance(fc_result, dict) or fc_result.get("unavailable") is True:
+            continue
+        up_probability = fc_result.get("up_probability")
+        if not _is_num(up_probability):
+            continue
+
+        # Pair the predicted Up_Probability with the realized next-bar direction.
+        records.append({
+            "up_probability": up_probability,
+            "went_up": nxt_close > cur_close,
+        })
+
+    report = _calibration_from_records(records, bins or fc_config.prob_bins)
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "candles": n,
+        **report,
     }
 
 

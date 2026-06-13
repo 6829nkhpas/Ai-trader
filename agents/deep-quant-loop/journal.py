@@ -92,13 +92,35 @@ def _init_db(conn: sqlite3.Connection) -> None:
             outcome_price REAL,
             outcome_at    REAL,
             r_multiple    REAL,
-            scored_at     REAL
+            scored_at     REAL,
+            forecast_up_probability REAL
         )
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status)")
+    # Additive, backward-compatible migrations for journals created before a
+    # column existed. Each entry is applied via a guarded ALTER that only runs
+    # when the column is absent, so existing journals upgrade in place and the
+    # operation never raises into the agent loop (R11.4).
+    _ensure_column(conn, "forecast_up_probability", "REAL")
     conn.commit()
+
+
+def _ensure_column(conn: sqlite3.Connection, column: str, decl_type: str) -> None:
+    """Add ``column`` to the ``trades`` table when it is missing (idempotent).
+
+    Inspects the live schema via ``PRAGMA table_info(trades)`` and only issues an
+    ``ALTER TABLE ... ADD COLUMN`` when the column is absent, so re-running on an
+    already-migrated journal is a no-op. Additive only (new columns are nullable
+    with no default), preserving existing rows. Never raises.
+    """
+    try:
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(trades)").fetchall()}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE trades ADD COLUMN {column} {decl_type}")
+    except Exception as e:
+        print(f"[Trade_Journal] WARN: could not ensure column '{column}': {e}")
 
 
 # ── Setup fingerprinting ──────────────────────────────────────────────────────
@@ -217,6 +239,85 @@ def _relative_strength_tag(decision: dict) -> str:
         return "unknown"
 
 
+# Fixed, low-cardinality forecast enumeration for the setup fingerprint (R11.3).
+# The journal collapses the (Forecast_Alignment x Up_Probability confidence band)
+# space into this small set so the forecast-extended ``setup_key`` stays
+# groupable and individual setups can accumulate enough scored trades to clear
+# LOW_SAMPLE_THRESHOLD. At most 8 distinct values including ``unknown`` (here 7):
+# each Alignment (aligned/misaligned/neutral) paired with a strong/weak band.
+FC_TAG_VALUES = {
+    "aligned-strong", "aligned-weak",
+    "misaligned-strong", "misaligned-weak",
+    "neutral-strong", "neutral-weak",
+    "unknown",
+}
+
+# Fixed split for the Up_Probability confidence band: the forecast is tagged
+# ``strong`` when its probability is at least this far from a 50/50 coin flip
+# (``abs(up_probability - 0.5) >= FC_STRONG_PROB_SPLIT``), otherwise ``weak``.
+# Documented constant (not a magic number): 0.15 means a >=65% / <=35% directional
+# probability is "strong", anything closer to 0.5 is "weak".
+FC_STRONG_PROB_SPLIT = 0.15
+
+_FC_ALIGNMENTS = {"aligned", "misaligned", "neutral"}
+
+
+def _forecast_tag(decision: dict) -> str:
+    """Collapse the decision's forecast into exactly one fixed enumeration value.
+
+    Reads the forecast entry recorded in the defensibility record
+    (``decision['defensibility']['forecast']``) and maps (Forecast_Alignment x
+    Up_Probability confidence band) to one of ``FC_TAG_VALUES``:
+      * the Alignment (``aligned``/``misaligned``/``neutral``) is carried as the prefix
+      * the Up_Probability confidence band is the suffix: ``strong`` when
+        ``abs(up_probability - 0.5) >= FC_STRONG_PROB_SPLIT``, else ``weak``
+
+    Any missing/unavailable forecast entry, empty value, non-numeric
+    Up_Probability, or unrecognized Alignment collapses to ``unknown`` (R11.2).
+    Returns the bare value (caller prefixes ``fc:``). Never raises.
+    """
+    try:
+        d = decision or {}
+        deff = d.get("defensibility") or {}
+        fc = deff.get("forecast")
+        if not isinstance(fc, dict):
+            return "unknown"
+        # An explicitly unavailable forecast entry carries no fabricated fields.
+        if fc.get("available") is False:
+            return "unknown"
+        alignment = str(fc.get("forecast_alignment") or "").strip().lower()
+        up_probability = fc.get("up_probability")
+        if alignment not in _FC_ALIGNMENTS or not _is_num(up_probability):
+            return "unknown"
+        band = "strong" if abs(up_probability - 0.5) >= FC_STRONG_PROB_SPLIT else "weak"
+        value = f"{alignment}-{band}"
+        return value if value in FC_TAG_VALUES else "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _forecast_up_probability(deff: dict) -> Optional[float]:
+    """Extract the forecast ``up_probability`` for persistence, or ``None``.
+
+    Reads ``deff['forecast']['up_probability']`` from a decision's defensibility
+    record and returns it only when the forecast entry is present, not explicitly
+    unavailable, and the probability is a finite number (validated via
+    ``_is_num``). Any missing/unavailable forecast or non-finite probability maps
+    to ``None`` so the column is written as ``NULL`` (R11.4). Never raises.
+    """
+    try:
+        d = deff or {}
+        fc = d.get("forecast")
+        if not isinstance(fc, dict):
+            return None
+        if fc.get("available") is False:
+            return None
+        up_probability = fc.get("up_probability")
+        return up_probability if _is_num(up_probability) else None
+    except Exception:
+        return None
+
+
 def derive_setup_tags(decision: dict) -> list:
     """Derive a coarse, groupable setup fingerprint from a committed decision.
 
@@ -238,6 +339,11 @@ def derive_setup_tags(decision: dict) -> list:
                     record; appended last at a FIXED position (after the
                     ``regime:`` tag) so ``setup_key`` stays deterministic and
                     low-cardinality.
+      * forecast    (alignment x probability band: aligned/misaligned/neutral
+                    paired with strong/weak, or unknown) collapsed from the
+                    forecast entry recorded in the defensibility record;
+                    appended last at a FIXED position (after the ``rs:`` tag) so
+                    ``setup_key`` stays deterministic and low-cardinality.
     """
     d = decision or {}
     deff = d.get("defensibility") or {}
@@ -280,6 +386,13 @@ def derive_setup_tags(decision: dict) -> list:
     # after the ``regime:`` tag so the resulting ``setup_key`` is deterministic
     # for identical inputs and stays low-cardinality (R10.1, R10.3).
     tags.append("rs:" + _relative_strength_tag(decision))
+
+    # Forecast dimension — appended at a FIXED position last (after the
+    # ``rs:`` tag, and after the order-flow ``of:`` tag once that feature lands)
+    # so the resulting ``setup_key`` is deterministic for identical inputs and
+    # stays low-cardinality. Collapses (Forecast_Alignment x Up_Probability
+    # confidence band) into one fixed value (R11.1, R11.2, R11.3).
+    tags.append("fc:" + _forecast_tag(decision))
 
     return tags
 
@@ -336,6 +449,8 @@ def record_decision(
         except (TypeError, ValueError):
             conv = None
 
+        fc_up_prob = _forecast_up_probability(deff)
+
         conn = _connect()
         try:
             _init_db(conn)
@@ -345,8 +460,8 @@ def record_decision(
                     created_at, mode, symbol, timeframe, action, entry, stop_loss,
                     take_profit, atr_14, conviction, risk_reward, setup_key,
                     setup_tags, source, status, outcome_price, outcome_at,
-                    r_multiple, scored_at
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    r_multiple, scored_at, forecast_up_probability
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     _now(), (mode or "FIND"), symbol, timeframe, action,
@@ -357,7 +472,7 @@ def record_decision(
                     conv,
                     rr if _is_num(rr) else None,
                     key, json.dumps(tags), d.get("source"),
-                    status, None, None, None, None,
+                    status, None, None, None, None, fc_up_prob,
                 ),
             )
             conn.commit()
@@ -606,6 +721,8 @@ def record_backtest_trade(
             risk = abs(entry - stop_loss)
             rr = abs(take_profit - entry) / risk if risk > 0 else None
 
+        fc_up_prob = _forecast_up_probability(deff)
+
         conn = _connect()
         try:
             _init_db(conn)
@@ -615,8 +732,8 @@ def record_backtest_trade(
                     created_at, mode, symbol, timeframe, action, entry, stop_loss,
                     take_profit, atr_14, conviction, risk_reward, setup_key,
                     setup_tags, source, status, outcome_price, outcome_at,
-                    r_multiple, scored_at
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    r_multiple, scored_at, forecast_up_probability
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     d.get("created_at") or _now(), "BACKTEST", symbol, timeframe, action,
@@ -627,7 +744,7 @@ def record_backtest_trade(
                     d.get("conviction_score"),
                     rr if _is_num(rr) else None,
                     key, json.dumps(tags), "backtest",
-                    status, outcome_price, outcome_at, r_multiple, _now(),
+                    status, outcome_price, outcome_at, r_multiple, _now(), fc_up_prob,
                 ),
             )
             conn.commit()

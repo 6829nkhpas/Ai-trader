@@ -30,6 +30,12 @@ import rs
 # the contract.
 import order_flow
 
+# Volatility_Forecaster — the single source of truth for the forecast math
+# (AD-1, AD-2). The get_forecast tool delegates parameter resolution and the
+# drift/volatility/regime-conditioned-blend classification to this pure module;
+# the tool itself only fetches the symbol candles and re-validates the contract.
+import forecaster
+
 RUST_SERVER_URL = "http://localhost:8084"
 
 # ── Price-watch registration retry policy (Requirement 14.3) ─────────────────
@@ -126,6 +132,18 @@ _OF_MEASURE_FIELDS = (
     "down_volume",
     "buying_pressure_ratio",
 )
+
+# ── Forecast_Tool contract (volatility-aware-forecaster) ─────────────────────
+# A get_forecast Forecast_Label must carry a projected_direction drawn from its
+# fixed enum, an up_probability finite number in [0.0, 1.0], an expected_move_atr
+# finite-number-or-null, a forecast_confidence finite number in [0.0, 1.0], a
+# forecast_alignment drawn from the shared ALIGNMENT_VALUES enum, plus each named
+# forecast measure (under a 'measures' object) present as a finite number or
+# null. An Unavailable_Marker ({"unavailable": true, ...}) is an honest non-fatal
+# result handled by the existing _has_honest_marker pass-through (R5.8).
+FORECAST_DIRECTIONS = {"up", "down", "flat"}
+# Forecast_Alignment reuses the existing ALIGNMENT_VALUES = {"aligned","misaligned","neutral"}.
+_FORECAST_MEASURE_FIELDS = ("drift", "volatility", "standardized_drift", "atr")
 
 # QuestDB HTTP query API for the Live_Ticks_Source (the same endpoint backtest.py
 # uses for the historical archive). The Tick_OFI layer reads recent ticks for the
@@ -448,6 +466,70 @@ def validate_contract(tool_name, payload):
                 return _contract_error(
                     "order flow 'live_tick_contributed' is not a boolean"
                 )
+            return payload
+
+        if tool_name == "get_forecast":
+            if not isinstance(payload, dict):
+                return _contract_error(
+                    f"get_forecast expected an object, got {type(payload).__name__}"
+                )
+            # A conforming Forecast_Label carries a projected_direction in its
+            # fixed enum, an up_probability finite number in [0.0, 1.0], an
+            # expected_move_atr finite-number-or-null, a forecast_confidence
+            # finite number in [0.0, 1.0], a forecast_alignment in the shared
+            # ALIGNMENT_VALUES enum, plus each named measure (under a 'measures'
+            # object) as finite-number-or-null. (An Unavailable_Marker was
+            # already passed through above by _has_honest_marker, so anything
+            # reaching here must be a full label.)
+            projected_direction = payload.get("projected_direction")
+            if projected_direction not in FORECAST_DIRECTIONS:
+                return _contract_error(
+                    f"projected_direction '{projected_direction}' not in "
+                    "{up, down, flat}"
+                )
+            # up_probability: a finite number in [0.0, 1.0] (reusing the same
+            # numeric-bounds pattern as the get_chart_patterns confidence check).
+            up_probability = payload.get("up_probability")
+            if not _is_number(up_probability) or not (0.0 <= up_probability <= 1.0):
+                return _contract_error(
+                    "forecast 'up_probability' is not a number in [0.0, 1.0]"
+                )
+            # expected_move_atr: a finite number or null (null when ATR is
+            # zero/unavailable).
+            if "expected_move_atr" not in payload:
+                return _contract_error("forecast missing field 'expected_move_atr'")
+            if not _is_number_or_null(payload["expected_move_atr"]):
+                return _contract_error(
+                    "forecast 'expected_move_atr' is neither numeric nor null"
+                )
+            # forecast_confidence: a finite number in [0.0, 1.0].
+            forecast_confidence = payload.get("forecast_confidence")
+            if not _is_number(forecast_confidence) or not (
+                0.0 <= forecast_confidence <= 1.0
+            ):
+                return _contract_error(
+                    "forecast 'forecast_confidence' is not a number in [0.0, 1.0]"
+                )
+            forecast_alignment = payload.get("forecast_alignment")
+            if forecast_alignment not in ALIGNMENT_VALUES:
+                return _contract_error(
+                    f"forecast_alignment '{forecast_alignment}' not in "
+                    "{aligned, misaligned, neutral}"
+                )
+            # The named forecast measures live under a 'measures' object; each
+            # must be present as a finite number or null.
+            measures = payload.get("measures")
+            if not isinstance(measures, dict):
+                return _contract_error("forecast 'measures' field is not an object")
+            for field in _FORECAST_MEASURE_FIELDS:
+                if field not in measures:
+                    return _contract_error(
+                        f"forecast measures missing field '{field}'"
+                    )
+                if not _is_number_or_null(measures[field]):
+                    return _contract_error(
+                        f"forecast measure '{field}' is neither numeric nor null"
+                    )
             return payload
 
         # Unknown / non-contract tool (e.g. declare_trade, watch_price_condition):
@@ -1289,6 +1371,153 @@ def get_order_flow(symbol: str, timeframe: str, proposed_direction: str = "") ->
             symbol if isinstance(symbol, str) else None,
             timeframe if isinstance(timeframe, str) else None,
             f"order-flow processing error: {str(e)}",
+        )
+
+
+def _forecast_unavailable(symbol, timeframe, reason: str) -> dict:
+    """Build a get_forecast Unavailable_Marker (the forecaster marker shape).
+
+    Mirrors ``_relative_strength_unavailable`` / ``_order_flow_unavailable`` /
+    ``forecaster._forecast_unavailable``: it carries the symbol / timeframe
+    context, the ``unavailable: true`` flag, and a ``reason`` citing the cause,
+    and it *omits* ``projected_direction`` / ``up_probability`` /
+    ``expected_move_atr`` / ``forecast_confidence`` / ``forecast_alignment``
+    entirely — an unavailable forecast is a missing optional input, never a
+    fabricated label (AD-5, Requirements 6.3, 6.5). Recognized as an honest,
+    non-fatal marker by ``_has_honest_marker`` so ``validate_contract`` passes it
+    through unchanged.
+    """
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "unavailable": True,
+        "reason": reason,
+    }
+
+
+@tool
+def get_forecast(symbol: str, timeframe: str, proposed_direction: str = "") -> dict:
+    """
+    Produce a volatility-aware, regime-conditioned probabilistic forward view for
+    a symbol/timeframe — the agent's PRIMARY predictive cross-check.
+
+    Use this BEFORE committing a directional (BUY/SELL) setup to check WHERE the
+    market is probably going next and HOW confident that view is. The forecast is
+    a volatility-scaled, regime-conditioned standardized drift turned into a
+    projected direction (up / down / flat), an up-probability in [0.0, 1.0], an
+    expected next-bar move in ATR units, a confidence in [0.0, 1.0], and the
+    alignment of a proposed trade direction with the forecast. The forecast is
+    GUIDANCE only — it never generates a trade, never blocks one, and never
+    overrides your decision. When the proposed trade is misaligned with the
+    forecast, or the up-probability does not support the direction, bias toward
+    lower conviction, waiting, or HOLD; when it is unavailable, proceed with the
+    remaining analysis and note it as unavailable.
+
+    The forecaster is pure math over the same authoritative OHLCV candles every
+    other tool uses (the symbol candles are fetched from the Rust Tool_Server),
+    and it obtains the trend state from the same regime classifier rather than
+    reimplementing regime math. Valid timeframes: '1m', '5m', '10m', '15m', '1h',
+    '4h', '1d'.
+
+    Args:
+        symbol (str): The trading symbol (e.g. "RELIANCE").
+        timeframe (str): The candle timeframe (e.g. "1m", "5m", "15m", "1h", "4h", "1d").
+        proposed_direction (str): Optional proposed trade direction ("BUY" / "SELL");
+                         when empty, no direction is assumed and alignment is neutral.
+
+    Returns:
+        dict: A Forecast_Label with:
+              - projected_direction ("up" | "down" | "flat")
+              - up_probability (a finite number in [0.0, 1.0])
+              - expected_move_atr (a finite number or null when ATR is unavailable)
+              - forecast_confidence (a finite number in [0.0, 1.0])
+              - forecast_alignment ("aligned" | "misaligned" | "neutral")
+              - measures: drift, volatility, standardized_drift, atr (each a
+                finite number or null)
+              When the forecast cannot be computed (insufficient/failed candle
+              retrieval, insufficient data, or any processing error) it returns an
+              Unavailable_Marker {"unavailable": true, "reason": ...} with NO
+              projected_direction / up_probability / expected_move_atr /
+              forecast_confidence / forecast_alignment — treat that as a missing,
+              non-blocking input. Never raises.
+    """
+    print(
+        f"\n[Tool Call] >>> get_forecast: symbol={symbol}, "
+        f"timeframe={timeframe}, direction={proposed_direction!r}"
+    )
+    try:
+        # 1. Validate arguments — empty/whitespace symbol or unsupported timeframe
+        #    is a structured error result (NOT an exception, R5.3).
+        if not isinstance(symbol, str) or not symbol.strip():
+            print("[Tool Error] <<< get_forecast: empty/whitespace symbol")
+            return {"error": "get_forecast requires a non-empty symbol"}
+        if timeframe not in SUPPORTED_TIMEFRAMES:
+            print(
+                f"[Tool Error] <<< get_forecast: unsupported timeframe '{timeframe}'"
+            )
+            return {
+                "error": (
+                    f"get_forecast received unsupported timeframe '{timeframe}'; "
+                    f"supported timeframes are {sorted(SUPPORTED_TIMEFRAMES)}"
+                ),
+            }
+
+        # 2. Resolve parameters (single source of truth; never raises).
+        config = forecaster.resolve_forecaster_config()
+
+        # 3. Fetch the symbol candles from the authoritative Rust Tool_Server.
+        #    Request enough candles to cover the largest single-estimate lookback
+        #    AND the minimum-candle gate, plus a margin so excluding any
+        #    non-finite candles still leaves enough to forecast.
+        required = max(config.min_candles, config.largest_lookback)
+        limit = required + RS_FETCH_MARGIN
+        candles, candle_reason = _fetch_candles_for_rs(symbol, timeframe, limit)
+        if candles is None:
+            # Candle retrieval failed/timed out -> Unavailable_Marker citing the
+            # cause (R6.1). Without candles there is no usable forecast at all.
+            print(f"[Tool Warning] <<< get_forecast: {candle_reason}")
+            return _forecast_unavailable(symbol, timeframe, candle_reason)
+
+        # 4. Classify via the pure Volatility_Forecaster. An empty
+        #    proposed_direction means "no direction" -> pass None so alignment is
+        #    neutral. forecast returns either a Forecast_Label or an
+        #    Unavailable_Marker and never raises.
+        result = forecaster.forecast(
+            candles,
+            config,
+            proposed_direction=proposed_direction or None,
+            symbol=symbol,
+            timeframe=timeframe,
+        )
+
+        # 5. Re-validate against the Tool_Result_Contract on receipt (AD-3) and
+        #    return. validate_contract passes an Unavailable_Marker through
+        #    unchanged and never raises.
+        validated = validate_contract("get_forecast", result)
+        if validated.get("unavailable"):
+            print(
+                f"[Tool Success] <<< get_forecast: symbol={symbol}, "
+                f"unavailable ({validated.get('reason')})"
+            )
+        elif "error" in validated:
+            print(f"[Tool Warning] <<< get_forecast: {validated.get('error')}")
+        else:
+            print(
+                f"[Tool Success] <<< get_forecast: symbol={symbol}, "
+                f"direction={validated.get('projected_direction')}, "
+                f"up_probability={validated.get('up_probability')}, "
+                f"confidence={validated.get('forecast_confidence')}, "
+                f"alignment={validated.get('forecast_alignment')}"
+            )
+        return validated
+    except Exception as e:
+        # Defensive catch-all: any processing error degrades to an honest
+        # Unavailable_Marker rather than raising into the agent loop (R6.5).
+        print(f"[Tool Warning] <<< get_forecast FAIL: {str(e)}")
+        return _forecast_unavailable(
+            symbol if isinstance(symbol, str) else None,
+            timeframe if isinstance(timeframe, str) else None,
+            f"forecast processing error: {str(e)}",
         )
 
 
