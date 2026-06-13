@@ -351,6 +351,61 @@ def _regime_step(record: dict) -> dict:
     return {"check": "market-regime", "outcome": outcome, "detail": detail}
 
 
+def _relative_strength_step(record: dict) -> dict:
+    """Map the defensibility relative-strength entry to a single ``VERIFICATION_STEP`` (R9).
+
+    The defensibility record's ``relative_strength`` entry (built by
+    ``graph._relative_strength_entry``) is either a usable label —
+    ``{"available": True, "alignment": ..., "index_direction": ...,
+    "relative_strength_state": ..., ...}`` — or an Unavailable_Marker —
+    ``{"available": False, "reason": ...}``. The recorded Alignment maps to a
+    stable outcome under the fixed check id ``relative-strength``:
+
+      * ``aligned``    → ``pass``                       (R9.2)
+      * ``misaligned`` → ``fail``                       (R9.3)
+      * ``neutral``    → ``informational``              (R9.4)
+      * unavailable    → ``not-evaluable`` (with an 'unavailable' indication, R9.5)
+
+    When relative strength is unavailable — no entry, a non-dict entry,
+    ``available`` is falsy, or the Alignment is missing/unrecognized — the step
+    reports ``not-evaluable`` with an explicit unavailable indication and NEVER
+    substitutes a fabricated Alignment (R9.5). Pure; never raises.
+    """
+    rs = record.get("relative_strength")
+
+    if not isinstance(rs, dict) or not rs.get("available"):
+        reason = rs.get("reason") if isinstance(rs, dict) else None
+        detail = "Relative strength unavailable" + (f": {reason}" if reason else "") + "."
+        return {
+            "check": "relative-strength",
+            "outcome": "not-evaluable — relative strength unavailable",
+            "detail": detail,
+        }
+
+    alignment = rs.get("alignment")
+    outcome = {
+        "aligned": "pass",
+        "misaligned": "fail",
+        "neutral": "informational",
+    }.get(alignment)
+
+    if outcome is None:
+        # An available entry without a recognized alignment is treated as
+        # unavailable rather than fabricating an outcome (R9.5).
+        return {
+            "check": "relative-strength",
+            "outcome": "not-evaluable — relative strength unavailable",
+            "detail": "Relative-strength alignment missing or unrecognized.",
+        }
+
+    detail = (
+        f"alignment={alignment}, index_direction={rs.get('index_direction')}, "
+        f"relative_strength_state={rs.get('relative_strength_state')}, "
+        f"benchmark={rs.get('benchmark')}."
+    )
+    return {"check": "relative-strength", "outcome": outcome, "detail": detail}
+
+
 def _derive_find_mode_steps(record: dict) -> List[dict]:
     """Derive the four self-verification checks from a FIND-mode record (R16.6).
 
@@ -445,6 +500,11 @@ def _derive_find_mode_steps(record: dict) -> List[dict]:
     # Exactly one regime step, derived from the defensibility regime entry.
     steps.append(_regime_step(record))
 
+    # ── Relative-strength context check (relative-strength-context, R9) ──────
+    # Exactly one relative-strength step, derived from the defensibility
+    # relative-strength entry.
+    steps.append(_relative_strength_step(record))
+
     return steps
 
 
@@ -477,6 +537,11 @@ def build_verification_steps(decision: Any) -> List[dict]:
         # (R8.1 — exactly one regime VERIFICATION_STEP).
         if not any(s.get("check") == "market-regime" for s in steps):
             steps.append(_regime_step(record))
+        # Surface exactly one relative-strength step in VERIFY mode too: append
+        # the derived step only when the validator checks don't already carry one
+        # (R9.1 — exactly one relative-strength VERIFICATION_STEP).
+        if not any(s.get("check") == "relative-strength" for s in steps):
+            steps.append(_relative_strength_step(record))
         return steps
 
     return _derive_find_mode_steps(record)
