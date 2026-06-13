@@ -463,6 +463,89 @@ def _forecast_step(record: dict) -> dict:
     return {"check": "forecast", "outcome": outcome, "detail": detail}
 
 
+def _trade_management_step(record: dict) -> dict:
+    """Map the defensibility management entry to a single ``VERIFICATION_STEP`` (R10).
+
+    The defensibility record's ``management`` entry (built by
+    ``graph._management_entry``) is present only for a committed directional
+    trade with usable execution levels — it is a dict of the shape
+    ``{"available": True, "style": <tm-style>, "action": ..., "entry": ...,
+    "initial_stop": ..., "legs": [...], ..., optionally "status": ...}`` — and is
+    absent entirely (no ``management`` key) for a HOLD or a decision with no
+    usable levels. The recorded management style maps to a stable outcome under
+    the fixed check id ``trade-management`` (R10.1):
+
+      * a valid multi-leg / active-management plan (``available`` True and the
+        style is anything other than ``single``: ``scale`` / ``scale-be`` /
+        ``scale-trail`` / ``scale-be-trail`` / ``be`` / ``trail``)
+                                                          -> ``pass``  (R10.2)
+      * a Single_Target_Trade (``available`` True, style ``single``)
+                                                          -> ``informational`` (R10.3)
+      * no management entry present (absent, non-dict, or ``available`` falsy)
+                                                          -> ``not-evaluable`` (R10.4)
+      * an explicitly invalid plan (the simulated ``status`` is ``"invalid"`` —
+        e.g. a zero initial-stop distance) -> ``fail`` (the only representable
+        failed-plan state; otherwise the three cases above cover everything)
+
+    The outcome string may carry a short suffix mirroring the sibling steps, but
+    the check id is always exactly ``trade-management`` and the primary outcome
+    token is one of ``pass`` / ``fail`` / ``informational`` / ``not-evaluable``.
+    Pure; never raises.
+    """
+    management = record.get("management")
+
+    if not isinstance(management, dict) or not management.get("available"):
+        reason = management.get("reason") if isinstance(management, dict) else None
+        detail = "No management plan recorded" + (f": {reason}" if reason else "") + "."
+        return {
+            "check": "trade-management",
+            "outcome": "not-evaluable — no management plan",
+            "detail": detail,
+        }
+
+    style = management.get("style")
+
+    # An explicitly invalid simulated plan (e.g. zero initial-stop distance) is
+    # the only representable failed-plan state.
+    if management.get("status") == "invalid":
+        return {
+            "check": "trade-management",
+            "outcome": f"fail — invalid plan ({style})",
+            "detail": "Trade_Manager reported the plan as invalid for scoring.",
+        }
+
+    # A Single_Target_Trade collapses to the ``single`` style: no active
+    # management, surfaced as informational (R10.3).
+    if style == "single":
+        return {
+            "check": "trade-management",
+            "outcome": "informational — single-target (no active management)",
+            "detail": (
+                f"action={management.get('action')}, entry={management.get('entry')}, "
+                f"initial_stop={management.get('initial_stop')}."
+            ),
+        }
+
+    # An available entry without a recognized active style is treated as
+    # not-evaluable rather than fabricating a pass (defensive; ``unknown`` only
+    # arises when no plan was built, which an available entry never is).
+    if not style or style == "unknown":
+        return {
+            "check": "trade-management",
+            "outcome": "not-evaluable — management style unrecognized",
+            "detail": "Management entry present without a recognized management style.",
+        }
+
+    # A valid multi-leg / active-management plan (R10.2).
+    legs = management.get("legs") or []
+    detail = (
+        f"style={style}, action={management.get('action')}, legs={len(legs)}, "
+        f"breakeven={'yes' if management.get('breakeven') else 'no'}, "
+        f"trailing={'yes' if management.get('trailing') else 'no'}."
+    )
+    return {"check": "trade-management", "outcome": f"pass — managed plan ({style})", "detail": detail}
+
+
 def _derive_find_mode_steps(record: dict) -> List[dict]:
     """Derive the four self-verification checks from a FIND-mode record (R16.6).
 
@@ -566,6 +649,11 @@ def _derive_find_mode_steps(record: dict) -> List[dict]:
     # Exactly one forecast step, derived from the defensibility forecast entry.
     steps.append(_forecast_step(record))
 
+    # ── Trade-management verification check (trade-management, R10) ──────────
+    # Exactly one trade-management step, derived from the defensibility
+    # management entry (absent -> not-evaluable).
+    steps.append(_trade_management_step(record))
+
     return steps
 
 
@@ -608,6 +696,11 @@ def build_verification_steps(decision: Any) -> List[dict]:
         # (R10.1 — exactly one forecast VERIFICATION_STEP).
         if not any(s.get("check") == "forecast" for s in steps):
             steps.append(_forecast_step(record))
+        # Surface exactly one trade-management step in VERIFY mode too: append
+        # the derived step only when the validator checks don't already carry one
+        # (R10.1 — exactly one trade-management VERIFICATION_STEP).
+        if not any(s.get("check") == "trade-management" for s in steps):
+            steps.append(_trade_management_step(record))
         return steps
 
     return _derive_find_mode_steps(record)
