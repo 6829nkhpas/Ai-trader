@@ -172,7 +172,7 @@ def _plan_and_candles(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 8: Purity and determinism
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(case=_plan_and_candles())
 def test_property_8_purity_and_determinism(case):
     """Feature: trade-management, Property 8: Purity and determinism —

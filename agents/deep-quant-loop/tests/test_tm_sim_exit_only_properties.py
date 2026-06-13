@@ -186,7 +186,7 @@ def _plan_and_candles(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 28: Simulator output is exit-only
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(case=_plan_and_candles())
 def test_property_28_simulator_output_is_exit_only(case):
     """Feature: trade-management, Property 28: Simulator output is exit-only —

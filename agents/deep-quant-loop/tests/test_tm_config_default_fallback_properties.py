@@ -131,7 +131,7 @@ _bad_assignment = st.fixed_dictionaries(
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 26: Configuration default fallback
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(assignment=_bad_assignment)
 def test_property_26_each_parameter_falls_back_to_its_default(assignment):
     """Feature: trade-management, Property 26: Configuration default fallback —

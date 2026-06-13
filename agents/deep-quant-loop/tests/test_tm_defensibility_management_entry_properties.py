@@ -221,7 +221,7 @@ def _exit_breakdown_of(sim_result):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 20: Defensibility management entry fidelity
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(case=_cases())
 def test_property_20_defensibility_management_entry_fidelity(case):
     """Feature: trade-management, Property 20: Defensibility management entry

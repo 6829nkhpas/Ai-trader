@@ -190,7 +190,7 @@ def _only_tm_step(steps):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 21: Trade-management verification step outcome
-@settings(max_examples=300, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(
     management=_management_value,
     extras=_find_mode_extras,

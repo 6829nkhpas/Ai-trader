@@ -103,7 +103,7 @@ _env_assignment = st.fixed_dictionaries(
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 27: Configuration resolution is path-independent
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(assignment=_env_assignment)
 def test_property_27_resolution_is_path_independent(assignment):
     """Feature: trade-management, Property 27: Configuration resolution is

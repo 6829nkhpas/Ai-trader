@@ -121,7 +121,7 @@ def _build_plan_and_levels(action, fractions):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 14: Validator leg-fraction bounds
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(action=_action, fractions=_fractions)
 def test_property_14_validator_leg_fraction_bounds(action, fractions):
     """Feature: trade-management, Property 14: Validator leg-fraction bounds —

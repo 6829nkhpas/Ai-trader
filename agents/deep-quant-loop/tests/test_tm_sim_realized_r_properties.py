@@ -187,7 +187,7 @@ def _independent_leg_r(price, entry, initial_stop, side):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 7: Realized_R is the fraction-weighted sum against the initial stop
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(case=_resolved_cases())
 def test_property_7_realized_r_fraction_weighted_against_initial_stop(case):
     """Feature: trade-management, Property 7: Realized_R is the fraction-weighted

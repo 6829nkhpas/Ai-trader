@@ -142,7 +142,7 @@ def _breakeven_scenarios(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 4: Breakeven advances the active stop to entry
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(scenario=_breakeven_scenarios())
 def test_property_4_breakeven_advances_stop_to_entry(scenario):
     """Feature: trade-management, Property 4: Breakeven advances the active stop

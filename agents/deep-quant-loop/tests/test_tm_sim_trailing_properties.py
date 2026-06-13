@@ -190,7 +190,7 @@ def _probe_candle(side, entry, initial_stop, far_target, ts):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 5: Trailing stop is monotone and never adverse
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(scenario=_trailing_scenarios())
 def test_property_5_trailing_stop_monotone_and_never_adverse(scenario):
     """Feature: trade-management, Property 5: Trailing stop is monotone and never

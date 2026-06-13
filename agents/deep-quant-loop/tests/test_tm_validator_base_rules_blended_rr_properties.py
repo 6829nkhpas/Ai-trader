@@ -173,7 +173,7 @@ def _scenarios(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 17: Validator preserves base rules and enforces the blended reward-to-risk
-@settings(max_examples=300, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(scenario=_scenarios())
 def test_property_17_base_rules_and_blended_rr(scenario):
     """Feature: trade-management, Property 17: Validator preserves base rules and

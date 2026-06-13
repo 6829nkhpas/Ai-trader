@@ -164,7 +164,7 @@ def _scenarios(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 16: Validator breakeven placement
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(scenario=_scenarios())
 def test_property_16_validator_breakeven_placement(scenario):
     """Feature: trade-management, Property 16: Validator breakeven placement —

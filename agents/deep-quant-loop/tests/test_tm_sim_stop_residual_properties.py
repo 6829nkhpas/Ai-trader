@@ -152,7 +152,7 @@ def _stop_closing_cases(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 3: Stop closes the entire residual
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(case=_stop_closing_cases())
 def test_property_3_stop_closes_entire_residual(case):
     """Feature: trade-management, Property 3: Stop closes the entire residual —

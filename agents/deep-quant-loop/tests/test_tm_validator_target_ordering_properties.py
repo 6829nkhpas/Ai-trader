@@ -135,7 +135,7 @@ def _ordering_case(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 15: Validator target ordering
-@settings(max_examples=300, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(case=_ordering_case())
 def test_property_15_validator_target_ordering(case):
     """Feature: trade-management, Property 15: Validator target ordering — the

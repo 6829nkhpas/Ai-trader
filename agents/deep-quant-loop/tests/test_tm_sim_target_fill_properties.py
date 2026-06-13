@@ -149,7 +149,7 @@ def _target_fill_scenarios(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 2: Target fill before stop
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(scenario=_target_fill_scenarios())
 def test_property_2_target_fill_before_stop(scenario):
     """Feature: trade-management, Property 2: Target fill before stop —

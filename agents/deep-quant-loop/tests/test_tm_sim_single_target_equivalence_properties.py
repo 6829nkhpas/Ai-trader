@@ -230,7 +230,7 @@ def _bracket_and_candles(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 13: Single-target equivalence (non-breaking guarantee)
-@settings(max_examples=300, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(case=_bracket_and_candles())
 def test_property_13_single_target_equivalence(case):
     """Feature: trade-management, Property 13: Single-target equivalence

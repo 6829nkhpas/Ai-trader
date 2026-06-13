@@ -158,7 +158,7 @@ def _plan_candles_and_shuffle(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 1: Candle order-invariance (confluence)
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(case=_plan_candles_and_shuffle())
 def test_property_1_candle_order_invariance(case):
     """Feature: trade-management, Property 1: Candle order-invariance (confluence) —

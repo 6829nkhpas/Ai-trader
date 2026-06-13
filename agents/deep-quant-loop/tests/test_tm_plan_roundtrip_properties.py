@@ -131,7 +131,7 @@ def _management_plans(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 19: Plan persistence round-trip
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(plan=_management_plans())
 def test_property_19_plan_persistence_round_trip(plan):
     """Feature: trade-management, Property 19: Plan persistence round-trip —

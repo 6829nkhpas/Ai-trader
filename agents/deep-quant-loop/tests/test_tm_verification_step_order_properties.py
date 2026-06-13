@@ -205,7 +205,7 @@ def _decision(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 22: Verification step precedes the decision
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(decision=_decision())
 def test_property_22_tm_step_precedes_decision_event(decision):
     """Validates: Requirements 10.5

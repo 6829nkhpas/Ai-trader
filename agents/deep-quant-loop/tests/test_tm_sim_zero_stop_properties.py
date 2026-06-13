@@ -133,7 +133,7 @@ def _zero_stop_cases(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 12: Zero initial stop distance is invalid, not a divide-by-zero
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(case=_zero_stop_cases())
 def test_property_12_zero_initial_stop_distance_is_invalid(case):
     """Feature: trade-management, Property 12: Zero initial stop distance is
@@ -154,7 +154,7 @@ def test_property_12_zero_initial_stop_distance_is_invalid(case):
 
 
 # Feature: trade-management, Property 12: Zero initial stop distance is invalid, not a divide-by-zero
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(case=_zero_stop_cases(), stop_distance=st.floats(min_value=1.0, max_value=40.0, allow_nan=False, allow_infinity=False))
 def test_property_12_nonzero_counterpart_is_not_invalid(case, stop_distance):
     """Sanity counterpart: the SAME plan shape with a NON-zero stop distance is

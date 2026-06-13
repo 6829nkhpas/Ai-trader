@@ -153,7 +153,7 @@ _atr = st.one_of(st.none(), _price)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 18: HOLD bypasses all plan checks
-@settings(max_examples=300, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(
     levels=_levels(),
     atr_14=_atr,

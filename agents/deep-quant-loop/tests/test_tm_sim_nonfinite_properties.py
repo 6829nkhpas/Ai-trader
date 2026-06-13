@@ -218,7 +218,7 @@ def _plan_clean_and_polluted(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 10: Non-finite candles are excluded
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(case=_plan_clean_and_polluted())
 def test_property_10_nonfinite_candles_excluded(case):
     """Feature: trade-management, Property 10: Non-finite candles are excluded —

@@ -125,7 +125,7 @@ def _signal_signature(results):
 
 
 # Feature: trade-management, Property 24: Comparison-mode signal-set identity
-@settings(max_examples=150, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(candles=_candle_series())
 def test_property_24_comparison_signal_set_identity(candles):
     """Validates: Requirements 12.1

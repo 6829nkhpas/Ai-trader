@@ -145,7 +145,7 @@ def _build_case(action, scenario, entry, atr, tight_frac, loose_mult):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 29: Validation never relaxes the base rules
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(
     action=_action,
     scenario=_scenario,

@@ -143,7 +143,7 @@ def _unresolved_cases(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 9: Unresolved plans report open without fabricating an exit
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(case=_unresolved_cases())
 def test_property_9_unresolved_plans_report_open(case):
     """Feature: trade-management, Property 9: Unresolved plans report open

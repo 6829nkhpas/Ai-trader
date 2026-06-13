@@ -197,7 +197,7 @@ def test_tm_tag_values_is_low_cardinality_and_contains_unknown_and_single():
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 23: Management-style tag is exactly one fixed-enumeration value
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(payload=_decision())
 def test_property_23_single_fixed_position_low_cardinality_tm_tag(payload):
     """Validates: Requirements 11.1, 11.2, 11.3

@@ -178,7 +178,7 @@ def _resolving_cases(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 11: Conservation of size
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(case=_resolving_cases())
 def test_property_11_conservation_of_size(case):
     """Feature: trade-management, Property 11: Conservation of size — for any

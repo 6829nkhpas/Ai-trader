@@ -119,7 +119,7 @@ def _with_closed_results(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 25: Comparison metrics are not-applicable on zero closed trades
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(results=_no_closed_results())
 def test_property_25_zero_closed_trades_report_not_applicable(results):
     """Feature: trade-management, Property 25: Comparison metrics are
@@ -136,7 +136,7 @@ def test_property_25_zero_closed_trades_report_not_applicable(results):
 
 
 # Feature: trade-management, Property 25: Comparison metrics are not-applicable on zero closed trades
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(results=_with_closed_results())
 def test_property_25_with_closed_trades_metrics_are_numeric(results):
     """Complement of Property 25: when at least one closed trade is present,

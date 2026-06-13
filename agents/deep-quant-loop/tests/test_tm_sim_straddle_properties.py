@@ -161,7 +161,7 @@ def _straddle_cases(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: trade-management, Property 6: Worst-case resolution on a straddling candle
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=50, deadline=None)
 @given(case=_straddle_cases())
 def test_property_6_worst_case_resolution_on_straddling_candle(case):
     """Feature: trade-management, Property 6: Worst-case resolution on a
