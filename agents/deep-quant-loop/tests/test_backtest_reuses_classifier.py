@@ -40,6 +40,7 @@ if _SVC_DIR not in sys.path:
     sys.path.insert(0, _SVC_DIR)
 
 import backtest  # noqa: E402
+import forecaster  # noqa: E402
 import regime  # noqa: E402
 from backtest import BacktestConfig, generate_and_score  # noqa: E402
 
@@ -90,20 +91,44 @@ def test_generate_and_score_delegates_to_regime_classifier(monkeypatch):
 
     real_resolve = regime.resolve_regime_config
     real_classify = regime.classify_regime
+    real_forecast = forecaster.forecast
+
+    # The Volatility_Aware_Forecaster ALSO (legitimately) delegates to the shared
+    # regime module — ``forecaster.forecast`` resolves config and classifies the
+    # trend state through the very same ``regime.resolve_regime_config`` /
+    # ``regime.classify_regime`` (its single source of truth for the regime math).
+    # To keep this test's claim focused on the BACKTEST's own delegation — that
+    # ``generate_and_score`` resolves the thresholds itself exactly once per run
+    # rather than reimplementing the regime math — we ignore resolutions that
+    # occur while we are inside ``forecaster.forecast`` (those belong to the
+    # forecaster's own reuse, not the backtest's).
+    in_forecast = {"depth": 0}
 
     def resolve_spy(*args, **kwargs):
-        resolve_calls["n"] += 1
+        if in_forecast["depth"] == 0:
+            resolve_calls["n"] += 1
         return real_resolve(*args, **kwargs)
 
     def classify_spy(candles, *args, **kwargs):
-        classify_calls["n"] += 1
-        classify_calls["slice_lengths"].append(len(candles))
+        if in_forecast["depth"] == 0:
+            classify_calls["n"] += 1
+            classify_calls["slice_lengths"].append(len(candles))
         return real_classify(candles, *args, **kwargs)
 
+    def forecast_spy(*args, **kwargs):
+        in_forecast["depth"] += 1
+        try:
+            return real_forecast(*args, **kwargs)
+        finally:
+            in_forecast["depth"] -= 1
+
     # Patch on the regime module; backtest references them as regime.<name>,
-    # so patching the module attribute exercises the real delegation path.
+    # so patching the module attribute exercises the real delegation path. The
+    # forecaster is wrapped only to attribute its (legitimate) regime reuse to
+    # itself, so the counts above reflect the backtest's direct delegation alone.
     monkeypatch.setattr(regime, "resolve_regime_config", resolve_spy)
     monkeypatch.setattr(regime, "classify_regime", classify_spy)
+    monkeypatch.setattr(forecaster, "forecast", forecast_spy)
 
     cfg = BacktestConfig(lookback=40)
     candles = _make_signal_producing_candles()
