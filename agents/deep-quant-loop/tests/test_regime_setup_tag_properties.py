@@ -202,32 +202,39 @@ def test_property_23_single_fixed_position_low_cardinality_regime_tag(payload):
 
     # ── Fixed position: the regime tag sits immediately after the ``va:`` tag
     # (R9.1). The relative-strength dimension (relative-strength-context) appends
-    # exactly one rs: tag immediately AFTER the regime tag, so the regime tag is
-    # the second-to-last tag (the rs: tag is last) rather than the last tag.
+    # exactly one rs: tag immediately AFTER the regime tag, and the
+    # volatility-aware-forecaster dimension appends exactly one fc: tag at the
+    # very END (after the rs: tag). The deterministic tag order is therefore:
+    # dir:, macro:, pred:, va:, regime:, rs:, fc: — so the fc: tag is LAST.
     regime_index = tags.index(regime_tags[0])
     assert tags[regime_index - 1].startswith("va:")
     rs_tags = [t for t in tags if t.startswith("rs:")]
+    fc_tags = [t for t in tags if t.startswith("fc:")]
+    # derive_setup_tags always appends an fc: tag, so it is non-empty and last.
+    assert fc_tags
+    assert tags[-1] == fc_tags[0]
     if rs_tags:
-        # When the relative-strength tag is present it follows the regime tag and
-        # is last; the regime tag is therefore second-to-last.
+        # When the relative-strength tag is present it immediately follows the
+        # regime tag (the fc: tag follows the rs: tag and is last).
         assert tags[regime_index + 1] == rs_tags[0]
-        assert tags[-1] == rs_tags[0]
-        assert tags[-2] == regime_tags[0]
     else:
-        # Without the relative-strength dimension the regime tag remains last.
-        assert tags[-1] == regime_tags[0]
+        # Without the relative-strength dimension the regime tag is immediately
+        # followed by the fc: tag (regime then fc when rs absent).
+        assert tags[regime_index + 1] == fc_tags[0]
 
     # ── Determinism: identical inputs -> identical tag list and setup_key (R9.1) ─
     tags_again = derive_setup_tags(decision)
     assert tags_again == tags
     assert setup_key_from_tags(tags_again) == setup_key_from_tags(tags)
-    # The regime value occupies a fixed deterministic slot in setup_key: it is
-    # the last component when no relative-strength tag is present, or the
-    # second-to-last (immediately before the rs: component) when it is.
+    # The regime value occupies a fixed deterministic slot in setup_key: the
+    # fc: component is always last; when a relative-strength tag is present it is
+    # the second-to-last component (immediately after the regime component).
     key = setup_key_from_tags(tags)
     key_parts = key.split("|")
+    assert key_parts[-1] == fc_tags[0]
     if rs_tags:
-        assert key_parts[-1] == rs_tags[0]
-        assert key_parts[-2] == regime_tags[0]
+        assert key_parts[-2] == rs_tags[0]
+        # The regime tag precedes the rs tag.
+        assert key_parts.index(regime_tags[0]) < key_parts.index(rs_tags[0])
     else:
-        assert key_parts[-1] == regime_tags[0]
+        assert key_parts[-2] == regime_tags[0]

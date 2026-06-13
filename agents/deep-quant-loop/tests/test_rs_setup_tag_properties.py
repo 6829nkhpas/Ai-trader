@@ -231,16 +231,26 @@ def test_property_25_single_fixed_position_low_cardinality_rs_tag(payload):
     # ── Missing/unavailable/unrecognized -> rs:unknown; valid -> mapped (R10.2) ─
     assert value == expected_value
 
-    # ── Fixed position: rs tag is LAST, immediately after the ``regime:`` tag (R10.1) ─
-    assert tags[-1] == rs_tags[0]
-    assert tags[-1].startswith("rs:")
+    # ── Fixed position: rs tag sits immediately after the ``regime:`` tag and
+    #    immediately before the single ``fc:`` tag, making it the SECOND-TO-LAST
+    #    tag (the ``fc:`` tag is now last) (R10.1) ─────────────────────────────
+    rs_index = tags.index(rs_tags[0])
     # The tag immediately before the rs tag is the regime tag.
-    assert tags[-2].startswith("regime:")
+    assert tags[rs_index - 1].startswith("regime:")
+    # The tag immediately after the rs tag is the single forecast (fc:) tag.
+    fc_tags = [t for t in tags if t.startswith("fc:")]
+    assert fc_tags and tags[rs_index + 1] == fc_tags[0]
+    # The fc: tag is last; the rs: tag is second-to-last.
+    assert tags[-1] == fc_tags[0]
+    assert tags[-2] == rs_tags[0]
 
     # ── Determinism: identical inputs -> identical tag list and setup_key (R10.1) ─
     tags_again = derive_setup_tags(decision)
     assert tags_again == tags
     assert setup_key_from_tags(tags_again) == setup_key_from_tags(tags)
-    # The rs value occupies the same (last) deterministic slot in setup_key.
+    # The rs value occupies the same (second-to-last) deterministic slot in
+    # setup_key, immediately before the fc: tag (last slot).
     key = setup_key_from_tags(tags)
-    assert key.split("|")[-1] == rs_tags[0]
+    key_parts = key.split("|")
+    assert key_parts[-1] == fc_tags[0]
+    assert key_parts[-2] == rs_tags[0]
