@@ -158,10 +158,16 @@ def test_favorable_find_mode_run_threads_regime_through_all_layers():
     # ── Layer 3: journal setup fingerprint carries the regime tag (R9.1) ─────
     tags = journal.derive_setup_tags(decision)
     assert "regime:trend-favorable" in tags
-    # Exactly one regime tag, at the fixed final position (low-cardinality, R9.1).
+    # Exactly one regime tag, at its fixed position (low-cardinality, R9.1). The
+    # relative-strength dimension (relative-strength-context) appends exactly one
+    # rs: tag immediately AFTER the regime tag, so the regime tag is now the
+    # second-to-last tag rather than the last.
     regime_tags = [t for t in tags if t.startswith("regime:")]
     assert regime_tags == ["regime:trend-favorable"]
-    assert tags[-1] == "regime:trend-favorable"
+    rs_tags = [t for t in tags if t.startswith("rs:")]
+    assert len(rs_tags) == 1
+    assert tags[-1] == rs_tags[0]
+    assert tags[-2] == "regime:trend-favorable"
 
 
 # ── Req 6.4: prompt-level setup_validation disclosure instruction ────────────

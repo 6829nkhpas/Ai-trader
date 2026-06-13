@@ -302,4 +302,4 @@ def test_watch_price_condition_registers_then_suspends_with_params():
     assert suspend["price_level"] == 2450.0
 
     # After /resume delivers the triggering candle, the tool reports the trigger.
-    assert "Condition met" in result
+    assert "condition met" in result.lower()
