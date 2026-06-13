@@ -173,7 +173,11 @@ def test_aligned_find_mode_run_threads_relative_strength_through_all_layers():
     # Exactly one relative-strength tag, at the fixed final position.
     rs_tags = [t for t in tags if t.startswith("rs:")]
     assert rs_tags == ["rs:leader-aligned"]
-    assert tags[-1] == "rs:leader-aligned"
+    # The forecaster appends exactly one trailing ``fc:`` tag after the ``rs:``
+    # tag, so the rs: tag is now second-to-last and ``fc:`` is last. This
+    # decision carries no forecast entry, so the trailing tag is ``fc:unknown``.
+    assert tags[-1] == "fc:unknown"
+    assert tags[-2] == "rs:leader-aligned"
 
 
 # ── Req 7.4: prompt-level setup_validation disclosure instruction ────────────
