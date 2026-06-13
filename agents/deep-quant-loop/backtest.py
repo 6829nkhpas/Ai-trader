@@ -42,6 +42,7 @@ import httpx
 
 import journal
 import regime
+import rs
 # Reuse the AUTHORITATIVE volume-profile math and EMA helper so seeded levels
 # match what the live agent and the UI compute.
 from tools import _compute_volume_profile, calculate_ema
@@ -74,6 +75,7 @@ class BacktestConfig:
     value_area_percent: float = 70.0
     record_unresolved: bool = False  # skip trades that never hit stop/target
     regime_gate_enabled: bool = False  # with-gate run drops unfavorable signals (gate logic: task 13.2)
+    rs_filter_enabled: bool = False  # with-filter run drops misaligned signals (filter logic: task 13.2)
 
 
 def _is_num(v) -> bool:
@@ -266,6 +268,66 @@ def _regime_defensibility_entry(regime_result: Optional[dict]) -> dict:
     return entry
 
 
+def _relative_strength_defensibility_entry(rs_result: Optional[dict]) -> dict:
+    """Map a ``rs.classify_relative_strength`` result to the defensibility entry.
+
+    Mirrors the shape ``graph._relative_strength_entry`` writes and
+    ``journal._relative_strength_tag`` reads, so seeded trades are tagged
+    identically to live LLM decisions:
+
+      * a usable Relative_Strength_Label -> ``{"available": True, index_direction,
+        relative_strength_state, alignment, measures, benchmark,
+        [symbol/timeframe/aligned_candles]}`` — copied VERBATIM from the
+        classifier output (no inference, R8.2/R11.3).
+      * an Unavailable_Marker / non-dict / label missing any categorical state ->
+        ``{"available": False, "reason": ...}`` with NO fabricated states
+        (R5.3/AD-4); a signal so labelled is RETAINED by the with-filter run and
+        tagged ``rs:unknown`` by the journal (R11.6).
+    """
+    if not isinstance(rs_result, dict):
+        return {"available": False, "reason": "no relative-strength result"}
+    # Honest Unavailable_Marker from the calculator — never fabricate states.
+    if rs_result.get("unavailable") is True:
+        return {"available": False, "reason": rs_result.get("reason") or "relative strength unavailable"}
+
+    index_direction = rs_result.get("index_direction")
+    relative_strength_state = rs_result.get("relative_strength_state")
+    alignment = rs_result.get("alignment")
+    if index_direction is None or relative_strength_state is None or alignment is None:
+        return {"available": False, "reason": "no usable relative-strength label"}
+
+    src_measures = rs_result.get("measures")
+    measures = dict(src_measures) if isinstance(src_measures, dict) else {}
+    entry = {
+        "available": True,
+        "index_direction": index_direction,
+        "relative_strength_state": relative_strength_state,
+        "alignment": alignment,
+        "measures": measures,
+    }
+    for k in ("benchmark", "symbol", "timeframe", "aligned_candles"):
+        if k in rs_result:
+            entry[k] = rs_result[k]
+    return entry
+
+
+def _candles_at_or_before(candle_series: Optional[List[dict]], cutoff_ts) -> List[dict]:
+    """Point-in-time slice: rows whose ``timestamp_ms`` is at or before ``cutoff_ts``.
+
+    Used to slice the BENCHMARK series look-ahead-free against a signal candle's
+    timestamp (R11.1): the benchmark is a SEPARATE series from the symbol, so it
+    cannot be index-sliced like ``candles[:i+1]`` and must be filtered by
+    timestamp instead. Returns an empty list for a missing series or a
+    non-numeric cutoff; never raises.
+    """
+    if not isinstance(candle_series, list) or not _is_num(cutoff_ts):
+        return []
+    return [
+        c for c in candle_series
+        if isinstance(c, dict) and _is_num(c.get("timestamp_ms")) and c["timestamp_ms"] <= cutoff_ts
+    ]
+
+
 def _signal_is_unfavorable(decision: dict) -> bool:
     """Return True only when the signal carries an AVAILABLE ``unfavorable`` label.
 
@@ -278,6 +340,21 @@ def _signal_is_unfavorable(decision: dict) -> bool:
     """
     regime_entry = decision.get("defensibility", {}).get("regime") or {}
     return regime_entry.get("available") is True and regime_entry.get("favorability") == "unfavorable"
+
+
+def _signal_is_misaligned(decision: dict) -> bool:
+    """Return True only when the signal carries an AVAILABLE ``misaligned`` label.
+
+    This is the with-filter drop predicate (R11.2): a directional signal whose
+    relative-strength Alignment is the available label ``misaligned`` for its
+    direction is dropped. A signal whose relative strength is an
+    Unavailable_Marker is reported as ``{"available": False, ...}`` by
+    ``_relative_strength_defensibility_entry`` and is RETAINED — never excluded on
+    the basis of relative strength being unavailable (R11.6). ``aligned`` and
+    ``neutral`` signals are likewise retained.
+    """
+    rs_entry = decision.get("defensibility", {}).get("relative_strength") or {}
+    return rs_entry.get("available") is True and rs_entry.get("alignment") == "misaligned"
 
 
 # ── Scoring against future candles (mirrors journal._score_one) ───────────────
@@ -324,11 +401,20 @@ def _score_signal(decision: dict, future: List[dict], cfg: BacktestConfig):
 # ── Orchestration ─────────────────────────────────────────────────────────────
 
 def generate_and_score(candles: List[dict], symbol: str, timeframe: str,
-                       cfg: BacktestConfig) -> List[dict]:
+                       cfg: BacktestConfig,
+                       benchmark_candles: Optional[List[dict]] = None,
+                       benchmark: Optional[str] = None) -> List[dict]:
     """Walk the candle history, emit rule-based signals, and score each one.
 
     Returns a list of result records: {decision, status, outcome_price,
     outcome_at, r_multiple}. Pure given the candle data (no DB / network).
+
+    ``benchmark_candles`` is the Benchmark_Index series for the run (resolved once
+    by the caller, e.g. ``seed``, via ``_resolve_candles`` for the benchmark
+    symbol/timeframe). When omitted, relative strength degrades to an honest
+    Unavailable_Marker for every signal (no benchmark to compare against) and the
+    seeded trades are tagged ``rs:unknown`` — the without-data behaviour stays
+    unchanged.
     """
     results: List[dict] = []
     n = len(candles)
@@ -339,6 +425,14 @@ def generate_and_score(candles: List[dict], symbol: str, timeframe: str,
     # get_market_regime tool uses (R10.5, R11.6) — the seeder never reimplements
     # the regime math.
     regime_config = regime.resolve_regime_config()
+
+    # Resolve the relative-strength parameters ONCE, reusing the SAME resolver the
+    # live get_relative_strength tool uses (R11.5, R12.6) — the seeder never
+    # reimplements the relative-strength math. The Benchmark_Index is likewise
+    # resolved once per run (R11.1).
+    rs_config = rs.resolve_rs_config()
+    if benchmark is None:
+        benchmark = rs.resolve_benchmark(symbol)
 
     cooldown_until = -1
     for i in range(cfg.lookback - 1, n - 1):
@@ -362,6 +456,26 @@ def generate_and_score(candles: List[dict], symbol: str, timeframe: str,
         # tag it (R10.3); shape mirrors graph._regime_entry.
         decision.setdefault("defensibility", {})["regime"] = _regime_defensibility_entry(regime_result)
 
+        # Classify the signal's relative strength look-ahead-free (R11.1). Both
+        # series are sliced to timestamps AT OR BEFORE the signal candle's
+        # timestamp: the symbol series is index-sliced ``candles[:i+1]`` (already
+        # point-in-time, ascending), and the SEPARATE benchmark series is filtered
+        # by ``timestamp_ms <= signal ts`` since it cannot be index-aligned. The
+        # signal's direction (BUY/SELL) is passed as ``proposed_direction``. The
+        # SAME calculator as the live tool path produces the label (R11.5);
+        # ``classify_relative_strength`` time-aligns the two windows internally.
+        symbol_window = candles[: i + 1]
+        benchmark_window = _candles_at_or_before(benchmark_candles, ts)
+        rs_result = rs.classify_relative_strength(
+            symbol_window, benchmark_window, rs_config,
+            proposed_direction=decision.get("action"),
+            symbol=symbol, benchmark=benchmark, timeframe=timeframe,
+        )
+        # Label the seeded trade with its Relative_Strength_Label so
+        # journal._relative_strength_tag can tag it (R11.3); shape mirrors
+        # graph._relative_strength_entry.
+        decision["defensibility"]["relative_strength"] = _relative_strength_defensibility_entry(rs_result)
+
         scored = _score_signal(decision, candles[i + 1:], cfg)
         if scored is None:
             continue
@@ -377,7 +491,18 @@ def generate_and_score(candles: List[dict], symbol: str, timeframe: str,
         # and its seeded set is a strict SUBSET of the without-gate set (R10.4).
         gated_out = cfg.regime_gate_enabled and _signal_is_unfavorable(decision)
 
-        if gated_out or (status == "expired" and not cfg.record_unresolved):
+        # ── Relative-strength filter (with-filter run only) ──────────────────
+        # When the filter is enabled, DROP a signal whose relative-strength
+        # Alignment is an AVAILABLE "misaligned" label for its direction (R11.2).
+        # Signals whose relative strength is an Unavailable_Marker are RETAINED —
+        # never excluded on the basis of relative strength being unavailable
+        # (R11.6) — as are aligned/neutral signals. The drop advances the cooldown
+        # exactly as a taken signal would, mirroring the regime gate, so the
+        # with-filter run walks the IDENTICAL history/rules as the without-filter
+        # run and its seeded set is a strict SUBSET of the without-filter set.
+        filtered_out = cfg.rs_filter_enabled and _signal_is_misaligned(decision)
+
+        if gated_out or filtered_out or (status == "expired" and not cfg.record_unresolved):
             cooldown_until = i + cfg.cooldown_bars
             continue
         results.append({
@@ -470,6 +595,27 @@ def _resolve_candles(symbol: str, timeframe: str, limit: int, source: str) -> Li
         return _fetch_candles(symbol, timeframe, limit)
 
 
+def _resolve_benchmark_candles(benchmark: str, timeframe: str, limit: int,
+                               source: str) -> Optional[List[dict]]:
+    """Resolve the Benchmark_Index candle series for a run.
+
+    Mirrors how the symbol candles are resolved (``_resolve_candles`` for the
+    benchmark symbol / same timeframe / same limit), so the relative-strength
+    calculator compares like-for-like windows. Degrades to ``None`` on any
+    retrieval failure (e.g. no history loaded for the benchmark) so the run still
+    proceeds — relative strength then reports an honest Unavailable_Marker for
+    every signal rather than aborting the seeding (R11.6, AD-4). Never raises.
+    """
+    if not isinstance(benchmark, str) or not benchmark.strip():
+        return None
+    try:
+        return _resolve_candles(benchmark.strip(), timeframe, limit, source)
+    except Exception as e:  # benchmark history may be absent — non-fatal.
+        print(f"[Backtest_Seeder] benchmark candles for {benchmark!r} unavailable "
+              f"({e}); relative strength will be reported as unavailable.")
+        return None
+
+
 def _load_candles_file(path: str) -> List[dict]:
     with open(path, "r", encoding="utf-8") as fh:
         data = json.load(fh)
@@ -492,7 +638,15 @@ def seed(symbol: str, timeframe: str, limit: int = 3000,
     if candles is None:
         candles = _resolve_candles(symbol, timeframe, limit, source)
 
-    results = generate_and_score(candles, symbol, timeframe, cfg)
+    # Resolve the Benchmark_Index and its candle series once for the run so each
+    # signal's relative strength is classified look-ahead-free against it (R11.1).
+    benchmark = rs.resolve_benchmark(symbol)
+    benchmark_candles = _resolve_benchmark_candles(benchmark, timeframe, limit, source)
+
+    results = generate_and_score(
+        candles, symbol, timeframe, cfg,
+        benchmark_candles=benchmark_candles, benchmark=benchmark,
+    )
     wins = sum(1 for r in results if r["status"] == "win")
     losses = sum(1 for r in results if r["status"] == "loss")
     expired = sum(1 for r in results if r["status"] == "expired")
@@ -597,6 +751,70 @@ def compare(symbol: str, timeframe: str, limit: int = 3000,
         "candles": len(candles),
         "with_gate": {"signals_scored": len(with_gate), **_run_metrics(with_gate)},
         "without_gate": {"signals_scored": len(without_gate), **_run_metrics(without_gate)},
+    }
+
+
+# ── With-filter / without-filter comparison (R11.2, R11.4, R11.6, R11.7) ─────
+
+def compare_relative_strength(symbol: str, timeframe: str, limit: int = 3000,
+                              candles: Optional[List[dict]] = None,
+                              benchmark_candles: Optional[List[dict]] = None,
+                              cfg: Optional[BacktestConfig] = None,
+                              benchmark: Optional[str] = None,
+                              source: str = "auto") -> dict:
+    """Run the backtest WITH and WITHOUT the relative-strength filter and compare (R11.4).
+
+    Both runs use the IDENTICAL candle history, the IDENTICAL Benchmark_Index
+    series, and IDENTICAL setup rules — only ``rs_filter_enabled`` differs — so
+    the two runs are directly comparable and the with-filter seeded set is a
+    strict subset of the without-filter set. The filter only removes signals whose
+    relative-strength Alignment is the available ``misaligned`` label for their
+    direction; signals whose relative strength is an Unavailable_Marker are
+    RETAINED — never excluded on the basis of relative strength being unavailable
+    (R11.2, R11.6).
+
+    The Benchmark_Index and its candle series are resolved ONCE for the run (or
+    supplied by the caller) so both runs classify relative strength look-ahead-free
+    against the identical benchmark window (R11.1, R11.5). When no benchmark candle
+    series is available, relative strength degrades to an honest Unavailable_Marker
+    for every signal and the with-filter run retains all signals.
+
+    Returns a summary reporting, for EACH run, the win-rate (winning closed /
+    closed) and expectancy (mean realized R per closed trade), with ``"n/a"`` when
+    a run produced zero closed trades (R11.7). Pure given ``candles`` /
+    ``benchmark_candles`` — no journal writes are performed.
+    """
+    base = cfg or BacktestConfig()
+    if candles is None:
+        candles = _resolve_candles(symbol, timeframe, limit, source)
+
+    # Resolve the Benchmark_Index and its candles ONCE so BOTH runs classify
+    # relative strength against the IDENTICAL benchmark window (R11.1).
+    if benchmark is None:
+        benchmark = rs.resolve_benchmark(symbol)
+    if benchmark_candles is None:
+        benchmark_candles = _resolve_benchmark_candles(benchmark, timeframe, limit, source)
+
+    # Identical history + identical rules; the filter flag is the ONLY difference.
+    filtered_cfg = replace(base, rs_filter_enabled=True)
+    unfiltered_cfg = replace(base, rs_filter_enabled=False)
+
+    with_filter = generate_and_score(
+        candles, symbol, timeframe, filtered_cfg,
+        benchmark_candles=benchmark_candles, benchmark=benchmark,
+    )
+    without_filter = generate_and_score(
+        candles, symbol, timeframe, unfiltered_cfg,
+        benchmark_candles=benchmark_candles, benchmark=benchmark,
+    )
+
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "candles": len(candles),
+        "benchmark": benchmark,
+        "with_filter": {"signals_scored": len(with_filter), **_run_metrics(with_filter)},
+        "without_filter": {"signals_scored": len(without_filter), **_run_metrics(without_filter)},
     }
 
 

@@ -158,6 +158,65 @@ def _regime_tag(decision: dict) -> str:
         return "unknown"
 
 
+# Fixed, low-cardinality relative-strength enumeration for the setup fingerprint
+# (R10.3). The journal collapses the (Relative_Strength_State x Alignment) space
+# into this small set so the relative-strength-extended ``setup_key`` stays
+# groupable and individual setups can accumulate enough scored trades to clear
+# LOW_SAMPLE_THRESHOLD. At most 8 distinct values including ``unknown``.
+RS_TAG_VALUES = {
+    "leader-aligned", "leader-misaligned",
+    "laggard-aligned", "laggard-misaligned",
+    "inline-neutral", "aligned", "misaligned",
+    "unknown",
+}
+
+_RS_STATES = {"leader", "inline", "laggard"}
+_RS_ALIGNMENTS = {"aligned", "misaligned", "neutral"}
+
+
+def _relative_strength_tag(decision: dict) -> str:
+    """Collapse the decision's relative strength into one fixed enumeration value.
+
+    Reads the relative-strength entry recorded in the defensibility record
+    (``decision['defensibility']['relative_strength']``) and maps
+    (Relative_Strength_State x Alignment) to one of ``RS_TAG_VALUES``:
+      * the directional pairings ``leader``/``laggard`` x ``aligned``/``misaligned``
+        collapse to ``<state>-<alignment>``
+      * an ``inline`` state with a ``neutral`` Alignment collapses to ``inline-neutral``
+      * the residual combinations (``inline`` x directional) collapse to the bare
+        Alignment value (``aligned``/``misaligned``)
+
+    Any missing/unavailable relative-strength entry, empty value, or unrecognized
+    combination collapses to ``unknown`` (R10.2). Returns the bare value (caller
+    prefixes ``rs:``). Never raises.
+    """
+    try:
+        d = decision or {}
+        deff = d.get("defensibility") or {}
+        rs = deff.get("relative_strength")
+        if not isinstance(rs, dict):
+            return "unknown"
+        # An explicitly unavailable relative-strength entry carries no states.
+        if rs.get("available") is False:
+            return "unknown"
+        state = str(rs.get("relative_strength_state") or "").strip().lower()
+        alignment = str(rs.get("alignment") or "").strip().lower()
+        if state not in _RS_STATES or alignment not in _RS_ALIGNMENTS:
+            return "unknown"
+        # Directional pairings (leader/laggard x aligned/misaligned) and the
+        # inline-neutral pairing collapse to ``<state>-<alignment>`` directly.
+        value = f"{state}-{alignment}"
+        if value in RS_TAG_VALUES:
+            return value
+        # Residual combinations collapse to the bare Alignment (aligned/misaligned);
+        # anything else (e.g. a leader/laggard neutral) collapses to ``unknown``.
+        if alignment in RS_TAG_VALUES:
+            return alignment
+        return "unknown"
+    except Exception:
+        return "unknown"
+
+
 def derive_setup_tags(decision: dict) -> list:
     """Derive a coarse, groupable setup fingerprint from a committed decision.
 
@@ -173,6 +232,12 @@ def derive_setup_tags(decision: dict) -> list:
                     collapsed from the regime recorded in the defensibility
                     record; appended last at a FIXED position so ``setup_key``
                     stays deterministic and low-cardinality.
+      * relative-strength (leader/laggard x aligned/misaligned, inline-neutral,
+                    bare aligned/misaligned, or unknown) collapsed from the
+                    relative-strength entry recorded in the defensibility
+                    record; appended last at a FIXED position (after the
+                    ``regime:`` tag) so ``setup_key`` stays deterministic and
+                    low-cardinality.
     """
     d = decision or {}
     deff = d.get("defensibility") or {}
@@ -210,6 +275,11 @@ def derive_setup_tags(decision: dict) -> list:
     # Regime dimension — appended last at a FIXED position (after ``va:``) so the
     # resulting ``setup_key`` is deterministic for identical inputs (R9.1).
     tags.append("regime:" + _regime_tag(decision))
+
+    # Relative-strength dimension — appended at a FIXED position immediately
+    # after the ``regime:`` tag so the resulting ``setup_key`` is deterministic
+    # for identical inputs and stays low-cardinality (R10.1, R10.3).
+    tags.append("rs:" + _relative_strength_tag(decision))
 
     return tags
 

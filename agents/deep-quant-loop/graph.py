@@ -85,6 +85,7 @@ from tools import (
     get_prediction,
     get_trade_performance,
     get_market_regime,
+    get_relative_strength,
     watch_price_condition,
     declare_trade,
     # Regime_Label enum sets — reused to recognise a usable get_market_regime
@@ -93,6 +94,13 @@ from tools import (
     REGIME_VOLATILITY_STATES,
     REGIME_FAVORABILITY,
     _REGIME_MEASURE_FIELDS,
+    # Relative_Strength_Label enum sets — reused to recognise a usable
+    # get_relative_strength label (vs an Unavailable_Marker) when building the
+    # defensibility record.
+    INDEX_DIRECTIONS,
+    RELATIVE_STRENGTH_STATES,
+    ALIGNMENT_VALUES,
+    _RS_MEASURE_FIELDS,
 )
 
 # Trade_Journal — measurement & feedback loop (Phase 2). Records every committed
@@ -159,6 +167,11 @@ You must follow this exact loop until a perfect setup is found or registered:
    - volatility_state (low / normal / high) — the realized-volatility state,
    - favorability (favorable / unfavorable / neutral) — whether this regime favors trend/momentum setups.
    Use favorability as a calibration filter, NOT a trade generator: a `favorable` regime does NOT force a trade, and the regime never blocks or overrides your decision. If the regime is unavailable (insufficient data / unavailable marker), treat it as a missing optional input — note it as unavailable and proceed with the remaining analysis; do NOT fabricate a regime and do NOT abort the decision on that basis.
+2c. RELATIVE STRENGTH & INDEX CONTEXT: Call `get_relative_strength` with the analyzed symbol and the SAME timeframe currently under analysis to measure how the symbol is behaving versus its benchmark index. The result reports:
+   - index_direction (up / down / flat) — the benchmark index's own trend,
+   - relative_strength_state (leader / inline / laggard) — whether the symbol is outperforming or underperforming its benchmark,
+   - alignment (aligned / misaligned / neutral) — whether a proposed trade direction agrees with the index direction and relative strength.
+   The veteran principle: trade the strongest names WITH the market — never fight the index, never buy a laggard in a falling market or short a leader in a rising one. Use relative strength as a calibration filter, NOT a trade generator: it never forces, blocks, or overrides your decision. If relative strength is unavailable (missing benchmark / insufficient data / unavailable marker), treat it as a missing optional input — note it as unavailable and proceed with the remaining analysis; do NOT fabricate it and do NOT abort the decision on that basis.
 3. KEY LEVELS: Call `get_support_resistance` with the timeframe you're analyzing (e.g., '15m' for intraday).
    For intraday timeframes it returns BOTH micro S/R levels (from that timeframe's candles) AND daily macro levels.
    It also includes the Opening Range (first 3 candles) high/low — a key intraday reference.
@@ -203,6 +216,7 @@ Ask yourself:
 - Does volume flow (OBV, CMF) confirm my direction?
 - What does my TRACK RECORD say? Have I checked `get_trade_performance` for this setup type? If a comparable setup has negative expectancy or a win rate too low for its R:R (and the sample is not tiny), I must scrap or downgrade this trade.
 - WHAT IS THE MARKET REGIME? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `favorability` from `get_market_regime`. If the favorability is `unfavorable` for the proposed setup type (e.g. a trend/momentum entry in a ranging or volatility-extreme regime), you MUST take exactly one of these actions: lower your conviction_score, wait for a better setup (e.g. via `watch_price_condition`), or HOLD. If the regime is unavailable, note it as unavailable and proceed — do NOT block the trade solely because the regime could not be computed.
+- AM I FIGHTING THE INDEX? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `index_direction` and `relative_strength_state` for `alignment` from `get_relative_strength`. If the alignment is `misaligned` (for example a BUY in a `laggard` against a `down` index, or a SELL in a `leader` against an `up` index), you MUST take exactly one of these actions: lower your conviction_score, wait for a better setup (e.g. via `watch_price_condition`), or HOLD. If relative strength is unavailable, note it as unavailable and proceed — do NOT block the trade solely because relative strength could not be computed.
 If the answer to ANY of the first 3 checks is YES, you must scrap the trade. You must either analyze a different timeframe to find a better entry, or call `watch_price_condition` to wait for a safer pullback. 
 ONLY call `declare_trade` if you are 100% confident you could defend this trade against rigorous critique.
 For a BUY or SELL you MUST pass the numeric `entry`, `stop_loss`, and `take_profit` arguments to `declare_trade` (and `atr_14` from the consensus report). The Trade_Validator rejects directional trades that omit these or that fail Risk:Reward >= 1:2 / stop >= 1.5x ATR; if rejected, revise the levels and call `declare_trade` again. A HOLD may omit the numeric levels.
@@ -216,6 +230,7 @@ Your `setup_validation` is the defensibility record for the trade and MUST expli
 - VOLUME PROFILE: State where the entry sits relative to the auction structure from `get_volume_profile` (POC / VAH / VAL and whether price is above/inside/below value), and which HVN/LVN levels back the stop and target.
 - TRACK RECORD: State the realized stat from `get_trade_performance` that informed your conviction (e.g., "This BUY-aligned-above-value setup is 7/10 with +1.3R expectancy" or "downgraded: comparable setup is -0.4R over 14 trades"). If low_sample, say so.
 - MARKET REGIME: State the Trend_State, the Volatility_State, and the Favorability taken from the `get_market_regime` result (e.g., "Regime: trending / normal vol / favorable"). If the favorability was unfavorable, state how you responded (lowered conviction / waited / HOLD). If the regime was unavailable, state that it was unavailable and that you proceeded without it.
+- RELATIVE STRENGTH: State the Index_Direction, the Relative_Strength_State, and the Alignment taken from the `get_relative_strength` result (e.g., "Relative strength: up index / leader / aligned"). If the alignment was misaligned, state how you responded (lowered conviction / waited / HOLD). If relative strength was unavailable, state that it was unavailable and that you proceeded without it.
 Always include the multi-timeframe bias, the key S/R levels used, the volatility (ATR) basis for the stop, and the Risk:Reward ratio in your setup_validation.
 </setup_validation_disclosure>
 
@@ -249,6 +264,7 @@ Your job is to verify this trade using the EXACT same <self_verification_protoco
 1. Call `get_multi_tf_trend` and `get_consensus_report`.
 2. Check the R:R ratio. Check if the SL is placed safely beyond live volatility bands. Check macro alignment. Cross-check the entry against the Volume Profile (`get_volume_profile`) and the realized track record for this setup type (`get_trade_performance`).
 2b. Consult `get_market_regime` for the symbol and timeframe while verifying. If the user-proposed trade is a directional (BUY/SELL) trade being taken in an `unfavorable` regime, you MUST include an explicit warning statement in your verification output that the proposed trade is being taken in an unfavorable market regime (state the trend_state, volatility_state, and favorability). If the regime is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because the regime could not be computed.
+2c. Consult `get_relative_strength` for the symbol and timeframe while verifying. If the user-proposed trade is a directional (BUY/SELL) trade that is `misaligned` with the index/relative-strength context (for example a BUY in a `laggard` against a `down` index, or a SELL in a `leader` against an `up` index), you MUST include an explicit warning statement in your verification output that the proposed trade fights the index / trades a laggard against its benchmark (state the index_direction, relative_strength_state, and alignment). If relative strength is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because relative strength could not be computed.
 3. Do not invent red flags if the trade is genuinely an A+ setup. If it fits the protocol, approve it and defend it.
 4. If it fails the protocol, explain exactly why, and suggest a better entry using `watch_price_condition`.
 
@@ -356,6 +372,7 @@ tools = [
     get_prediction,
     get_trade_performance,
     get_market_regime,
+    get_relative_strength,
     watch_price_condition,
     declare_trade
 ]
@@ -386,6 +403,7 @@ REGISTERED_TOOL_NAMES = {
     "get_prediction",
     "get_trade_performance",
     "get_market_regime",
+    "get_relative_strength",
     "watch_price_condition",
     "declare_trade",
 }
@@ -403,6 +421,7 @@ MARKET_DATA_TOOL_NAMES = {
     "get_news_context",
     "get_prediction",
     "get_market_regime",
+    "get_relative_strength",
 }
 
 # DeepSeek/HuggingFace custom-token markup boundaries.
@@ -1131,6 +1150,77 @@ def _regime_entry(results) -> dict:
     return entry
 
 
+def _relative_strength_entry(results) -> dict:
+    """Build the defensibility relative-strength entry from the most recent
+    get_relative_strength result already present in message history (R8.1-R8.3).
+
+    ``results`` is the ``_latest_tool_results`` map, so
+    ``results['get_relative_strength']`` is the most-recent successfully-parsed,
+    non-error relative-strength result (a usable Relative_Strength_Label or an
+    Unavailable_Marker). This function:
+
+      * copies the Index_Direction, Relative_Strength_State, Alignment, the named
+        Relative_Strength_Measures, and the Benchmark_Index VERBATIM from that
+        result — it never infers or substitutes a value not present in the tool
+        output (R8.2);
+      * records the entry as unavailable, with NO fabricated index_direction/
+        relative_strength_state/alignment, when no usable Relative_Strength_Label
+        is present — none in history, or only an error / Unavailable_Marker
+        result (R8.3).
+
+    It is a pure read of tool output and never touches the committed decision
+    (R13.4, R13.5); relative strength is a filter/defensibility surface, not a
+    gate.
+    """
+    rs = results.get("get_relative_strength")
+
+    # No relative-strength result at all, a non-dict result, or an explicit
+    # Unavailable_Marker → unavailable. We carry the marker's own reason when
+    # present, but NEVER populate index_direction/relative_strength_state/
+    # alignment or measures with substitute values.
+    if not isinstance(rs, dict):
+        return {"available": False, "reason": "no get_relative_strength result present in message history"}
+    if rs.get("unavailable") is True:
+        return {"available": False, "reason": rs.get("reason") or "relative strength unavailable"}
+
+    index_direction = rs.get("index_direction")
+    relative_strength_state = rs.get("relative_strength_state")
+    alignment = rs.get("alignment")
+
+    # A usable Relative_Strength_Label must carry all three categorical states
+    # drawn from their fixed enums plus a benchmark string; anything missing
+    # means we have no usable label, and we must not fabricate one (R8.3).
+    if (
+        index_direction not in INDEX_DIRECTIONS
+        or relative_strength_state not in RELATIVE_STRENGTH_STATES
+        or alignment not in ALIGNMENT_VALUES
+        or not isinstance(rs.get("benchmark"), str)
+    ):
+        return {"available": False, "reason": "no usable get_relative_strength label present in message history"}
+
+    # Copy the named Relative_Strength_Measures verbatim (each is already a finite
+    # number or null per the tool contract); never infer a measure not reported.
+    src_measures = rs.get("measures")
+    measures = {}
+    if isinstance(src_measures, dict):
+        for field in _RS_MEASURE_FIELDS:
+            measures[field] = src_measures.get(field)
+
+    entry = {
+        "available": True,
+        "index_direction": index_direction,
+        "relative_strength_state": relative_strength_state,
+        "alignment": alignment,
+        "measures": measures,
+        "benchmark": rs["benchmark"],
+    }
+    # Carry symbol/timeframe/aligned_candles context verbatim when present.
+    for k in ("symbol", "timeframe", "aligned_candles"):
+        if k in rs:
+            entry[k] = rs[k]
+    return entry
+
+
 def build_defensibility_record(messages, decision, mode=None, manual_trade=None) -> dict:
     """Assemble the trade defensibility record from tool results in history (R7).
 
@@ -1267,6 +1357,27 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
             f"{regime.get('volatility_state')})."
         )
 
+    # ── Relative-strength entry (R8.1-R8.4, R13.4-R13.5) ─────────────────────
+    # Mirror the most-recent get_relative_strength result verbatim (or record it
+    # as unavailable). Relative strength is a defensibility surface only: it
+    # NEVER modifies, overrides, or blocks the committed decision's action or
+    # execution levels (R13.4, R13.5) — we merely add an explicit opposition
+    # statement when a misaligned context is committed against with a directional
+    # (BUY/SELL) trade (R8.4).
+    relative_strength = _relative_strength_entry(results)
+    if (
+        relative_strength.get("available")
+        and relative_strength.get("alignment") == "misaligned"
+        and action in ("BUY", "SELL")
+    ):
+        relative_strength["trade_opposes_relative_strength"] = (
+            f"RELATIVE STRENGTH CONFLICT: the committed {action} trade fights the "
+            f"index or trades a laggard against its benchmark "
+            f"({relative_strength.get('benchmark')}) — index_direction="
+            f"{relative_strength.get('index_direction')}, relative_strength_state="
+            f"{relative_strength.get('relative_strength_state')}, alignment=misaligned."
+        )
+
     record = {
         "mode": mode,
         "action": action,
@@ -1284,13 +1395,21 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
         "macro_trend_conflict": macro_conflict,
         "news_sentiment": news_sentiment,
         "regime": regime,
+        "relative_strength": relative_strength,
         "summary": (
             f"Multi-TF 1D bias: {bias_1d_raw or 'n/a'}. "
             f"RR: {risk_reward if risk_reward is not None else 'n/a'}. "
             f"High-confidence patterns: {named}. "
             f"Regime: {regime.get('favorability') if regime.get('available') else 'unavailable'}. "
+            f"Relative strength: "
+            f"{relative_strength.get('alignment') if relative_strength.get('available') else 'unavailable'}. "
             f"{macro_conflict} {predictive_conflict}"
             + (f" {regime['trade_opposes_regime']}" if regime.get("trade_opposes_regime") else "")
+            + (
+                f" {relative_strength['trade_opposes_relative_strength']}"
+                if relative_strength.get("trade_opposes_relative_strength")
+                else ""
+            )
         ),
     }
 

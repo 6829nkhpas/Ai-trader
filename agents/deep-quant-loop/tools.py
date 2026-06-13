@@ -16,6 +16,13 @@ from langchain_core.runnables import RunnableConfig
 # re-validates the contract.
 import regime
 
+# Relative_Strength_Calculator — the single source of truth for the
+# relative-strength math (AD-2). The get_relative_strength tool delegates
+# benchmark/parameter resolution and classification to this pure module; the
+# tool itself only fetches the symbol + benchmark candles and re-validates the
+# contract.
+import rs
+
 RUST_SERVER_URL = "http://localhost:8084"
 
 # ── Price-watch registration retry policy (Requirement 14.3) ─────────────────
@@ -77,6 +84,29 @@ _REGIME_MEASURE_FIELDS = (
     "atr_percentile",
     "bb_width",
 )
+
+# ── Relative_Strength_Tool contract (relative-strength-context) ──────────────
+# A get_relative_strength Relative_Strength_Label must carry an index_direction,
+# a relative_strength_state, and an alignment each drawn from its fixed enum, a
+# `benchmark` string identifying the resolved Benchmark_Index, plus the named
+# Relative_Strength_Measures (under a 'measures' object) each present as a finite
+# number or null. An Unavailable_Marker ({"unavailable": true, ...}) is an honest
+# non-fatal result handled by the existing _has_honest_marker pass-through.
+INDEX_DIRECTIONS = {"up", "down", "flat"}
+RELATIVE_STRENGTH_STATES = {"leader", "inline", "laggard"}
+ALIGNMENT_VALUES = {"aligned", "misaligned", "neutral"}
+_RS_MEASURE_FIELDS = (
+    "rs_ratio",
+    "rs_ratio_slope",
+    "relative_return",
+    "correlation",
+    "beta",
+)
+
+# Extra candles requested beyond the largest-lookback / min-candle gate so that
+# excluding non-finite candles and intersecting the symbol & benchmark
+# timestamps still leaves enough aligned candles to classify (Requirement 4.4).
+RS_FETCH_MARGIN = int(os.getenv("RS_FETCH_MARGIN", "20"))
 
 
 def _is_number(v) -> bool:
@@ -289,6 +319,52 @@ def validate_contract(tool_name, payload):
                 if not _is_number_or_null(measures[field]):
                     return _contract_error(
                         f"regime measure '{field}' is neither numeric nor null"
+                    )
+            return payload
+
+        if tool_name == "get_relative_strength":
+            if not isinstance(payload, dict):
+                return _contract_error(
+                    f"get_relative_strength expected an object, got {type(payload).__name__}"
+                )
+            # A conforming Relative_Strength_Label carries the three categorical
+            # states in their fixed enums, a `benchmark` string, plus each named
+            # measure as finite-number-or-null. (An Unavailable_Marker was
+            # already passed through above by _has_honest_marker, so anything
+            # reaching here must be a full label.)
+            index_direction = payload.get("index_direction")
+            if index_direction not in INDEX_DIRECTIONS:
+                return _contract_error(
+                    f"index_direction '{index_direction}' not in {{up, down, flat}}"
+                )
+            relative_strength_state = payload.get("relative_strength_state")
+            if relative_strength_state not in RELATIVE_STRENGTH_STATES:
+                return _contract_error(
+                    f"relative_strength_state '{relative_strength_state}' not in "
+                    "{leader, inline, laggard}"
+                )
+            alignment = payload.get("alignment")
+            if alignment not in ALIGNMENT_VALUES:
+                return _contract_error(
+                    f"alignment '{alignment}' not in {{aligned, misaligned, neutral}}"
+                )
+            # The resolved Benchmark_Index must be present as a string.
+            benchmark = payload.get("benchmark")
+            if not isinstance(benchmark, str):
+                return _contract_error("relative strength missing 'benchmark' string")
+            # The named Relative_Strength_Measures live under a 'measures' object;
+            # each must be present as a finite number or null.
+            measures = payload.get("measures")
+            if not isinstance(measures, dict):
+                return _contract_error("relative strength 'measures' field is not an object")
+            for field in _RS_MEASURE_FIELDS:
+                if field not in measures:
+                    return _contract_error(
+                        f"relative strength measures missing field '{field}'"
+                    )
+                if not _is_number_or_null(measures[field]):
+                    return _contract_error(
+                        f"relative strength measure '{field}' is neither numeric nor null"
                     )
             return payload
 
@@ -700,6 +776,225 @@ def get_market_regime(symbol: str, timeframe: str) -> dict:
             symbol if isinstance(symbol, str) else None,
             timeframe if isinstance(timeframe, str) else None,
             f"regime processing error: {str(e)}",
+        )
+
+
+def _relative_strength_unavailable(symbol, timeframe, benchmark, reason: str) -> dict:
+    """Build a get_relative_strength Unavailable_Marker (rs's marker shape).
+
+    Mirrors ``_regime_unavailable`` / ``rs._rs_unavailable``: it carries the
+    symbol / timeframe / benchmark context, the ``unavailable: true`` flag, and a
+    ``reason`` citing the cause, and it *omits* index_direction /
+    relative_strength_state / alignment entirely — an unavailable relative
+    strength is a missing optional input, never a fabricated label (AD-4,
+    Requirements 5.1, 5.3, 5.5). Recognized as an honest, non-fatal marker by
+    ``_has_honest_marker`` so ``validate_contract`` passes it through unchanged.
+    """
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "benchmark": benchmark,
+        "unavailable": True,
+        "reason": reason,
+    }
+
+
+def _fetch_candles_for_rs(symbol, timeframe, limit):
+    """Fetch candles for a single series from the Rust Tool_Server for RS.
+
+    Returns ``(candles, None)`` on success or ``(None, reason)`` when the
+    retrieval timed out / failed or the payload was a non-list / error payload.
+    Never raises — a failure is reported as a ``reason`` string the caller turns
+    into an Unavailable_Marker (Requirements 4.4, 5.1).
+    """
+    try:
+        response = httpx.post(
+            f"{RUST_SERVER_URL}/tools/get_candles",
+            json={"symbol": symbol, "timeframe": timeframe, "limit": limit},
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        candles = response.json()
+    except Exception as fetch_exc:
+        return None, f"candle retrieval failed: {fetch_exc}"
+
+    # The candle payload may itself be an error list (get_candles' error path
+    # returns ``[{"error": ...}]``); treat a non-list / error payload as a
+    # retrieval failure.
+    if not isinstance(candles, list) or (
+        candles and isinstance(candles[0], dict) and "error" in candles[0]
+    ):
+        reason = "candle retrieval returned no usable data"
+        if isinstance(candles, list) and candles and isinstance(candles[0], dict):
+            reason = f"candle retrieval failed: {candles[0].get('error')}"
+        return None, reason
+
+    return candles, None
+
+
+@tool
+def get_relative_strength(symbol: str, timeframe: str, benchmark: str = "",
+                          proposed_direction: str = "") -> dict:
+    """
+    Measure a symbol's relative strength versus its benchmark index and the
+    alignment of a proposed trade direction with the index / relative-strength
+    context.
+
+    Use this BEFORE committing a directional (BUY/SELL) setup to check whether the
+    trade goes WITH the market (a leader while the index is up, or a laggard while
+    the index is down) or FIGHTS it. The relative strength is GUIDANCE only — it
+    never generates a trade, never blocks one, and never overrides your decision.
+    When the proposed trade is misaligned with the index, bias toward lower
+    conviction, waiting, or HOLD; when it is unavailable, proceed with the
+    remaining analysis and note it as unavailable.
+
+    The calculator is pure math over the same authoritative OHLCV candles every
+    other tool uses (both the symbol candles and the Benchmark_Index candles are
+    fetched from the Rust Tool_Server). The benchmark is resolved from the symbol
+    via the Benchmark_Map unless an explicit benchmark is supplied. Valid
+    timeframes: '1m', '5m', '10m', '15m', '1h', '4h', '1d'.
+
+    Args:
+        symbol (str): The trading symbol (e.g. "RELIANCE").
+        timeframe (str): The candle timeframe (e.g. "1m", "5m", "15m", "1h", "4h", "1d").
+        benchmark (str): Optional explicit Benchmark_Index; when empty the
+                         benchmark is resolved from the symbol via the Benchmark_Map.
+        proposed_direction (str): Optional proposed trade direction ("BUY" / "SELL");
+                         when empty, no direction is assumed and alignment is neutral.
+
+    Returns:
+        dict: A Relative_Strength_Label with:
+              - index_direction ("up" | "down" | "flat")
+              - relative_strength_state ("leader" | "inline" | "laggard")
+              - alignment ("aligned" | "misaligned" | "neutral")
+              - benchmark (the resolved Benchmark_Index)
+              - measures: rs_ratio, rs_ratio_slope, relative_return, correlation,
+                beta (each a finite number or null)
+              When relative strength cannot be computed (missing benchmark candles,
+              retrieval failure/timeout, insufficient data, or any processing error)
+              it returns an Unavailable_Marker {"unavailable": true, "reason": ...}
+              with NO index_direction / relative_strength_state / alignment — treat
+              that as a missing, non-blocking input. Never raises.
+    """
+    print(
+        f"\n[Tool Call] >>> get_relative_strength: symbol={symbol}, "
+        f"timeframe={timeframe}, benchmark={benchmark!r}, direction={proposed_direction!r}"
+    )
+    try:
+        # 1. Validate arguments — empty/whitespace symbol or unsupported timeframe
+        #    is a structured error result (NOT an exception, R4.3).
+        if not isinstance(symbol, str) or not symbol.strip():
+            print("[Tool Error] <<< get_relative_strength: empty/whitespace symbol")
+            return {
+                "error": "get_relative_strength requires a non-empty symbol",
+            }
+        if timeframe not in SUPPORTED_TIMEFRAMES:
+            print(
+                f"[Tool Error] <<< get_relative_strength: unsupported timeframe '{timeframe}'"
+            )
+            return {
+                "error": (
+                    f"get_relative_strength received unsupported timeframe '{timeframe}'; "
+                    f"supported timeframes are {sorted(SUPPORTED_TIMEFRAMES)}"
+                ),
+            }
+
+        # 2. Resolve the Benchmark_Index. An explicit non-empty benchmark wins;
+        #    otherwise the Benchmark_Map / documented default resolves it (R4.2,
+        #    R2.x). resolve_benchmark never raises.
+        resolved_benchmark = rs.resolve_benchmark(symbol, benchmark)
+
+        # A symbol cannot be its own benchmark — fetching identical series would
+        # fabricate a degenerate "relative" strength. Treat that as a missing
+        # benchmark and degrade honestly (R2.4).
+        if (
+            isinstance(resolved_benchmark, str)
+            and resolved_benchmark.strip().upper() == symbol.strip().upper()
+        ):
+            reason = (
+                f"no distinct benchmark available for symbol '{symbol}' "
+                f"(resolved benchmark '{resolved_benchmark}' equals the symbol)"
+            )
+            print(f"[Tool Warning] <<< get_relative_strength: {reason}")
+            return _relative_strength_unavailable(
+                symbol, timeframe, resolved_benchmark, reason
+            )
+
+        # 3. Resolve parameters (single source of truth; never raises).
+        config = rs.resolve_rs_config()
+
+        # 4. Fetch BOTH the symbol candles and the Benchmark_Index candles from
+        #    the authoritative Rust Tool_Server (R4.4). Request enough candles to
+        #    cover the largest single-measure lookback AND the minimum-candle
+        #    gate, plus a margin so excluding any non-finite / non-common candles
+        #    still leaves enough aligned candles.
+        required = max(config.min_candles, config.largest_lookback)
+        limit = required + RS_FETCH_MARGIN
+
+        sym_candles, sym_reason = _fetch_candles_for_rs(symbol, timeframe, limit)
+        if sym_candles is None:
+            print(f"[Tool Warning] <<< get_relative_strength: symbol {sym_reason}")
+            return _relative_strength_unavailable(
+                symbol, timeframe, resolved_benchmark, f"symbol {sym_reason}"
+            )
+
+        bench_candles, bench_reason = _fetch_candles_for_rs(
+            resolved_benchmark, timeframe, limit
+        )
+        if bench_candles is None:
+            # Missing/unavailable benchmark candles -> Unavailable_Marker that
+            # NAMES the benchmark whose candles could not be retrieved (R2.4, R5.1).
+            reason = f"benchmark '{resolved_benchmark}' {bench_reason}"
+            print(f"[Tool Warning] <<< get_relative_strength: {reason}")
+            return _relative_strength_unavailable(
+                symbol, timeframe, resolved_benchmark, reason
+            )
+
+        # 5. Classify via the pure Relative_Strength_Calculator. An empty
+        #    proposed_direction means "no direction" -> pass None so alignment is
+        #    neutral (R1.9). classify_relative_strength returns either a
+        #    Relative_Strength_Label or an Unavailable_Marker and never raises.
+        direction = (
+            proposed_direction.strip()
+            if isinstance(proposed_direction, str) and proposed_direction.strip()
+            else None
+        )
+        result = rs.classify_relative_strength(
+            sym_candles,
+            bench_candles,
+            config,
+            proposed_direction=direction,
+            symbol=symbol,
+            benchmark=resolved_benchmark,
+            timeframe=timeframe,
+        )
+
+        # 6. Re-validate against the Tool_Result_Contract on receipt (AD-3) and
+        #    return. validate_contract passes an Unavailable_Marker through
+        #    unchanged and never raises.
+        validated = validate_contract("get_relative_strength", result)
+        if validated.get("unavailable"):
+            print(
+                f"[Tool Success] <<< get_relative_strength: symbol={symbol}, "
+                f"benchmark={resolved_benchmark}, unavailable ({validated.get('reason')})"
+            )
+        else:
+            print(
+                f"[Tool Success] <<< get_relative_strength: symbol={symbol}, "
+                f"benchmark={resolved_benchmark}, index={validated.get('index_direction')}, "
+                f"state={validated.get('relative_strength_state')}, "
+                f"alignment={validated.get('alignment')}"
+            )
+        return validated
+    except Exception as e:
+        # Defensive catch-all: any processing error degrades to an honest
+        # Unavailable_Marker rather than raising into the agent loop (R5.5).
+        print(f"[Tool Warning] <<< get_relative_strength FAIL: {str(e)}")
+        return _relative_strength_unavailable(
+            symbol if isinstance(symbol, str) else None,
+            timeframe if isinstance(timeframe, str) else None,
+            benchmark if isinstance(benchmark, str) and benchmark.strip() else None,
+            f"relative-strength processing error: {str(e)}",
         )
 
 
