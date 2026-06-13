@@ -86,6 +86,7 @@ from tools import (
     get_trade_performance,
     get_market_regime,
     get_relative_strength,
+    get_order_flow,
     watch_price_condition,
     declare_trade,
     # Regime_Label enum sets — reused to recognise a usable get_market_regime
@@ -373,6 +374,7 @@ tools = [
     get_trade_performance,
     get_market_regime,
     get_relative_strength,
+    get_order_flow,
     watch_price_condition,
     declare_trade
 ]
@@ -404,6 +406,7 @@ REGISTERED_TOOL_NAMES = {
     "get_trade_performance",
     "get_market_regime",
     "get_relative_strength",
+    "get_order_flow",
     "watch_price_condition",
     "declare_trade",
 }
@@ -422,6 +425,7 @@ MARKET_DATA_TOOL_NAMES = {
     "get_prediction",
     "get_market_regime",
     "get_relative_strength",
+    "get_order_flow",
 }
 
 # DeepSeek/HuggingFace custom-token markup boundaries.

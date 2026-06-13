@@ -23,6 +23,13 @@ import regime
 # contract.
 import rs
 
+# Order_Flow_Calculator — the single source of truth for the order-flow math
+# (AD-1, AD-2). The get_order_flow tool delegates parameter resolution and
+# classification to this pure module; the tool itself only fetches the symbol
+# candles (proxy layer) and reads recent ticks (Tick_OFI layer) and re-validates
+# the contract.
+import order_flow
+
 RUST_SERVER_URL = "http://localhost:8084"
 
 # ── Price-watch registration retry policy (Requirement 14.3) ─────────────────
@@ -102,6 +109,31 @@ _RS_MEASURE_FIELDS = (
     "correlation",
     "beta",
 )
+
+# ── Order_Flow_Tool contract (order-flow-context) ────────────────────────────
+# A get_order_flow Order_Flow_Label must carry an order_flow_state and an
+# alignment each drawn from its fixed enum (alignment reuses ALIGNMENT_VALUES
+# above), each named Order_Flow_Proxy_Measure (under a 'measures' object) present
+# as a finite number or null, a `tick_ofi` finite-number-or-null, and a boolean
+# `live_tick_contributed` flag. An Unavailable_Marker ({"unavailable": true, ...})
+# is an honest non-fatal result handled by the existing _has_honest_marker
+# pass-through (Requirement 5.8).
+ORDER_FLOW_STATES = {"buying", "selling", "balanced"}
+_OF_MEASURE_FIELDS = (
+    "candle_delta",
+    "cvd_proxy",
+    "up_volume",
+    "down_volume",
+    "buying_pressure_ratio",
+)
+
+# QuestDB HTTP query API for the Live_Ticks_Source (the same endpoint backtest.py
+# uses for the historical archive). The Tick_OFI layer reads recent ticks for the
+# symbol from the `live_ticks` table via this API; an unreachable server / empty
+# result simply degrades the Tick_OFI to unavailable (R6.1).
+QUESTDB_HTTP_URL = os.getenv("QUESTDB_HTTP_URL", "http://127.0.0.1:9000")
+# How many recent ticks to read for the Tick_OFI (matches the Rust LIMIT 200).
+OF_TICK_FETCH_LIMIT = int(os.getenv("OF_TICK_FETCH_LIMIT", "200"))
 
 # Extra candles requested beyond the largest-lookback / min-candle gate so that
 # excluding non-finite candles and intersecting the symbol & benchmark
@@ -366,6 +398,56 @@ def validate_contract(tool_name, payload):
                     return _contract_error(
                         f"relative strength measure '{field}' is neither numeric nor null"
                     )
+            return payload
+
+        if tool_name == "get_order_flow":
+            if not isinstance(payload, dict):
+                return _contract_error(
+                    f"get_order_flow expected an object, got {type(payload).__name__}"
+                )
+            # A conforming Order_Flow_Label carries the two categorical states in
+            # their fixed enums, each named proxy measure as finite-number-or-null
+            # (under a 'measures' object), a finite-number-or-null Tick_OFI, and a
+            # boolean live-tick-contributed flag. (An Unavailable_Marker was
+            # already passed through above by _has_honest_marker, so anything
+            # reaching here must be a full label.)
+            order_flow_state = payload.get("order_flow_state")
+            if order_flow_state not in ORDER_FLOW_STATES:
+                return _contract_error(
+                    f"order_flow_state '{order_flow_state}' not in "
+                    "{buying, selling, balanced}"
+                )
+            alignment = payload.get("alignment")
+            if alignment not in ALIGNMENT_VALUES:
+                return _contract_error(
+                    f"alignment '{alignment}' not in {{aligned, misaligned, neutral}}"
+                )
+            # The named Order_Flow_Proxy_Measures live under a 'measures' object;
+            # each must be present as a finite number or null.
+            measures = payload.get("measures")
+            if not isinstance(measures, dict):
+                return _contract_error("order flow 'measures' field is not an object")
+            for field in _OF_MEASURE_FIELDS:
+                if field not in measures:
+                    return _contract_error(
+                        f"order flow measures missing field '{field}'"
+                    )
+                if not _is_number_or_null(measures[field]):
+                    return _contract_error(
+                        f"order flow measure '{field}' is neither numeric nor null"
+                    )
+            # The Tick_OFI must be present as a finite number or null.
+            if "tick_ofi" not in payload:
+                return _contract_error("order flow missing field 'tick_ofi'")
+            if not _is_number_or_null(payload["tick_ofi"]):
+                return _contract_error(
+                    "order flow 'tick_ofi' is neither numeric nor null"
+                )
+            # The live-tick-contributed flag must be a boolean.
+            if not isinstance(payload.get("live_tick_contributed"), bool):
+                return _contract_error(
+                    "order flow 'live_tick_contributed' is not a boolean"
+                )
             return payload
 
         # Unknown / non-contract tool (e.g. declare_trade, watch_price_condition):
@@ -995,6 +1077,218 @@ def get_relative_strength(symbol: str, timeframe: str, benchmark: str = "",
             timeframe if isinstance(timeframe, str) else None,
             benchmark if isinstance(benchmark, str) and benchmark.strip() else None,
             f"relative-strength processing error: {str(e)}",
+        )
+
+
+def _order_flow_unavailable(symbol, timeframe, reason: str) -> dict:
+    """Build a get_order_flow Unavailable_Marker (the order-flow marker shape).
+
+    Mirrors ``_relative_strength_unavailable`` / ``_regime_unavailable`` /
+    ``order_flow._order_flow_unavailable``: it carries the symbol / timeframe
+    context, the ``unavailable: true`` flag, and a ``reason`` citing the cause,
+    and it *omits* ``order_flow_state`` / ``alignment`` entirely — an unavailable
+    order flow is a missing optional input, never a fabricated label (AD-5,
+    Requirements 6.3, 14.6). Recognized as an honest, non-fatal marker by
+    ``_has_honest_marker`` so ``validate_contract`` passes it through unchanged
+    (Requirement 5.8).
+    """
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "unavailable": True,
+        "reason": reason,
+    }
+
+
+def _read_live_ticks(symbol, limit):
+    """Read up to ``limit`` recent ticks for ``symbol`` from the Live_Ticks_Source.
+
+    Queries the ``live_ticks`` table via the QuestDB HTTP ``/exec`` API (the same
+    API ``backtest.py`` uses for the historical archive), most-recent-first, then
+    REVERSES the rows to chronological oldest-first order — the order
+    ``order_flow.compute_tick_ofi`` expects (mirroring the Rust
+    ``compute_order_flow_imbalance`` ``ORDER BY timestamp DESC ... .rev()``).
+
+    Each row maps to the tick dict shape ``order_flow._parse_tick`` expects:
+    ``{last_price, volume, best_bid, best_ask}`` (``volume`` is the day's
+    cumulative traded volume, matching the ``live_ticks.volume`` column).
+
+    Returns a list of tick dicts on success, or ``[]`` on ANY failure
+    (unreachable server, query error, no rows, malformed payload). The caller
+    treats ``[]`` as "tick layer unavailable" (R6.1); this helper NEVER raises
+    into the tool body (R6.5).
+    """
+    try:
+        sym = str(symbol).replace("'", "''")  # escape for the SQL string literal
+        query = (
+            "SELECT last_traded_price, volume, best_bid, best_ask "
+            f"FROM live_ticks WHERE symbol='{sym}' "
+            f"ORDER BY timestamp DESC LIMIT {int(limit)}"
+        )
+        r = httpx.get(
+            f"{QUESTDB_HTTP_URL}/exec", params={"query": query}, timeout=10.0
+        )
+        r.raise_for_status()
+        body = r.json()
+    except Exception as exc:
+        print(f"[Tool Warning] _read_live_ticks: tick retrieval failed: {exc}")
+        return []
+
+    if not isinstance(body, dict) or body.get("error"):
+        return []
+    dataset = body.get("dataset")
+    if not isinstance(dataset, list) or not dataset:
+        return []
+
+    ticks = []
+    # The DESC query returns most-recent-first; reverse to oldest-first so the
+    # cumulative-volume deltas the Tick_OFI consumes run forward in time.
+    for row in reversed(dataset):
+        if not isinstance(row, (list, tuple)) or len(row) < 4:
+            continue
+        ticks.append({
+            "last_price": row[0],
+            "volume": row[1],
+            "best_bid": row[2],
+            "best_ask": row[3],
+        })
+    return ticks
+
+
+@tool
+def get_order_flow(symbol: str, timeframe: str, proposed_direction: str = "") -> dict:
+    """
+    Read the tape: classify net order-flow pressure (buying / selling / balanced)
+    and the alignment of a proposed trade direction with that flow.
+
+    Use this BEFORE committing a directional (BUY/SELL) setup to check WHO is
+    pressing the trade — buyers or sellers — from candle-derived order-flow
+    proxies (a per-candle delta proxy, a cumulative-volume-delta proxy, up/down
+    volume, and a buying-pressure ratio) and, when the live tick stream is
+    available, a true tick-based Order Flow Imbalance (Tick_OFI). Order flow is
+    GUIDANCE only — it never generates a trade, never blocks one, and never
+    overrides your decision. When the proposed trade is misaligned with the flow
+    (a BUY into net selling, or a SELL into net buying), bias toward lower
+    conviction, waiting, or HOLD; when it is unavailable, proceed with the
+    remaining analysis and note it as unavailable.
+
+    The calculator is pure math over the same authoritative OHLCV candles every
+    other tool uses (the symbol candles are fetched from the Rust Tool_Server).
+    The Tick_OFI is read from the `live_ticks` source; when that stream is absent
+    (market closed, no rows, too few ticks) the Tick_OFI is honestly marked
+    unavailable and only the candle-derived proxy layer is used — never a
+    fabricated neutral value. Valid timeframes: '1m', '5m', '10m', '15m', '1h',
+    '4h', '1d'.
+
+    Args:
+        symbol (str): The trading symbol (e.g. "RELIANCE").
+        timeframe (str): The candle timeframe (e.g. "1m", "5m", "15m", "1h", "4h", "1d").
+        proposed_direction (str): Optional proposed trade direction ("BUY" / "SELL");
+                         when empty, no direction is assumed and alignment is neutral.
+
+    Returns:
+        dict: An Order_Flow_Label with:
+              - order_flow_state ("buying" | "selling" | "balanced")
+              - alignment ("aligned" | "misaligned" | "neutral")
+              - measures: candle_delta, cvd_proxy, up_volume, down_volume,
+                buying_pressure_ratio (each a finite number or null)
+              - tick_ofi (a finite number in [-1.0, 1.0] or null when unavailable)
+              - live_tick_contributed (bool — whether live ticks contributed)
+              When order flow cannot be computed (insufficient/failed candle
+              retrieval, all-null proxies with no tick layer, or any processing
+              error) it returns an Unavailable_Marker {"unavailable": true,
+              "reason": ...} with NO order_flow_state / alignment — treat that as
+              a missing, non-blocking input. Never raises.
+    """
+    print(
+        f"\n[Tool Call] >>> get_order_flow: symbol={symbol}, "
+        f"timeframe={timeframe}, direction={proposed_direction!r}"
+    )
+    try:
+        # 1. Validate arguments — empty/whitespace symbol or unsupported timeframe
+        #    is a structured error result (NOT an exception, R5.3).
+        if not isinstance(symbol, str) or not symbol.strip():
+            print("[Tool Error] <<< get_order_flow: empty/whitespace symbol")
+            return {"error": "get_order_flow requires a non-empty symbol"}
+        if timeframe not in SUPPORTED_TIMEFRAMES:
+            print(
+                f"[Tool Error] <<< get_order_flow: unsupported timeframe '{timeframe}'"
+            )
+            return {
+                "error": (
+                    f"get_order_flow received unsupported timeframe '{timeframe}'; "
+                    f"supported timeframes are {sorted(SUPPORTED_TIMEFRAMES)}"
+                ),
+            }
+
+        # 2. Resolve parameters (single source of truth; never raises).
+        config = order_flow.resolve_order_flow_config()
+
+        # 3. Fetch the symbol candles from the authoritative Rust Tool_Server for
+        #    the proxy layer. Request enough candles to cover the largest single-
+        #    measure lookback AND the minimum-candle gate, plus a margin so
+        #    excluding any non-finite candles still leaves enough to classify.
+        required = max(config.min_candles, config.largest_lookback)
+        limit = required + RS_FETCH_MARGIN
+        candles, candle_reason = _fetch_candles_for_rs(symbol, timeframe, limit)
+        if candles is None:
+            # Candle retrieval failed/timed out -> Unavailable_Marker citing the
+            # cause (R6.2). The proxy layer is the floor; without it there is no
+            # usable order flow at all.
+            print(f"[Tool Warning] <<< get_order_flow: {candle_reason}")
+            return _order_flow_unavailable(symbol, timeframe, candle_reason)
+
+        # 4. Attempt to read recent ticks for the symbol from the Live_Ticks_Source
+        #    (Tick_OFI layer). Any failure / no rows yields [] so the Tick_OFI is
+        #    simply unavailable and the proxy layer still classifies (R6.1, R6.6).
+        ticks = _read_live_ticks(symbol, OF_TICK_FETCH_LIMIT)
+
+        # 5. Classify via the pure Order_Flow_Calculator. An empty
+        #    proposed_direction means "no direction" -> pass None so alignment is
+        #    neutral (R3.4). classify_order_flow returns either an Order_Flow_Label
+        #    or an Unavailable_Marker and never raises.
+        direction = (
+            proposed_direction.strip()
+            if isinstance(proposed_direction, str) and proposed_direction.strip()
+            else None
+        )
+        result = order_flow.classify_order_flow(
+            candles,
+            ticks,
+            config,
+            proposed_direction=direction,
+            symbol=symbol,
+            timeframe=timeframe,
+        )
+
+        # 6. Re-validate against the Tool_Result_Contract on receipt (AD-3) and
+        #    return. validate_contract passes an Unavailable_Marker through
+        #    unchanged and never raises.
+        validated = validate_contract("get_order_flow", result)
+        if validated.get("unavailable"):
+            print(
+                f"[Tool Success] <<< get_order_flow: symbol={symbol}, "
+                f"unavailable ({validated.get('reason')})"
+            )
+        elif "error" in validated:
+            print(f"[Tool Warning] <<< get_order_flow: {validated.get('error')}")
+        else:
+            print(
+                f"[Tool Success] <<< get_order_flow: symbol={symbol}, "
+                f"state={validated.get('order_flow_state')}, "
+                f"alignment={validated.get('alignment')}, "
+                f"tick_ofi={validated.get('tick_ofi')}, "
+                f"live_tick_contributed={validated.get('live_tick_contributed')}"
+            )
+        return validated
+    except Exception as e:
+        # Defensive catch-all: any processing error degrades to an honest
+        # Unavailable_Marker rather than raising into the agent loop (R6.5).
+        print(f"[Tool Warning] <<< get_order_flow FAIL: {str(e)}")
+        return _order_flow_unavailable(
+            symbol if isinstance(symbol, str) else None,
+            timeframe if isinstance(timeframe, str) else None,
+            f"order-flow processing error: {str(e)}",
         )
 
 
