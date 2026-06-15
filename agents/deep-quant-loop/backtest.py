@@ -44,6 +44,7 @@ import forecaster
 import journal
 import regime
 import rs
+import session
 import trade_manager
 # Reuse the AUTHORITATIVE volume-profile math and EMA helper so seeded levels
 # match what the live agent and the UI compute.
@@ -79,6 +80,7 @@ class BacktestConfig:
     regime_gate_enabled: bool = False  # with-gate run drops unfavorable signals (gate logic: task 13.2)
     rs_filter_enabled: bool = False  # with-filter run drops misaligned signals (filter logic: task 13.2)
     forecast_filter_enabled: bool = False  # with-forecast run drops forecast-misaligned signals (filter logic: task 14.2)
+    session_filter_enabled: bool = False  # with-filter run drops session-unfavorable signals (filter logic: task 9.1)
     manage_trades: bool = False  # managed run: seed trades carry the default Management_Plan, scored via the Trade_Manager (R7.1)
 
 
@@ -381,6 +383,53 @@ def _forecast_defensibility_entry(fc_result: Optional[dict]) -> dict:
     return entry
 
 
+def _session_defensibility_entry(session_result: Optional[dict]) -> dict:
+    """Map a ``session.classify_session`` result to the defensibility session entry.
+
+    Mirrors the shape ``graph._session_entry`` writes and ``journal._session_tag``
+    reads, so seeded trades are labelled identically to live LLM decisions:
+
+      * a usable Session_Label -> ``{"available": True, session_phase,
+        minutes_since_open, minutes_until_close, expiry_context, time_favorability,
+        [symbol/timeframe]}`` — copied VERBATIM from the classifier output (no
+        inference, R8.2/R11.3).
+      * an Unavailable_Marker / non-dict / label missing a categorical field ->
+        ``{"available": False, "reason": ...}`` with NO fabricated fields
+        (AD-5/R5.2); a signal so labelled is RETAINED by the with-filter run and
+        tagged ``sess:unknown`` by the journal (R11.5).
+    """
+    if not isinstance(session_result, dict):
+        return {"available": False, "reason": "no session result"}
+    # Honest Unavailable_Marker from the classifier — never fabricate fields.
+    if session_result.get("unavailable") is True:
+        return {"available": False, "reason": session_result.get("reason") or "session unavailable"}
+
+    session_phase = session_result.get("session_phase")
+    time_favorability = session_result.get("time_favorability")
+    # A usable Session_Label must carry a session_phase and a time_favorability;
+    # anything missing means no usable label, and we must not fabricate one.
+    if session_phase is None or time_favorability is None:
+        return {"available": False, "reason": "no usable session label"}
+
+    src_expiry = session_result.get("expiry_context")
+    expiry_context = dict(src_expiry) if isinstance(src_expiry, dict) else {}
+    entry = {
+        "available": True,
+        "session_phase": session_phase,
+        # minutes_since_open / minutes_until_close are finite-number-or-null per
+        # the classifier contract; copy them verbatim (including null) without
+        # substituting a value.
+        "minutes_since_open": session_result.get("minutes_since_open"),
+        "minutes_until_close": session_result.get("minutes_until_close"),
+        "expiry_context": expiry_context,
+        "time_favorability": time_favorability,
+    }
+    for k in ("symbol", "timeframe"):
+        if k in session_result:
+            entry[k] = session_result[k]
+    return entry
+
+
 def _candles_at_or_before(candle_series: Optional[List[dict]], cutoff_ts) -> List[dict]:
     """Point-in-time slice: rows whose ``timestamp_ms`` is at or before ``cutoff_ts``.
 
@@ -440,6 +489,21 @@ def _signal_is_forecast_misaligned(decision: dict) -> bool:
     """
     fc_entry = decision.get("defensibility", {}).get("forecast") or {}
     return fc_entry.get("available") is True and fc_entry.get("forecast_alignment") == "misaligned"
+
+
+def _signal_is_session_unfavorable(decision: dict) -> bool:
+    """Return True only when the signal carries an AVAILABLE ``unfavorable`` session.
+
+    This is the with-filter drop predicate (R11.2): a directional signal whose
+    Time_Favorability is the available label ``unfavorable`` for its time window
+    is dropped. A signal whose session result is an Unavailable_Marker is reported
+    as ``{"available": False, ...}`` by ``_session_defensibility_entry`` and is
+    RETAINED — never excluded on the basis of the session being unavailable
+    (R11.5) — as are ``favorable`` and ``neutral`` signals. Mirrors
+    ``_signal_is_unfavorable`` (the regime gate predicate).
+    """
+    sess_entry = decision.get("defensibility", {}).get("session") or {}
+    return sess_entry.get("available") is True and sess_entry.get("time_favorability") == "unfavorable"
 
 
 # ── Scoring against future candles (mirrors journal._score_one) ───────────────
@@ -654,6 +718,12 @@ def generate_and_score(candles: List[dict], symbol: str, timeframe: str,
     # from it) to ``trade_manager.simulate_plan`` (R7.1, R7.2, AD-2).
     trade_manager_config = trade_manager.resolve_trade_manager_config()
 
+    # Resolve the session parameters ONCE, reusing the SAME resolver the live
+    # get_session_context tool uses (R11.6, R12.6) — the seeder never reimplements
+    # the session date math. Each signal's session is classified point-in-time
+    # from the timestamp of its OWN candle using this single resolved config.
+    session_config = session.resolve_session_config()
+
     cooldown_until = -1
     for i in range(cfg.lookback - 1, n - 1):
         if i < cooldown_until:
@@ -712,6 +782,17 @@ def generate_and_score(candles: List[dict], symbol: str, timeframe: str,
         # can tag it and journal.record_backtest_trade persists its Up_Probability
         # (R11.4); shape mirrors graph._forecast_entry.
         decision["defensibility"]["forecast"] = _forecast_defensibility_entry(fc_result)
+
+        # Classify the signal's session using the timestamp of the signal's OWN
+        # candle (index ``i``) via the SAME classifier as the live tool path
+        # (R11.1, R11.6). A candle's timestamp is intrinsic to that candle, so
+        # this is inherently look-ahead-free — no later candle informs the label.
+        session_result = session.classify_session(
+            ts, session_config, symbol=symbol, timeframe=timeframe,
+        )
+        # Label the seeded trade with its Session_Phase and expiry flag so
+        # journal._session_tag can tag it (R11.3); shape mirrors graph._session_entry.
+        decision["defensibility"]["session"] = _session_defensibility_entry(session_result)
 
         # ── Score the signal (managed via the Trade_Manager, else single-target) ─
         # A managed run (``cfg.manage_trades``) attaches the uniform default
@@ -780,7 +861,18 @@ def generate_and_score(candles: List[dict], symbol: str, timeframe: str,
         # without-forecast run and its seeded set is a strict SUBSET of it.
         forecast_filtered_out = cfg.forecast_filter_enabled and _signal_is_forecast_misaligned(decision)
 
-        if gated_out or filtered_out or forecast_filtered_out or (status == "expired" and not cfg.record_unresolved):
+        # ── Session filter (with-filter run only) ────────────────────────────
+        # When the session filter is enabled, DROP a signal whose Time_Favorability
+        # is an AVAILABLE "unfavorable" label for its time window (R11.2). Signals
+        # whose session result is an Unavailable_Marker are RETAINED — never
+        # excluded on the basis of the session being unavailable (R11.5) — as are
+        # favorable/neutral signals. The drop advances the cooldown exactly as a
+        # taken signal would, mirroring the regime gate and the RS/forecast
+        # filters, so the with-filter run walks the IDENTICAL history/rules as the
+        # without-filter run and its seeded set is a strict SUBSET of it.
+        session_filtered_out = cfg.session_filter_enabled and _signal_is_session_unfavorable(decision)
+
+        if gated_out or filtered_out or forecast_filtered_out or session_filtered_out or (status == "expired" and not cfg.record_unresolved):
             cooldown_until = i + cfg.cooldown_bars
             continue
         results.append({
@@ -1076,6 +1168,72 @@ def compare_relative_strength(symbol: str, timeframe: str, limit: int = 3000,
     # Identical history + identical rules; the filter flag is the ONLY difference.
     filtered_cfg = replace(base, rs_filter_enabled=True)
     unfiltered_cfg = replace(base, rs_filter_enabled=False)
+
+    with_filter = generate_and_score(
+        candles, symbol, timeframe, filtered_cfg,
+        benchmark_candles=benchmark_candles, benchmark=benchmark,
+    )
+    without_filter = generate_and_score(
+        candles, symbol, timeframe, unfiltered_cfg,
+        benchmark_candles=benchmark_candles, benchmark=benchmark,
+    )
+
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "candles": len(candles),
+        "benchmark": benchmark,
+        "with_filter": {"signals_scored": len(with_filter), **_run_metrics(with_filter)},
+        "without_filter": {"signals_scored": len(without_filter), **_run_metrics(without_filter)},
+    }
+
+
+# ── With-session-filter / without-session-filter comparison (R11.2, R11.4, R11.5) ─
+
+def compare_session(symbol: str, timeframe: str, limit: int = 3000,
+                    candles: Optional[List[dict]] = None,
+                    benchmark_candles: Optional[List[dict]] = None,
+                    cfg: Optional[BacktestConfig] = None,
+                    benchmark: Optional[str] = None,
+                    source: str = "auto") -> dict:
+    """Run the backtest WITH and WITHOUT the session filter and compare (R11.4).
+
+    Both runs use the IDENTICAL candle history and IDENTICAL setup rules — only
+    ``session_filter_enabled`` differs — so the two runs are directly comparable
+    and the with-filter seeded set is a strict subset of the without-filter set.
+    The filter only removes signals whose Time_Favorability is the available
+    ``unfavorable`` label for their time window; signals whose session result is
+    an Unavailable_Marker are RETAINED — never excluded on the basis of the
+    session being unavailable (R11.2, R11.5).
+
+    Each signal's session is classified look-ahead-free from the timestamp of its
+    OWN candle via the same ``session.classify_session`` the live tool path uses
+    (R11.1, R11.6). The session filter needs no benchmark, but
+    ``generate_and_score`` also labels relative strength for every signal, so the
+    Benchmark_Index and its candle series are resolved ONCE for the run (as in
+    ``compare_relative_strength``) and passed to BOTH runs, keeping each run
+    well-formed and identical apart from the session-filter flag.
+
+    Returns a summary reporting, for EACH run, the win-rate (winning closed /
+    closed) and expectancy (mean realized R per closed trade), with ``"n/a"`` when
+    a run produced zero closed trades (R11.4). Pure given ``candles`` /
+    ``benchmark_candles`` — no journal writes are performed.
+    """
+    base = cfg or BacktestConfig()
+    if candles is None:
+        candles = _resolve_candles(symbol, timeframe, limit, source)
+
+    # The session filter needs no benchmark, but generate_and_score labels
+    # relative strength regardless; resolve the Benchmark_Index and its candles
+    # ONCE so BOTH runs are well-formed and identical apart from the flag.
+    if benchmark is None:
+        benchmark = rs.resolve_benchmark(symbol)
+    if benchmark_candles is None:
+        benchmark_candles = _resolve_benchmark_candles(benchmark, timeframe, limit, source)
+
+    # Identical history + identical rules; the session-filter flag is the ONLY difference.
+    filtered_cfg = replace(base, session_filter_enabled=True)
+    unfiltered_cfg = replace(base, session_filter_enabled=False)
 
     with_filter = generate_and_score(
         candles, symbol, timeframe, filtered_cfg,

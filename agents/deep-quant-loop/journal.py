@@ -376,6 +376,73 @@ def _management_style_tag(decision: dict) -> str:
         return "unknown"
 
 
+# Fixed, low-cardinality session enumeration for the setup fingerprint (R10.3).
+# The journal collapses the (Session_Phase x expiry-day flag) space into this
+# small set so the session-extended ``setup_key`` stays groupable and individual
+# setups can accumulate enough scored trades to clear LOW_SAMPLE_THRESHOLD.
+# Exactly 8 distinct values including ``unknown`` (AD-8):
+#   * each in-session phase keeps its own bucket: ``opening``, ``morning``,
+#     ``midday``, ``afternoon``, ``closing``;
+#   * the two out-of-session phases (``pre_open``/``post_close``) collapse to
+#     ``offhours``;
+#   * an expiry-day candle in the ``afternoon``/``closing`` chop window collapses
+#     to ``expiry`` (overriding the bare phase bucket);
+#   * anything missing/unavailable/unrecognized collapses to ``unknown``.
+SESS_TAG_VALUES = {
+    "opening", "morning", "midday", "afternoon", "closing",
+    "offhours", "expiry", "unknown",
+}
+
+# The two phases that, on a weekly-expiry day, collapse to the ``expiry`` chop
+# bucket rather than their own phase bucket (R2.3 / design table).
+_SESS_EXPIRY_PHASES = {"afternoon", "closing"}
+# The out-of-session phases that collapse to the ``offhours`` bucket.
+_SESS_OFFHOURS_PHASES = {"pre_open", "post_close"}
+# The in-session phases that keep their own bucket (non-expiry).
+_SESS_OWN_BUCKET_PHASES = {"opening", "morning", "midday", "afternoon", "closing"}
+
+
+def _session_tag(decision: dict) -> str:
+    """Collapse the decision's session context into one fixed enumeration value.
+
+    Reads the session entry recorded in the defensibility record
+    (``decision['defensibility']['session']``) and maps (Session_Phase x
+    expiry-day flag) to one of ``SESS_TAG_VALUES``:
+      * an ``is_expiry_day`` candle in the ``afternoon``/``closing`` phase (the
+        key chop window) collapses to ``expiry``;
+      * otherwise ``pre_open``/``post_close`` collapse to ``offhours``;
+      * each remaining phase (``opening``/``morning``/``midday`` and a non-expiry
+        ``afternoon``/``closing``) keeps its own bucket.
+
+    Any missing/unavailable session entry, empty value, or unrecognized phase
+    collapses to ``unknown`` (R10.2). Returns the bare value (caller prefixes
+    ``sess:``). Never raises.
+    """
+    try:
+        d = decision or {}
+        deff = d.get("defensibility") or {}
+        sess = deff.get("session")
+        if not isinstance(sess, dict):
+            return "unknown"
+        # An explicitly unavailable session entry carries no fabricated phase.
+        if sess.get("available") is False:
+            return "unknown"
+        phase = str(sess.get("session_phase") or "").strip().lower()
+        if phase not in _SESS_OWN_BUCKET_PHASES and phase not in _SESS_OFFHOURS_PHASES:
+            return "unknown"
+        # Expiry-day afternoon/closing chop overrides the bare phase bucket.
+        expiry_context = sess.get("expiry_context")
+        is_expiry_day = bool(expiry_context.get("is_expiry_day")) if isinstance(expiry_context, dict) else False
+        if is_expiry_day and phase in _SESS_EXPIRY_PHASES:
+            return "expiry"
+        if phase in _SESS_OFFHOURS_PHASES:
+            return "offhours"
+        # Remaining in-session phases keep their own bucket.
+        return phase if phase in SESS_TAG_VALUES else "unknown"
+    except Exception:
+        return "unknown"
+
+
 def derive_setup_tags(decision: dict) -> list:
     """Derive a coarse, groupable setup fingerprint from a committed decision.
 
@@ -407,6 +474,11 @@ def derive_setup_tags(decision: dict) -> list:
                     in the defensibility management entry; appended last at a
                     FIXED position (after the ``fc:`` tag) so ``setup_key`` stays
                     deterministic and low-cardinality.
+      * session     (opening/morning/midday/afternoon/closing/offhours/expiry,
+                    or unknown) — collapsed from the (Session_Phase x expiry-day
+                    flag) recorded in the defensibility session entry; appended
+                    last at a FIXED position (after the ``tm:`` tag) so
+                    ``setup_key`` stays deterministic and low-cardinality.
     """
     d = decision or {}
     deff = d.get("defensibility") or {}
@@ -465,6 +537,13 @@ def derive_setup_tags(decision: dict) -> list:
     # missing/unavailable management entry defaults to ``tm:unknown`` (R11.1,
     # R11.2, R11.3).
     tags.append("tm:" + _management_style_tag(decision))
+
+    # Session dimension — appended at a FIXED position last (after the ``tm:``
+    # tag) so the resulting ``setup_key`` is deterministic for identical inputs
+    # and stays low-cardinality. Collapses (Session_Phase x expiry-day flag) into
+    # one fixed ``sess:`` value; a missing/unavailable session entry defaults to
+    # ``sess:unknown`` (R10.1, R10.2, R10.3).
+    tags.append("sess:" + _session_tag(decision))
 
     return tags
 

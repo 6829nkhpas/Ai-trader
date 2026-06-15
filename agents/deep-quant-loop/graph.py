@@ -88,6 +88,7 @@ from tools import (
     get_relative_strength,
     get_order_flow,
     get_forecast,
+    get_session_context,
     watch_price_condition,
     declare_trade,
     # Reused to build the committed Management_Plan for the defensibility record
@@ -113,6 +114,10 @@ from tools import (
     # defensibility record. (Forecast_Alignment reuses the shared ALIGNMENT_VALUES.)
     FORECAST_DIRECTIONS,
     _FORECAST_MEASURE_FIELDS,
+    # Session_Label enum sets — reused to recognise a usable get_session_context
+    # label (vs an Unavailable_Marker) when building the defensibility record.
+    SESSION_PHASES,
+    TIME_FAVORABILITY,
 )
 
 # Trade_Journal — measurement & feedback loop (Phase 2). Records every committed
@@ -191,6 +196,12 @@ You must follow this exact loop until a perfect setup is found or registered:
    - relative_strength_state (leader / inline / laggard) — whether the symbol is outperforming or underperforming its benchmark,
    - alignment (aligned / misaligned / neutral) — whether a proposed trade direction agrees with the index direction and relative strength.
    The veteran principle: trade the strongest names WITH the market — never fight the index, never buy a laggard in a falling market or short a leader in a rising one. Use relative strength as a calibration filter, NOT a trade generator: it never forces, blocks, or overrides your decision. If relative strength is unavailable (missing benchmark / insufficient data / unavailable marker), treat it as a missing optional input — note it as unavailable and proceed with the remaining analysis; do NOT fabricate it and do NOT abort the decision on that basis.
+2d. SESSION & EXPIRY CONTEXT: Call `get_session_context` with the analyzed symbol and the SAME timeframe currently under analysis to label the time-of-day context. The result reports:
+   - session_phase (pre_open / opening / morning / midday / afternoon / closing / post_close) — where in the trading day this candle sits,
+   - minutes_since_open / minutes_until_close — the distance (in minutes) from the session boundaries (null outside the session),
+   - expiry_context (is_expiry_day / days_until_expiry) — whether the candle's date is the weekly-expiry day and how close the next expiry is,
+   - time_favorability (favorable / unfavorable / neutral) — whether the clock favors taking a new trade right now.
+   The veteran principle: the NSE session is NOT uniform — the opening drive is violent and mean-reverting, the midday lull is thin and chop-prone, and expiry-afternoon flow is distorted. Use time_favorability as a calibration filter, NOT a trade generator: a `favorable` window does NOT force a trade, and the session context never blocks or overrides your decision. If the session context is unavailable (missing / non-finite timestamp / retrieval failure / unavailable marker), treat it as a missing optional input — note it as unavailable and proceed with the remaining analysis; do NOT fabricate a session label and do NOT abort the decision on that basis.
 3. KEY LEVELS: Call `get_support_resistance` with the timeframe you're analyzing (e.g., '15m' for intraday).
    For intraday timeframes it returns BOTH micro S/R levels (from that timeframe's candles) AND daily macro levels.
    It also includes the Opening Range (first 3 candles) high/low — a key intraday reference.
@@ -243,6 +254,7 @@ Ask yourself:
 - WHAT IS THE MARKET REGIME? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `favorability` from `get_market_regime`. If the favorability is `unfavorable` for the proposed setup type (e.g. a trend/momentum entry in a ranging or volatility-extreme regime), you MUST take exactly one of these actions: lower your conviction_score, wait for a better setup (e.g. via `watch_price_condition`), or HOLD. If the regime is unavailable, note it as unavailable and proceed — do NOT block the trade solely because the regime could not be computed.
 - AM I FIGHTING THE INDEX? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `index_direction` and `relative_strength_state` for `alignment` from `get_relative_strength`. If the alignment is `misaligned` (for example a BUY in a `laggard` against a `down` index, or a SELL in a `leader` against an `up` index), you MUST take exactly one of these actions: lower your conviction_score, wait for a better setup (e.g. via `watch_price_condition`), or HOLD. If relative strength is unavailable, note it as unavailable and proceed — do NOT block the trade solely because relative strength could not be computed.
 - WHAT DOES THE FORECAST SAY? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `Forecast_Alignment` and the `Up_Probability` from `get_forecast`. If the Forecast_Alignment is `misaligned` OR the Up_Probability does not support your direction (a BUY needs Up_Probability >= 0.5; a SELL needs Up_Probability <= 0.5), you MUST take exactly one of these actions: lower your conviction_score, wait for a better setup (e.g. via `watch_price_condition`), or HOLD. If the forecast is unavailable, note it as unavailable and proceed — do NOT block the trade solely because the forecast could not be computed.
+- DOES THE CLOCK FAVOR THIS TRADE? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `time_favorability` from `get_session_context`. If the time_favorability is `unfavorable` (for example the violent opening minutes or expiry-afternoon chop), you MUST take exactly one of these actions: lower your conviction_score, wait for a better window (e.g. via `watch_price_condition`), or HOLD. If the session context is unavailable, note it as unavailable and proceed — do NOT block the trade solely because the session context could not be computed.
 - IS MY MANAGEMENT PLAN SOUND? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), confirm the Management_Plan you will attach to `declare_trade`: (a) every scale-out leg fraction lies in (0.0, 1.0] and the leg fractions sum to <= 1.0; (b) the scale-out targets are ordered on the profit side (strictly beyond entry, non-decreasing for a BUY and non-increasing for a SELL); (c) the breakeven trigger sits strictly between the entry and the first scale-out target on the profit side; and (d) the blended (fraction-weighted) Risk:Reward still meets the configured minimum. If any of these fail, revise the plan before committing rather than declaring an inconsistent plan.
 If the answer to ANY of the first 3 checks is YES, you must scrap the trade. You must either analyze a different timeframe to find a better entry, or call `watch_price_condition` to wait for a safer pullback. 
 ONLY call `declare_trade` if you are 100% confident you could defend this trade against rigorous critique.
@@ -260,6 +272,7 @@ Your `setup_validation` is the defensibility record for the trade and MUST expli
 - MARKET REGIME: State the Trend_State, the Volatility_State, and the Favorability taken from the `get_market_regime` result (e.g., "Regime: trending / normal vol / favorable"). If the favorability was unfavorable, state how you responded (lowered conviction / waited / HOLD). If the regime was unavailable, state that it was unavailable and that you proceeded without it.
 - RELATIVE STRENGTH: State the Index_Direction, the Relative_Strength_State, and the Alignment taken from the `get_relative_strength` result (e.g., "Relative strength: up index / leader / aligned"). If the alignment was misaligned, state how you responded (lowered conviction / waited / HOLD). If relative strength was unavailable, state that it was unavailable and that you proceeded without it.
 - FORECAST: State the Projected_Direction, the Up_Probability, the Expected_Move_ATR, and the Forecast_Alignment taken from the `get_forecast` result (e.g., "Forecast: Projected_Direction up / Up_Probability 0.63 / Expected_Move_ATR +0.41 / aligned"). If the Forecast_Alignment was misaligned or the Up_Probability did not support the direction, state how you responded (lowered conviction / waited / HOLD). If the forecast was unavailable, state that it was unavailable and that you proceeded without it.
+- SESSION CONTEXT: State the Session_Phase, the Expiry_Context (is_expiry_day and days_until_expiry), and the Time_Favorability taken from the `get_session_context` result (e.g., "Session: morning phase / not expiry day / favorable" or "Session: afternoon / expiry day / unfavorable"). If the time_favorability was unfavorable, state how you responded (lowered conviction / waited / HOLD). If the session context was unavailable, state that it was unavailable and that you proceeded without it.
 - MANAGEMENT PLAN: When you attach a Management_Plan, state the scale-out targets and their size fractions, the breakeven trigger, and the trailing-stop rule in your setup_validation (e.g., "Scale 50% at 1R, move stop to breakeven after the first target, trail the remainder by 1.5x ATR"). If the trade is a single-target trade with no active management, state that it is single-target.
 Always include the multi-timeframe bias, the key S/R levels used, the volatility (ATR) basis for the stop, and the Risk:Reward ratio in your setup_validation.
 </setup_validation_disclosure>
@@ -297,6 +310,7 @@ Your job is to verify this trade using the EXACT same <self_verification_protoco
 2c. Consult `get_relative_strength` for the symbol and timeframe while verifying. If the user-proposed trade is a directional (BUY/SELL) trade that is `misaligned` with the index/relative-strength context (for example a BUY in a `laggard` against a `down` index, or a SELL in a `leader` against an `up` index), you MUST include an explicit warning statement in your verification output that the proposed trade fights the index / trades a laggard against its benchmark (state the index_direction, relative_strength_state, and alignment). If relative strength is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because relative strength could not be computed.
 2d. Consult `get_forecast` for the symbol and timeframe while verifying. If the user-proposed trade is a directional (BUY/SELL) trade that is `misaligned` with the forecast (Forecast_Alignment is `misaligned`, or the Up_Probability does not support the proposed direction — a BUY needs Up_Probability >= 0.5, a SELL needs Up_Probability <= 0.5), you MUST include an explicit warning statement in your verification output that the proposed trade is misaligned with the volatility-aware forecast (state the Projected_Direction, the Up_Probability, the Expected_Move_ATR, and the Forecast_Alignment). If the forecast is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because the forecast could not be computed.
 2e. Evaluate the proposed trade's MANAGEMENT, or its absence. If the user supplied scale-out targets, a breakeven move, or a trailing rule, critique whether the leg fractions are in range and sum to at most the full position, the targets are ordered on the profit side, the breakeven trigger sits between entry and the first target, and the blended Risk:Reward is sound — and state any management red flags. If the user proposed a single static bracket with no management, recommend a concrete management plan where appropriate: for example scale out a fraction at the first target, move the stop to breakeven after that target, and trail the remainder, so the trade can scratch at breakeven instead of taking a full stop and let a runner extend. Management is a recommendation, not a hard requirement — do NOT reject an otherwise A+ trade solely because it is single-target.
+2f. Consult `get_session_context` for the symbol and timeframe while verifying. If the user-proposed trade is a directional (BUY/SELL) trade being taken in an `unfavorable` time window (for example the violent opening minutes or expiry-afternoon chop), you MUST include an explicit warning statement in your verification output that the proposed trade is being taken in an unfavorable time window (state the session_phase, the expiry_context, and the time_favorability). If the session context is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because the session context could not be computed.
 3. Do not invent red flags if the trade is genuinely an A+ setup. If it fits the protocol, approve it and defend it.
 4. If it fails the protocol, explain exactly why, and suggest a better entry using `watch_price_condition`.
 
@@ -407,6 +421,7 @@ tools = [
     get_relative_strength,
     get_order_flow,
     get_forecast,
+    get_session_context,
     watch_price_condition,
     declare_trade
 ]
@@ -440,6 +455,7 @@ REGISTERED_TOOL_NAMES = {
     "get_relative_strength",
     "get_order_flow",
     "get_forecast",
+    "get_session_context",
     "watch_price_condition",
     "declare_trade",
 }
@@ -460,6 +476,7 @@ MARKET_DATA_TOOL_NAMES = {
     "get_relative_strength",
     "get_order_flow",
     "get_forecast",
+    "get_session_context",
 }
 
 # DeepSeek/HuggingFace custom-token markup boundaries.
@@ -1263,6 +1280,74 @@ def _relative_strength_entry(results) -> dict:
     return entry
 
 
+def _session_entry(results) -> dict:
+    """Build the defensibility session entry from the most recent
+    get_session_context result already present in message history (R8.1-R8.3).
+
+    ``results`` is the ``_latest_tool_results`` map, so
+    ``results['get_session_context']`` is the most-recent successfully-parsed,
+    non-error session result (a usable Session_Label or an Unavailable_Marker).
+    This function:
+
+      * copies the Session_Phase, minutes-since-open, minutes-until-close, the
+        Expiry_Context, and the Time_Favorability VERBATIM from that result — it
+        never infers or substitutes a value not present in the tool output
+        (R8.2);
+      * records the entry as unavailable, with NO fabricated session_phase/
+        time_favorability/expiry_context, when no usable Session_Label is present
+        — none in history, or only an error / Unavailable_Marker result (R8.3).
+
+    It is a pure read of tool output and never touches the committed decision's
+    action or execution levels (R13.4, R13.5); session awareness is a
+    filter/defensibility surface, not a gate.
+    """
+    sess = results.get("get_session_context")
+
+    # No session result at all, a non-dict result, or an explicit
+    # Unavailable_Marker → unavailable. We carry the marker's own reason when
+    # present, but NEVER populate session_phase/time_favorability/expiry_context
+    # with substitute values.
+    if not isinstance(sess, dict):
+        return {"available": False, "reason": "no get_session_context result present in message history"}
+    if sess.get("unavailable") is True:
+        return {"available": False, "reason": sess.get("reason") or "session context unavailable"}
+
+    session_phase = sess.get("session_phase")
+    time_favorability = sess.get("time_favorability")
+    expiry_context = sess.get("expiry_context")
+
+    # A usable Session_Label must carry a session_phase and a time_favorability
+    # drawn from their fixed enums, plus an expiry_context object carrying a
+    # boolean is_expiry_day; anything missing means we have no usable label, and
+    # we must not fabricate one (R8.3).
+    if (
+        session_phase not in SESSION_PHASES
+        or time_favorability not in TIME_FAVORABILITY
+        or not isinstance(expiry_context, dict)
+        or not isinstance(expiry_context.get("is_expiry_day"), bool)
+    ):
+        return {"available": False, "reason": "no usable get_session_context label present in message history"}
+
+    # Copy the five session fields verbatim (minutes are already a finite number
+    # or null per the tool contract); never infer a value not reported.
+    entry = {
+        "available": True,
+        "session_phase": session_phase,
+        "minutes_since_open": sess.get("minutes_since_open"),
+        "minutes_until_close": sess.get("minutes_until_close"),
+        "expiry_context": {
+            "is_expiry_day": expiry_context.get("is_expiry_day"),
+            "days_until_expiry": expiry_context.get("days_until_expiry"),
+        },
+        "time_favorability": time_favorability,
+    }
+    # Carry symbol/timeframe context verbatim when present.
+    for k in ("symbol", "timeframe"):
+        if k in sess:
+            entry[k] = sess[k]
+    return entry
+
+
 def _forecast_entry(results) -> dict:
     """Build the defensibility forecast entry from the most recent get_forecast
     result already present in message history (R9.1-R9.3).
@@ -1627,6 +1712,27 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
             f"forecast_alignment=misaligned)."
         )
 
+    # ── Session entry (R8.1-R8.4, R13.4-R13.5) ───────────────────────────────
+    # Mirror the most-recent get_session_context result verbatim (or record it as
+    # unavailable). Session awareness is a filter / defensibility surface only: it
+    # NEVER modifies, overrides, or blocks the committed decision's action or
+    # execution levels (R13.4, R13.5) — we merely add an explicit statement that
+    # the committed trade is taken in an unfavorable time window when the
+    # Time_Favorability is `unfavorable` and a directional (BUY/SELL) trade is
+    # committed (R8.4).
+    session = _session_entry(results)
+    if (
+        session.get("available")
+        and session.get("time_favorability") == "unfavorable"
+        and action in ("BUY", "SELL")
+    ):
+        session["trade_in_unfavorable_window"] = (
+            f"UNFAVORABLE TIME WINDOW: the committed {action} trade is taken in an "
+            f"unfavorable time window (session_phase={session.get('session_phase')}, "
+            f"is_expiry_day={session.get('expiry_context', {}).get('is_expiry_day')}, "
+            f"time_favorability=unfavorable)."
+        )
+
     # ── Management entry (R9.1-R9.3) ─────────────────────────────────────────
     # For a committed directional (BUY/SELL) trade with usable levels, cite the
     # committed Management_Plan — the declared multi-leg plan, or the degenerate
@@ -1656,6 +1762,7 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
         "regime": regime,
         "relative_strength": relative_strength,
         "forecast": forecast,
+        "session": session,
         "summary": (
             f"Multi-TF 1D bias: {bias_1d_raw or 'n/a'}. "
             f"RR: {risk_reward if risk_reward is not None else 'n/a'}. "
@@ -1665,6 +1772,8 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
             f"{relative_strength.get('alignment') if relative_strength.get('available') else 'unavailable'}. "
             f"Forecast: "
             f"{forecast.get('forecast_alignment') if forecast.get('available') else 'unavailable'}. "
+            f"Session: "
+            f"{session.get('time_favorability') if session.get('available') else 'unavailable'}. "
             f"{macro_conflict} {predictive_conflict}"
             + (f" {regime['trade_opposes_regime']}" if regime.get("trade_opposes_regime") else "")
             + (
@@ -1675,6 +1784,11 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
             + (
                 f" {forecast['trade_opposes_forecast']}"
                 if forecast.get("trade_opposes_forecast")
+                else ""
+            )
+            + (
+                f" {session['trade_in_unfavorable_window']}"
+                if session.get("trade_in_unfavorable_window")
                 else ""
             )
         ),

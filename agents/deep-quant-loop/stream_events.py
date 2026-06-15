@@ -546,6 +546,71 @@ def _trade_management_step(record: dict) -> dict:
     return {"check": "trade-management", "outcome": f"pass — managed plan ({style})", "detail": detail}
 
 
+def _session_step(record: dict) -> dict:
+    """Map the defensibility session entry to a single ``VERIFICATION_STEP`` (R9).
+
+    The defensibility record's ``session`` entry (built by ``graph._session_entry``)
+    is either a usable label — ``{"available": True, "session_phase": ...,
+    "time_favorability": ..., "expiry_context": {...}, "minutes_since_open": ...,
+    "minutes_until_close": ...}`` — or an Unavailable_Marker —
+    ``{"available": False, "reason": ...}``. The recorded Time_Favorability maps
+    to a stable outcome under the fixed check id ``session``:
+
+      * ``favorable``   → ``pass``                       (R9.2)
+      * ``unfavorable`` → ``fail``                       (R9.3)
+      * ``neutral``     → ``informational``              (R9.4)
+      * unavailable     → ``not-evaluable`` (with an 'unavailable' indication, R9.5)
+
+    When the session context is unavailable — no entry, a non-dict entry,
+    ``available`` is falsy, or the Time_Favorability is missing/unrecognized — the
+    step reports ``not-evaluable`` with an explicit unavailable indication and
+    NEVER substitutes a fabricated favorability (R9.5). Pure; never raises.
+    """
+    session = record.get("session")
+
+    if not isinstance(session, dict) or not session.get("available"):
+        reason = session.get("reason") if isinstance(session, dict) else None
+        detail = "Session context unavailable" + (f": {reason}" if reason else "") + "."
+        return {
+            "check": "session",
+            "outcome": "not-evaluable — session context unavailable",
+            "detail": detail,
+        }
+
+    favorability = session.get("time_favorability")
+    outcome = {
+        "favorable": "pass",
+        "unfavorable": "fail",
+        "neutral": "informational",
+    }.get(favorability)
+
+    if outcome is None:
+        # An available entry without a recognized favorability is treated as
+        # unavailable rather than fabricating an outcome (R9.5).
+        return {
+            "check": "session",
+            "outcome": "not-evaluable — session context unavailable",
+            "detail": "Session time_favorability missing or unrecognized.",
+        }
+
+    expiry = session.get("expiry_context")
+    if isinstance(expiry, dict):
+        expiry_detail = (
+            f"is_expiry_day={expiry.get('is_expiry_day')}, "
+            f"days_until_expiry={expiry.get('days_until_expiry')}"
+        )
+    else:
+        expiry_detail = "expiry_context unavailable"
+    detail = (
+        f"time_favorability={favorability}, "
+        f"session_phase={session.get('session_phase')}, "
+        f"minutes_since_open={session.get('minutes_since_open')}, "
+        f"minutes_until_close={session.get('minutes_until_close')}, "
+        f"{expiry_detail}."
+    )
+    return {"check": "session", "outcome": outcome, "detail": detail}
+
+
 def _derive_find_mode_steps(record: dict) -> List[dict]:
     """Derive the four self-verification checks from a FIND-mode record (R16.6).
 
@@ -654,6 +719,10 @@ def _derive_find_mode_steps(record: dict) -> List[dict]:
     # management entry (absent -> not-evaluable).
     steps.append(_trade_management_step(record))
 
+    # ── Session & expiry awareness check (session-expiry-awareness, R9) ──────
+    # Exactly one session step, derived from the defensibility session entry.
+    steps.append(_session_step(record))
+
     return steps
 
 
@@ -701,6 +770,11 @@ def build_verification_steps(decision: Any) -> List[dict]:
         # (R10.1 — exactly one trade-management VERIFICATION_STEP).
         if not any(s.get("check") == "trade-management" for s in steps):
             steps.append(_trade_management_step(record))
+        # Surface exactly one session step in VERIFY mode too: append the
+        # derived step only when the validator checks don't already carry one
+        # (R9.1 — exactly one session VERIFICATION_STEP).
+        if not any(s.get("check") == "session" for s in steps):
+            steps.append(_session_step(record))
         return steps
 
     return _derive_find_mode_steps(record)

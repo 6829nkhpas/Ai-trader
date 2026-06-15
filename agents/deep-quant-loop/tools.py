@@ -37,6 +37,15 @@ import order_flow
 # the tool itself only fetches the symbol candles and re-validates the contract.
 import forecaster
 
+# Session_Classifier — the single source of truth for the session/expiry math
+# (AD-1, AD-2, AD-3). The get_session_context tool delegates parameter
+# resolution and classification to this pure module; the tool itself only
+# fetches the most recent candle from the authoritative Rust Tool_Server, reads
+# its timestamp, and re-validates the contract. The same module is reused by the
+# Backtest_Seeder so the live path and the backtest path share one source of
+# truth for the session math.
+import session
+
 # Trade_Validator + Trade_Manager (trade-management). declare_trade gates a
 # declared Management_Plan through the pure Python Trade_Validator
 # (validator.validate_trade(plan=...)) BEFORE forwarding to the authoritative
@@ -153,6 +162,21 @@ _OF_MEASURE_FIELDS = (
 FORECAST_DIRECTIONS = {"up", "down", "flat"}
 # Forecast_Alignment reuses the existing ALIGNMENT_VALUES = {"aligned","misaligned","neutral"}.
 _FORECAST_MEASURE_FIELDS = ("drift", "volatility", "standardized_drift", "atr")
+
+# ── Session_Tool contract (session-expiry-awareness) ─────────────────────────
+# A get_session_context Session_Label must carry a `session_phase` drawn from
+# the fixed SESSION_PHASES enum, a `minutes_since_open` and a `minutes_until_close`
+# each present as a finite number or null, an `expiry_context` object carrying a
+# boolean `is_expiry_day` and a finite-number `days_until_expiry`, and a
+# `time_favorability` drawn from the fixed TIME_FAVORABILITY enum. The session
+# label is computed PURELY from the most recent candle's timestamp and the
+# resolved configuration — no external data source (AD-1). An Unavailable_Marker
+# ({"unavailable": true, ...}) is an honest non-fatal result handled by the
+# existing _has_honest_marker pass-through (Requirements 4.8, 5.2).
+SESSION_PHASES = {
+    "pre_open", "opening", "morning", "midday", "afternoon", "closing", "post_close",
+}
+TIME_FAVORABILITY = {"favorable", "unfavorable", "neutral"}
 
 # QuestDB HTTP query API for the Live_Ticks_Source (the same endpoint backtest.py
 # uses for the historical archive). The Tick_OFI layer reads recent ticks for the
@@ -539,6 +563,63 @@ def validate_contract(tool_name, payload):
                     return _contract_error(
                         f"forecast measure '{field}' is neither numeric nor null"
                     )
+            return payload
+
+        if tool_name == "get_session_context":
+            if not isinstance(payload, dict):
+                return _contract_error(
+                    f"get_session_context expected an object, got {type(payload).__name__}"
+                )
+            # A conforming Session_Label carries a `session_phase` drawn from the
+            # fixed SESSION_PHASES enum, a `minutes_since_open` and a
+            # `minutes_until_close` each finite-number-or-null (null outside the
+            # session), an `expiry_context` object with a boolean `is_expiry_day`
+            # and a finite-number `days_until_expiry`, and a `time_favorability`
+            # drawn from the fixed TIME_FAVORABILITY enum. (An Unavailable_Marker
+            # was already passed through above by _has_honest_marker, so anything
+            # reaching here must be a full label.)
+            session_phase = payload.get("session_phase")
+            if session_phase not in SESSION_PHASES:
+                return _contract_error(
+                    f"session_phase '{session_phase}' not in "
+                    "{pre_open, opening, morning, midday, afternoon, closing, post_close}"
+                )
+            # minutes_since_open / minutes_until_close: finite number or null.
+            if "minutes_since_open" not in payload:
+                return _contract_error("session missing field 'minutes_since_open'")
+            if not _is_number_or_null(payload["minutes_since_open"]):
+                return _contract_error(
+                    "session 'minutes_since_open' is neither numeric nor null"
+                )
+            if "minutes_until_close" not in payload:
+                return _contract_error("session missing field 'minutes_until_close'")
+            if not _is_number_or_null(payload["minutes_until_close"]):
+                return _contract_error(
+                    "session 'minutes_until_close' is neither numeric nor null"
+                )
+            # The Expiry_Context lives under an 'expiry_context' object carrying a
+            # boolean `is_expiry_day` and a finite-number `days_until_expiry`.
+            expiry_context = payload.get("expiry_context")
+            if not isinstance(expiry_context, dict):
+                return _contract_error("session 'expiry_context' field is not an object")
+            if not isinstance(expiry_context.get("is_expiry_day"), bool):
+                return _contract_error(
+                    "session 'expiry_context.is_expiry_day' is not a boolean"
+                )
+            if "days_until_expiry" not in expiry_context:
+                return _contract_error(
+                    "session 'expiry_context' missing field 'days_until_expiry'"
+                )
+            if not _is_number(expiry_context["days_until_expiry"]):
+                return _contract_error(
+                    "session 'expiry_context.days_until_expiry' is not numeric"
+                )
+            time_favorability = payload.get("time_favorability")
+            if time_favorability not in TIME_FAVORABILITY:
+                return _contract_error(
+                    f"time_favorability '{time_favorability}' not in "
+                    "{favorable, unfavorable, neutral}"
+                )
             return payload
 
         # Unknown / non-contract tool (e.g. declare_trade, watch_price_condition):
@@ -1527,6 +1608,157 @@ def get_forecast(symbol: str, timeframe: str, proposed_direction: str = "") -> d
             symbol if isinstance(symbol, str) else None,
             timeframe if isinstance(timeframe, str) else None,
             f"forecast processing error: {str(e)}",
+        )
+
+
+def _session_unavailable(symbol, timeframe, reason: str) -> dict:
+    """Build a get_session_context Unavailable_Marker (the session marker shape).
+
+    Mirrors ``_regime_unavailable`` / ``_relative_strength_unavailable`` /
+    ``session._unavailable``: it carries the symbol / timeframe context, the
+    ``unavailable: true`` flag, and a ``reason`` citing the cause, and it *omits*
+    session_phase / time_favorability entirely — an unavailable session context
+    is a missing optional input, never a fabricated label (AD-5, Requirements
+    5.1, 5.2, 5.4). Recognized as an honest, non-fatal marker by
+    ``_has_honest_marker`` so ``validate_contract`` passes it through unchanged.
+    """
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "unavailable": True,
+        "reason": reason,
+    }
+
+
+@tool
+def get_session_context(symbol: str, timeframe: str) -> dict:
+    """
+    Classify the time-of-day context for a symbol/timeframe.
+
+    Use this BEFORE committing a directional (BUY/SELL) setup to gauge whether
+    the clock favors taking a new trade at all. The opening drive, the midday
+    lull, and expiry-afternoon chop are the lowest-quality windows; a veteran
+    trader sizes down or stands aside there. The session context is GUIDANCE
+    only — it never generates a trade, never blocks one, and never overrides
+    your decision. When the time window is unfavorable, bias toward lowering
+    conviction, waiting for a better window, or HOLD; when it is unavailable,
+    proceed with the remaining analysis and note it as unavailable.
+
+    The classifier is pure date math over the timestamp of the most recent
+    authoritative candle (fetched from the Rust Tool_Server) interpreted in the
+    IST market session — no external data source. Valid timeframes: '1m', '5m',
+    '10m', '15m', '1h', '4h', '1d'.
+
+    Args:
+        symbol (str): The trading symbol (e.g. "RELIANCE").
+        timeframe (str): The candle timeframe (e.g. "1m", "5m", "15m", "1h", "4h", "1d").
+
+    Returns:
+        dict: A Session_Label with:
+              - session_phase ("pre_open" | "opening" | "morning" | "midday" |
+                "afternoon" | "closing" | "post_close")
+              - minutes_since_open (a finite number or null)
+              - minutes_until_close (a finite number or null)
+              - expiry_context: {is_expiry_day (bool), days_until_expiry (int)}
+              - time_favorability ("favorable" | "unfavorable" | "neutral")
+              When the session cannot be computed (retrieval failure/timeout,
+              empty/missing candle, invalid timestamp, or any processing error)
+              it returns an Unavailable_Marker {"unavailable": true, "reason": ...}
+              with NO session_phase/time_favorability — treat that as a missing,
+              non-blocking input. Never raises.
+    """
+    print(f"\n[Tool Call] >>> get_session_context: symbol={symbol}, timeframe={timeframe}")
+    try:
+        # 1. Validate arguments — empty/whitespace symbol or unsupported
+        #    timeframe is a structured error result (NOT an exception, R4.3).
+        if not isinstance(symbol, str) or not symbol.strip():
+            print("[Tool Error] <<< get_session_context: empty/whitespace symbol")
+            return {
+                "error": "get_session_context requires a non-empty symbol",
+            }
+        if timeframe not in SUPPORTED_TIMEFRAMES:
+            print(f"[Tool Error] <<< get_session_context: unsupported timeframe '{timeframe}'")
+            return {
+                "error": (
+                    f"get_session_context received unsupported timeframe '{timeframe}'; "
+                    f"supported timeframes are {sorted(SUPPORTED_TIMEFRAMES)}"
+                ),
+            }
+
+        # 2. Resolve parameters (single source of truth; never raises). The same
+        #    resolver is reused by the Backtest_Seeder (AD-3, AD-6, R12.6).
+        config = session.resolve_session_config()
+
+        # 3. Fetch the most recent candle from the authoritative Rust Tool_Server,
+        #    exactly like the regime / relative-strength / order-flow tools. On
+        #    retrieval failure / timeout / error payload / empty result ->
+        #    Unavailable_Marker citing the retrieval cause (R4.4, R5.1, R5.4).
+        try:
+            response = httpx.post(
+                f"{RUST_SERVER_URL}/tools/get_candles",
+                json={"symbol": symbol, "timeframe": timeframe, "limit": 1},
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            candles = response.json()
+        except Exception as fetch_exc:
+            # Retrieval timeout / failure -> Unavailable_Marker citing the cause
+            # (R5.1). NEVER propagate the exception into the agent loop.
+            print(f"[Tool Warning] <<< get_session_context: candle retrieval failed: {fetch_exc}")
+            return _session_unavailable(
+                symbol,
+                timeframe,
+                f"candle retrieval failed: {fetch_exc}",
+            )
+
+        # The candle payload may itself be an error list (get_candles' error path
+        # returns ``[{"error": ...}]``); treat a non-list / error / empty payload
+        # as a retrieval failure -> Unavailable_Marker.
+        if not isinstance(candles, list) or not candles or (
+            isinstance(candles[0], dict) and "error" in candles[0]
+        ):
+            reason = "candle retrieval returned no usable data"
+            if isinstance(candles, list) and candles and isinstance(candles[0], dict) and "error" in candles[0]:
+                reason = f"candle retrieval failed: {candles[0].get('error')}"
+            print(f"[Tool Warning] <<< get_session_context: {reason}")
+            return _session_unavailable(symbol, timeframe, reason)
+
+        # 4. Read the timestamp of the most recent candle (the last element of
+        #    the chronologically-ordered candle list).
+        last_candle = candles[-1]
+        if not isinstance(last_candle, dict):
+            return _session_unavailable(
+                symbol, timeframe, "most recent candle is not an object"
+            )
+        timestamp_ms = last_candle.get("timestamp_ms")
+
+        # 5. Classify via the pure Session_Classifier. It returns either a
+        #    Session_Label or an Unavailable_Marker, and never raises.
+        result = session.classify_session(
+            timestamp_ms, config, symbol=symbol, timeframe=timeframe
+        )
+
+        # 6. Re-validate against the Tool_Result_Contract on receipt (AD-3) and
+        #    return. validate_contract passes an Unavailable_Marker through
+        #    unchanged and never raises.
+        validated = validate_contract("get_session_context", result)
+        if validated.get("unavailable"):
+            print(f"[Tool Success] <<< get_session_context: symbol={symbol}, unavailable ({validated.get('reason')})")
+        else:
+            print(
+                f"[Tool Success] <<< get_session_context: symbol={symbol}, "
+                f"phase={validated.get('session_phase')}, "
+                f"favorability={validated.get('time_favorability')}"
+            )
+        return validated
+    except Exception as e:
+        # Defensive catch-all: any processing error degrades to an honest
+        # Unavailable_Marker rather than raising into the agent loop (R5.4).
+        print(f"[Tool Warning] <<< get_session_context FAIL: {str(e)}")
+        return _session_unavailable(
+            symbol if isinstance(symbol, str) else None,
+            timeframe if isinstance(timeframe, str) else None,
+            f"session processing error: {str(e)}",
         )
 
 
