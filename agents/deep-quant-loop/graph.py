@@ -131,6 +131,35 @@ import journal
 # reimplementing the multi-leg fill / breakeven / trail logic (R9.1, R9.2, AD-2).
 import trade_manager
 
+# Multi-Agent Debate pure core (multi-agent-debate). The Bull/Bear/Judge roles
+# resolve their per-role model + bounds from the environment via
+# ``resolve_debate_config`` and emit structured stances parsed by
+# ``parse_stance`` (serialized for the state / defensibility record via
+# ``stance_to_dict``). Importing the pure module keeps the LLM-free debate logic
+# unit/property-testable in isolation.
+from debate import (
+    parse_stance,
+    resolve_debate_config,
+    stance_to_dict,
+    DebateConfig,
+    # The three categorical Debate_Consensus values — used to validate the
+    # Judge verdict threaded into the defensibility record (multi-agent-debate,
+    # R7.1) so an unrecognized consensus degrades gracefully rather than being
+    # surfaced verbatim.
+    DEBATE_CONSENSUS_VALUES,
+    # Consensus classification + conviction derivation — the deterministic heart
+    # of the Judge's synthesis (multi-agent-debate, R4.1/R4.4). The Judge node
+    # reconstructs the stored Bull/Bear stances and feeds them through these pure
+    # functions to set debate_consensus / debate_conviction.
+    classify_consensus,
+    derive_conviction,
+    judge_directional_bias,
+    # One Bull-then-Bear exchange is TURNS_PER_ROUND model turns; used to derive
+    # the 1-based round index from the bounded turn counter so the round-looping
+    # (bull → bear → [next round] → judge) is idempotent (R3.6, R6.1).
+    TURNS_PER_ROUND,
+)
+
 # ── State Definition ────────────────────────────────────────────────────────
 
 class AgentState(TypedDict):
@@ -155,11 +184,43 @@ class AgentState(TypedDict):
     # the Q&A tool-fetch loop (R18.4). It never affects the committed decision —
     # the Declared_Trade is immutable while answering questions (R18.6).
     qa_turns: int
+    # ── Multi-Agent Debate bookkeeping (multi-agent-debate, R1/R3/R4/R6) ──────
+    # All fields below are ADDITIVE and Optional/defaulted: a non-DEBATE run
+    # (FIND / VERIFY / QA) never sets or reads them, so legacy behaviour is
+    # completely unchanged. They are populated only on a DEBATE-mode run.
+    #
+    # Current phase within a DEBATE run: "research" while the shared-evidence
+    # gathering loop runs (declaration suppressed), "debate" once the bull/bear/
+    # judge roles take over. None for every non-DEBATE run (R2.1).
+    phase: Optional[str]
+    # Total bounded model turns taken across all debate roles. Guarantees the
+    # debate always terminates against DEBATE_MAX_TURNS (R6.2).
+    debate_turns: int
+    # Current debate round index (1-based), bounded by DEBATE_ROUNDS (R3.6, R6.1).
+    debate_round: int
+    # Serialized DebateStance dicts emitted by the Bull / Bear roles. None until
+    # the corresponding role has produced a stance (R3.3).
+    bull_stance: Optional[dict]
+    bear_stance: Optional[dict]
+    # Judge verdict: the classified disagreement structure
+    # (strong_agree | lean | contested) and the derived conviction in [0, 100]
+    # (R4.1, R4.4). None until the Judge has run.
+    debate_consensus: Optional[str]
+    debate_conviction: Optional[int]
 
 
 # Maximum number of consecutive reasoning-only turns the agent may take before
 # the loop forces a HOLD with reason `no-decision-reached` (R2.3, R2.5).
 MAX_REASONING_TURNS = 3
+
+# Routing label returned by `should_continue` / `route_after_tools` when a DEBATE
+# Research_Phase completes (either the model issued a suppressed `declare_trade`
+# signalling it is done gathering, or the bounded reasoning budget was reached).
+# It is mapped to the `bull` node in the graph so research hands off to the
+# Bull/Bear/Judge debate instead of forcing a HOLD (multi-agent-debate, R2.1).
+# It is ONLY ever returned while `phase` is a DEBATE phase, so non-DEBATE runs
+# never reach it.
+DEBATE_HANDOFF = "debate"
 
 # ── System Prompts ──────────────────────────────────────────────────────────
 
@@ -426,6 +487,147 @@ tools = [
     declare_trade
 ]
 llm_with_tools = llm.bind_tools(tools)
+
+# ── Per-role read-only model factory (multi-agent-debate, R3.5/R6.3/R6.4) ─────
+# The Bull and Bear roles argue over the ALREADY-gathered Shared_Evidence; they
+# are bound to a READ-ONLY tool set that EXCLUDES the trade-committing /
+# run-suspending tools so a debate role can never commit or suspend a trade
+# (R3.5, R12.1). This exclusion set mirrors ``QA_FORBIDDEN_TOOLS`` (defined later
+# for the Q&A sub-loop); the names are inlined here because the factory must be
+# constructed alongside the base ``llm`` before that constant exists.
+DEBATE_READONLY_EXCLUDED_TOOLS = {"declare_trade", "watch_price_condition"}
+
+# The read-only Analysis_Tool set = the full tool list minus the excluded tools.
+readonly_tools = [
+    t for t in tools
+    if getattr(t, "name", None) not in DEBATE_READONLY_EXCLUDED_TOOLS
+]
+
+# Default read-only-bound model — the graceful-degradation fallback used when a
+# role-specific model cannot be constructed (R6.4). Bound to the SAME read-only
+# tool set so the fallback also cannot commit/suspend a trade.
+readonly_llm_with_tools = llm.bind_tools(readonly_tools)
+
+# Cache of read-only-bound role models keyed by (model_name, "readonly") so the
+# repeated Bull/Bear turns across rounds reuse one bound client instead of
+# rebuilding a ChatOpenAI on every node invocation.
+_ROLE_LLM_CACHE: dict = {}
+
+
+def _build_readonly_llm_for_model(role_model: str):
+    """Build (and cache) a read-only-tool-bound ChatOpenAI for ``role_model``.
+
+    Degrades gracefully and NEVER raises (R6.4): if constructing a role-specific
+    client fails for any reason, falls back to the default read-only binding
+    (``readonly_llm_with_tools``). Reuses the same api_key / base_url / retry /
+    timeout configuration as the system ``llm``.
+    """
+    key = (role_model, "readonly")
+    cached = _ROLE_LLM_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        role_llm = ChatOpenAI(
+            model=role_model,
+            openai_api_key=api_key,
+            openai_api_base=base_url,
+            temperature=0.2,
+            max_retries=int(_env_nonempty("LLM_MAX_RETRIES", default="4")),
+            timeout=float(_env_nonempty("LLM_TIMEOUT_SECS", default="90")),
+        )
+        bound = role_llm.bind_tools(readonly_tools)
+    except Exception as e:
+        print(
+            f"[Deep Quant Debate] Could not build role model {role_model!r}: {e}. "
+            f"Falling back to the default read-only binding."
+        )
+        bound = readonly_llm_with_tools
+    _ROLE_LLM_CACHE[key] = bound
+    return bound
+
+
+def get_role_llm(role: str):
+    """Return the cached read-only-bound LLM for a debate ``role``.
+
+    Uses ``resolve_debate_config(model_name)`` to pick the per-role model
+    (``bull_model`` / ``bear_model``), each defaulting to the system model when
+    its env var is unset/empty/invalid (R6.3). Never raises (R6.4): any failure
+    degrades to ``readonly_llm_with_tools``. Bull and Bear both bind to the
+    read-only tool set, so ``declare_trade`` / ``watch_price_condition`` are not
+    available to them regardless of the resolved model.
+    """
+    try:
+        cfg = resolve_debate_config(model_name)
+        role_norm = (role or "").strip().lower()
+        if role_norm == "bull":
+            role_model = cfg.bull_model
+        elif role_norm == "bear":
+            role_model = cfg.bear_model
+        else:
+            # Any other role falls back to the system model (read-only bound).
+            role_model = model_name
+        return _build_readonly_llm_for_model(role_model)
+    except Exception as e:
+        print(
+            f"[Deep Quant Debate] get_role_llm({role!r}) failed: {e}. "
+            f"Using the default read-only binding."
+        )
+        return readonly_llm_with_tools
+
+
+# ── Judge full-tool model factory (multi-agent-debate, R4.5/R6.3/R6.4) ────────
+# The Judge is the ONLY role permitted to commit a trade, so it binds the FULL
+# tool set (including ``declare_trade``) — unlike the read-only Bull/Bear. The
+# Judge's bounded read-only "targeted clarification" calls (R2.4) are policed in
+# ``judge_node`` itself, not by the binding, so the full binding is correct here.
+def _build_full_llm_for_model(role_model: str):
+    """Build (and cache) a FULL-tool-bound ChatOpenAI for the Judge ``role_model``.
+
+    Mirrors ``_build_readonly_llm_for_model`` but binds the complete ``tools``
+    list so the Judge can call ``declare_trade``. Degrades gracefully and NEVER
+    raises (R6.4): if constructing a role-specific client fails, falls back to
+    the default full-tool binding (``llm_with_tools``).
+    """
+    key = (role_model, "full")
+    cached = _ROLE_LLM_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        role_llm = ChatOpenAI(
+            model=role_model,
+            openai_api_key=api_key,
+            openai_api_base=base_url,
+            temperature=0.2,
+            max_retries=int(_env_nonempty("LLM_MAX_RETRIES", default="4")),
+            timeout=float(_env_nonempty("LLM_TIMEOUT_SECS", default="90")),
+        )
+        bound = role_llm.bind_tools(tools)
+    except Exception as e:
+        print(
+            f"[Deep Quant Debate] Could not build judge model {role_model!r}: {e}. "
+            f"Falling back to the default full-tool binding."
+        )
+        bound = llm_with_tools
+    _ROLE_LLM_CACHE[key] = bound
+    return bound
+
+
+def get_judge_llm():
+    """Return the cached FULL-tool-bound LLM for the Judge role.
+
+    Uses ``resolve_debate_config(model_name)`` to pick ``judge_model`` (defaulting
+    to the system model when its env var is unset/empty/invalid, R6.3). Never
+    raises (R6.4): any failure degrades to ``llm_with_tools``.
+    """
+    try:
+        cfg = resolve_debate_config(model_name)
+        return _build_full_llm_for_model(cfg.judge_model)
+    except Exception as e:
+        print(
+            f"[Deep Quant Debate] get_judge_llm() failed: {e}. "
+            f"Using the default full-tool binding."
+        )
+        return llm_with_tools
 
 # ── Nodes & Routing ─────────────────────────────────────────────────────────
 
@@ -1534,6 +1736,97 @@ def _management_entry(decision, action, levels, results, atr_14) -> Optional[dic
     return entry
 
 
+def _debate_entry(decision, mode, action):
+    """Build the debate sub-entry for a DEBATE-mode decision (R7.1-R7.4), or None.
+
+    Reads ONLY the stored Bull/Bear stances and the Judge verdict that
+    ``judge_node`` threads onto the decision under the private ``_debate``
+    carrier before finalization (``bull_stance`` / ``bear_stance`` /
+    ``consensus`` / ``conviction``). Nothing is invented:
+
+      * A missing/garbled stance is represented as ``{"available": False}`` rather
+        than a fabricated stance (R7.2, R12.2); a present stance is mirrored from
+        its stored serialized form verbatim.
+      * ``conviction_basis`` is a faithful projection of the stored consensus and
+        the two stance strengths — it states how they set the conviction and
+        invents no new evidence (R7.1, R7.2).
+      * ``committed_against_contested`` is included ONLY when a directional
+        BUY/SELL was committed against a ``contested`` consensus (R7.4).
+
+    Returns ``None`` for any non-DEBATE run or when no debate data was threaded,
+    so ``build_defensibility_record`` adds NO ``debate`` key (R7.3) — mirroring
+    the way the ``management`` entry is added only when applicable.
+    """
+    if mode != DEBATE_MODE:
+        return None
+    raw = decision.get("_debate") if isinstance(decision, dict) else None
+    if not isinstance(raw, dict):
+        return None
+
+    # Mirror the stored stances verbatim; a missing stance is marked unavailable
+    # rather than fabricated (R7.2, R12.2).
+    bull_raw = raw.get("bull_stance")
+    bear_raw = raw.get("bear_stance")
+    bull_entry = bull_raw if isinstance(bull_raw, dict) else {"available": False}
+    bear_entry = bear_raw if isinstance(bear_raw, dict) else {"available": False}
+
+    consensus = raw.get("consensus")
+    if consensus not in DEBATE_CONSENSUS_VALUES:
+        consensus = "unknown"
+
+    conviction = raw.get("conviction")
+    try:
+        conviction = int(conviction) if conviction is not None else None
+    except (TypeError, ValueError):
+        conviction = None
+
+    # Read the strengths back from the stored stances purely for the basis
+    # statement (an unavailable stance is reported as such, never invented).
+    def _stance_strength(entry):
+        if isinstance(entry, dict) and entry.get("available") is not False:
+            s = entry.get("strength")
+            if isinstance(s, bool):
+                return None
+            if isinstance(s, (int, float)):
+                return int(s)
+        return None
+
+    bull_strength = _stance_strength(bull_entry)
+    bear_strength = _stance_strength(bear_entry)
+    bull_desc = str(bull_strength) if bull_strength is not None else "unavailable"
+    bear_desc = str(bear_strength) if bear_strength is not None else "unavailable"
+
+    conviction_basis = (
+        f"Consensus '{consensus}' with bull strength {bull_desc} vs bear strength "
+        f"{bear_desc} set the Judge conviction to "
+        f"{conviction if conviction is not None else 'n/a'}."
+    )
+    if consensus == "contested":
+        conviction_basis += (
+            " A contested consensus attenuates conviction toward caution."
+        )
+
+    entry = {
+        "bull_stance": bull_entry,
+        "bear_stance": bear_entry,
+        "consensus": consensus,
+        "conviction": conviction,
+        "conviction_basis": conviction_basis,
+    }
+
+    # R7.4: only when a directional BUY/SELL was committed against a contested
+    # debate, add an explicit statement that the trade fought a contested verdict.
+    if consensus == "contested" and action in ("BUY", "SELL"):
+        entry["committed_against_contested"] = (
+            f"COMMITTED AGAINST A CONTESTED DEBATE: the Judge committed a directional "
+            f"{action} even though the Bull and Bear cases were comparably strong and "
+            f"opposed (bull strength {bull_desc} vs bear strength {bear_desc}, "
+            f"consensus=contested)."
+        )
+
+    return entry
+
+
 def build_defensibility_record(messages, decision, mode=None, manual_trade=None) -> dict:
     """Assemble the trade defensibility record from tool results in history (R7).
 
@@ -1800,6 +2093,16 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
     if management is not None:
         record["management"] = management
 
+    # Attach the debate entry only for a DEBATE-mode decision that carries the
+    # threaded Bull/Bear stances + Judge verdict (multi-agent-debate, R7.1).
+    # A non-DEBATE run (or a DEBATE run with no threaded debate data) yields
+    # None, so NO ``debate`` key is added (R7.3) — exactly like the management
+    # entry above. The debate-consensus stream step reads an absent key as
+    # "not-evaluable".
+    debate = _debate_entry(decision, mode, action)
+    if debate is not None:
+        record["debate"] = debate
+
     # VERIFY mode must report every Trade_Validator check outcome (R7.4).
     if mode == "VERIFY":
         record["validator_checks"] = _verify_mode_validator_checks(action, levels, atr)
@@ -1899,11 +2202,25 @@ def call_model(state: AgentState):
     # usable data in this run. (Gating on this flag is implemented separately.)
     market_data_seen = bool(state.get("market_data_seen")) or _market_data_seen(messages)
 
-    return {
+    update = {
         "messages": [response],
         "reasoning_turns": reasoning_turns,
         "market_data_seen": market_data_seen,
     }
+
+    # ── DEBATE Research_Phase entry (multi-agent-debate, R2.1) ───────────────
+    # A DEBATE-mode run enters through the `agent` node (route_entry maps the
+    # DEBATE research-entry string to `agent`). The first time the model is
+    # invoked for that run, latch `phase = "research"` so the downstream
+    # `tool_node` data-gate suppresses any `declare_trade` while evidence is
+    # gathered (the Research_Phase "stops before any trade is declared"). The
+    # flag is set ONLY for DEBATE and ONLY when not already set, so FIND /
+    # VERIFY / QA runs never populate `phase` and are completely unchanged.
+    if (mode or "").strip().upper() == DEBATE_MODE and not state.get("phase"):
+        print("[Deep Quant Agent] DEBATE run -> entering Research_Phase (phase=research).")
+        update["phase"] = "research"
+
+    return update
 
 # Base ToolNode used to execute only the well-formed (`ok`) tool calls.
 _base_tool_node = ToolNode(tools)
@@ -1931,6 +2248,29 @@ def tool_node(state: AgentState):
 
     ok_calls = [tc for tc in all_calls if statuses.get(tc["id"], "ok") == "ok"]
     failed_calls = [tc for tc in all_calls if statuses.get(tc["id"], "ok") != "ok"]
+
+    # ── DEBATE Research_Phase declaration gate (multi-agent-debate, R2.1) ────
+    # While `phase == "research"` the Research_Phase gathers the Shared_Evidence
+    # only and MUST stop before any trade is declared. Reusing the proven
+    # data-gate mechanism, any `declare_trade` issued during research is held
+    # back here: it is answered with synthetic feedback and is NEVER committed
+    # (no `state["decision"]` is set), so the Research_Phase can never finalize a
+    # trade. A `declare_trade` is also the model signalling it is done gathering,
+    # so it hands control off to the debate roles by transitioning the phase to
+    # "debate" (consumed by `route_after_tools` -> `bull`). Non-declare tool
+    # calls (the actual evidence gathering) execute normally below. This branch
+    # is inert for every non-DEBATE run because `phase` is only ever set for a
+    # DEBATE run (see `call_model`).
+    research_phase = (state.get("phase") == "research")
+    research_blocked_declares: List[dict] = []
+    if research_phase:
+        retained = []
+        for tc in ok_calls:
+            if tc.get("name") == "declare_trade":
+                research_blocked_declares.append(tc)
+            else:
+                retained.append(tc)
+        ok_calls = retained
 
     # ── First-turn data-acquisition gate (R3.1-R3.3) ─────────────────────────
     # `market_data_seen` is maintained by call_model from the messages that
@@ -1966,6 +2306,34 @@ def tool_node(state: AgentState):
         )
 
     update = {"messages": out_messages}
+
+    # ── Resolve gated Research_Phase declare_trade calls (R2.1) ──────────────
+    # A `declare_trade` issued while gathering the Shared_Evidence is suppressed:
+    # it is answered with feedback and NOT committed. The Research_Phase then
+    # hands off to the debate roles — signalled by transitioning the phase to
+    # "debate", which `route_after_tools` routes to the `bull` node. No
+    # `state["decision"]` is ever set here, so research can never finalize a
+    # trade (Property 7).
+    if research_blocked_declares:
+        for tc in research_blocked_declares:
+            note = (
+                "declare_trade suppressed during the research phase: the Research_Phase "
+                "gathers the shared evidence base only and never commits a trade. The "
+                "Judge will commit the trade after the Bull/Bear debate weighs this "
+                "evidence. Stop declaring and conclude your evidence gathering."
+            )
+            print(
+                "[Deep Quant Tools] Gated declare_trade during research phase "
+                "(suppressed, not committed) -> handing off to debate roles."
+            )
+            out_messages.append(
+                ToolMessage(content=note, tool_call_id=tc["id"], name="declare_trade")
+            )
+        # Mark the research → debate handoff. The Shared_Evidence is exactly the
+        # ToolMessages accumulated in state["messages"] (consumed verbatim by the
+        # Bull, Bear, and Judge roles); nothing is re-gathered.
+        update["phase"] = "debate"
+        return update
 
     # ── Resolve gated declare_trade calls ────────────────────────────────────
     if blocked_declares:
@@ -2101,7 +2469,15 @@ def should_continue(state: AgentState) -> str:
         print("[Deep Quant Routing] Reasoning budget remaining. Routing to -> loop_agent")
         return "loop_agent"
 
-    # ── Precedence 4: reasoning exhausted → forced HOLD ──────────────────────
+    # ── Precedence 4: reasoning exhausted ────────────────────────────────────
+    # In a DEBATE Research_Phase, exhausting the reasoning budget means the
+    # model gathered evidence without ever (usably) declaring; hand the gathered
+    # Shared_Evidence off to the debate roles instead of forcing a HOLD (R2.1).
+    if state.get("phase") in ("research", "debate"):
+        print("[Deep Quant Routing] Research budget reached. Routing to -> debate (bull)")
+        return DEBATE_HANDOFF
+
+    # ── Precedence 4 (non-DEBATE): reasoning exhausted → forced HOLD ──────────
     print("[Deep Quant Routing] Reasoning budget exhausted. Routing to -> force_hold")
     return "force_hold"
 
@@ -2148,6 +2524,13 @@ def route_after_tools(state: AgentState) -> str:
     if state.get("decision"):
         print("[Deep Quant Routing] Decision committed during tool execution. Routing to -> end")
         return "end"
+    # DEBATE Research_Phase handoff: `tool_node` transitions `phase` to "debate"
+    # once research is complete (a suppressed declare_trade signalled the model
+    # is done gathering). Route to the debate roles (`bull`) rather than looping
+    # the research agent again (R2.1). Inert for non-DEBATE runs (`phase` unset).
+    if state.get("phase") == "debate":
+        print("[Deep Quant Routing] Research complete (phase=debate). Routing to -> debate (bull)")
+        return DEBATE_HANDOFF
     return "agent"
 
 
@@ -2172,6 +2555,20 @@ def route_after_tools(state: AgentState) -> str:
 #     instructed never to fabricate (R18.4).
 
 QA_MODE = "QA"
+
+# Multi-Agent Debate analysis mode (multi-agent-debate, R1.2). A request with
+# ``mode == "DEBATE"`` is the ONLY trigger for the adversarial bull/bear/judge
+# debate; nothing runs it implicitly (R1.4). Every other mode value (FIND,
+# VERIFY, QA, or any arbitrary string) follows the unchanged legacy routing.
+DEBATE_MODE = "DEBATE"
+
+# Routing target string returned by ``route_entry`` for a DEBATE-mode run. The
+# Research_Phase reuses the existing ``agent`` analysis loop (declaration is
+# suppressed downstream via ``state["phase"] == "research"``), so this routing
+# key is mapped to the ``agent`` node in the conditional entry point. Using a
+# DISTINCT return string keeps FIND/VERIFY/QA routing byte-identical while
+# making the DEBATE entry distinguishable at the routing layer.
+DEBATE_RESEARCH_ENTRY = "research"
 
 # Maximum number of Q&A model turns (each may issue read-only tool fetches)
 # before the Q&A loop is forced to end. Bounds the tool-fetch loop (R18.4).
@@ -2424,14 +2821,29 @@ def qa_should_continue(state: AgentState) -> str:
 
 
 def route_entry(state: AgentState) -> str:
-    """Select the entry node: the Q&A handler in QA mode, else the analysis loop.
+    """Select the entry node: the Q&A handler in QA mode, the Research_Phase in
+    DEBATE mode, else the normal FIND/VERIFY analysis loop.
 
     A request with ``mode == "QA"`` reuses the same thread_id and answers from
     the persisted Session_Analysis_Context without re-running analysis (R18.1).
+
+    A request with ``mode == "DEBATE"`` enters the Research_Phase (R1.2) — which
+    reuses the existing ``agent`` analysis loop with declaration suppressed —
+    returning a DISTINCT routing string (``DEBATE_RESEARCH_ENTRY``) so the
+    DEBATE entry is distinguishable at the routing layer. The conditional entry
+    point maps that string to the ``agent`` node. DEBATE is the ONLY trigger for
+    the debate; nothing runs it implicitly (R1.4).
+
+    FIND / VERIFY resolve to the ``agent`` analysis loop and QA to ``qa_agent``
+    exactly as before — these legacy branches are byte-identical (R1.3, R5.4).
     """
-    if (state.get("mode") or "").strip().upper() == QA_MODE:
+    mode = (state.get("mode") or "").strip().upper()
+    if mode == QA_MODE:
         print("[Deep Quant Routing] mode=QA -> entering Trade Q&A handler.")
         return "qa_agent"
+    if mode == DEBATE_MODE:
+        print("[Deep Quant Routing] mode=DEBATE -> entering Research_Phase.")
+        return DEBATE_RESEARCH_ENTRY
     return "agent"
 
 
@@ -2444,6 +2856,531 @@ workflow.add_node("agent", call_model)
 workflow.add_node("tools", tool_node)
 workflow.add_node("force_hold", force_hold)
 
+# ── DEBATE debate-role nodes (multi-agent-debate) ────────────────────────────
+# The Research_Phase (the reused `agent`+`tools` loop with declaration
+# suppressed) hands off to the Bull/Bear/Judge debate via the `bull` node.
+#
+# TASK 7.1 (this task) implements the real Bull_Agent and Bear_Agent: each
+# consumes the Shared_Evidence (the ToolMessages already in state["messages"] —
+# no re-gathering), is bound to the READ-ONLY tool set (so it cannot commit or
+# suspend a trade), and emits a structured Debate_Stance via
+# ``debate.parse_stance``. Neither ever sets ``state["decision"]`` — only the
+# Judge commits (R3.5, R12.1).
+#
+# STILL OUTSTANDING: TASK 8.1 adds the Judge node + `route_debate` and the
+# round-looping (bull → bear → judge → [next round | finalize]); TASK 15.1
+# finalizes the edge wiring (replacing the temporary `bear → __end__` edge).
+# TASK 7.1 (this task) replaces the placeholder body in place with the real
+# Bull_Agent and adds a `bear_node`. TASK 8.1 adds `route_debate` + the Judge
+# node and the round-looping (bull → bear → judge → [next round | finalize]);
+# TASK 15.1 finalizes the edge wiring. Replace the function body in place — do
+# NOT re-`add_node("bull", ...)` (LangGraph rejects a duplicate node name).
+
+
+# ── Debate role helpers (multi-agent-debate, R2.2/R2.3/R3.1-R3.6) ─────────────
+def _collect_shared_evidence(messages) -> List[str]:
+    """Collect the Shared_Evidence from the gathered ToolMessages, in order.
+
+    The Bull/Bear roles consume the evidence already gathered in the
+    Research_Phase (the ToolMessages in ``state["messages"]``) verbatim — they do
+    NOT re-run the tool-gathering loop (R2.3). Each usable ToolMessage is rendered
+    as a ``<tool_name>: <content>`` line so it can be threaded into the role
+    prompt as text (avoiding tool/assistant message-ordering constraints).
+    """
+    evidence: List[str] = []
+    for m in messages or []:
+        if not _is_tool_message(m):
+            continue
+        name = getattr(m, "name", None) or "tool"
+        content = getattr(m, "content", "")
+        if content is None:
+            content = ""
+        text = content if isinstance(content, str) else str(content)
+        text = text.strip()
+        if text:
+            evidence.append(f"{name}: {text}")
+    return evidence
+
+
+def _extract_stance_payload(raw_content):
+    """Extract the stance JSON object from a role response's content.
+
+    The role is asked to emit a single JSON object (lean / strength / arguments /
+    biggest_risk). Real models often wrap it in prose or markdown fences, so we
+    extract the first brace-balanced object and hand THAT to ``parse_stance``;
+    when none is found we pass the raw content through (``parse_stance`` then
+    degrades to an unavailable stance). Never raises.
+    """
+    if not isinstance(raw_content, str):
+        return raw_content
+    extracted = _extract_balanced_json(raw_content, 0)
+    return extracted if extracted is not None else raw_content
+
+
+_BULL_ROLE_PROMPT = """You are the BULL analyst in an adversarial trading debate.
+
+Your job: argue the STRONGEST possible LONG case for the symbol using ONLY the shared evidence provided below. Do NOT fabricate any market data — cite only values that appear in the evidence. If the evidence is weak for a long, say so honestly and score your strength low; never invent support.
+
+You are an analyst, not an executor: you must NOT attempt to commit, declare, or schedule a trade. Output your stance as a SINGLE JSON object and nothing else:
+{
+  "lean": "long" | "short" | "neutral",
+  "strength": <integer 0-100, how compelling the long case is>,
+  "arguments": ["concise evidence-grounded point", ...],
+  "biggest_risk": "the single biggest risk to YOUR long thesis"
+}"""
+
+_BEAR_ROLE_PROMPT = """You are the BEAR analyst in an adversarial trading debate.
+
+Your job: argue the STRONGEST possible SHORT / NO-TRADE case for the symbol using ONLY the shared evidence provided below. Do NOT fabricate any market data — cite only values that appear in the evidence. If the evidence actually favors a long, say so honestly and score your strength low; never invent bearish support.
+
+You are an analyst, not an executor: you must NOT attempt to commit, declare, or schedule a trade. Output your stance as a SINGLE JSON object and nothing else:
+{
+  "lean": "long" | "short" | "neutral",
+  "strength": <integer 0-100, how compelling the short / no-trade case is>,
+  "arguments": ["concise evidence-grounded point", ...],
+  "biggest_risk": "the single biggest risk to YOUR short / no-trade thesis"
+}"""
+
+
+def _run_debate_role(role: str, state: AgentState, system_prompt: str) -> dict:
+    """Run one Bull/Bear turn over the Shared_Evidence and return a state update.
+
+    Shared by ``bull_node`` and ``bear_node``: it gathers the Shared_Evidence,
+    threads in the opposing prior-round stance when more than one round is run
+    (R3.6), invokes the read-only-bound role LLM, parses the structured stance
+    via ``debate.parse_stance``, stores ``stance_to_dict(stance)`` into
+    ``bull_stance`` / ``bear_stance``, and increments ``debate_turns``. It NEVER
+    sets ``state["decision"]`` — only the Judge commits (R3.5, R12.1).
+    """
+    role_norm = (role or "").strip().lower()
+    evidence = _collect_shared_evidence(state.get("messages"))
+    evidence_block = (
+        "\n".join(f"- {line}" for line in evidence)
+        if evidence else "(no usable shared evidence was gathered)"
+    )
+
+    # Round threading (R3.6): from round 2 onward, give each role the opposing
+    # side's most recent stance to rebut. The Bull rebuts the prior Bear stance;
+    # the Bear rebuts the (just-produced) Bull stance.
+    debate_round = state.get("debate_round") or 1
+    threading_block = ""
+    if role_norm == "bull":
+        prior = state.get("bear_stance")
+        if prior and debate_round > 1:
+            threading_block = (
+                "\n\nThe BEAR argued the following in the prior round — rebut its "
+                f"strongest points where the evidence lets you:\n{json.dumps(prior)}"
+            )
+    elif role_norm == "bear":
+        prior = state.get("bull_stance")
+        if prior:
+            threading_block = (
+                "\n\nThe BULL argued the following — rebut its strongest points "
+                f"where the evidence lets you:\n{json.dumps(prior)}"
+            )
+
+    human = HumanMessage(
+        content=(
+            f"SHARED EVIDENCE (gathered once in the research phase — argue over "
+            f"this, do not request more):\n{evidence_block}{threading_block}\n\n"
+            f"Now emit your stance as a single JSON object."
+        )
+    )
+
+    role_llm = get_role_llm(role_norm)
+    try:
+        response = role_llm.invoke([SystemMessage(content=system_prompt), human])
+        raw_content = getattr(response, "content", "") or ""
+    except Exception as e:
+        # A role failure must not crash the debate: emit an unavailable stance so
+        # the Judge can proceed on the remaining evidence (R12.2). parse_stance(
+        # role, None) yields available=False.
+        print(f"[Deep Quant Debate] {role_norm} role invocation failed: {e}")
+        raw_content = None
+
+    payload = _extract_stance_payload(raw_content)
+    stance = parse_stance(role_norm, payload)
+    stance_dict = stance_to_dict(stance)
+    print(
+        f"[Deep Quant Debate] {role_norm} stance — lean={stance.lean} "
+        f"strength={stance.strength} available={stance.available} "
+        f"(round {debate_round})."
+    )
+
+    update: dict = {
+        "debate_turns": (state.get("debate_turns") or 0) + 1,
+        # Stay in the debate phase; the Judge node (task 8.1) will finalize.
+        "phase": "debate",
+    }
+    if role_norm == "bull":
+        update["bull_stance"] = stance_dict
+    elif role_norm == "bear":
+        update["bear_stance"] = stance_dict
+    # NEVER set update["decision"] here — only the Judge commits (R3.5, R12.1).
+    return update
+
+
+def bull_node(state: AgentState):
+    """Bull_Agent — argue the strongest long case over the Shared_Evidence (R3.1).
+
+    Consumes the ToolMessages already gathered in the Research_Phase (no
+    re-gathering), emits a structured Debate_Stance parsed by
+    ``debate.parse_stance``, stores it in ``bull_stance``, and increments
+    ``debate_turns``. Bound to the read-only tool set, so it cannot call
+    ``declare_trade`` / ``watch_price_condition`` and never sets a decision
+    (R3.5, R12.1).
+    """
+    # Initialize the 1-based round counter on first entry into the debate so the
+    # round-threading logic and the Judge's round-looping (task 8.1) have a
+    # defined starting round (R3.6, R6.1).
+    #
+    # The round index is derived DETERMINISTICALLY from the bounded turn counter
+    # so the round-looping (`route_debate` -> back to `bull`) is idempotent:
+    # before the Bull turn of round k, exactly (k-1) full Bull+Bear rounds (each
+    # TURNS_PER_ROUND turns) have completed, so
+    # ``round = (debate_turns // TURNS_PER_ROUND) + 1``. This is correct for the
+    # first entry (debate_turns == 0 -> round 1) and every subsequent round.
+    turns_done = state.get("debate_turns") or 0
+    current_round = (turns_done // TURNS_PER_ROUND) + 1
+    # Reflect the resolved round for this turn's threading decisions (R3.6).
+    state = {**state, "debate_round": current_round}
+    update: dict = {"debate_round": current_round}
+    update.update(_run_debate_role("bull", state, _BULL_ROLE_PROMPT))
+    return update
+
+
+def bear_node(state: AgentState):
+    """Bear_Agent — argue the strongest short / no-trade case (R3.2).
+
+    Consumes the same Shared_Evidence as the Bull (no re-gathering), is given the
+    Bull's stance to rebut (R3.6), emits a structured Debate_Stance parsed by
+    ``debate.parse_stance``, stores it in ``bear_stance``, and increments
+    ``debate_turns``. Bound to the read-only tool set, so it cannot call
+    ``declare_trade`` / ``watch_price_condition`` and never sets a decision
+    (R3.5, R12.1).
+    """
+    return _run_debate_role("bear", state, _BEAR_ROLE_PROMPT)
+
+
+# ── Judge node + bounded debate sequencing (multi-agent-debate, task 8.1) ─────
+_JUDGE_ROLE_PREAMBLE = """You are the JUDGE in an adversarial Bull/Bear trading debate.
+
+The Research_Phase has ALREADY gathered the shared evidence (provided below as tool results), and the Bull and Bear analysts have each argued their strongest case over THAT SAME evidence. Your job is to WEIGH both stances against the shared evidence and decide.
+
+You are the ONLY role permitted to commit a trade. When you are ready, call `declare_trade` (BUY / SELL / HOLD). You MUST apply the FULL <self_verification_protocol> below before committing — the same hard-risk discipline used for a single-agent decision, and the Trade_Validator remains authoritative on your declaration.
+
+A deterministic synthesis of the two stances (consensus, conviction, advisory bias) is given to you below. A `contested` consensus MUST bias you toward a HOLD or a reduced-size decision; use the computed conviction as the anchor for your conviction_score.
+
+You MAY issue at most {judge_max_tool_calls} targeted READ-ONLY analysis-tool call(s) to resolve a single clarification before declaring — do NOT re-run the whole research loop, and do NOT fabricate data. Do NOT call `watch_price_condition`; if no A+ trade is defensible, declare a HOLD.
+
+"""
+
+
+def _build_judge_prompt(state: AgentState) -> str:
+    """Build the Judge system prompt: a Judge preamble + the unchanged
+    self-verification protocol used for a single-agent decision (R4.7).
+
+    Reuses ``format_system_prompt`` so the Judge applies the exact same
+    <self_verification_protocol> / declare_trade discipline as the standard
+    analysis loop, prefixed with the adversarial-debate framing and the bounded
+    read-only tool-call allowance (R2.4).
+    """
+    try:
+        cfg = resolve_debate_config(model_name)
+        judge_budget = cfg.judge_max_tool_calls
+    except Exception:
+        judge_budget = 0
+    preamble = _JUDGE_ROLE_PREAMBLE.format(judge_max_tool_calls=judge_budget)
+    # format_system_prompt(state) for a DEBATE run (mode != VERIFY) returns the
+    # DEEP_QUANT_SYSTEM_PROMPT (which contains the full self-verification
+    # protocol + declare_trade rules) plus the timeframe instruction.
+    return preamble + format_system_prompt(state)
+
+
+def judge_node(state: AgentState):
+    """Judge_Agent — weigh both stances, set the verdict, and commit (R4.1-R4.7).
+
+    Reconstructs the stored Bull/Bear ``DebateStance``s, classifies the
+    Debate_Consensus and derives the Conviction via the pure ``debate`` core
+    (R4.1, R4.4), then invokes the FULL-tool-bound Judge LLM. The Judge may issue
+    at most ``judge_max_tool_calls`` targeted READ-ONLY tool calls for a single
+    clarification (R2.4) before committing via ``declare_trade``. Its declaration
+    flows through the UNCHANGED ``_decision_from_declare`` /
+    ``_declare_was_rejected`` / ``_finalize_decision`` path, so the Trade_Validator
+    stays authoritative (R4.6, R5.2) and the decision is journaled exactly like a
+    single-agent decision (R5.5). If no validated trade is committed within the
+    budget, a stated HOLD is finalized (R5.3). Only the Judge commits (R4.5).
+    """
+    cfg = resolve_debate_config(model_name)
+    budget = cfg.judge_max_tool_calls
+
+    # Reconstruct the stored stances (parse_stance round-trips stance_to_dict)
+    # and run the deterministic synthesis. An unavailable/missing stance is
+    # treated as strength 0 by the pure core, never fabricated (R12.2).
+    bull = parse_stance("bull", state.get("bull_stance"))
+    bear = parse_stance("bear", state.get("bear_stance"))
+    consensus = classify_consensus(bull, bear)
+    conviction = derive_conviction(bull, bear, consensus)
+    bias = judge_directional_bias(bull, bear, consensus)
+    print(
+        f"[Deep Quant Debate] judge synthesis -> consensus={consensus} "
+        f"conviction={conviction} advisory_bias={bias}."
+    )
+
+    evidence = _collect_shared_evidence(state.get("messages"))
+    evidence_block = (
+        "\n".join(f"- {line}" for line in evidence)
+        if evidence else "(no usable shared evidence was gathered)"
+    )
+
+    human = HumanMessage(
+        content=(
+            "SHARED EVIDENCE (gathered once in the research phase — weigh this, "
+            f"do not re-gather):\n{evidence_block}\n\n"
+            f"BULL stance:\n{json.dumps(state.get('bull_stance') or {})}\n\n"
+            f"BEAR stance:\n{json.dumps(state.get('bear_stance') or {})}\n\n"
+            "DEBATE SYNTHESIS (computed deterministically from the two stances):\n"
+            f"- consensus: {consensus}\n"
+            f"- conviction: {conviction} (in [0, 100])\n"
+            f"- advisory directional bias: {bias}\n\n"
+            "Now weigh the cases against the shared evidence, apply your "
+            "self-verification protocol, and either call declare_trade (BUY / "
+            "SELL / HOLD) or declare a HOLD."
+        )
+    )
+
+    judge_llm = get_judge_llm()
+    system_prompt = _build_judge_prompt(state)
+
+    # Conversation the Judge LLM sees (system prompt prepended at invoke time).
+    judge_msgs: List[BaseMessage] = [SystemMessage(content=system_prompt), human]
+    # Messages merged back into the shared state so the Judge's reasoning, any
+    # read-only clarification results, and its declaration are surfaced in the
+    # stream and remain a valid (id-paired) message history.
+    new_messages: List[BaseMessage] = []
+
+    decision: Optional[dict] = None
+    readonly_used = 0
+    # Bounded iterations guarantee termination (R2.4, R6.2): at most `budget`
+    # read-only clarification rounds, plus a declaration round, plus slack.
+    max_iters = budget + 2
+
+    for _ in range(max_iters):
+        try:
+            response = judge_llm.invoke(judge_msgs)
+        except Exception as e:
+            print(f"[Deep Quant Debate] judge invocation failed: {e}")
+            break
+
+        extraction = extract_tool_calls(response)
+        all_calls = extraction.calls
+        # Pair every discovered call with an id on the AIMessage so the follow-up
+        # ToolMessages keep the history valid.
+        response.tool_calls = [
+            {"name": c.name, "args": c.args or {}, "id": c.id} for c in all_calls
+        ]
+        judge_msgs.append(response)
+        new_messages.append(response)
+
+        ok_calls = [c for c in all_calls if c.status == "ok"]
+        failed_calls = [c for c in all_calls if c.status != "ok"]
+
+        # Answer malformed calls with synthetic feedback so the Judge can self-correct.
+        for c in failed_calls:
+            tmsg = ToolMessage(
+                content=_synthetic_failure_content(c),
+                tool_call_id=c.id,
+                name=c.name or "unknown_tool",
+            )
+            judge_msgs.append(tmsg)
+            new_messages.append(tmsg)
+
+        declare_calls = [c for c in ok_calls if c.name == "declare_trade"]
+        suspend_calls = [c for c in ok_calls if c.name == "watch_price_condition"]
+        readonly_calls = [
+            c for c in ok_calls if c.name not in DEBATE_READONLY_EXCLUDED_TOOLS
+        ]
+
+        # The Judge may not suspend the run (only commit or HOLD): refuse any
+        # watch_price_condition with feedback rather than executing it.
+        for c in suspend_calls:
+            tmsg = ToolMessage(
+                content=(
+                    "watch_price_condition is not available to the Judge: weigh the "
+                    "shared evidence and either declare_trade (BUY/SELL) or declare a HOLD."
+                ),
+                tool_call_id=c.id,
+                name="watch_price_condition",
+            )
+            judge_msgs.append(tmsg)
+            new_messages.append(tmsg)
+
+        # ── Declaration: route through the UNCHANGED finalize path ───────────
+        if declare_calls:
+            call_dicts = [
+                {"name": c.name, "args": c.args or {}, "id": c.id} for c in declare_calls
+            ]
+            temp = AIMessage(content="", tool_calls=call_dicts)
+            result = _base_tool_node.invoke({"messages": [temp]})
+            declare_tmsgs = list(result["messages"])
+            judge_msgs.extend(declare_tmsgs)
+            new_messages.extend(declare_tmsgs)
+
+            cand = _decision_from_declare(call_dicts)
+            if cand is not None and _declare_was_rejected(declare_tmsgs):
+                # The authoritative Trade_Validator rejected the trade: do NOT
+                # finalize. Let the Judge revise & re-declare within budget (R4.6).
+                print(
+                    "[Deep Quant Debate] Judge declare_trade REJECTED by the validator; "
+                    "allowing revision within the remaining budget."
+                )
+            elif cand is not None:
+                decision = cand
+                print(
+                    f"[Deep Quant Debate] Judge committed decision: action={decision.get('action')}."
+                )
+                break
+            # cand is None -> not a usable declaration; fall through and loop.
+            continue
+
+        # ── Targeted read-only clarification calls (bounded by the budget) ────
+        if readonly_calls:
+            for c in readonly_calls:
+                if readonly_used >= budget:
+                    tmsg = ToolMessage(
+                        content=(
+                            f"Judge read-only tool budget exhausted ({budget}). Do not "
+                            "gather more data — weigh the existing shared evidence and "
+                            "declare your decision (declare_trade BUY/SELL or HOLD) now."
+                        ),
+                        tool_call_id=c.id,
+                        name=c.name,
+                    )
+                    judge_msgs.append(tmsg)
+                    new_messages.append(tmsg)
+                    continue
+                temp = AIMessage(
+                    content="", tool_calls=[{"name": c.name, "args": c.args or {}, "id": c.id}]
+                )
+                result = _base_tool_node.invoke({"messages": [temp]})
+                rmsgs = list(result["messages"])
+                judge_msgs.extend(rmsgs)
+                new_messages.extend(rmsgs)
+                readonly_used += 1
+            continue
+
+        # No actionable tool calls this turn (pure reasoning, or only failed /
+        # suspend calls) -> the Judge declined to commit; stop and finalize HOLD.
+        if not ok_calls:
+            break
+
+    update: dict = {
+        "debate_turns": (state.get("debate_turns") or 0) + 1,
+        "phase": "debate",
+        "debate_consensus": consensus,
+        "debate_conviction": conviction,
+        "messages": new_messages,
+    }
+
+    if decision is not None:
+        # Thread the stored Bull/Bear stances + Judge verdict onto the decision so
+        # the single ``_finalize_decision`` chokepoint's ``build_defensibility_record``
+        # can build the ``debate`` sub-entry from them (multi-agent-debate, R7.1).
+        # The carrier is private (``_debate``) and is popped immediately after the
+        # record is built so it never leaks into the journaled / streamed decision.
+        decision["_debate"] = {
+            "bull_stance": state.get("bull_stance"),
+            "bear_stance": state.get("bear_stance"),
+            "consensus": consensus,
+            "conviction": conviction,
+        }
+        # Single finalize chokepoint: attach the defensibility record and journal
+        # the decision exactly like a single-agent commit (R5.5).
+        _finalize_decision(state, decision)
+        decision.pop("_debate", None)
+        update["decision"] = decision
+        return update
+
+    # ── No validated trade within budget -> stated HOLD (R5.3) ───────────────
+    # Reuse the force_hold semantics: a stated HOLD with reason "no-decision-reached"
+    # rather than a fabricated trade.
+    hold_decision = {
+        "action": "HOLD",
+        "conviction_score": 0,
+        "reason": "no-decision-reached",
+        "setup_validation": (
+            f"The Bull/Bear debate reached a '{consensus}' consensus (derived conviction "
+            f"{conviction}); the Judge committed no validated A+ trade within the bounded "
+            "debate budget. Holding to preserve capital rather than force a low-conviction trade."
+        ),
+        "execution_plan": "HOLD — no trade taken (the debate produced no validated setup).",
+        "source": "debate_hold",
+    }
+    # Thread the stored Bull/Bear stances + Judge verdict onto the HOLD decision
+    # too, so the debate sub-entry is built for an exhausted/declined debate as
+    # well (multi-agent-debate, R7.1). A HOLD never triggers
+    # ``committed_against_contested`` (R7.4 is directional-only). The carrier is
+    # popped after the record is built so it never leaks downstream.
+    hold_decision["_debate"] = {
+        "bull_stance": state.get("bull_stance"),
+        "bear_stance": state.get("bear_stance"),
+        "consensus": consensus,
+        "conviction": conviction,
+    }
+    hold_decision["defensibility"] = _finalize_decision(state, hold_decision)
+    hold_decision.pop("_debate", None)
+    new_messages.append(
+        AIMessage(
+            content=json.dumps(
+                {
+                    "conviction_score": hold_decision["conviction_score"],
+                    "setup_validation": hold_decision["setup_validation"],
+                    "execution_plan": hold_decision["execution_plan"],
+                }
+            )
+        )
+    )
+    update["decision"] = hold_decision
+    update["messages"] = new_messages
+    return update
+
+
+def route_debate(state: AgentState) -> str:
+    """Sequence the debate: bull -> bear -> (loop additional rounds) -> judge.
+
+    Called after the Bear turn. Loops back to the Bull for another round while
+    another round is configured AND the turn budget is not exhausted; otherwise
+    hands off to the Judge. The strict ``debate_turns < max_turns`` bound
+    guarantees termination regardless of configuration (R6.2). The next Bull turn
+    derives its (incremented) round index deterministically from ``debate_turns``
+    (see ``bull_node``), so no separate round-increment bookkeeping is needed here.
+    """
+    try:
+        cfg = resolve_debate_config(model_name)
+        rounds = cfg.rounds
+        max_turns = cfg.max_turns
+    except Exception:
+        rounds, max_turns = 1, TURNS_PER_ROUND + 1
+
+    debate_round = state.get("debate_round") or 1
+    debate_turns = state.get("debate_turns") or 0
+
+    if debate_round < rounds and debate_turns < max_turns:
+        print(
+            f"[Deep Quant Routing] Debate round {debate_round}/{rounds} complete "
+            f"(turns={debate_turns}/{max_turns}). Routing to -> bull (next round)."
+        )
+        return "bull"
+    print(
+        f"[Deep Quant Routing] Debate rounds complete (round {debate_round}/{rounds}, "
+        f"turns={debate_turns}/{max_turns}). Routing to -> judge."
+    )
+    return "judge"
+
+workflow.add_node("bull", bull_node)
+workflow.add_node("bear", bear_node)
+workflow.add_node("judge", judge_node)
+
 # Trade Q&A nodes (Requirement 18). They reuse the same compiled graph + the
 # MemorySaver checkpointer so a QA request on an existing thread_id sees the
 # persisted Session_Analysis_Context. They are wired as a separate, bounded
@@ -2451,12 +3388,16 @@ workflow.add_node("force_hold", force_hold)
 workflow.add_node("qa_agent", qa_node)
 workflow.add_node("qa_tools", qa_tool_node)
 
-# Conditional entry: mode=QA enters the Q&A handler; everything else runs the
-# normal FIND/VERIFY analysis loop (R18.1).
+# Conditional entry: mode=QA enters the Q&A handler; mode=DEBATE enters the
+# Research_Phase (which reuses the `agent` analysis loop with declaration
+# suppressed); everything else runs the normal FIND/VERIFY analysis loop
+# (R18.1, R1.2, R1.3). The DEBATE research-entry string maps to the same `agent`
+# node, so the FIND/VERIFY/QA targets are unchanged.
 workflow.set_conditional_entry_point(
     route_entry,
     {
         "qa_agent": "qa_agent",
+        DEBATE_RESEARCH_ENTRY: "agent",
         "agent": "agent",
     },
 )
@@ -2472,6 +3413,10 @@ workflow.add_conditional_edges(
         "suspend": "tools",
         "loop_agent": "agent",
         "force_hold": "force_hold",
+        # DEBATE research-completion handoff (multi-agent-debate, R2.1). Only
+        # reachable while `phase` is a DEBATE phase, so non-DEBATE runs never use
+        # it. Mapped to the `bull` placeholder until tasks 7.1/8.1 wire the roles.
+        DEBATE_HANDOFF: "bull",
         "end": "__end__",
     }
 )
@@ -2482,12 +3427,33 @@ workflow.add_conditional_edges(
     route_after_tools,
     {
         "agent": "agent",
+        # DEBATE research → debate handoff after a suppressed declare_trade.
+        DEBATE_HANDOFF: "bull",
         "end": "__end__",
     }
 )
 
 # A forced HOLD terminates the run.
 workflow.add_edge("force_hold", "__end__")
+
+# DEBATE round sequencing (multi-agent-debate, task 8.1). The Bull always hands
+# off to the Bear within a round; after the Bear, `route_debate` either loops
+# back to the Bull for another configured round (R3.6) or hands off to the Judge,
+# strictly bounded by `debate_turns < max_turns` so the debate always terminates
+# (R6.2). The Judge node finalizes internally — committing a validated
+# declare_trade through the unchanged `_decision_from_declare` /
+# `_declare_was_rejected` / `_finalize_decision` path, or finalizing a stated
+# HOLD on budget exhaustion (R5.3) — then the run ends.
+workflow.add_edge("bull", "bear")
+workflow.add_conditional_edges(
+    "bear",
+    route_debate,
+    {
+        "bull": "bull",
+        "judge": "judge",
+    },
+)
+workflow.add_edge("judge", "__end__")
 
 # ── Trade Q&A sub-loop edges (Requirement 18) ─────────────────────────────────
 # qa_agent answers from the persisted context; if it requested a read-only data
