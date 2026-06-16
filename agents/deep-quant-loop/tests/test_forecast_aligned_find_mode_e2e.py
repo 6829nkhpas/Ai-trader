@@ -190,10 +190,11 @@ def test_aligned_find_mode_run_threads_forecast_through_all_layers():
     # ── Layer 3: journal setup fingerprint carries the forecast tag (R11.1) ──
     tags = journal.derive_setup_tags(decision)
     assert "fc:aligned-strong" in tags
-    # Exactly one forecast tag, at the fixed final position.
+    # Exactly one forecast tag, at its fixed position; later dimensions (tm/sess)
+    # and the multi-agent-debate ``db:`` tag follow, so ``db:`` is the final tag.
     fc_tags = [t for t in tags if t.startswith("fc:")]
     assert fc_tags == ["fc:aligned-strong"]
-    assert tags[-1] == "fc:aligned-strong"
+    assert tags[-1].startswith("db:")
 
     # ── Layer 4: the forecast Up_Probability is persisted (R11.4) ────────────
     _orig_db_path = journal.JOURNAL_DB_PATH

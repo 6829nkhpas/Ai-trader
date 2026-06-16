@@ -225,16 +225,25 @@ def test_property_23_single_fixed_position_low_cardinality_tm_tag(payload):
     # ── Missing/unavailable/garbage -> tm:unknown; valid -> declared style (R11.2, R11.3) ─
     assert value == expected_value
 
-    # ── Fixed position: tm tag is LAST, immediately after the ``fc:`` tag (R11.1) ─
-    assert tags[-1] == tm_tags[0]
-    assert tags[-1].startswith("tm:")
+    # ── Fixed position: tm tag sits immediately after the ``fc:`` tag and
+    #    immediately before the ``sess:`` tag. The session dimension and the
+    #    multi-agent-debate ``db:`` tag are appended after it, so the ``db:`` tag
+    #    is now the FINAL tag (R11.1). ──────────────────────────────────────
+    tm_index = tags.index(tm_tags[0])
     # The tag immediately before the tm tag is the forecast tag.
-    assert tags[-2].startswith("fc:")
+    assert tags[tm_index - 1].startswith("fc:")
+    # The tag immediately after the tm tag is the session (sess:) tag.
+    assert tags[tm_index + 1].startswith("sess:")
+    # The debate dimension is always appended last.
+    assert tags[-1].startswith("db:")
 
     # ── Determinism: identical inputs -> identical tag list and setup_key (R11.1) ─
     tags_again = derive_setup_tags(decision)
     assert tags_again == tags
     assert setup_key_from_tags(tags_again) == setup_key_from_tags(tags)
-    # The tm value occupies the same (last) deterministic slot in setup_key.
-    key = setup_key_from_tags(tags)
-    assert key.split("|")[-1] == tm_tags[0]
+    # The tm value occupies the same deterministic slot in setup_key, immediately
+    # after the fc: component; the db: component is always last.
+    key_parts = setup_key_from_tags(tags).split("|")
+    assert key_parts[-1].startswith("db:")
+    tm_key_index = key_parts.index(tm_tags[0])
+    assert key_parts[tm_key_index - 1].startswith("fc:")

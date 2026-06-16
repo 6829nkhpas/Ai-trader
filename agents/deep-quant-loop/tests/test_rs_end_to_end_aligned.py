@@ -170,14 +170,16 @@ def test_aligned_find_mode_run_threads_relative_strength_through_all_layers():
     # ── Layer 3: journal setup fingerprint carries the RS tag (R10.1) ────────
     tags = journal.derive_setup_tags(decision)
     assert "rs:leader-aligned" in tags
-    # Exactly one relative-strength tag, at the fixed final position.
+    # Exactly one relative-strength tag, at its fixed position.
     rs_tags = [t for t in tags if t.startswith("rs:")]
     assert rs_tags == ["rs:leader-aligned"]
-    # The forecaster appends exactly one trailing ``fc:`` tag after the ``rs:``
-    # tag, so the rs: tag is now second-to-last and ``fc:`` is last. This
-    # decision carries no forecast entry, so the trailing tag is ``fc:unknown``.
-    assert tags[-1] == "fc:unknown"
-    assert tags[-2] == "rs:leader-aligned"
+    # The forecaster appends exactly one ``fc:`` tag immediately after the
+    # ``rs:`` tag; subsequent dimensions (tm/sess) and the multi-agent-debate
+    # ``db:`` tag follow, so ``db:`` is the final tag. This decision carries no
+    # forecast entry, so the tag immediately after ``rs:`` is ``fc:unknown``.
+    rs_index = tags.index("rs:leader-aligned")
+    assert tags[rs_index + 1] == "fc:unknown"
+    assert tags[-1].startswith("db:")
 
 
 # ── Req 7.4: prompt-level setup_validation disclosure instruction ────────────

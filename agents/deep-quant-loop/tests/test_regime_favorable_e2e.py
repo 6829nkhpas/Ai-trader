@@ -162,18 +162,20 @@ def test_favorable_find_mode_run_threads_regime_through_all_layers():
     # relative-strength dimension (relative-strength-context) appends exactly one
     # rs: tag immediately AFTER the regime tag, and the volatility-aware-forecaster
     # dimension appends exactly one fc: tag immediately AFTER the rs: tag. The
-    # deterministic order is now ``... va: regime: rs: fc:`` (fc: is last), so the
-    # regime tag is the third-to-last tag, the rs: tag is second-to-last, and the
-    # fc: tag is last.
+    # deterministic order is ``... va: regime: rs: fc: tm: sess: db:`` — the
+    # multi-agent-debate ``db:`` tag is the final tag. The regime tag is
+    # immediately followed by the rs: tag, which is immediately followed by the
+    # fc: tag.
     regime_tags = [t for t in tags if t.startswith("regime:")]
     assert regime_tags == ["regime:trend-favorable"]
     rs_tags = [t for t in tags if t.startswith("rs:")]
     assert len(rs_tags) == 1
     fc_tags = [t for t in tags if t.startswith("fc:")]
     assert len(fc_tags) == 1
-    assert tags[-1] == fc_tags[0]
-    assert tags[-2] == rs_tags[0]
-    assert tags[-3] == "regime:trend-favorable"
+    regime_index = tags.index("regime:trend-favorable")
+    assert tags[regime_index + 1] == rs_tags[0]
+    assert tags[regime_index + 2] == fc_tags[0]
+    assert tags[-1].startswith("db:")
 
 
 # ── Req 6.4: prompt-level setup_validation disclosure instruction ────────────

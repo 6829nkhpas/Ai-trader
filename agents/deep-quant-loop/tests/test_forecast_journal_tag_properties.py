@@ -265,16 +265,25 @@ def test_property_28_single_fixed_position_low_cardinality_fc_tag(payload):
     # ── Missing/unavailable/unrecognized -> fc:unknown; valid -> mapped (R11.2) ─
     assert value == expected_value
 
-    # ── Fixed position: fc tag is LAST, immediately after the ``rs:`` tag (R11.1) ─
-    assert tags[-1] == fc_tags[0]
-    assert tags[-1].startswith("fc:")
+    # ── Fixed position: fc tag sits immediately after the ``rs:`` tag and
+    #    immediately before the ``tm:`` tag. Later dimensions (tm/sess) and the
+    #    multi-agent-debate ``db:`` tag are appended after it, so the ``db:`` tag
+    #    is now the FINAL tag (R11.1). ──────────────────────────────────────
+    fc_index = tags.index(fc_tags[0])
     # The tag immediately before the fc tag is the relative-strength tag.
-    assert tags[-2].startswith("rs:")
+    assert tags[fc_index - 1].startswith("rs:")
+    # The tag immediately after the fc tag is the management-style (tm:) tag.
+    assert tags[fc_index + 1].startswith("tm:")
+    # The debate dimension is always appended last.
+    assert tags[-1].startswith("db:")
 
     # ── Determinism: identical inputs -> identical tag list and setup_key (R11.1) ─
     tags_again = derive_setup_tags(decision)
     assert tags_again == tags
     assert setup_key_from_tags(tags_again) == setup_key_from_tags(tags)
-    # The fc value occupies the same (last) deterministic slot in setup_key.
-    key = setup_key_from_tags(tags)
-    assert key.split("|")[-1] == fc_tags[0]
+    # The fc value occupies the same deterministic slot in setup_key, immediately
+    # after the rs: component; the db: component is always last.
+    key_parts = setup_key_from_tags(tags).split("|")
+    assert key_parts[-1].startswith("db:")
+    fc_key_index = key_parts.index(fc_tags[0])
+    assert key_parts[fc_key_index - 1].startswith("rs:")
