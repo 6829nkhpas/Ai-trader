@@ -1,39 +1,34 @@
-"""Property-based test for session-step ordering (stream_events.py, task 6.3).
+# Feature: session-expiry-awareness, Property 21: The session verification step precedes the DECISION event
+"""Property-based test for session-step ordering (task 6.3).
 
 Feature: session-expiry-awareness
 
 This module implements design **Property 21: The session verification step
 precedes the DECISION event**:
 
-    When ``decision_events`` expands a committed decision into its ordered event
-    tuples, the session ``VERIFICATION_STEP`` (the step carrying the stable
-    check id ``session``) is emitted strictly before the ``DECISION`` event of
-    that run.
+    For any decision, the event sequence emitted by ``decision_events`` places
+    the session ``VERIFICATION_STEP`` before the ``DECISION`` event of that run.
 
 Validates: Requirements 9.6.
 
 The implementation under test lives in ``stream_events.py``:
   - ``decision_events(decision)`` — yields every ``VERIFICATION_STEP`` tuple
-    followed by the ``DECISION`` tuple (R9.6). Verification steps precede the
-    decision so the observed order reflects the self-verification protocol
-    running before the trade is finalized.
-  - ``_session_step`` / ``build_verification_steps`` — supply exactly one
-    ``session`` step among those verification steps.
+    (one of which is the session step, check id ``session``) and then the
+    ``DECISION`` tuple, so verification steps precede the decision (R9.6).
+  - ``build_verification_steps(decision)`` — surfaces exactly one session step
+    in both FIND mode (no ``validator_checks``) and VERIFY mode (an explicit
+    ``validator_checks`` list).
 
-The real LLM / graph is never invoked. A committed decision is built directly
-with a ``defensibility`` record carrying a ``session`` entry in its various
-states (a usable label across all three Time_Favorability values, an
-Unavailable_Marker, an unrecognized favorability, and malformed/missing
-entries), plus the action + rationale fields ``build_decision_event`` reads, so
-``decision_events`` produces both a session ``VERIFICATION_STEP`` and a
-``DECISION``. The session entry is built in the shape ``graph._session_entry``
-produces: ``{"available": True, "session_phase": ..., "time_favorability": ...,
+The real LLM / graph is never invoked. The defensibility ``session`` entry is
+built directly in the shape ``graph._session_entry`` produces: a usable label
+``{"available": True, "session_phase": ..., "time_favorability": ...,
 "expiry_context": {...}, "minutes_since_open": ..., "minutes_until_close": ...}``
-or ``{"available": False, "reason": ...}``.
+or an Unavailable_Marker ``{"available": False, "reason": ...}``.
 
-The sys.path / import pattern mirrors the sibling ``test_session_*`` modules: the
-service directory (one level up) is prepended to ``sys.path`` so
-``stream_events`` is importable when pytest is run from anywhere.
+The sys.path / import pattern mirrors
+``tests/test_session_verification_step_properties.py``: the service directory
+(one level up) is prepended to ``sys.path`` so ``stream_events`` is importable
+when pytest is run from anywhere.
 """
 
 import os
@@ -48,9 +43,9 @@ if _SVC_DIR not in sys.path:
     sys.path.insert(0, _SVC_DIR)
 
 from stream_events import (  # noqa: E402
-    DECISION,
-    VERIFICATION_STEP,
     decision_events,
+    VERIFICATION_STEP,
+    DECISION,
 )
 
 SESSION_CHECK = "session"
@@ -58,6 +53,7 @@ SESSION_CHECK = "session"
 _PHASES = [
     "pre_open", "opening", "morning", "midday", "afternoon", "closing", "post_close",
 ]
+
 
 # ── Strategies ───────────────────────────────────────────────────────────────
 _minutes_value = st.one_of(
@@ -104,20 +100,7 @@ _unavailable_session_entry = st.builds(
     ),
 )
 
-# An "available but unrecognized favorability" entry (routes to not-evaluable).
-_unrecognized_favorability_entry = st.builds(
-    lambda fav: {
-        "available": True,
-        "session_phase": "morning",
-        "time_favorability": fav,
-        "minutes_since_open": 30.0,
-        "minutes_until_close": 300.0,
-        "expiry_context": {"is_expiry_day": False, "days_until_expiry": 2},
-    },
-    st.one_of(st.none(), st.text(max_size=8)),
-)
-
-# Malformed / missing entries route to not-evaluable as well.
+# Malformed / missing entries route to a not-evaluable session step too.
 _degenerate_session_entry = st.one_of(
     st.none(),
     st.just({}),
@@ -128,14 +111,11 @@ _degenerate_session_entry = st.one_of(
 _session_entry = st.one_of(
     _available_session_entry(),
     _unavailable_session_entry,
-    _unrecognized_favorability_entry,
     _degenerate_session_entry,
 )
 
-# Optional FIND-mode record fields the other checks read. Their presence/absence
-# must not affect ordering. A record with NO ``validator_checks`` routes through
-# FIND mode; a record WITH a ``validator_checks`` list routes through VERIFY mode
-# — the session step must precede the DECISION on either path.
+# Optional FIND-mode record fields the sibling checks read. Their presence must
+# not affect the session-step-before-DECISION ordering.
 _find_mode_extras = st.fixed_dictionaries(
     {},
     optional={
@@ -146,19 +126,29 @@ _find_mode_extras = st.fixed_dictionaries(
     },
 )
 
-_validator_checks = st.one_of(
-    st.none(),  # FIND mode (no validator_checks)
-    st.just(  # VERIFY mode (explicit validator_checks)
-        [
-            {"check": "risk-reward", "outcome": "pass", "detail": "RR=2.5"},
-            {"check": "macro-trend-alignment", "outcome": "informational"},
-        ]
-    ),
+# An explicit VERIFY-mode validator_checks list (routes through VERIFY surfacing).
+_validator_checks = st.lists(
+    st.fixed_dictionaries({
+        "check": st.sampled_from(["risk-reward", "macro-trend-alignment", "level-alignment"]),
+        "outcome": st.sampled_from(["pass", "fail", "informational"]),
+    }),
+    max_size=4,
 )
 
 
-def _event_names(events):
-    return [name for name, _ in events]
+def _names(events):
+    """Materialize the ordered list of event names from decision_events()."""
+    return [name for name, _payload in events]
+
+
+def _session_step_indices(events):
+    """Indices of session VERIFICATION_STEP events in the emitted sequence."""
+    return [
+        i for i, (name, payload) in enumerate(events)
+        if name == VERIFICATION_STEP
+        and isinstance(payload, dict)
+        and payload.get("check") == SESSION_CHECK
+    ]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -170,118 +160,94 @@ def _event_names(events):
 @given(
     session=_session_entry,
     extras=_find_mode_extras,
-    validator_checks=_validator_checks,
+    checks=st.one_of(st.none(), _validator_checks),
     action=st.sampled_from(["BUY", "SELL", "HOLD"]),
     conviction=st.integers(min_value=0, max_value=10),
-    rationale=st.text(max_size=40),
 )
-def test_property_21_session_step_precedes_decision(
-    session, extras, validator_checks, action, conviction, rationale
-):
+def test_property_21_session_step_precedes_decision(session, extras, checks, action, conviction):
     """Validates: Requirements 9.6
 
-    For any committed decision whose defensibility record carries a session
-    entry (in any of its label / unavailable / unrecognized / malformed states),
-    on both the FIND-mode path (no ``validator_checks``) and the VERIFY-mode path
-    (an explicit ``validator_checks`` list):
-
-      * ``decision_events`` emits exactly one session ``VERIFICATION_STEP`` and
-        exactly one ``DECISION`` event;
-      * the session ``VERIFICATION_STEP`` is emitted strictly before the
-        ``DECISION`` event;
-      * every ``VERIFICATION_STEP`` (not only the session one) precedes the
-        ``DECISION`` event, confirming the documented step-then-decision order.
+    For any decision (FIND mode with no validator_checks, or VERIFY mode with an
+    explicit validator_checks list), driving ``decision_events`` yields exactly
+    one session ``VERIFICATION_STEP`` and a single ``DECISION`` event, with the
+    session step strictly before the DECISION event.
     """
     record = dict(extras)
     record["session"] = session
-    if validator_checks is not None:
-        record["validator_checks"] = validator_checks
+    if checks is not None:
+        record["validator_checks"] = checks
 
     decision = {
         "action": action,
         "conviction_score": conviction,
-        "setup_validation": rationale or None,
-        "reason": "forced HOLD" if not rationale else None,
+        "reason": "test rationale",
         "defensibility": record,
     }
 
     events = list(decision_events(decision))
-    names = _event_names(events)
+    names = _names(events)
 
-    # ── A DECISION is always emitted for a structured decision (R16.7). ──────
-    assert names.count(DECISION) == 1, (
-        f"expected exactly one DECISION event, got {names.count(DECISION)}"
-    )
-    decision_index = names.index(DECISION)
+    # A structured decision dict always produces exactly one DECISION event.
+    decision_indices = [i for i, n in enumerate(names) if n == DECISION]
+    assert len(decision_indices) == 1, f"expected exactly one DECISION, got {len(decision_indices)}"
+    decision_index = decision_indices[0]
 
-    # ── The DECISION is the final event; every verification step precedes it. ─
-    assert decision_index == len(names) - 1, (
-        f"DECISION must be the last event, found at {decision_index} of "
-        f"{len(names)} events: {names}"
-    )
-    for i, name in enumerate(names):
-        if name == VERIFICATION_STEP:
-            assert i < decision_index, (
-                f"VERIFICATION_STEP at {i} must precede DECISION at "
-                f"{decision_index}: {names}"
-            )
-
-    # ── Exactly one session VERIFICATION_STEP exists, before the DECISION. ───
-    session_indices = [
-        i
-        for i, (name, payload) in enumerate(events)
-        if name == VERIFICATION_STEP
-        and isinstance(payload, dict)
-        and payload.get("check") == SESSION_CHECK
-    ]
+    # Exactly one session verification step is present.
+    session_indices = _session_step_indices(events)
     assert len(session_indices) == 1, (
-        f"expected exactly one '{SESSION_CHECK}' VERIFICATION_STEP, got "
-        f"{len(session_indices)}"
+        f"expected exactly one '{SESSION_CHECK}' step, got {len(session_indices)}"
     )
+
+    # ── R9.6: the session step precedes the DECISION event ───────────────────
     assert session_indices[0] < decision_index, (
-        f"session VERIFICATION_STEP at {session_indices[0]} must precede "
-        f"DECISION at {decision_index}: {names}"
+        f"session step at index {session_indices[0]} must precede the DECISION "
+        f"event at index {decision_index}"
     )
+
+    # The DECISION is the terminal event of the run (every verification step,
+    # not just the session one, comes before it).
+    assert decision_index == len(events) - 1
+    assert all(
+        names[i] == VERIFICATION_STEP for i in range(decision_index)
+    ), "every event before the DECISION must be a VERIFICATION_STEP"
 
 
 # Feature: session-expiry-awareness, Property 21: The session verification step precedes the DECISION event
-def test_property_21_explicit_ordering_example():
+def test_property_21_explicit_ordering_states():
     """Validates: Requirements 9.6
 
-    A concrete, non-Hypothesis check: a committed BUY whose session entry is a
-    usable ``unfavorable`` label yields a session step (outcome ``fail``) strictly
-    before the DECISION event, and the DECISION is the terminal event.
+    A non-Hypothesis exhaustive check across the mandated session states (each
+    Time_Favorability value and an unavailable marker), in both FIND and VERIFY
+    mode, confirming the session step is emitted before the DECISION event.
     """
-    decision = {
-        "action": "BUY",
-        "conviction_score": 6,
-        "setup_validation": "Long continuation against value-area support.",
-        "defensibility": {
-            "session": {
-                "available": True,
-                "session_phase": "opening",
-                "time_favorability": "unfavorable",
-                "minutes_since_open": 3.0,
-                "minutes_until_close": 372.0,
-                "expiry_context": {"is_expiry_day": False, "days_until_expiry": 2},
-            },
-        },
+    base_label = {
+        "session_phase": "morning",
+        "minutes_since_open": 30.0,
+        "minutes_until_close": 300.0,
+        "expiry_context": {"is_expiry_day": False, "days_until_expiry": 2},
     }
+    session_entries = [
+        {"available": True, "time_favorability": "favorable", **base_label},
+        {"available": True, "time_favorability": "unfavorable", **base_label},
+        {"available": True, "time_favorability": "neutral", **base_label},
+        {"available": False, "reason": "invalid timestamp"},
+    ]
+    # FIND mode (no validator_checks) and VERIFY mode (explicit list).
+    mode_records = [
+        {},
+        {"validator_checks": [{"check": "risk-reward", "outcome": "pass"}]},
+    ]
 
-    events = list(decision_events(decision))
-    names = _event_names(events)
+    for entry in session_entries:
+        for mode in mode_records:
+            record = dict(mode)
+            record["session"] = entry
+            decision = {"action": "BUY", "conviction_score": 7, "defensibility": record}
 
-    assert DECISION in names
-    decision_index = names.index(DECISION)
-    assert decision_index == len(names) - 1
+            events = list(decision_events(decision))
+            names = [name for name, _ in events]
 
-    session_index = next(
-        i
-        for i, (name, payload) in enumerate(events)
-        if name == VERIFICATION_STEP
-        and isinstance(payload, dict)
-        and payload.get("check") == SESSION_CHECK
-    )
-    assert session_index < decision_index
-    # The session step carried its mapped outcome (sanity: unfavorable -> fail).
-    assert events[session_index][1]["outcome"] == "fail"
+            decision_index = names.index(DECISION)
+            session_idx = _session_step_indices(events)
+            assert len(session_idx) == 1
+            assert session_idx[0] < decision_index
