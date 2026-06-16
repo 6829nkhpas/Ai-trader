@@ -219,7 +219,11 @@ def test_single_target_management_entry_informational_step_and_tag():
     tags = journal.derive_setup_tags(decision)
     tm_tags = [t for t in tags if t.startswith("tm:")]
     assert tm_tags == ["tm:single"], "a single-target management entry yields exactly tm:single"
-    assert tags[-1] == "tm:single", "the tm tag sits at the fixed final position"
+    # The tm tag sits at its fixed position immediately after the ``fc:`` tag;
+    # the session and multi-agent-debate dimensions follow, so ``db:`` is last.
+    tm_index = tags.index("tm:single")
+    assert tags[tm_index - 1].startswith("fc:")
+    assert tags[-1].startswith("db:"), "the debate tag sits at the fixed final position"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

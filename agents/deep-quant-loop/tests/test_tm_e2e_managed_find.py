@@ -248,8 +248,12 @@ def test_managed_find_mode_run_threads_plan_through_all_layers(temp_journal, mon
     tm_tags = [t for t in tags if t.startswith("tm:")]
     assert len(tm_tags) == 1, "exactly one management-style tag"
     assert tm_tags[0] == f"tm:{expected_style}"
-    # The tm tag sits at the fixed final position and is NON-single.
-    assert tags[-1] == tm_tags[0]
+    # The tm tag sits at its fixed position immediately after the ``fc:`` tag and
+    # is NON-single. The session dimension and the multi-agent-debate ``db:`` tag
+    # are appended after it, so the ``db:`` tag is the final tag.
+    tm_index = tags.index(tm_tags[0])
+    assert tags[tm_index - 1].startswith("fc:")
+    assert tags[-1].startswith("db:")
     assert tm_tags[0] != "tm:single"
 
     # ── Layer 4: the plan persists and is re-scorable (R6.3, R4.3) ───────────

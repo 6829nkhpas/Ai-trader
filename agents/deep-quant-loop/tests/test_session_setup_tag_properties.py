@@ -210,10 +210,18 @@ def test_property_22_session_tag_low_cardinality_fixed_position(decision):
     # ── Value drawn from the fixed low-cardinality enumeration (R10.3). ───────
     assert value in SESS_TAG_VALUES, f"sess value {value!r} not in {SESS_TAG_VALUES}"
 
-    # ── Fixed position: the session tag is the LAST tag in the sequence. ──────
+    # ── Fixed position: the session tag sits immediately after the ``tm:`` tag
+    #    and immediately before the multi-agent-debate ``db:`` tag (now the
+    #    FINAL tag). ─────────────────────────────────────────────────────────
     sess_index = tags.index(sess_tag)
-    assert sess_index == len(tags) - 1, (
-        f"sess tag not at fixed (last) position: index {sess_index} of {len(tags)}"
+    assert tags[sess_index - 1].startswith("tm:"), (
+        f"sess tag not immediately after tm: tag in {tags}"
+    )
+    assert sess_index == len(tags) - 2, (
+        f"sess tag not at fixed (second-to-last) position: index {sess_index} of {len(tags)}"
+    )
+    assert tags[-1].startswith("db:"), (
+        f"debate tag not at final position in {tags}"
     )
 
     # ── Collapsing rules hold against the independent reference (R10.2/R10.3). ─
