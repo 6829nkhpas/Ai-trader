@@ -443,6 +443,46 @@ def _session_tag(decision: dict) -> str:
         return "unknown"
 
 
+# Fixed, low-cardinality debate enumeration for the setup fingerprint (R9.3).
+# The journal collapses the Multi-Agent Debate's classified consensus into this
+# small set so the debate-extended ``setup_key`` stays groupable and individual
+# setups can accumulate enough scored trades to clear LOW_SAMPLE_THRESHOLD.
+# Exactly 4 distinct values (<= 8 per R9.3): the three categorical
+# Debate_Consensus values (``strong_agree``/``lean``/``contested``) plus
+# ``unknown`` for every non-DEBATE decision (which carries no debate entry) or
+# any missing/empty/unrecognized consensus.
+DB_TAG_VALUES = {"strong_agree", "lean", "contested", "unknown"}
+
+_DB_CONSENSUS_VALUES = {"strong_agree", "lean", "contested"}
+
+
+def _debate_tag(decision: dict) -> str:
+    """Collapse the decision's debate consensus into one fixed enumeration value.
+
+    Reads the debate entry recorded in the defensibility record
+    (``decision['defensibility']['debate']`` — written by ``graph._debate_entry``
+    on a DEBATE-mode run as ``{bull_stance, bear_stance, consensus, conviction,
+    conviction_basis, ...}``) and returns the classified ``consensus`` verbatim
+    when it is one of the three categorical Debate_Consensus values
+    (``strong_agree``/``lean``/``contested``).
+
+    Any non-DEBATE decision (no ``debate`` entry), a missing/non-dict entry, an
+    empty or ``unknown`` consensus, or an unrecognized value collapses to
+    ``unknown`` (R9.2). Returns the bare value (caller prefixes ``db:``). Never
+    raises.
+    """
+    try:
+        d = decision or {}
+        deff = d.get("defensibility") or {}
+        debate = deff.get("debate")
+        if not isinstance(debate, dict):
+            return "unknown"
+        consensus = str(debate.get("consensus") or "").strip().lower()
+        return consensus if consensus in _DB_CONSENSUS_VALUES else "unknown"
+    except Exception:
+        return "unknown"
+
+
 def derive_setup_tags(decision: dict) -> list:
     """Derive a coarse, groupable setup fingerprint from a committed decision.
 
@@ -544,6 +584,14 @@ def derive_setup_tags(decision: dict) -> list:
     # one fixed ``sess:`` value; a missing/unavailable session entry defaults to
     # ``sess:unknown`` (R10.1, R10.2, R10.3).
     tags.append("sess:" + _session_tag(decision))
+
+    # Debate dimension — appended at the FINAL fixed position (after the
+    # ``sess:`` tag) so the resulting ``setup_key`` is deterministic for
+    # identical inputs and stays low-cardinality. Collapses the Multi-Agent
+    # Debate's classified consensus into one fixed ``db:`` value; a non-DEBATE
+    # decision (no debate entry) or any missing/empty/unrecognized consensus
+    # defaults to ``db:unknown`` (R9.1, R9.2, R9.3).
+    tags.append("db:" + _debate_tag(decision))
 
     return tags
 

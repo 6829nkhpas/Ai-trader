@@ -164,18 +164,27 @@ def strip_tool_call_markup(content: Any) -> str:
     return text.strip()
 
 
-def build_reasoning_event(content: Any) -> Optional[dict]:
+def build_reasoning_event(content: Any, role: Optional[str] = None) -> Optional[dict]:
     """Build a ``REASONING`` payload from an assistant message's content.
 
     Strips all tool-call markup (R16.8) and returns ``{"content": <text>}`` only
     when natural-language reasoning remains; returns ``None`` when the content
     was empty or consisted solely of markup, so the caller emits no event for it
     (R16.1).
+
+    When the source message carries a ``role`` tag (one of ``bull`` / ``bear`` /
+    ``judge`` set by the debate role nodes, multi-agent-debate R8.1), it is
+    surfaced on the payload so the distinct role reasoning events are
+    distinguishable. Untagged (single-agent / non-debate) reasoning omits the
+    ``role`` key, leaving the existing payload shape unchanged.
     """
     stripped = strip_tool_call_markup(content)
     if not stripped:
         return None
-    return {"content": stripped}
+    payload = {"content": stripped}
+    if isinstance(role, str) and role.strip():
+        payload["role"] = role.strip()
+    return payload
 
 
 # ── Tool-call event builders ─────────────────────────────────────────────────
@@ -611,6 +620,64 @@ def _session_step(record: dict) -> dict:
     return {"check": "session", "outcome": outcome, "detail": detail}
 
 
+def _debate_consensus_step(record: dict) -> dict:
+    """Map the defensibility debate entry to a single debate-consensus ``VERIFICATION_STEP`` (R8).
+
+    The defensibility record's ``debate`` entry (built by ``graph`` for a
+    DEBATE-mode decision, task 11.1) is a dict of the shape
+    ``{"bull_stance": ..., "bear_stance": ..., "consensus": ...,
+    "conviction": ..., "conviction_basis": ...,
+    optionally "committed_against_contested": ...}``, and is **absent entirely**
+    for any non-DEBATE run. The recorded Debate_Consensus maps to a stable
+    outcome under the fixed check id ``debate-consensus`` (R8.2):
+
+      * ``strong_agree`` → ``pass``                       (R8.3)
+      * ``lean``         → ``informational``              (R8.3)
+      * ``contested``    → ``fail``                       (R8.3)
+      * no debate entry / missing / unrecognized consensus → ``not-evaluable`` (R8.4)
+
+    When no debate entry is present — no ``debate`` key, a non-dict entry, or the
+    consensus is missing/unrecognized — the step reports ``not-evaluable`` and
+    NEVER substitutes a fabricated consensus (R8.4). The check id is always
+    exactly ``debate-consensus`` so a DEBATE run surfaces exactly one such step
+    (R8.1/R8.2). Pure; never raises.
+    """
+    debate = record.get("debate")
+
+    if not isinstance(debate, dict):
+        return {
+            "check": "debate-consensus",
+            "outcome": "not-evaluable — no debate entry",
+            "detail": "No debate entry present in the defensibility record.",
+        }
+
+    consensus = debate.get("consensus")
+    outcome = {
+        "strong_agree": "pass",
+        "lean": "informational",
+        "contested": "fail",
+    }.get(consensus)
+
+    if outcome is None:
+        # A debate entry without a recognized consensus is treated as
+        # not-evaluable rather than fabricating an outcome (R8.4).
+        return {
+            "check": "debate-consensus",
+            "outcome": "not-evaluable — debate consensus unrecognized",
+            "detail": f"Debate consensus missing or unrecognized (consensus={consensus!r}).",
+        }
+
+    detail = f"consensus={consensus}, conviction={debate.get('conviction')}"
+    basis = debate.get("conviction_basis")
+    if basis:
+        detail += f", basis={basis}"
+    committed_against_contested = debate.get("committed_against_contested")
+    if committed_against_contested:
+        detail += f"; {committed_against_contested}"
+    detail += "."
+    return {"check": "debate-consensus", "outcome": outcome, "detail": detail}
+
+
 def _derive_find_mode_steps(record: dict) -> List[dict]:
     """Derive the four self-verification checks from a FIND-mode record (R16.6).
 
@@ -723,6 +790,12 @@ def _derive_find_mode_steps(record: dict) -> List[dict]:
     # Exactly one session step, derived from the defensibility session entry.
     steps.append(_session_step(record))
 
+    # ── Debate-consensus check (multi-agent-debate, R8) ──────────────────────
+    # Exactly one debate-consensus step, derived from the defensibility debate
+    # entry (absent for non-DEBATE runs -> not-evaluable). Appended last so it is
+    # ordered before the DECISION event by `decision_events` (R8.5).
+    steps.append(_debate_consensus_step(record))
+
     return steps
 
 
@@ -775,6 +848,11 @@ def build_verification_steps(decision: Any) -> List[dict]:
         # (R9.1 — exactly one session VERIFICATION_STEP).
         if not any(s.get("check") == "session" for s in steps):
             steps.append(_session_step(record))
+        # Surface exactly one debate-consensus step in VERIFY mode too: append
+        # the derived step only when the validator checks don't already carry one
+        # (multi-agent-debate R8.1 — exactly one debate-consensus VERIFICATION_STEP).
+        if not any(s.get("check") == "debate-consensus" for s in steps):
+            steps.append(_debate_consensus_step(record))
         return steps
 
     return _derive_find_mode_steps(record)
@@ -857,7 +935,17 @@ def message_events(msg: Any) -> Iterator[Tuple[str, dict]]:
         return
 
     if "AIMessage" in msg_type:
-        reasoning = build_reasoning_event(getattr(msg, "content", None))
+        # Surface a `role` tag (bull/bear/judge) when the source AIMessage carries
+        # one in additional_kwargs so the debate role reasoning events are
+        # distinguishable (multi-agent-debate R8.1). Single-agent messages carry
+        # no role tag, so the payload shape is unchanged for them.
+        role = None
+        kwargs = getattr(msg, "additional_kwargs", None)
+        if isinstance(kwargs, dict):
+            tag = kwargs.get("role")
+            if isinstance(tag, str) and tag.strip():
+                role = tag.strip()
+        reasoning = build_reasoning_event(getattr(msg, "content", None), role)
         if reasoning is not None:
             yield REASONING, reasoning
         for tc in getattr(msg, "tool_calls", None) or []:

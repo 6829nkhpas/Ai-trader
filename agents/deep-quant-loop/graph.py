@@ -184,6 +184,14 @@ class AgentState(TypedDict):
     # the Q&A tool-fetch loop (R18.4). It never affects the committed decision —
     # the Declared_Trade is immutable while answering questions (R18.6).
     qa_turns: int
+    # ── VERIFY-mode devil's-advocate bookkeeping (multi-agent-debate, R11) ────
+    # ADDITIVE / Optional latch: True once the Bear_Agent devil's advocate has
+    # been run against the user-proposed trade in a VERIFY run, so it is invoked
+    # exactly once per run. Only ever set on a VERIFY run; FIND / DEBATE / QA runs
+    # never populate or read it, so their behaviour is completely unchanged. It
+    # never influences the committed decision — the VERIFY verdict path stays the
+    # sole decision authority (R11.3).
+    verify_devils_advocate_done: Optional[bool]
     # ── Multi-Agent Debate bookkeeping (multi-agent-debate, R1/R3/R4/R6) ──────
     # All fields below are ADDITIVE and Optional/defaulted: a non-DEBATE run
     # (FIND / VERIFY / QA) never sets or reads them, so legacy behaviour is
@@ -2152,6 +2160,24 @@ def call_model(state: AgentState):
         print("[Deep Quant Agent] Existing system instruction detected.")
         
     print(f"[Deep Quant Agent] Calling model: {model_name} with {len(messages)} messages...")
+
+    # ── VERIFY-mode devil's advocate (multi-agent-debate, R11) ───────────────
+    # Before the risk-manager forms its verdict, run the Bear_Agent as an explicit
+    # devil's advocate against the user-proposed trade and inject its stance into
+    # the conversation the model is about to see, so the verdict path weighs it
+    # (R11.1, R11.2). It runs EXACTLY ONCE per VERIFY run and only after the
+    # Shared_Evidence is available, cites only that evidence (R11.4), and NEVER
+    # commits or blocks — it is read-only bound and only appends a message, so the
+    # existing VERIFY verdict path stays the sole decision authority (R11.3).
+    # Inert for every non-VERIFY run (FIND / DEBATE / QA unchanged).
+    devils_advocate_msg = None
+    if _should_run_verify_devils_advocate(state, mode, messages):
+        print("[Deep Quant Agent] VERIFY run -> invoking Bear devil's advocate against the proposed trade.")
+        devils_advocate_msg = run_verify_devils_advocate(state, messages)
+        if devils_advocate_msg is not None:
+            # The model sees the devil's-advocate stance when forming its verdict.
+            messages = list(messages) + [devils_advocate_msg]
+
     response = llm_with_tools.invoke(messages)
     
     print(f"[Deep Quant Agent] Model responded. Content length: {len(response.content or '')}")
@@ -2207,6 +2233,15 @@ def call_model(state: AgentState):
         "reasoning_turns": reasoning_turns,
         "market_data_seen": market_data_seen,
     }
+
+    # Persist the devil's-advocate stance into the verification reasoning, ordered
+    # BEFORE the model's verdict response (it is a plain AIMessage with no tool
+    # calls, so message-ordering / tool-pairing invariants are preserved and
+    # ``messages[-1]`` remains the verdict response for the loop). Latch the
+    # one-shot flag so it runs exactly once per VERIFY run (R11.1-R11.3).
+    if devils_advocate_msg is not None:
+        update["messages"] = [devils_advocate_msg, response]
+        update["verify_devils_advocate_done"] = True
 
     # ── DEBATE Research_Phase entry (multi-agent-debate, R2.1) ───────────────
     # A DEBATE-mode run enters through the `agent` node (route_entry maps the
@@ -3012,6 +3047,19 @@ def _run_debate_role(role: str, state: AgentState, system_prompt: str) -> dict:
         # Stay in the debate phase; the Judge node (task 8.1) will finalize.
         "phase": "debate",
     }
+    # Surface this role's reasoning as a distinct, role-tagged REASONING event in
+    # the glass-box stream (multi-agent-debate, R8.1). The Bull/Bear are READ-ONLY
+    # analysts, so the appended message carries NO executable tool_calls — it is a
+    # pure-reasoning AIMessage whose content is the role's stance text, tagged with
+    # the producing role in ``additional_kwargs["role"]`` so ``stream_events`` can
+    # label it ("bull" / "bear"). A failed invocation (``raw_content is None``)
+    # appends no message, leaving the message history unchanged. Because the
+    # message has no tool_calls it needs no paired ToolMessage and stays valid for
+    # the ``add_messages`` reducer (R3.5, R12.1 — it never sets a decision).
+    if isinstance(raw_content, str) and raw_content.strip():
+        update["messages"] = [
+            AIMessage(content=raw_content, additional_kwargs={"role": role_norm})
+        ]
     if role_norm == "bull":
         update["bull_stance"] = stance_dict
     elif role_norm == "bear":
@@ -3060,6 +3108,135 @@ def bear_node(state: AgentState):
     (R3.5, R12.1).
     """
     return _run_debate_role("bear", state, _BEAR_ROLE_PROMPT)
+
+
+# ── VERIFY-mode devil's advocate (multi-agent-debate, R11) ────────────────────
+# In VERIFY (co-pilot verification) mode the existing single-agent risk-manager
+# verdict path is AUGMENTED — not replaced — with the Bear_Agent run as an
+# explicit DEVIL'S ADVOCATE against the user-proposed trade (R11.1). Its stance
+# is surfaced as an AIMessage in the verification reasoning so the verdict path
+# weighs it (R11.2); it cites only the gathered Shared_Evidence and is told never
+# to fabricate (R11.4). It NEVER itself commits or blocks a trade: it is bound to
+# the READ-ONLY tool set via ``get_role_llm("bear")`` (no ``declare_trade`` /
+# ``watch_price_condition``) and ``run_verify_devils_advocate`` returns ONLY a
+# message — it never sets ``state["decision"]`` — so the existing VERIFY verdict
+# path remains the sole decision authority (R11.3). FIND / DEBATE / QA are
+# unaffected because this only runs on a VERIFY-mode turn.
+_VERIFY_DEVILS_ADVOCATE_PROMPT = """You are the BEAR analyst acting as an explicit DEVIL'S ADVOCATE in co-pilot trade verification.
+
+A trader has proposed the following trade and wants it genuinely stress-tested:
+- Side: {side}
+- Symbol: {symbol}
+- Entry: {entry}
+- Stop-loss: {stop_loss}
+- Take-profit: {take_profit}
+- Trader's notes: {user_analysis}
+
+Your job: argue the STRONGEST possible case that THIS PROPOSED TRADE IS WRONG — that the trader should NOT take it as specified — using ONLY the shared evidence provided below. Attack the weakest links: poor entry location, an unsafe or too-tight stop, an unrealistic target / weak Risk:Reward, conflict with the macro trend, the volume-profile structure, the regime/relative-strength/forecast/session context, or the realized track record. Do NOT fabricate any market data — cite only values that appear in the evidence. If the evidence genuinely supports the trade, say so honestly and score your strength low; never invent objections.
+
+You are an analyst and a devil's advocate, NOT an executor: you must NOT attempt to commit, declare, block, approve, or schedule a trade. The verification verdict is decided by the risk-manager path, not by you. Output your stance as a SINGLE JSON object and nothing else:
+{{
+  "lean": "long" | "short" | "neutral",
+  "strength": <integer 0-100, how compelling the case AGAINST the proposed trade is>,
+  "arguments": ["concise evidence-grounded objection to the proposed trade", ...],
+  "biggest_risk": "the single biggest risk to YOUR case against the trade (i.e. why the trade might actually be right)"
+}}"""
+
+
+def run_verify_devils_advocate(state: AgentState, messages=None) -> Optional[AIMessage]:
+    """Run the Bear_Agent devil's advocate against the user-proposed trade (R11).
+
+    Builds a VERIFY-specific Bear prompt targeted at ``state["manual_trade"]``,
+    invokes the READ-ONLY-bound Bear LLM (``get_role_llm("bear")`` — it cannot
+    call ``declare_trade`` / ``watch_price_condition``) over the already-gathered
+    Shared_Evidence, parses the structured stance via ``debate.parse_stance``,
+    and returns an ``AIMessage`` carrying that stance so it is surfaced in the
+    verification reasoning and informs the verdict (R11.1, R11.2, R11.4).
+
+    Returns ONLY a message and NEVER sets ``state["decision"]`` — the existing
+    VERIFY verdict path remains the sole decision authority (R11.3). Never raises:
+    any failure yields an unavailable stance message so verification proceeds.
+    """
+    src_messages = messages if messages is not None else state.get("messages")
+    trade = state.get("manual_trade") or {}
+
+    evidence = _collect_shared_evidence(src_messages)
+    evidence_block = (
+        "\n".join(f"- {line}" for line in evidence)
+        if evidence else "(no usable shared evidence was gathered yet)"
+    )
+
+    system_prompt = _VERIFY_DEVILS_ADVOCATE_PROMPT.format(
+        side=trade.get("side", "N/A"),
+        symbol=state.get("symbol", "N/A"),
+        entry=trade.get("entry", "N/A"),
+        stop_loss=trade.get("stop_loss", "N/A"),
+        take_profit=trade.get("take_profit", "N/A"),
+        user_analysis=trade.get("user_analysis", "None"),
+    )
+    human = HumanMessage(
+        content=(
+            "SHARED EVIDENCE (gathered during verification — argue over THIS, do "
+            f"not request more and do not fabricate):\n{evidence_block}\n\n"
+            "Now emit your devil's-advocate stance against the proposed trade as a "
+            "single JSON object."
+        )
+    )
+
+    role_llm = get_role_llm("bear")
+    try:
+        response = role_llm.invoke([SystemMessage(content=system_prompt), human])
+        raw_content = getattr(response, "content", "") or ""
+    except Exception as e:
+        # A failure must not crash verification: degrade to an unavailable stance
+        # so the verdict path proceeds on the remaining evidence (R11.4, R12.2).
+        print(f"[Deep Quant Verify] devil's-advocate invocation failed: {e}")
+        raw_content = None
+
+    payload = _extract_stance_payload(raw_content)
+    stance = parse_stance("bear", payload)
+    stance_dict = stance_to_dict(stance)
+    print(
+        f"[Deep Quant Verify] devil's-advocate stance — lean={stance.lean} "
+        f"strength={stance.strength} available={stance.available}."
+    )
+
+    # Surface the stance as readable reasoning + the structured JSON so the
+    # verdict path can both read it and the glass-box stream can tag it (a `role`
+    # tag is attached for the role-tagged-reasoning step, task 12.1). This is a
+    # plain AIMessage with NO tool calls, so it never executes/commits anything.
+    devils_msg = AIMessage(
+        content=(
+            "DEVIL'S ADVOCATE (Bear) — the strongest evidence-grounded case AGAINST "
+            "the proposed trade, for you to weigh in your verification verdict. This "
+            "stance does NOT itself approve, block, or commit the trade.\n"
+            f"{json.dumps(stance_dict)}"
+        )
+    )
+    # Tag the message so downstream role-tagged-reasoning surfacing (task 12.1)
+    # can distinguish it; harmless to any consumer that ignores additional_kwargs.
+    try:
+        devils_msg.additional_kwargs["role"] = "bear"
+        devils_msg.additional_kwargs["verify_devils_advocate"] = True
+    except Exception:
+        pass
+    return devils_msg
+
+
+def _should_run_verify_devils_advocate(state: AgentState, mode: str, messages) -> bool:
+    """True only on a VERIFY run, once, after the Shared_Evidence is available.
+
+    Gated so the devil's advocate runs EXACTLY ONCE per VERIFY run and only after
+    at least one market-data Analysis_Tool has returned data — so it argues over
+    real gathered evidence rather than nothing (R11.1, R11.4). Returns False for
+    every non-VERIFY run, leaving FIND / DEBATE / QA completely unchanged (R11 is
+    VERIFY-only).
+    """
+    if (mode or "").strip().upper() != "VERIFY":
+        return False
+    if state.get("verify_devils_advocate_done"):
+        return False
+    return bool(state.get("market_data_seen")) or _market_data_seen(messages)
 
 
 # ── Judge node + bounded debate sequencing (multi-agent-debate, task 8.1) ─────
@@ -3179,6 +3356,16 @@ def judge_node(state: AgentState):
         response.tool_calls = [
             {"name": c.name, "args": c.args or {}, "id": c.id} for c in all_calls
         ]
+        # Tag the Judge's reasoning AIMessage so its REASONING events are
+        # distinguishable as the "judge" role in the glass-box stream (R8.1).
+        # Additive: the role tag goes into ``additional_kwargs`` WITHOUT touching
+        # ``tool_calls``, so the id-paired ToolMessage follow-ups stay valid and
+        # the message history remains well-formed.
+        existing_kwargs = getattr(response, "additional_kwargs", None)
+        if isinstance(existing_kwargs, dict):
+            existing_kwargs["role"] = "judge"
+        else:
+            response.additional_kwargs = {"role": "judge"}
         judge_msgs.append(response)
         new_messages.append(response)
 
@@ -3337,7 +3524,8 @@ def judge_node(state: AgentState):
                     "setup_validation": hold_decision["setup_validation"],
                     "execution_plan": hold_decision["execution_plan"],
                 }
-            )
+            ),
+            additional_kwargs={"role": "judge"},
         )
     )
     update["decision"] = hold_decision
