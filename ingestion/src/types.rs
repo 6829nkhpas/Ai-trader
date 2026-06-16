@@ -29,4 +29,8 @@ pub struct ParsedTick {
     pub close: f64,
     /// Exchange timestamp in Unix milliseconds
     pub timestamp_ms: i64,
+    /// Open interest — number of outstanding contracts. Present only for
+    /// full-mode option/future packets; `None` for equity ticks and any
+    /// LTP/Quote-mode or truncated packet (never a fabricated zero).
+    pub open_interest: Option<u64>,
 }

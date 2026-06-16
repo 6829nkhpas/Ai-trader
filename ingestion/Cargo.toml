@@ -72,3 +72,11 @@ protoc-bin-vendored = "3"
 # all modules except the Kafka producer.
 default = ["kafka"]
 kafka = ["dep:rdkafka"]
+
+# ===========================================================================
+# Dev Dependencies (tests)
+# ===========================================================================
+[dev-dependencies]
+
+# Property-based testing for the binary tick parser and other pure logic.
+proptest = "1"

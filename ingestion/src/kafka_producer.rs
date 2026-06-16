@@ -82,6 +82,7 @@ impl KafkaProducer {
             high: tick.high,
             low: tick.low,
             close: tick.close,
+            open_interest: tick.open_interest,
         };
 
         // Encode to bytes
