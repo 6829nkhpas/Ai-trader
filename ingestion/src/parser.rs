@@ -56,6 +56,10 @@ const DEPTH_ASK_OFFSET: usize = 124;
 /// Each depth entry: 4 bytes qty + 4 bytes price + 2 bytes orders = 10 bytes.
 const DEPTH_ENTRY_LEN: usize = 10;
 
+/// Offset of the big-endian i32 `open_interest` field inside a Full-mode packet
+/// (after the 44-byte quote block + `last_traded_timestamp`).
+const OI_OFFSET: usize = 48;
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /// Parse a single Kite binary tick **packet** (already sliced out of the outer
@@ -107,6 +111,10 @@ pub fn parse_binary_tick(payload: &[u8], symbol: &str) -> Result<Tick, String> {
     let mut high: f64 = 0.0;
     let mut low: f64 = 0.0;
     let mut close: f64 = 0.0;
+    // Open interest is present only in Full-mode option/future packets. It
+    // stays `None` for LTP/Quote packets and on any short/failed read so an
+    // absent value is never fabricated as a real `Some(0)` (R2.4).
+    let mut open_interest: Option<u64> = None;
 
     if payload.len() >= MODE_QUOTE {
         // Quote / Full mode — additional OHLCV fields start at byte 8.
@@ -164,6 +172,16 @@ pub fn parse_binary_tick(payload: &[u8], symbol: &str) -> Result<Tick, String> {
             let ask_price_paise = ask_cur.read_i32::<BigEndian>().unwrap_or(0);
             best_ask = ask_price_paise as f64 / 100.0;
         }
+
+        // Bytes 48-51: open_interest (i32 big-endian). Present on full-mode
+        // option/future packets; index full packets carry no meaningful OI.
+        // Read defensively — a short/failed read leaves `open_interest = None`.
+        if let Some(oi_bytes) = payload.get(OI_OFFSET..OI_OFFSET + 4) {
+            let mut oi_cur = Cursor::new(oi_bytes);
+            if let Ok(oi_value) = oi_cur.read_i32::<BigEndian>() {
+                open_interest = Some(oi_value as u64);
+            }
+        }
     }
 
     // Timestamp: system wall-clock in UTC milliseconds.
@@ -186,6 +204,7 @@ pub fn parse_binary_tick(payload: &[u8], symbol: &str) -> Result<Tick, String> {
         high,
         low,
         close,
+        open_interest,
     })
 }
 
@@ -283,5 +302,162 @@ mod tests {
         let map = std::collections::HashMap::new();
         let ticks = parse_binary_frame(&frame, &map);
         assert!(ticks.is_empty());
+    }
+}
+
+// ─── Property-based tests ────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod oi_presence_property_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Build a synthetic packet for the requested mode.
+    ///
+    /// * mode 0 → LTP   (8 bytes)              — no OI
+    /// * mode 1 → Quote (44 bytes)             — no OI
+    /// * mode 2 → truncated full (45..183)     — no OI (full branch never runs)
+    /// * mode 3 → Full  (184 bytes), OI at off 48 = `oi`
+    fn build_packet(mode: u8, full_bytes: &[u8], trunc_len: usize, oi: i32) -> Vec<u8> {
+        match mode {
+            0 => full_bytes[..MODE_LTP].to_vec(),
+            1 => full_bytes[..MODE_QUOTE].to_vec(),
+            2 => full_bytes[..trunc_len].to_vec(),
+            _ => {
+                let mut buf = full_bytes[..MODE_FULL].to_vec();
+                buf[OI_OFFSET..OI_OFFSET + 4].copy_from_slice(&oi.to_be_bytes());
+                buf
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        // Feature: options-data-foundation, Property 3
+        // Open-interest presence semantics: parsed `open_interest` is `Some(value)`
+        // if and only if the packet is full mode and carries the OI field; LTP-mode
+        // and Quote-mode packets, and any truncated/failed read, yield `None` — never
+        // a fabricated `Some(0)` indistinguishable from a real zero. For full-mode
+        // packets the `Some` value equals the big-endian i32 at offset 48 (as u64).
+        // Validates: Requirements 2.1, 2.4
+        #[test]
+        fn prop_open_interest_presence_semantics(
+            mode in 0u8..4u8,
+            oi in any::<i32>(),
+            trunc_len in (MODE_QUOTE + 1)..MODE_FULL,
+            full_bytes in proptest::collection::vec(any::<u8>(), MODE_FULL),
+        ) {
+            let packet = build_packet(mode, &full_bytes, trunc_len, oi);
+            let tick = parse_binary_tick(&packet, "TEST")
+                .expect("synthetic packet (>= LTP length) must parse");
+
+            if mode == 3 {
+                // Full mode carries OI: present and equal to the written i32 (as u64).
+                prop_assert_eq!(tick.open_interest, Some(oi as u64));
+            } else {
+                // LTP / Quote / truncated: OI must be absent, never a fabricated Some(0).
+                prop_assert_eq!(tick.open_interest, None);
+            }
+        }
+    }
+}
+
+// ─── Equity-tick backward-compatibility tests ────────────────────────────────
+
+#[cfg(test)]
+mod equity_backward_compat_tests {
+    use super::*;
+
+    /// Build a representative Quote-mode (44-byte) equity packet using the exact
+    /// byte offsets the parser reads, so the parsed fields can be checked against
+    /// the known input values.
+    ///
+    /// Layout (all big-endian, prices in paise):
+    ///   0-3   instrument_token (u32)
+    ///   4-7   last_traded_price (i32 paise)
+    ///   8-11  last_traded_qty   (i32, skipped by parser)
+    ///   12-15 average_price     (i32, skipped by parser)
+    ///   16-19 volume            (i32)
+    ///   20-23 buy_quantity      (i32)
+    ///   24-27 sell_quantity     (i32)
+    ///   28-31 open  (i32 paise)
+    ///   32-35 high  (i32 paise)
+    ///   36-39 low   (i32 paise)
+    ///   40-43 close (i32 paise)
+    #[allow(clippy::too_many_arguments)]
+    fn make_quote_packet(
+        token: u32,
+        ltp_paise: i32,
+        last_qty: i32,
+        avg_paise: i32,
+        volume: i32,
+        buy_qty: i32,
+        sell_qty: i32,
+        open_paise: i32,
+        high_paise: i32,
+        low_paise: i32,
+        close_paise: i32,
+    ) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(MODE_QUOTE);
+        buf.extend_from_slice(&token.to_be_bytes());
+        buf.extend_from_slice(&ltp_paise.to_be_bytes());
+        buf.extend_from_slice(&last_qty.to_be_bytes());
+        buf.extend_from_slice(&avg_paise.to_be_bytes());
+        buf.extend_from_slice(&volume.to_be_bytes());
+        buf.extend_from_slice(&buy_qty.to_be_bytes());
+        buf.extend_from_slice(&sell_qty.to_be_bytes());
+        buf.extend_from_slice(&open_paise.to_be_bytes());
+        buf.extend_from_slice(&high_paise.to_be_bytes());
+        buf.extend_from_slice(&low_paise.to_be_bytes());
+        buf.extend_from_slice(&close_paise.to_be_bytes());
+        debug_assert_eq!(buf.len(), MODE_QUOTE);
+        buf
+    }
+
+    /// R2.5 — An existing equity Quote-mode (44-byte) packet parses to identical
+    /// prior field values (token, last price, volume, OHLC) with the new
+    /// `open_interest` field absent (`None`) and best bid/ask unset in Quote mode.
+    #[test]
+    fn test_equity_quote_packet_backward_compatible() {
+        // INFY @ ₹1500.25, volume 12 345, OHLC = 1490.00 / 1510.50 / 1485.75 / 1495.00
+        let token = 408_065_u32;
+        let packet = make_quote_packet(
+            token,
+            150_025, // ltp paise → 1500.25
+            10,      // last_traded_qty (skipped)
+            149_900, // avg_price paise (skipped)
+            12_345,  // volume
+            500,     // buy_qty (not surfaced in Quote mode)
+            450,     // sell_qty (not surfaced in Quote mode)
+            149_000, // open paise → 1490.00
+            151_050, // high paise → 1510.50
+            148_575, // low paise → 1485.75
+            149_500, // close paise → 1495.00
+        );
+
+        let tick = parse_binary_tick(&packet, "INFY").expect("Quote-mode packet must parse");
+
+        // Identical prior field values.
+        assert_eq!(tick.symbol, "INFY");
+        assert_eq!(tick.instrument_token, token);
+        assert!((tick.last_traded_price - 1500.25).abs() < 1e-9);
+        assert_eq!(tick.volume, 12_345);
+        assert!((tick.open - 1490.00).abs() < 1e-9);
+        assert!((tick.high - 1510.50).abs() < 1e-9);
+        assert!((tick.low - 1485.75).abs() < 1e-9);
+        assert!((tick.close - 1495.00).abs() < 1e-9);
+
+        // Best bid/ask are only populated from Full-mode depth; in Quote mode
+        // they remain at their prior default of 0.0.
+        assert!((tick.best_bid - 0.0).abs() < 1e-9);
+        assert!((tick.best_ask - 0.0).abs() < 1e-9);
+
+        // A timestamp is still stamped as before.
+        assert!(tick.timestamp_ms > 0);
+
+        // The new open-interest field is absent for an equity Quote packet —
+        // never fabricated as Some(0) (R2.4, R2.5).
+        assert_eq!(tick.open_interest, None);
     }
 }

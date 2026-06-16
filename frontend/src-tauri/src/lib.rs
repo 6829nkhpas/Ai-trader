@@ -216,6 +216,26 @@ pub fn run() {
               tauri::async_runtime::spawn(async move {
                   services::instrument_master::run_instrument_sync(app_handle_instruments).await;
               });
+
+              // ── NFO Derivatives Master: Non-blocking daily sync ────────
+              // Downloads + persists the Kite NFO segment (options/futures)
+              // into the `nfo_instruments` SQLite table on the same 24h
+              // cache schedule. Independent of the NSE sync above.
+              let app_handle_nfo = app.handle().clone();
+              tauri::async_runtime::spawn(async move {
+                  services::instrument_master::run_nfo_sync(app_handle_nfo).await;
+              });
+
+              // ── Option-Chain Subscriber (Options Data Foundation F1) ───
+              // Periodically resolves the bounded option-chain selection for
+              // each configured underlying and pushes it to the ingestion
+              // control port (:8085). Skips underlyings without spot; retries
+              // push failures on the next tick. Runs on its own task — never
+              // blocks the equity tick path.
+              let app_handle_chain = app.handle().clone();
+              tauri::async_runtime::spawn(async move {
+                  services::option_chain_subscriber::run_option_chain_subscriber(app_handle_chain).await;
+              });
           }
           Err(e) => {
               error!("Workspace DB init failed: {} — drawings will not persist.", e);
