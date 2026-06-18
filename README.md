@@ -1,4 +1,4 @@
-# 🌌 Strat: Institutional Quantitative Trading Terminal & AI platform
+# 🌌 Strat: Institutional Quantitative Trading Terminal & AI Platform
 
 Strat is an institutional-grade, high-frequency AI-powered trading platform executing advanced quantitative strategies on the NSE (National Stock Exchange of India). Combining high-speed Rust-based ingestion engines, mathematical consensus, predictive price curves, real-time sentiment analysis, and a unified reasoning layer powered by the **"Self-Defending Hunter" V3 prompt core (Alpha-Quant)**, Strat delivers high-probability directional conviction with zero compromise on capital preservation.
 
@@ -6,30 +6,27 @@ Strat is an institutional-grade, high-frequency AI-powered trading platform exec
 
 ## 🏗️ System Architecture & Data Flow
 
-Strat is built on a distributed, low-latency asynchronous architecture utilizing Rust, Python (LangGraph & FastAPI), Fastify, Apache Kafka, Redis, and QuestDB.
-
-### Core Data Flow & Orchestration
-1. **Binary Tick Ingestion**: High-speed tick data is ingested from Zerodha's Kite WS API by the Rust ingestion service and streamed to Apache Kafka.
-2. **QuestDB & Technical Calculations**: Apache Kafka feeds tick data to QuestDB. The Technical Agent recalculates metrics (RSI, Bollinger Bands, MACD, etc.) in real-time.
-3. **Stateful ReAct Loop (LangGraph)**: The Tauri terminal links to a local Rust Tool Server. This server is queried by the Python-based LangGraph ReAct reasoning service, which executes secure local tools to retrieve microstructures, macro trends, and support/resistance zones.
-4. **Self-Verification & UI Event Streaming**: The AI agent self-audits trade setups and streams structured reasoning updates back to the Tauri frontend via Server-Sent Events (SSE).
+Strat is built on a distributed, low-latency asynchronous architecture utilizing Rust, SQLite, Python (FastAPI, LangGraph & PyTorch), Apache Kafka, Redis, and QuestDB.
 
 ```mermaid
 graph TD
     %% Ingestion & Live Streams
-    subgraph StreamLayer ["Data Ingestion & Microservices"]
+    subgraph StreamLayer ["Data Ingestion & Control (Rust)"]
         Kite[Zerodha Kite WS API] -->|Binary Ticks| Ingest[ingestion service / Rust]
-        Ingest -->|Raw Ticks Stream| Kafka[Apache Kafka]
+        IngestControl[TCP Control Server: 8085] -->|Diff Subscriptions| Ingest
     end
 
     %% Storage & Database
     subgraph DBStore ["High-Velocity DB & Cache"]
-        Kafka -->|Tick Ingestion| QDB[(QuestDB: live_ticks)]
+        Ingest -->|Raw Equity Ticks| Kafka[Apache Kafka: market.ticks]
+        Ingest -->|SQL Inserts| QDB[(QuestDB: live_ticks)]
+        Ingest -->|Spawned Task Option Ticks| QDB_Opt[(QuestDB: option_ticks)]
+        Ingest -->|Periodic Snapshots| QDB_Snap[(QuestDB: option_chain_snapshots)]
         RedisCache[(Redis Cache)]
     end
 
     %% Analytical Agents
-    subgraph Analytics ["Quantitative calculations & Agents"]
+    subgraph Analytics ["Quantitative Calculations & Analytics"]
         AgentTech[Technical Agent / Rust] -->|Protobuf| Kafka
         AgentPred[Predictive Agent / Rust] -->|OLS / Curve fit| Kafka
         NewsAPI[Google News RSS / Local API] --> SentimentService[Sentiment Agent / Node.js]
@@ -37,16 +34,17 @@ graph TD
     end
 
     %% Desktop Interface & IPC Bridge
-    subgraph DesktopClient ["Desktop Terminal / Tauri + Next.js"]
+    subgraph DesktopClient ["Desktop Terminal / Tauri + Next.js (Rust & React)"]
         UI[React/Next.js Dashboards] <-->|Zustand Telemetry| Zustand[useTradeStore / useQuantStore]
         TauriCore[Tauri Rust Core] <-->|Zero-Latency IPC bincode| UI
+        TauriCore -->|SQLite read/write| SQLite[(SQLite: instruments & workspace)]
         TauriCore -->|Pg PG Pool| QDB
     end
 
     %% Unified Reasoning Core
-    subgraph Reasoning ["Deep Quant ReAct Loop & Reasoning"]
-        TauriCore -->|Data Fusion / Tool API| ToolServer[Rust Tool Server]
-        ToolServer -->|get_candles / get_consensus_report / get_multi_tf_trend| QuantLoop[LangGraph Agent: Alpha-Quant V3]
+    subgraph Reasoning ["LangGraph Reasoning Loop: FastAPI 8086"]
+        TauriCore -->|Data Fusion / Tool API| ToolServer[Rust Tool Server: 8084]
+        ToolServer -->|get_candles / get_consensus_report| QuantLoop[LangGraph Agent: Alpha-Quant V3]
         QuantLoop -->|watch_price_condition / declare_trade| ToolServer
         QuantLoop -->|SSE Streams| TauriCore
         TauriCore -->|Emit Events| UI
@@ -59,11 +57,21 @@ graph TD
     style Reasoning fill:#11111b,stroke:#a6e3a1,stroke-width:2px;
 ```
 
+### Core Execution Flow
+1. **Dynamic Ingestion Subscription**: The ingestion service boots with zero active subscriptions and listens on TCP control port `8085`. Tauri triggers subscriptions based on symbols active in the UI.
+2. **Binary Tick Parsing**: High-speed tick data is ingested from Zerodha's Kite WebSocket API, decoded from its big-endian binary layout into internal data structures, and routed according to its contract class.
+3. **Dual-Sink Routing & Fault Isolation**:
+   - **Equity Path**: Raw equity ticks are published to Kafka (`market.ticks`) and QuestDB (`live_ticks`).
+   - **Option Path**: Option ticks are processed concurrently in spawned async tasks, inserting ticks to `option_ticks` and saving latest prices and open interest in-memory. A separate periodic background task writes `option_chain_snapshots` to QuestDB.
+4. **Local Tool Server & Quant Computations**: Tauri runs a local Rust Tool Server (port `8084`) that computes VWAP, EMAs, pivot support/resistance, Volume Profiles (POC/VAH/VAL), and detects 19 candlestick patterns client-side.
+5. **Stateful ReAct Loop (LangGraph)**: A FastAPI service (port `8086`) compiles the LangGraph state machine. It consumes the Rust Tool Server APIs to retrieve market microstructure, macro trends, and economic indicators.
+6. **Self-Verification & UI Event Streaming**: The reasoning loop evaluates proposed setups against rigorous risk rules (expectancy, volatility, indices, clocks) and streams structured updates back to the Tauri frontend via Server-Sent Events (SSE).
+
 ---
 
 ## 🧠 Deep Quant Analytical Foundation
 
-Strat's reasoning core is driven by a sophisticated multi-variable RAG (Retrieval-Augmented Generation) pipeline that feeds into the **"Self-Defending Hunter" V3 System Prompt (Alpha-Quant)**. Instead of leaving numeric parameters to LLM hallucination, they are mathematically calculated in the native Rust engine and injected verbatim.
+Strat's reasoning core is driven by a sophisticated multi-variable RAG (Retrieval-Augmented Generation) pipeline that feeds into the **"Self-Defending Hunter" V3 System Prompt (Alpha-Quant)**. All indicators and market calculations are mathematically resolved in the native Rust engine and injected verbatim.
 
 ### 1. VWEPR (Volume-Weighted Exponential Price Regression) Curvature
 The terminal utilizes the **VWEPR** regression system to predict support/resistance and trend exhaustion using polynomial fitting. By mapping a sliding window of historical bars, we fit a quadratic curve:
@@ -80,7 +88,7 @@ $$\det(A) = N(S_{x^2}S_{x^4} - S_{x^3}^2) - S_x(S_x S_{x^4} - S_{x^2}S_{x^3}) + 
 
 ```rust
 // In quant/vwepr.rs — Fit solver using determinants
-let det_a = n * (s_x2 * s_x4 - s_x3 * s_x3) - s_x * (s_x * s_x4 - s_x2 * s_x3) + s_x2 * (s_x * s_x3 - s_x2 * s_x2);
+let det_a = n * (s_x2 * s_x4 - s_x3 * s_x3) - s_x * (s_x * s_x4 - s_x2 * s_x3) + s_x2 * (s_xy * s_x3 - s_x2y * s_x2);
 if det_a.abs() > 1e-9 {
     let a = (n_y * (s_x2 * s_x4 - s_x3 * s_x3) - s_x * (s_xy * s_x4 - s_x2 * s_x2y) + s_x2 * (s_xy * s_x3 - s_x2y * s_x2)) / det_a;
     // a represents VWEPR quadratic curvature
@@ -97,46 +105,99 @@ $$\text{Candles} = \text{Daily Archive} \cup \text{Intraday Cache} \cup \text{Li
 
 ---
 
-## 🏛️ The "Self-Defending Hunter" Reasoning Persona
+## 🏛️ Options Data Foundation (F&O Sync)
 
-Alpha Suite V3 introduces the **"Self-Defending Hunter"** prompt architecture (**Alpha-Quant**). Rather than rushing into volatile positions, the agent operates in a high-patience regime that loops through multiple timeframes, schedules async price-watching conditions, and rigorously self-criticizes trade ideas before final declaration.
+Strat implements a fully automated, end-to-end Options Data Foundation (Phase F1) that syncs derivatives contract lists, resolves option strike chains, and coordinates subscription parameters.
 
-### The Hunter Mindset
-*   **Capital Preservation First**: If current conditions are messy or lack high-probability entries, the agent is never forced to act.
-*   **Timeframe Looping**: Dynamically crawls from 5m/15m to 1H, 4H, and 1D levels to establish structural smart-money confluence.
-*   **Async Trigger Conditions**: Uses `watch_price_condition` to place price-and-volume tripwires, parking resources until high-probability triggers fire.
+### 1. Bounded Option Chain Resolution (`option_chain.rs`)
+Pure, deterministic, clock-free library that constructs the strike-ordered CE/PE ladder for underlyings:
+* **ATM Strike Selection**: Locates the listed strike nearest to the underlying spot price (resolving equidistant ties to the lower strike).
+* **Strike Band Window**: Filters a contiguous, sorted, and de-duplicated strike band around the ATM strike bounded by a configurable half-width $M$ (delivering a strike band size $\le 2M + 1$).
+* **Nearest Expiries**: Filters the $N$ nearest non-expired expiries.
+* **Bounded Selection**: Computes the cross product (Selected Expiries $\times$ Clamped Strike Band $\times$ CE/PE Option Types) to form the bounded subset, ensuring subscription size is rigidly limited.
 
-### Self-Verification Protocol
-Before calling `declare_trade`, the agent enters an aggressive risk-auditing monologue evaluating:
-1.  **Macro Trend Alignment**: Ensuring micro entries don't trade against the daily trend bias.
-2.  **Volatility Buffer**: Checking that the proposed Stop Loss isn't too tight compared to recent volatility bands (ATR / Bollinger).
-3.  **Strict Risk-Reward**: Confirming a minimum of 1:2 R:R ratio.
+### 2. Bounded Option Chain Subscriber (`option_chain_subscriber.rs`)
+A background service running inside the Tauri native bridge that links the database to the ingestion control port:
+* **Spot Price Resolution**: Polls QuestDB `live_ticks` every 15 seconds to fetch the latest spot prices for configured underlyings (skipping and logging any underlying whose spot is unavailable to prevent mis-centered bands).
+* **SQLite Instrument Load**: Queries NFO contracts from the local SQLite `nfo_instruments` cache.
+* **ATM Recenter Gate**: Calculates the new chain selection and compares it against the active subscription. It triggers a control port update only when the ATM strike shifts past a configured threshold.
+* **TCP Control Handshake**: Sends a newline-delimited `option_chain_set` command JSON payload to TCP port `8085`.
 
-If any check fails, the trade is rejected, and the agent continues scanning other scopes. This same protocol is fully mirrored in **Verify Mode (Co-Pilot)** to prevent logical contradictions. 
+### 3. Ingestion Subscription Diffing (`ingestion/src/main.rs`)
+The ingestion control server parses incoming `option_chain_set` instructions and dynamically synchronizes active subscriptions:
+* **Delta Subscriptions**: Diffs the new option token set against the current selection. It sends `subscribe` and `mode=full` commands for added tokens and `unsubscribe` commands for removed tokens to Zerodha's WebSocket API.
+* **Fault-Isolated Sinks**: Saves option metadata and latest states in-memory. Incoming option ticks are routed away from the main equity execution threads into `option_ticks` table SQL inserts, preventing option-side latency or DB stalls from degrading equity execution.
+* **In-Memory Snapshots**: A separate thread polls the snapshot interval and inserts consolidated `option_chain_snapshots` table rows containing price and open interest (preserving nulls, never fabricating zero) to QuestDB.
 
-### Injected Prompt Variable Map (Exactly 18 Parameters)
-The system prompt resolves and format-injects the exact quantitative metrics of the market, structured as follows:
+---
 
-| # | Injected Parameter | Rust Type | Description |
-|---|---|---|---|
-| 1 | `symbol` | `&str` | Trading ticker name (e.g. `RELIANCE`, `NIFTY 50`) |
-| 2 | `timeframe` | `&str` | Scanning interval (e.g. `10m`, `1d`) |
-| 3 | `macro_context` | `&str` | Broader index direction fetched via QuestDB (e.g., `NIFTY 50 is trending up +0.8% today`) |
-| 4 | `latest_close` | `f64` | The last closing price from our deduplicated array |
-| 5 | `vwap_val` | `f64` | Volume Weighted Average Price |
-| 6 | `ofi_val` | `f64` | Order Flow Imbalance (-1.0 Ask pressure, +1.0 Bid pressure) |
-| 7 | `vol_multiplier` | `f64` | Volume spike above the 20-period average (walked backward to find active volume) |
-| 8 | `atr_val` | `f64` | Average True Range (14-period volatility baseline) |
-| 9 | `bb_upper` | `f64` | Bollinger Bands Upper threshold |
-| 10 | `bb_mid` | `f64` | Bollinger Bands Middle baseline |
-| 11 | `bb_lower` | `f64` | Bollinger Bands Lower threshold |
-| 12 | `rsi_val` | `f64` | Relative Strength Index (14-period momentum metric) |
-| 13 | `macd_val` | `f64` | MACD Line value |
-| 14 | `macd_signal` | `f64` | MACD Signal line |
-| 15 | `ema9_val` | `f64` | 9-period Exponential Moving Average |
-| 16 | `ema21_val` | `f64` | 21-period Exponential Moving Average |
-| 17 | `acceleration_coeff` | `f64` | VWEPR quadratic curvature acceleration ($a$) |
-| 18 | `detected_patterns` | `&str` | Comma-separated candlestick patterns found inside a rolling window |
+## 🧠 LangGraph Stateful Agentic Reasoning Core
+
+Strat's reasoning layer runs as an independent FastAPI service on port `8086` orchestrating a stateful LangGraph agent graph.
+
+```mermaid
+graph TD
+    Start([Start Run]) --> Init[Initialize Agent State]
+    Init --> CheckMode{Mode Selector}
+    
+    %% FIND Mode Flow
+    CheckMode -->|FIND| Research[Research Phase: Gather data from Tool Server]
+    Research --> CallTools[Call Technical / Regime / Forecast / Profile Tools]
+    CallTools --> SaveEvidence[Save Shared Evidence to State]
+    SaveEvidence --> CheckTurns{Turns < Max?}
+    CheckTurns -->|Yes| DecideFind{Decide?}
+    CheckTurns -->|No| ForceHold[Force HOLD: no-decision-reached]
+    DecideFind -->|Declare Trade| Commit[Commit Declared Trade]
+    DecideFind -->|Watch Price| Suspend[Watch Price: Suspend Run]
+    DecideFind -->|More Info| Research
+    
+    %% VERIFY Mode Flow
+    CheckMode -->|VERIFY| RiskAudit[Co-Pilot Risk Critique]
+    RiskAudit --> VerifyChecks[Verify SL >= 1.5x ATR, RR >= 1:2, Regime & Clock]
+    VerifyChecks --> DevilsAdvocate[Bear Agent: Devil's Advocate Audit]
+    DevilsAdvocate --> VerifyVerdict[Format Verification JSON Plan]
+    
+    %% DEBATE Mode Flow
+    CheckMode -->|DEBATE| DebatePrep[Debate Phase: Exclude Committing Tools]
+    DebatePrep --> BullTurn[Bull Agent: Arguing Buy Case]
+    BullTurn --> BearTurn[Bear Agent: Arguing Sell Case]
+    BearTurn --> CheckRounds{Round < Max?}
+    CheckRounds -->|Yes| BullTurn
+    CheckRounds -->|No| JudgeTurn[Judge Agent: Classify Consensus & Conviction]
+    JudgeTurn --> Verdict[Judge Final Decision]
+    
+    %% Q&A Mode Flow
+    CheckMode -->|QA| QAPhase[Trade QA Phase: Session Context Grounding]
+    QAPhase --> ReadCheckpoint[Load Persisted Thread via MemorySaver]
+    ReadCheckpoint --> AnswerQA[Stream Grounded Answer, Immutable Decision]
+
+    %% Terminal States
+    ForceHold --> Finish([Run Finished])
+    Commit --> Finish
+    Suspend --> Finish
+    VerifyVerdict --> Finish
+    Verdict --> Finish
+    AnswerQA --> Finish
+```
+
+### 1. User-Driven Action Modes
+* **`FIND` Mode (Directional Hunter)**: Scans the active chart timeframe. Walks the qualitative tool pipeline (macro bias, volume profiles, patterns, OLS, and neural drift forecasts) to identify A+ trades. It commits a trade or places a price trigger via `watch_price_condition` (suspending the graph run until a target candle wakes it up).
+* **`VERIFY` Mode (Co-Pilot)**: Evaluates a user-proposed trade bracket. Audits levels against live ATR volatility, Bollinger Bands, and support/resistance pivots. Runs a single-pass Bear Agent Devil's Advocate critique to identify hidden structural red flags.
+* **`DEBATE` Mode (Consensus Debate)**: Bypasses single-agent bias. Spawns an internal debate round where a Bull Agent and a Bear Agent (Devil's Advocate) argue over the gathered evidence (both bound to a read-only toolset to prevent unauthorized execution). A Judge Agent classifies their stance as `strong_agree`, `lean`, or `contested`, and derives a numeric conviction score.
+* **`QA` Mode (Interactive Auditing)**: Allows users to ask follow-up questions about prior trades. Answers are grounded in the thread's checkpointed session memory (`MemorySaver` checkpointer). The active `Declared_Trade` remains strictly immutable.
+
+### 2. System Tools & Calibration Filters
+* **Regime Detection Gate (`get_market_regime`)**: Labels trend state (trending/ranging), volatility (low/normal/high), and favorability. Unfavorable regimes require downgrading trade conviction or holding.
+* **Relative Strength & Index Context (`get_relative_strength`)**: Compares symbol strength relative to its benchmark index. Prevents buying laggards in falling markets or fighting index momentum.
+* **Session & Expiry Clock Context (`get_session_context`)**: Identifies NSE session phase (opening drive, midday lull, expiry afternoon flow) and rates time favorability.
+* **Realized expectancy Edge Audit (`get_trade_performance`)**: Cross-references proposed setups against the agent's historical win rate and expectancy (in $R$).
+* **Exits Simulator (`trade_manager.py`)**: Models multi-leg target execution, breakeven trigger stops, and trailing stops using real candle streams.
+
+### 3. Glass-Box Execution Visibility
+All agent runs stream structured, real-time Server-Sent Events (SSE) detailing node transitions:
+* `RUN_STARTED` is emitted first.
+* Reasoning steps, tool starts, tool outcomes, and risk audits are expanded and streamed in strict chronological step order (assuring `TOOL_CALL_START` always precedes `TOOL_CALL_RESULT`).
+* Completes with a terminal `RUN_FINISHED` status (`completed`/`paused`) or an `ERROR` event. If the LLM provider fails, a clean `ERROR` is surfaced, preventing silent UI failures or fabricated trade plans.
 
 ---
 
@@ -145,23 +206,23 @@ The system prompt resolves and format-injects the exact quantitative metrics of 
 ```text
 /
 ├── agents/
-│   ├── deep-quant-loop/  # LangGraph-based stateful ReAct loop (Self-Defending Hunter AI agent)
-│   ├── technical/        # Rust Technical Indicator calculations (RSI, Bollinger Bands, MACD, EMA)
-│   ├── predictive/       # Rust OLS and Regression projection calculator
-│   └── sentiment/        # Claude-powered real-time news evaluation engine with Redis Cache
-├── aggregator/           # Decision broadcasting, Dynamic Weighting & Conflict Resolution (Rust)
-├── ingestion/            # High-speed binary Zerodha Kite WS tick aggregator (Rust)
-├── backend/              # QuestDB Schema Migration Runner
-└── frontend/
-    ├── src-tauri/        # Tauri Native Bridge
-    │   ├── src/
-    │   │   ├── commands/ # Tauri IPC Commands (charts.rs, deep_quant.rs, ticker.rs)
-    │   │   └── services/ # LLM Service (llm.rs), Instrument Master and history loaders
-    │   └── tests/        # Contract API & Mock Testing suite (mockito mock server)
+│   ├── deep-quant-loop/  # LangGraph FastAPI service (ReAct loop, Debate roles, Exits simulator)
+│   ├── technical/        # Rust Technical Indicator calculations (RSI, BB, MACD, EMA)
+│   ├── predictive/       # Rust OLS and naive Linear Regression projection engine
+│   ├── quant-rag/        # DeepSeek anomaly analysis & headline insights via NVIDIA NIM
+│   └── sentiment/        # News evaluation & Claude sentiment classifier with Redis cache
+├── aggregator/           # Consensus broadcasting & Dynamic Weighting aggregator (Rust)
+├── alpha-terminal/       # OHLC 10m window aggregation and WebSocket broadcaster (Rust)
+├── ingestion/            # High-speed binary Kite WS tick dual-sink router (Rust, port 8085)
+├── backend/              # QuestDB Schema migration runner
+├── shared_protos/        # Protobuf data schemas & contracts (market_data.proto)
+├── tools/                # load_tester (Stress testing chaos engine with anomaly injector)
+└── frontend/             # Desktop HUD Terminal
+    ├── src-tauri/        # Tauri Native Bridge (Instrument master sync, option chain subscriber)
     └── src/
-        ├── app/          # Dashboards and User Interface
+        ├── app/          # Dashboard HUD layouts (Intraday, Swing, Investor profiles)
         ├── store/        # Telemetry State management (useTradeStore, useQuantStore)
-        └── components/   # Interactive Trading charts and quantitative panels
+        └── components/   # HTML5 Canvas chart overlays (Volume Profile, Level-2 Footprint)
 ```
 
 ---
@@ -171,50 +232,67 @@ The system prompt resolves and format-injects the exact quantitative metrics of 
 ### Environment Configurations
 Create a `.env` file at the root:
 ```env
-# ── database configuration ───────────────────────────────
+# ── Database Configuration ───────────────────────────────
 QUESTDB_HTTP_URL="http://127.0.0.1:9000"
-QUESTDB_PG_URL="postgresql://admin:quest@localhost:8812/qdb"
+QUESTDB_POSTGRES_URL="postgresql://admin:quest@localhost:8812/qdb"
 
-# ── Zerodha Kite credentials ─────────────────────────────
+# ── Zerodha Kite Credentials ─────────────────────────────
 KITE_API_KEY="your_kite_api_key"
 KITE_ACCESS_TOKEN="your_daily_kite_access_token"
 
-# ── LLM Inference Provider ──────────────────────────────
-LLM_API_URL="https://router.huggingface.co/v1/chat/completions"
-LLM_API_KEY="hf_xxxxxxxxxxxxxxxxxxxxxxxx"
-LLM_MODEL="deepseek-ai/DeepSeek-V3-0324"
+# ── LLM Inference Provider (Gemini / OpenAI Compatible) ────────────────────
+LLM_API_URL="https://generativelanguage.googleapis.com/v1beta/openai"
+LLM_API_KEY="AIzaSyXXXXXXXXXXXXXXXXXXXX"
+LLM_MODEL="gemini-2.5-flash"
+LLM_MAX_RETRIES="4"
+LLM_TIMEOUT_SECS="90"
+
+# ── F&O Ingestion Parameters ─────────────────────────────
+FNO_UNDERLYINGS="NIFTY 50,BANKNIFTY"
+FNO_NEAREST_EXPIRIES="2"
+FNO_STRIKE_BAND_HALF_WIDTH="10"
+FNO_ATM_RECENTER_THRESHOLD="1.0"
+FNO_SNAPSHOT_INTERVAL_SECS="60"
+INGESTION_CONTROL_PORT="8085"
 
 # ── Redis & Kafka Brokers ────────────────────────────────
 REDIS_URL="redis://127.0.0.1:6379"
-KAFKA_BROKER_URL="127.0.0.1:9092"
+KAFKA_BROKER_URL="127.0.0.1:19092"
 ```
 
 ### Dev Launch Pipeline
-1.  **Stand up Core Infrastructure**:
-    ```bash
-    docker-compose up -d
-    ```
-    This registers Redis, Apache Kafka, and QuestDB.
 
-2.  **Boot Deep Quant ReAct Agent Service**:
-    ```bash
-    cd agents/deep-quant-loop
-    pip install -r requirements.txt
-    python main.py
-    ```
-    This starts the LangGraph-based stateful agent API on `http://127.0.0.1:8086`.
+1. **Stand up Core Infrastructure**:
+   ```bash
+   docker-compose up -d
+   ```
+   Starts Redis, Redpanda (Kafka), and QuestDB.
 
-3.  **Verify Backend API Contract Tests**:
-    ```bash
-    cd frontend/src-tauri
-    cargo test --test api_tests
-    ```
+2. **Boot Deep Quant ReAct Agent Service**:
+   ```bash
+   cd agents/deep-quant-loop
+   pip install -r requirements.txt
+   python main.py
+   ```
+   Launches the LangGraph reasoning API on `http://127.0.0.1:8086`.
 
-4.  **Boot Desktop Terminal**:
-    ```bash
-    cd frontend
-    npm run tauri dev
-    ```
+3. **Verify Backend API & Option Chain Property Tests**:
+   ```bash
+   cd frontend/src-tauri
+   cargo test
+   ```
+
+4. **Boot Ingestion Service**:
+   ```bash
+   cd ingestion
+   cargo run
+   ```
+
+5. **Boot Desktop Terminal**:
+   ```bash
+   cd frontend
+   npm run tauri dev
+   ```
 
 ---
 
