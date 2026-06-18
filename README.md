@@ -6,7 +6,7 @@ Strat is an institutional-grade, high-frequency AI-powered trading platform exec
 
 ## 🏗️ System Architecture & Data Flow
 
-Strat is built on a distributed, low-latency asynchronous architecture utilizing Rust, SQLite, Python (FastAPI, LangGraph & PyTorch), Apache Kafka, Redis, and QuestDB.
+Strat is built on a distributed, low-latency asynchronous architecture utilizing Rust, SQLite, Python (FastAPI, LangGraph, and PyTorch), Apache Kafka, Redis, and QuestDB.
 
 ```mermaid
 graph TD
@@ -186,18 +186,31 @@ graph TD
 * **`DEBATE` Mode (Consensus Debate)**: Bypasses single-agent bias. Spawns an internal debate round where a Bull Agent and a Bear Agent (Devil's Advocate) argue over the gathered evidence (both bound to a read-only toolset to prevent unauthorized execution). A Judge Agent classifies their stance as `strong_agree`, `lean`, or `contested`, and derives a numeric conviction score.
 * **`QA` Mode (Interactive Auditing)**: Allows users to ask follow-up questions about prior trades. Answers are grounded in the thread's checkpointed session memory (`MemorySaver` checkpointer). The active `Declared_Trade` remains strictly immutable.
 
-### 2. System Tools & Calibration Filters
-* **Regime Detection Gate (`get_market_regime`)**: Labels trend state (trending/ranging), volatility (low/normal/high), and favorability. Unfavorable regimes require downgrading trade conviction or holding.
-* **Relative Strength & Index Context (`get_relative_strength`)**: Compares symbol strength relative to its benchmark index. Prevents buying laggards in falling markets or fighting index momentum.
-* **Session & Expiry Clock Context (`get_session_context`)**: Identifies NSE session phase (opening drive, midday lull, expiry afternoon flow) and rates time favorability.
-* **Realized expectancy Edge Audit (`get_trade_performance`)**: Cross-references proposed setups against the agent's historical win rate and expectancy (in $R$).
-* **Exits Simulator (`trade_manager.py`)**: Models multi-leg target execution, breakeven trigger stops, and trailing stops using real candle streams.
+### 2. Multi-Agent Debate & Stance Judge (`debate.py` & `calibration.py`)
+* **Arguing Roles**: The Bull and Bear agents conduct structured debate rounds over the shared evidence. They are restricted from committing trades (`declare_trade` is disabled).
+* **Judge Consensus Classification**: The Judge agent applies a deterministic classification strategy over the stances:
+  - `STRONG_FLOOR` or `STRONG_GAP` indicates clear directional dominance.
+  - `CONTESTED_GAP` indicates a high degree of disagreement.
+* **Conviction Calibration**: The Judge maps the classified consensus and relative distance of stances into a calibrated conviction score $[0, 100]$ using predefined weights. This prevents LLM hallucinations on confidence scoring.
 
-### 3. Glass-Box Execution Visibility
-All agent runs stream structured, real-time Server-Sent Events (SSE) detailing node transitions:
-* `RUN_STARTED` is emitted first.
-* Reasoning steps, tool starts, tool outcomes, and risk audits are expanded and streamed in strict chronological step order (assuring `TOOL_CALL_START` always precedes `TOOL_CALL_RESULT`).
-* Completes with a terminal `RUN_FINISHED` status (`completed`/`paused`) or an `ERROR` event. If the LLM provider fails, a clean `ERROR` is surfaced, preventing silent UI failures or fabricated trade plans.
+### 3. Timezone-Aware Session & Expiry Engine (`session.py`)
+* **NSE Session Phases**: Maps trades strictly to exchange timezone constraints (`Asia/Kolkata` / +05:30) and classifies the current phase:
+  - `pre_open`, `opening` (violent mean-reversion, minutes 0–15), `morning`, `midday` (thin chop, low volume), `afternoon`, `closing`, and `post_close`.
+* **Expiry Awareness**: Checks whether the current session is an expiry day (`is_expiry_day`) and computes the number of days until the nearest weekly/monthly option contract expiry (`days_until_expiry`).
+* **Time-Based Gating**: Evaluates clocks to label `time_favorability` (e.g. flagging setups in the opening drive or late expiry afternoons as `unfavorable`). Gating is non-blocking: the agent is warned but can still proceed. Unfavorable windows require explicit disclosures in the committed defensibility record.
+
+### 4. Trade exits & simulator (`trade_manager.py` & `journal.py`)
+* **Managed Exit Simulation**: Evaluates proposed bracket trade setups over candle arrays using `trade_manager.simulate_plan`. It strictly models multi-leg target execution, stop-loss triggers, breakeven trigger thresholds, and trailing stop offsets.
+* **Trade Expectancy Audit**: Keeps track of the agent's edge by checking its win rate and expectancy (measured in $R$) overall and per setup type using a local SQLite-backed trade journal (`journal.py`).
+* **Calibrated Confidence**: The agent adjusts its `conviction_score` downward if its trade journal reports a historically negative expectancy for comparable setups.
+
+### 5. Volatility-Aware Forecast Signal Filtering (`forecaster.py`)
+* **Forecast Engine**: Employs regime- and volatility-aware mathematical forecasters (`get_forecast`) to compute a Projected Direction, an Up-Probability $[0.0, 1.0]$, and the Expected Move scaled in ATR units.
+* **Forecast Gate Filtering**: Acts as the primary predictive check. A directional trade proposed against the forecast gate (misaligned Forecast Alignment or insufficient Up-Probability) triggers a reduction in conviction or forces a `HOLD`.
+
+### 6. Glass-Box Execution Visibility & Budget Controls
+* **Reasoning Budget**: Bounds the number of consecutive reasoning-only turns (default: 3) to prevent the LLM from entering infinite loop states when tools fail. Exceeding the budget automatically forces a `HOLD` with a `no-decision-reached` label.
+* **Chronological SSE Stream**: Streams event frames containing the chronological reasoning logs, tool start, and tool results back to Tauri. Surfacing a clean `ERROR` event (rather than a fabricated JSON fallback plan) if the LLM provider becomes unreachable.
 
 ---
 
@@ -224,6 +237,20 @@ All agent runs stream structured, real-time Server-Sent Events (SSE) detailing n
         ├── store/        # Telemetry State management (useTradeStore, useQuantStore)
         └── components/   # HTML5 Canvas chart overlays (Volume Profile, Level-2 Footprint)
 ```
+
+---
+
+## 🧪 Purity & Property-Based Testing Foundation
+
+To ensure mathematical correctness, the platform adopts a strict **purity-first design**. All quantitative calculations, configurations, and state decisions are extracted into pure functions that are tested against arbitrary boundaries.
+
+* **Property-Based Testing (Hypothesis & Proptest)**: Over 160 unit and property tests validate the behavior of the platform:
+  - **F&O Config Totality**: Confirms `resolve_fno_config` never panics and resolves defaults safely for any environment variable state (R6.1–6.3).
+  - **Option Selection Contiguity**: Confirms strike band clamping, ATM selection, and nearest expiries logic are correct over arbitrary random-walk candles.
+  - **Debate Configuration & Stances**: Tests Judge decision loops, conviction calibration weights, and stance parsing over thousands of generated inputs.
+  - **Session & Expiry Limits**: Assures timezone mapping, minutes since open/until close calculations, and expiry contexts do not suffer from offset or lookahead biases.
+  - **Trade Manager Exit Logic**: Validates simulated exit brackets, stop adjustments, and trailing fills under synthetic price trajectories.
+  - **Fault Isolation**: Validates that option-routing failures never block the main equity stream.
 
 ---
 
