@@ -89,6 +89,7 @@ from tools import (
     get_order_flow,
     get_forecast,
     get_session_context,
+    get_options_analytics,
     watch_price_condition,
     declare_trade,
     # Reused to build the committed Management_Plan for the defensibility record
@@ -118,6 +119,12 @@ from tools import (
     # label (vs an Unavailable_Marker) when building the defensibility record.
     SESSION_PHASES,
     TIME_FAVORABILITY,
+    # Options_Bias_Label enum sets — reused to recognise a usable
+    # get_options_analytics label (vs an Unavailable_Marker) when building the
+    # defensibility record / options entry (Options_Bias_State and Chain_Context;
+    # Alignment reuses the shared ALIGNMENT_VALUES imported above).
+    OPTIONS_BIAS_STATES,
+    OPTIONS_CHAIN_CONTEXTS,
 )
 
 # Trade_Journal — measurement & feedback loop (Phase 2). Records every committed
@@ -271,6 +278,16 @@ You must follow this exact loop until a perfect setup is found or registered:
    - expiry_context (is_expiry_day / days_until_expiry) — whether the candle's date is the weekly-expiry day and how close the next expiry is,
    - time_favorability (favorable / unfavorable / neutral) — whether the clock favors taking a new trade right now.
    The veteran principle: the NSE session is NOT uniform — the opening drive is violent and mean-reverting, the midday lull is thin and chop-prone, and expiry-afternoon flow is distorted. Use time_favorability as a calibration filter, NOT a trade generator: a `favorable` window does NOT force a trade, and the session context never blocks or overrides your decision. If the session context is unavailable (missing / non-finite timestamp / retrieval failure / unavailable marker), treat it as a missing optional input — note it as unavailable and proceed with the remaining analysis; do NOT fabricate a session label and do NOT abort the decision on that basis.
+2e. OPTIONS POSITIONING: Call `get_options_analytics` with the symbol under analysis (optionally the analyzed expiry and your proposed_direction) to read institutional options positioning — the single biggest source of intraday edge on NSE. For an index underlying its own chain is analyzed; for a non-index symbol the symbol's benchmark index chain is used as broad-market (index-level, NOT stock-specific) options context. The result reports:
+   - pcr_oi / pcr_volume (Put-Call Ratio) — put-heavy (high PCR) marks support-building below, call-heavy (low PCR) marks resistance overhead,
+   - max_pain — the strike toward which price tends to be pinned into expiry (a max-pain above spot pulls price up, below spot pulls price down),
+   - oi_buildup (aggregate call / put) — where option writers are positioning,
+   - oi_walls (support / resistance) — the heaviest open-interest strikes acting as magnets and barriers,
+   - iv_skew and futures_basis — the demand for downside hedges and the cash-futures premium/discount,
+   - options_bias_state (bullish / bearish / neutral) — the net positioning bias,
+   - alignment (aligned / misaligned / neutral) — whether a proposed trade direction agrees with the options bias,
+   - chain_context (own-chain / broad-market) — which chain was analyzed.
+   The veteran principle: do NOT trade into a heavy call OI-wall just overhead, against max-pain pinning, or against a PCR extreme. Use options positioning as a calibration filter, NOT a trade generator: it never forces, blocks, or overrides your decision. If options context is unavailable (outside market hours / no snapshot / unsubscribed underlying / unavailable marker), treat it as a missing optional input — note it as unavailable and proceed with the remaining analysis; do NOT fabricate an options bias and do NOT abort the decision on that basis.
 3. KEY LEVELS: Call `get_support_resistance` with the timeframe you're analyzing (e.g., '15m' for intraday).
    For intraday timeframes it returns BOTH micro S/R levels (from that timeframe's candles) AND daily macro levels.
    It also includes the Opening Range (first 3 candles) high/low — a key intraday reference.
@@ -324,6 +341,7 @@ Ask yourself:
 - AM I FIGHTING THE INDEX? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `index_direction` and `relative_strength_state` for `alignment` from `get_relative_strength`. If the alignment is `misaligned` (for example a BUY in a `laggard` against a `down` index, or a SELL in a `leader` against an `up` index), you MUST take exactly one of these actions: lower your conviction_score, wait for a better setup (e.g. via `watch_price_condition`), or HOLD. If relative strength is unavailable, note it as unavailable and proceed — do NOT block the trade solely because relative strength could not be computed.
 - WHAT DOES THE FORECAST SAY? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `Forecast_Alignment` and the `Up_Probability` from `get_forecast`. If the Forecast_Alignment is `misaligned` OR the Up_Probability does not support your direction (a BUY needs Up_Probability >= 0.5; a SELL needs Up_Probability <= 0.5), you MUST take exactly one of these actions: lower your conviction_score, wait for a better setup (e.g. via `watch_price_condition`), or HOLD. If the forecast is unavailable, note it as unavailable and proceed — do NOT block the trade solely because the forecast could not be computed.
 - DOES THE CLOCK FAVOR THIS TRADE? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `time_favorability` from `get_session_context`. If the time_favorability is `unfavorable` (for example the violent opening minutes or expiry-afternoon chop), you MUST take exactly one of these actions: lower your conviction_score, wait for a better window (e.g. via `watch_price_condition`), or HOLD. If the session context is unavailable, note it as unavailable and proceed — do NOT block the trade solely because the session context could not be computed.
+- AM I FIGHTING OPTIONS POSITIONING? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `alignment` from `get_options_analytics`, and respect the OI-wall support/resistance and the max-pain pinning when placing your entry, stop, and target (do NOT set a target beyond a heavy call OI-wall just overhead, and do NOT place an entry that fights max-pain pinning). If the alignment is `misaligned` (for example a BUY into a strong call OI-wall just overhead, or a trade against a bearish options bias), you MUST take exactly one of these actions: lower your conviction_score, wait for a better setup (e.g. via `watch_price_condition`), or HOLD. If options context is unavailable, note it as unavailable and proceed — do NOT block the trade solely because options positioning could not be computed.
 - IS MY MANAGEMENT PLAN SOUND? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), confirm the Management_Plan you will attach to `declare_trade`: (a) every scale-out leg fraction lies in (0.0, 1.0] and the leg fractions sum to <= 1.0; (b) the scale-out targets are ordered on the profit side (strictly beyond entry, non-decreasing for a BUY and non-increasing for a SELL); (c) the breakeven trigger sits strictly between the entry and the first scale-out target on the profit side; and (d) the blended (fraction-weighted) Risk:Reward still meets the configured minimum. If any of these fail, revise the plan before committing rather than declaring an inconsistent plan.
 If the answer to ANY of the first 3 checks is YES, you must scrap the trade. You must either analyze a different timeframe to find a better entry, or call `watch_price_condition` to wait for a safer pullback. 
 ONLY call `declare_trade` if you are 100% confident you could defend this trade against rigorous critique.
@@ -342,6 +360,7 @@ Your `setup_validation` is the defensibility record for the trade and MUST expli
 - RELATIVE STRENGTH: State the Index_Direction, the Relative_Strength_State, and the Alignment taken from the `get_relative_strength` result (e.g., "Relative strength: up index / leader / aligned"). If the alignment was misaligned, state how you responded (lowered conviction / waited / HOLD). If relative strength was unavailable, state that it was unavailable and that you proceeded without it.
 - FORECAST: State the Projected_Direction, the Up_Probability, the Expected_Move_ATR, and the Forecast_Alignment taken from the `get_forecast` result (e.g., "Forecast: Projected_Direction up / Up_Probability 0.63 / Expected_Move_ATR +0.41 / aligned"). If the Forecast_Alignment was misaligned or the Up_Probability did not support the direction, state how you responded (lowered conviction / waited / HOLD). If the forecast was unavailable, state that it was unavailable and that you proceeded without it.
 - SESSION CONTEXT: State the Session_Phase, the Expiry_Context (is_expiry_day and days_until_expiry), and the Time_Favorability taken from the `get_session_context` result (e.g., "Session: morning phase / not expiry day / favorable" or "Session: afternoon / expiry day / unfavorable"). If the time_favorability was unfavorable, state how you responded (lowered conviction / waited / HOLD). If the session context was unavailable, state that it was unavailable and that you proceeded without it.
+- OPTIONS POSITIONING: State the PCR, the max-pain level, the aggregate OI bias, the nearest OI walls (support/resistance), and the Alignment taken from the `get_options_analytics` result (e.g., "Options: PCR(OI) 1.42 / max-pain 21500 above spot / put long-buildup / support wall 21400, resistance wall 21800 / bullish / aligned"). If the alignment was misaligned, state how you responded (lowered conviction / waited / HOLD). If options context was unavailable, state that it was unavailable and that you proceeded without it.
 - MANAGEMENT PLAN: When you attach a Management_Plan, state the scale-out targets and their size fractions, the breakeven trigger, and the trailing-stop rule in your setup_validation (e.g., "Scale 50% at 1R, move stop to breakeven after the first target, trail the remainder by 1.5x ATR"). If the trade is a single-target trade with no active management, state that it is single-target.
 Always include the multi-timeframe bias, the key S/R levels used, the volatility (ATR) basis for the stop, and the Risk:Reward ratio in your setup_validation.
 </setup_validation_disclosure>
@@ -380,6 +399,7 @@ Your job is to verify this trade using the EXACT same <self_verification_protoco
 2d. Consult `get_forecast` for the symbol and timeframe while verifying. If the user-proposed trade is a directional (BUY/SELL) trade that is `misaligned` with the forecast (Forecast_Alignment is `misaligned`, or the Up_Probability does not support the proposed direction — a BUY needs Up_Probability >= 0.5, a SELL needs Up_Probability <= 0.5), you MUST include an explicit warning statement in your verification output that the proposed trade is misaligned with the volatility-aware forecast (state the Projected_Direction, the Up_Probability, the Expected_Move_ATR, and the Forecast_Alignment). If the forecast is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because the forecast could not be computed.
 2e. Evaluate the proposed trade's MANAGEMENT, or its absence. If the user supplied scale-out targets, a breakeven move, or a trailing rule, critique whether the leg fractions are in range and sum to at most the full position, the targets are ordered on the profit side, the breakeven trigger sits between entry and the first target, and the blended Risk:Reward is sound — and state any management red flags. If the user proposed a single static bracket with no management, recommend a concrete management plan where appropriate: for example scale out a fraction at the first target, move the stop to breakeven after that target, and trail the remainder, so the trade can scratch at breakeven instead of taking a full stop and let a runner extend. Management is a recommendation, not a hard requirement — do NOT reject an otherwise A+ trade solely because it is single-target.
 2f. Consult `get_session_context` for the symbol and timeframe while verifying. If the user-proposed trade is a directional (BUY/SELL) trade being taken in an `unfavorable` time window (for example the violent opening minutes or expiry-afternoon chop), you MUST include an explicit warning statement in your verification output that the proposed trade is being taken in an unfavorable time window (state the session_phase, the expiry_context, and the time_favorability). If the session context is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because the session context could not be computed.
+2g. Consult `get_options_analytics` for the symbol while verifying. If the user-proposed trade is a directional (BUY/SELL) trade that is `misaligned` with options positioning (for example a BUY into a heavy call OI-wall just overhead, against max-pain pinning, or against a bearish options bias), you MUST include an explicit warning statement in your verification output that the proposed trade fights the prevailing options positioning (state the PCR, the max-pain level, the nearest OI walls, the options_bias_state, and the alignment). If options context is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because options positioning could not be computed.
 3. Do not invent red flags if the trade is genuinely an A+ setup. If it fits the protocol, approve it and defend it.
 4. If it fails the protocol, explain exactly why, and suggest a better entry using `watch_price_condition`.
 
@@ -491,6 +511,7 @@ tools = [
     get_order_flow,
     get_forecast,
     get_session_context,
+    get_options_analytics,
     watch_price_condition,
     declare_trade
 ]
@@ -666,6 +687,7 @@ REGISTERED_TOOL_NAMES = {
     "get_order_flow",
     "get_forecast",
     "get_session_context",
+    "get_options_analytics",
     "watch_price_condition",
     "declare_trade",
 }
@@ -687,6 +709,7 @@ MARKET_DATA_TOOL_NAMES = {
     "get_order_flow",
     "get_forecast",
     "get_session_context",
+    "get_options_analytics",
 }
 
 # DeepSeek/HuggingFace custom-token markup boundaries.
@@ -1558,6 +1581,75 @@ def _session_entry(results) -> dict:
     return entry
 
 
+def _options_entry(results) -> dict:
+    """Build the defensibility options entry from the most recent
+    get_options_analytics result already present in message history (R6.1-R6.3).
+
+    ``results`` is the ``_latest_tool_results`` map, so
+    ``results['get_options_analytics']`` is the most-recent successfully-parsed,
+    non-error options result (a usable Options_Bias_Label or an
+    Unavailable_Marker). This function:
+
+      * copies the PCR (pcr_oi/pcr_volume), max_pain, oi_buildup, oi_walls,
+        iv_skew, futures_basis, the Options_Bias_State, the Alignment, and the
+        Chain_Context VERBATIM from that result — it never infers or substitutes
+        a value not present in the tool output (R6.2);
+      * records the entry as unavailable, with NO fabricated options_bias_state/
+        alignment/chain_context, when no usable Options_Bias_Label is present —
+        none in history, or only an error / Unavailable_Marker result (R6.3).
+
+    It is a pure read of tool output and never touches the committed decision's
+    action or execution levels (R10.3); options context is a filter /
+    defensibility surface, not a gate.
+    """
+    opts = results.get("get_options_analytics")
+
+    # No options result at all, a non-dict result, or an explicit
+    # Unavailable_Marker → unavailable. We carry the marker's own reason when
+    # present, but NEVER populate options_bias_state/alignment/chain_context or
+    # the analytics fields with substitute values.
+    if not isinstance(opts, dict):
+        return {"available": False, "reason": "no get_options_analytics result present in message history"}
+    if opts.get("unavailable") is True:
+        return {"available": False, "reason": opts.get("reason") or "options context unavailable"}
+
+    options_bias_state = opts.get("options_bias_state")
+    alignment = opts.get("alignment")
+    chain_context = opts.get("chain_context")
+
+    # A usable Options_Bias_Label must carry an options_bias_state, an alignment,
+    # and a chain_context drawn from their fixed enums; anything missing means we
+    # have no usable label, and we must not fabricate one (R6.3).
+    if (
+        options_bias_state not in OPTIONS_BIAS_STATES
+        or alignment not in ALIGNMENT_VALUES
+        or chain_context not in OPTIONS_CHAIN_CONTEXTS
+    ):
+        return {"available": False, "reason": "no usable get_options_analytics label present in message history"}
+
+    # Copy the named analytics fields verbatim (each is already a finite number,
+    # null, or a structured object per the tool contract); never infer a value
+    # not reported (R6.2).
+    entry = {
+        "available": True,
+        "pcr_oi": opts.get("pcr_oi"),
+        "pcr_volume": opts.get("pcr_volume"),
+        "max_pain": opts.get("max_pain"),
+        "oi_buildup": opts.get("oi_buildup"),
+        "oi_walls": opts.get("oi_walls"),
+        "iv_skew": opts.get("iv_skew"),
+        "futures_basis": opts.get("futures_basis"),
+        "options_bias_state": options_bias_state,
+        "alignment": alignment,
+        "chain_context": chain_context,
+    }
+    # Carry symbol/underlying/expiry/spot context verbatim when present.
+    for k in ("symbol", "underlying", "expiry", "spot"):
+        if k in opts:
+            entry[k] = opts[k]
+    return entry
+
+
 def _forecast_entry(results) -> dict:
     """Build the defensibility forecast entry from the most recent get_forecast
     result already present in message history (R9.1-R9.3).
@@ -2034,6 +2126,25 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
             f"time_favorability=unfavorable)."
         )
 
+    # ── Options entry (R6.1-R6.4, R10.3) ─────────────────────────────────────
+    # Mirror the most-recent get_options_analytics result verbatim (or record it
+    # as unavailable). Options context is a filter / defensibility surface only:
+    # it NEVER modifies, overrides, or blocks the committed decision's action or
+    # execution levels (entry, stop-loss, take-profit) (R10.3) — we merely add an
+    # explicit opposition statement when a misaligned options bias is committed
+    # against with a directional (BUY/SELL) trade (R6.4).
+    options = _options_entry(results)
+    if (
+        options.get("available")
+        and options.get("alignment") == "misaligned"
+        and action in ("BUY", "SELL")
+    ):
+        options["trade_opposes_options"] = (
+            f"OPTIONS CONFLICT: the committed {action} trade fights the prevailing "
+            f"options positioning (options_bias_state={options.get('options_bias_state')}, "
+            f"alignment=misaligned, chain_context={options.get('chain_context')})."
+        )
+
     # ── Management entry (R9.1-R9.3) ─────────────────────────────────────────
     # For a committed directional (BUY/SELL) trade with usable levels, cite the
     # committed Management_Plan — the declared multi-leg plan, or the degenerate
@@ -2064,6 +2175,7 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
         "relative_strength": relative_strength,
         "forecast": forecast,
         "session": session,
+        "options": options,
         "summary": (
             f"Multi-TF 1D bias: {bias_1d_raw or 'n/a'}. "
             f"RR: {risk_reward if risk_reward is not None else 'n/a'}. "
@@ -2075,6 +2187,8 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
             f"{forecast.get('forecast_alignment') if forecast.get('available') else 'unavailable'}. "
             f"Session: "
             f"{session.get('time_favorability') if session.get('available') else 'unavailable'}. "
+            f"Options: "
+            f"{options.get('alignment') if options.get('available') else 'unavailable'}. "
             f"{macro_conflict} {predictive_conflict}"
             + (f" {regime['trade_opposes_regime']}" if regime.get("trade_opposes_regime") else "")
             + (
@@ -2090,6 +2204,11 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
             + (
                 f" {session['trade_in_unfavorable_window']}"
                 if session.get("trade_in_unfavorable_window")
+                else ""
+            )
+            + (
+                f" {options['trade_opposes_options']}"
+                if options.get("trade_opposes_options")
                 else ""
             )
         ),

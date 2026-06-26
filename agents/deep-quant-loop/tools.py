@@ -46,6 +46,21 @@ import forecaster
 # truth for the session math.
 import session
 
+# Options_Analytics_Engine (F2) — the single source of truth for the options
+# analytics math (AD-2). The get_options_analytics tool delegates ALL option
+# chain / spot / future I/O and every analytic (PCR, max pain, OI buildup, OI
+# walls, IV skew, futures basis) to this pure module's compute_options_analytics;
+# the tool never recomputes any of it and consumes the result verbatim.
+import options
+
+# Options_Bias_Classifier (F3) — the single source of truth for the options
+# *bias* math (AD-2, AD-3). The get_options_analytics tool delegates threshold
+# resolution and the threshold-vote classification to this pure module; the tool
+# itself only resolves the analyzed chain, calls the F2 engine, threads the
+# result through classify_options_bias, and re-validates the contract.
+import options_bias
+from options_bias import classify_options_bias
+
 # Trade_Validator + Trade_Manager (trade-management). declare_trade gates a
 # declared Management_Plan through the pure Python Trade_Validator
 # (validator.validate_trade(plan=...)) BEFORE forwarding to the authoritative
@@ -177,6 +192,27 @@ SESSION_PHASES = {
     "pre_open", "opening", "morning", "midday", "afternoon", "closing", "post_close",
 }
 TIME_FAVORABILITY = {"favorable", "unfavorable", "neutral"}
+
+# ── Options_Analytics_Tool contract (options-agent-integration) ──────────────
+# A get_options_analytics Options_Bias_Label must carry an `options_bias_state`
+# and an `alignment` each drawn from its fixed enum (alignment reuses the shared
+# ALIGNMENT_VALUES above), a `chain_context` drawn from OPTIONS_CHAIN_CONTEXTS,
+# each named numeric-or-null analytic (`pcr_oi`, `pcr_volume`, `max_pain`,
+# `futures_basis`) present as a finite number or null, an `oi_buildup` object
+# carrying `call`/`put`, an `oi_walls` object carrying numeric-or-null
+# `support`/`resistance`, and an `iv_skew` object-or-null. An Unavailable_Marker
+# ({"unavailable": true, ...}, or the {"error": ...} from _options_unavailable)
+# is an honest non-fatal result handled by the existing _has_honest_marker
+# pass-through (Requirement 2.6).
+OPTIONS_BIAS_STATES = {"bullish", "bearish", "neutral"}
+OPTIONS_CHAIN_CONTEXTS = {"own-chain", "broad-market"}
+_OPTIONS_NUMERIC_OR_NULL_FIELDS = ("pcr_oi", "pcr_volume", "max_pain", "futures_basis")
+
+# The small set of index Underlyings whose OWN option chain is analyzed (labelled
+# `own-chain`). A non-index symbol resolves to its Benchmark_Index chain via
+# rs.resolve_benchmark instead, labelled `broad-market` (AD-4, Requirement 2.3).
+# Matched case-insensitively against the upper-cased symbol.
+INDEX_UNDERLYINGS = {"NIFTY 50", "NIFTY", "BANKNIFTY"}
 
 # QuestDB HTTP query API for the Live_Ticks_Source (the same endpoint backtest.py
 # uses for the historical archive). The Tick_OFI layer reads recent ticks for the
@@ -620,6 +656,70 @@ def validate_contract(tool_name, payload):
                     f"time_favorability '{time_favorability}' not in "
                     "{favorable, unfavorable, neutral}"
                 )
+            return payload
+
+        if tool_name == "get_options_analytics":
+            if not isinstance(payload, dict):
+                return _contract_error(
+                    f"get_options_analytics expected an object, got {type(payload).__name__}"
+                )
+            # A conforming Options_Bias_Label carries the two categorical labels
+            # in their fixed enums (alignment reuses ALIGNMENT_VALUES), a
+            # `chain_context` in OPTIONS_CHAIN_CONTEXTS, each named analytic as
+            # finite-number-or-null, an `oi_buildup` object with call/put, an
+            # `oi_walls` object with numeric-or-null support/resistance, and an
+            # `iv_skew` object-or-null. (An Unavailable_Marker was already passed
+            # through above by _has_honest_marker, so anything reaching here must
+            # be a full label.)
+            options_bias_state = payload.get("options_bias_state")
+            if options_bias_state not in OPTIONS_BIAS_STATES:
+                return _contract_error(
+                    f"options_bias_state '{options_bias_state}' not in "
+                    "{bullish, bearish, neutral}"
+                )
+            alignment = payload.get("alignment")
+            if alignment not in ALIGNMENT_VALUES:
+                return _contract_error(
+                    f"alignment '{alignment}' not in {{aligned, misaligned, neutral}}"
+                )
+            chain_context = payload.get("chain_context")
+            if chain_context not in OPTIONS_CHAIN_CONTEXTS:
+                return _contract_error(
+                    f"chain_context '{chain_context}' not in "
+                    "{own-chain, broad-market}"
+                )
+            # The named analytics must each be present as a finite number or null.
+            for field in _OPTIONS_NUMERIC_OR_NULL_FIELDS:
+                if field not in payload:
+                    return _contract_error(f"options analytics missing field '{field}'")
+                if not _is_number_or_null(payload[field]):
+                    return _contract_error(
+                        f"options analytic '{field}' is neither numeric nor null"
+                    )
+            # The aggregate OI buildup lives under an 'oi_buildup' object carrying
+            # a `call` and a `put`.
+            oi_buildup = payload.get("oi_buildup")
+            if not isinstance(oi_buildup, dict):
+                return _contract_error("options 'oi_buildup' field is not an object")
+            for side in ("call", "put"):
+                if side not in oi_buildup:
+                    return _contract_error(f"options 'oi_buildup' missing field '{side}'")
+            # The nearest OI walls live under an 'oi_walls' object carrying a
+            # numeric-or-null `support` and `resistance`.
+            oi_walls = payload.get("oi_walls")
+            if not isinstance(oi_walls, dict):
+                return _contract_error("options 'oi_walls' field is not an object")
+            for level in ("support", "resistance"):
+                if level not in oi_walls:
+                    return _contract_error(f"options 'oi_walls' missing field '{level}'")
+                if not _is_number_or_null(oi_walls[level]):
+                    return _contract_error(
+                        f"options 'oi_walls.{level}' is neither numeric nor null"
+                    )
+            # The IV skew is an object or null.
+            iv_skew = payload.get("iv_skew")
+            if iv_skew is not None and not isinstance(iv_skew, dict):
+                return _contract_error("options 'iv_skew' is neither an object nor null")
             return payload
 
         # Unknown / non-contract tool (e.g. declare_trade, watch_price_condition):
@@ -1461,6 +1561,181 @@ def get_order_flow(symbol: str, timeframe: str, proposed_direction: str = "") ->
             symbol if isinstance(symbol, str) else None,
             timeframe if isinstance(timeframe, str) else None,
             f"order-flow processing error: {str(e)}",
+        )
+
+
+def _options_unavailable(symbol, underlying, chain_context, reason: str) -> dict:
+    """Build a get_options_analytics Unavailable_Marker (the options marker shape).
+
+    Mirrors ``_order_flow_unavailable`` / ``_relative_strength_unavailable`` /
+    ``options._options_unavailable``: it carries the original ``symbol``, the
+    resolved ``underlying`` and ``chain_context``, the ``unavailable: true`` flag,
+    and a ``reason`` citing the cause, and it *omits* ``options_bias_state`` /
+    ``alignment`` entirely — an unavailable options context is a missing optional
+    input, never a fabricated label (AD-6, Requirements 3.2, 3.4). Recognized as
+    an honest, non-fatal marker by ``_has_honest_marker`` so ``validate_contract``
+    passes it through unchanged (Requirement 2.6).
+    """
+    return {
+        "symbol": symbol,
+        "underlying": underlying,
+        "chain_context": chain_context,
+        "unavailable": True,
+        "reason": reason,
+    }
+
+
+@tool
+def get_options_analytics(symbol: str, expiry: str = "",
+                          proposed_direction: str = "") -> dict:
+    """
+    Read the options-positioning picture for a symbol — PCR (OI and volume), max
+    pain, aggregate OI buildup, OI-wall support/resistance, IV skew, futures basis
+    — plus a derived Options_Bias (bullish / bearish / neutral) and its Alignment
+    with a proposed trade direction.
+
+    Use this BEFORE committing a directional (BUY/SELL) setup to check whether the
+    trade goes WITH institutional positioning or FIGHTS heavy OI walls, max-pain
+    pinning, or PCR extremes. Options context is GUIDANCE only — it never generates
+    a trade, never blocks one, and never overrides your decision. When the proposed
+    trade is misaligned with options positioning, bias toward lower conviction,
+    waiting, or HOLD; when it is unavailable, proceed with the remaining analysis
+    and note it as unavailable.
+
+    For an index Underlying (NIFTY 50, BANKNIFTY) its OWN chain is analyzed
+    (chain_context="own-chain"); for a non-index symbol the symbol's benchmark
+    index chain is used as broad-market options context
+    (chain_context="broad-market"), clearly labelled as index-level rather than
+    stock-specific. The options analytics math lives entirely in the F2 engine and
+    is consumed verbatim; the bias is a pure threshold vote over those analytics.
+
+    Args:
+        symbol (str): The trading symbol (e.g. "RELIANCE", "BANKNIFTY").
+        expiry (str): Optional expiry; when empty the engine's nearest available
+                      expiry for the resolved chain is used.
+        proposed_direction (str): Optional proposed trade direction ("BUY" / "SELL");
+                      when empty, no direction is assumed and alignment is neutral.
+
+    Returns:
+        dict: An options result carrying pcr_oi, pcr_volume, max_pain, oi_buildup,
+              oi_walls, iv_skew, futures_basis, underlying/expiry/spot, the derived
+              options_bias_state ("bullish"/"bearish"/"neutral"), the alignment
+              ("aligned"/"misaligned"/"neutral"), the driving signals, and the
+              chain_context used — or an Unavailable_Marker {"unavailable": true,
+              "reason": ...} with options_bias_state / alignment OMITTED. Treat an
+              unavailable result as a missing, non-blocking input. Never raises.
+    """
+    print(
+        f"\n[Tool Call] >>> get_options_analytics: symbol={symbol}, "
+        f"expiry={expiry!r}, direction={proposed_direction!r}"
+    )
+    # Resolve the analyzed chain + label up-front so the defensive catch-all can
+    # still report the chain context it had resolved (these stay None until
+    # resolution succeeds).
+    underlying = None
+    chain_context = None
+    try:
+        # 1. Validate arguments — an empty/whitespace symbol is a structured error
+        #    result (NOT an exception, Requirement 3 / R2.x). expiry and
+        #    proposed_direction are optional strings.
+        if not isinstance(symbol, str) or not symbol.strip():
+            print("[Tool Error] <<< get_options_analytics: empty/whitespace symbol")
+            return {"error": "get_options_analytics requires a non-empty symbol"}
+
+        # 2. Resolve the analyzed chain + label (Requirement 2.3). An index
+        #    Underlying uses its OWN chain (chain_context="own-chain"); a non-index
+        #    symbol resolves to its Benchmark_Index chain via rs.resolve_benchmark
+        #    as broad-market options context (chain_context="broad-market"). The
+        #    result always records chain_context, the resolved underlying, and the
+        #    original symbol.
+        if symbol.strip().upper() in INDEX_UNDERLYINGS:
+            underlying = symbol.strip()
+            chain_context = "own-chain"
+        else:
+            underlying = rs.resolve_benchmark(symbol)
+            chain_context = "broad-market"
+
+        # 3. Obtain the Options_Analytics_Result from the F2 engine, which owns ALL
+        #    QuestDB chain / spot / future I/O and never raises (Requirement 2.4).
+        #    An empty expiry means "nearest available expiry" — the engine treats a
+        #    falsy expiry as the nearest chain.
+        expiry_or_none = expiry.strip() if isinstance(expiry, str) else ""
+        analytics = options.compute_options_analytics(underlying, expiry_or_none)
+
+        # 4. Unavailable gate (Requirements 3.1, 3.2). When the engine returns an
+        #    Unavailable_Marker (or a non-dict), pass it through as an options
+        #    Unavailable_Marker carrying the chain context and reason, with
+        #    options_bias_state / alignment OMITTED — never a fabricated bias.
+        if not isinstance(analytics, dict) or analytics.get("unavailable") is True:
+            reason = (
+                analytics.get("reason")
+                if isinstance(analytics, dict) and analytics.get("reason")
+                else f"options analytics unavailable for {underlying}"
+            )
+            print(
+                f"[Tool Success] <<< get_options_analytics: symbol={symbol}, "
+                f"underlying={underlying}, unavailable ({reason})"
+            )
+            return _options_unavailable(symbol, underlying, chain_context, reason)
+
+        # 5. Classify the bias via the pure Options_Bias_Classifier (Requirement
+        #    2.4). Resolve the bias config once (single source of truth; never
+        #    raises). An empty proposed_direction means "no direction" -> pass None
+        #    so alignment is neutral. classify_options_bias never raises.
+        config = options_bias.resolve_options_bias_config()
+        direction = (
+            proposed_direction.strip()
+            if isinstance(proposed_direction, str) and proposed_direction.strip()
+            else None
+        )
+        label = classify_options_bias(analytics, config, proposed_direction=direction)
+
+        # 6. Merge the analytics fields, the bias fields, and the chain context
+        #    into a single result (Requirement 2.5). The analytics are consumed
+        #    verbatim — never recomputed.
+        result = {
+            # Analytics (verbatim from the F2 engine).
+            "underlying": analytics.get("underlying", underlying),
+            "expiry": analytics.get("expiry"),
+            "spot": analytics.get("spot"),
+            "pcr_oi": analytics.get("pcr_oi"),
+            "pcr_volume": analytics.get("pcr_volume"),
+            "max_pain": analytics.get("max_pain"),
+            "oi_buildup": analytics.get("oi_buildup"),
+            "oi_walls": analytics.get("oi_walls"),
+            "iv_skew": analytics.get("iv_skew"),
+            "futures_basis": analytics.get("futures_basis"),
+            # Bias (from the classifier).
+            "options_bias_state": label.get("options_bias_state"),
+            "alignment": label.get("alignment"),
+            "signals": label.get("signals"),
+            # Chain context used (Requirement 2.3).
+            "chain_context": chain_context,
+        }
+
+        # 7. Re-validate against the Tool_Result_Contract on receipt (AD-3, R2.6)
+        #    and return. validate_contract passes an Unavailable_Marker through
+        #    unchanged and never raises.
+        validated = validate_contract("get_options_analytics", result)
+        if "error" in validated:
+            print(f"[Tool Warning] <<< get_options_analytics: {validated.get('error')}")
+        else:
+            print(
+                f"[Tool Success] <<< get_options_analytics: symbol={symbol}, "
+                f"underlying={underlying}, chain_context={chain_context}, "
+                f"state={validated.get('options_bias_state')}, "
+                f"alignment={validated.get('alignment')}"
+            )
+        return validated
+    except Exception as e:
+        # 8. Defensive catch-all: any processing error degrades to an honest
+        #    Unavailable_Marker rather than raising into the agent loop (R3.4).
+        print(f"[Tool Warning] <<< get_options_analytics FAIL: {str(e)}")
+        return _options_unavailable(
+            symbol if isinstance(symbol, str) else None,
+            underlying,
+            chain_context,
+            f"options processing error: {str(e)}",
         )
 
 

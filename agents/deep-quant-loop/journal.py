@@ -483,6 +483,67 @@ def _debate_tag(decision: dict) -> str:
         return "unknown"
 
 
+# Fixed, low-cardinality options enumeration for the setup fingerprint (R8.3).
+# The journal collapses the (Options_Bias_State x Alignment) space into this
+# small set so the options-extended ``setup_key`` stays groupable and individual
+# setups can accumulate enough scored trades to clear LOW_SAMPLE_THRESHOLD.
+# Exactly 6 distinct values (<= 8 per R8.3) including ``unknown``:
+#   * a directional bias (``bullish``/``bearish``) pairs with its ``aligned``/
+#     ``misaligned`` Alignment -> ``<bias>-<alignment>``;
+#   * a ``neutral`` bias collapses to ``neutral`` regardless of Alignment;
+#   * any missing/unavailable options entry, empty value, or unrecognized
+#     combination (e.g. a directional bias with a ``neutral`` Alignment)
+#     collapses to ``unknown`` (R8.2).
+OPT_TAG_VALUES = {
+    "bullish-aligned", "bullish-misaligned",
+    "bearish-aligned", "bearish-misaligned",
+    "neutral", "unknown",
+}
+
+_OPT_BIAS_STATES = {"bullish", "bearish", "neutral"}
+_OPT_ALIGNMENTS = {"aligned", "misaligned", "neutral"}
+
+
+def _options_tag(decision: dict) -> str:
+    """Collapse the decision's options bias into one fixed enumeration value.
+
+    Reads the options entry recorded in the defensibility record
+    (``decision['defensibility']['options']`` — written by ``graph._options_entry``)
+    and maps (Options_Bias_State x Alignment) to one of ``OPT_TAG_VALUES``:
+      * a directional bias (``bullish``/``bearish``) pairs with its
+        ``aligned``/``misaligned`` Alignment to ``<bias>-<alignment>``;
+      * a ``neutral`` bias collapses to ``neutral`` regardless of Alignment.
+
+    Any missing/non-dict/unavailable options entry, empty value, or unrecognized
+    combination (including a directional bias with a ``neutral`` Alignment)
+    collapses to ``unknown`` (R8.2). Returns the bare value (caller prefixes
+    ``opt:``). Never raises.
+    """
+    try:
+        d = decision or {}
+        deff = d.get("defensibility") or {}
+        opts = deff.get("options")
+        if not isinstance(opts, dict):
+            return "unknown"
+        # An explicitly unavailable options entry carries no fabricated bias.
+        if opts.get("available") is False:
+            return "unknown"
+        bias = str(opts.get("options_bias_state") or "").strip().lower()
+        alignment = str(opts.get("alignment") or "").strip().lower()
+        if bias not in _OPT_BIAS_STATES or alignment not in _OPT_ALIGNMENTS:
+            return "unknown"
+        # A neutral bias collapses to ``neutral`` regardless of Alignment.
+        if bias == "neutral":
+            return "neutral"
+        # A directional bias pairs with its aligned/misaligned Alignment; a
+        # directional bias with a neutral Alignment is not in the enumeration and
+        # collapses to ``unknown``.
+        value = f"{bias}-{alignment}"
+        return value if value in OPT_TAG_VALUES else "unknown"
+    except Exception:
+        return "unknown"
+
+
 def derive_setup_tags(decision: dict) -> list:
     """Derive a coarse, groupable setup fingerprint from a committed decision.
 
@@ -592,6 +653,14 @@ def derive_setup_tags(decision: dict) -> list:
     # decision (no debate entry) or any missing/empty/unrecognized consensus
     # defaults to ``db:unknown`` (R9.1, R9.2, R9.3).
     tags.append("db:" + _debate_tag(decision))
+
+    # Options dimension — appended at a FIXED position last (after the ``db:``
+    # tag) so the resulting ``setup_key`` is deterministic for identical inputs
+    # and stays low-cardinality. Collapses (Options_Bias_State x Alignment) into
+    # one fixed ``opt:`` value; a missing/non-dict/unavailable options entry, an
+    # empty value, or a value outside the enumeration defaults to ``opt:unknown``
+    # (R8.1, R8.2, R8.3).
+    tags.append("opt:" + _options_tag(decision))
 
     return tags
 

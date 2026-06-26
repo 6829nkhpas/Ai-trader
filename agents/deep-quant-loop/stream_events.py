@@ -620,6 +620,70 @@ def _session_step(record: dict) -> dict:
     return {"check": "session", "outcome": outcome, "detail": detail}
 
 
+def _options_step(record: dict) -> dict:
+    """Map the defensibility options entry to a single ``VERIFICATION_STEP`` (R7).
+
+    The defensibility record's ``options`` entry (built by ``graph._options_entry``)
+    is either a usable Options_Bias_Label —
+    ``{"available": True, "options_bias_state": ..., "alignment": ...,
+    "chain_context": ..., "pcr_oi": ..., "max_pain": ..., "oi_walls": {...}, ...}``
+    — or an Unavailable_Marker — ``{"available": False, "reason": ...}``. The
+    recorded Alignment maps to a stable outcome under the fixed check id
+    ``options``:
+
+      * ``aligned``    → ``pass``                       (R7.2)
+      * ``misaligned`` → ``fail``                       (R7.2)
+      * ``neutral``    → ``informational``              (R7.2)
+      * unavailable    → ``not-evaluable`` (with an 'unavailable' indication, R7.3)
+
+    When options context is unavailable — no entry, a non-dict entry,
+    ``available`` is falsy, or the Alignment is missing/unrecognized — the step
+    reports ``not-evaluable`` with an explicit unavailable indication and NEVER
+    substitutes a fabricated alignment (R7.3). Pure; never raises.
+    """
+    options = record.get("options")
+
+    if not isinstance(options, dict) or not options.get("available"):
+        reason = options.get("reason") if isinstance(options, dict) else None
+        detail = "Options context unavailable" + (f": {reason}" if reason else "") + "."
+        return {
+            "check": "options",
+            "outcome": "not-evaluable — options unavailable",
+            "detail": detail,
+        }
+
+    alignment = options.get("alignment")
+    outcome = {
+        "aligned": "pass",
+        "misaligned": "fail",
+        "neutral": "informational",
+    }.get(alignment)
+
+    if outcome is None:
+        # An available entry without a recognized alignment is treated as
+        # unavailable rather than fabricating an outcome (R7.3).
+        return {
+            "check": "options",
+            "outcome": "not-evaluable — options unavailable",
+            "detail": "Options alignment missing or unrecognized.",
+        }
+
+    oi_walls = options.get("oi_walls")
+    if isinstance(oi_walls, dict):
+        walls_detail = (
+            f"support={oi_walls.get('support')}, resistance={oi_walls.get('resistance')}"
+        )
+    else:
+        walls_detail = "oi_walls unavailable"
+    detail = (
+        f"alignment={alignment}, "
+        f"options_bias_state={options.get('options_bias_state')}, "
+        f"pcr_oi={options.get('pcr_oi')}, max_pain={options.get('max_pain')}, "
+        f"{walls_detail}, chain_context={options.get('chain_context')}."
+    )
+    return {"check": "options", "outcome": outcome, "detail": detail}
+
+
 def _debate_consensus_step(record: dict) -> dict:
     """Map the defensibility debate entry to a single debate-consensus ``VERIFICATION_STEP`` (R8).
 
@@ -790,6 +854,13 @@ def _derive_find_mode_steps(record: dict) -> List[dict]:
     # Exactly one session step, derived from the defensibility session entry.
     steps.append(_session_step(record))
 
+    # ── Options positioning context check (options-agent-integration, R7) ────
+    # Exactly one options step, derived from the defensibility options entry
+    # (unavailable -> not-evaluable). Appended among the sibling context steps,
+    # before the debate-consensus step, so it is ordered before the DECISION
+    # event by `decision_events` (R7.4).
+    steps.append(_options_step(record))
+
     # ── Debate-consensus check (multi-agent-debate, R8) ──────────────────────
     # Exactly one debate-consensus step, derived from the defensibility debate
     # entry (absent for non-DEBATE runs -> not-evaluable). Appended last so it is
@@ -848,6 +919,11 @@ def build_verification_steps(decision: Any) -> List[dict]:
         # (R9.1 — exactly one session VERIFICATION_STEP).
         if not any(s.get("check") == "session" for s in steps):
             steps.append(_session_step(record))
+        # Surface exactly one options step in VERIFY mode too: append the
+        # derived step only when the validator checks don't already carry one
+        # (options-agent-integration R7.1 — exactly one options VERIFICATION_STEP).
+        if not any(s.get("check") == "options" for s in steps):
+            steps.append(_options_step(record))
         # Surface exactly one debate-consensus step in VERIFY mode too: append
         # the derived step only when the validator checks don't already carry one
         # (multi-agent-debate R8.1 — exactly one debate-consensus VERIFICATION_STEP).
