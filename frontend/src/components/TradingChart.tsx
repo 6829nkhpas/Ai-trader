@@ -245,19 +245,19 @@ export default function TradingChart({ showHeader = true }: TradingChartProps) {
         <div className="flex items-center justify-between gap-4 border-b border-border-default bg-surface px-5 py-4">
           <div className="flex min-w-0 items-center gap-3">
             <div className="truncate text-sm font-semibold text-text-primary">Live Market Tape</div>
-            <span className="rounded-full border border-border-default bg-elevated px-2.5 py-1 text-xs font-semibold text-text-secondary">
+            <span className="rounded-none border border-border-default bg-elevated px-2.5 py-1 text-xs font-semibold text-text-secondary">
               {liveDecisions.length} decisions
             </span>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-3 text-xs text-text-secondary">
             <span className="flex items-center gap-1">
-              <span className="h-2.5 w-2.5 rounded-full bg-bull" /> Up
+              <span className="h-2.5 w-2.5 rounded-none bg-bull" /> Up
             </span>
             <span className="flex items-center gap-1">
-              <span className="h-2.5 w-2.5 rounded-full bg-bear" /> Down
+              <span className="h-2.5 w-2.5 rounded-none bg-bear" /> Down
             </span>
             <span className="flex items-center gap-1">
-              <span className="h-2.5 w-2.5 rounded-full bg-neutral" /> Hold
+              <span className="h-2.5 w-2.5 rounded-none bg-neutral" /> Hold
             </span>
           </div>
         </div>
@@ -265,18 +265,18 @@ export default function TradingChart({ showHeader = true }: TradingChartProps) {
 
       <div
         ref={chartContainerRef}
-        className="h-full w-full flex-1 overflow-hidden rounded-b-2xl bg-chart-bg"
+        className="h-full w-full flex-1 overflow-hidden rounded-none bg-chart-bg"
         style={{ minHeight: showHeader ? '420px' : '320px' }}
       />
 
       {!hoveredDecision && liveDecisions.length === 0 && (
-        <div className="absolute inset-0 flex items-center justify-center rounded-2xl border border-dashed border-border-default bg-card text-sm text-text-secondary">
+        <div className="absolute inset-0 flex items-center justify-center rounded-none border border-dashed border-border-default bg-card text-sm text-text-secondary">
           Waiting for backend decisions...
         </div>
       )}
 
       {hoveredDecision && (
-        <div className="pointer-events-none absolute left-5 top-5 z-10 rounded-2xl border border-border-default bg-card p-4 text-text-primary transition-opacity duration-200">
+        <div className="pointer-events-none absolute left-5 top-5 z-10 rounded-none border border-border-default bg-card p-4 text-text-primary transition-opacity duration-200">
           <h3 className={`mb-2 text-base font-semibold ${decisionTone}`}>AI Decision: {hoveredDecision.action_type}</h3>
           <div className="space-y-1 text-sm text-text-secondary">
             <p>
