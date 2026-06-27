@@ -20,12 +20,12 @@ const TOP_WATCHLIST = [
 ];
 
 const SECTOR_COLORS: Record<string, string> = {
-  Energy: 'bg-amber-500/10 text-amber-400',
-  IT: 'bg-cyan-500/10 text-cyan-400',
-  Banking: 'bg-emerald-500/10 text-emerald-400',
-  FMCG: 'bg-purple-500/10 text-purple-400',
-  Telecom: 'bg-rose-500/10 text-rose-400',
-  Infra: 'bg-orange-500/10 text-orange-400',
+  Energy: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  IT: 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400',
+  Banking: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+  FMCG: 'bg-purple-500/10 text-purple-600 dark:text-purple-400',
+  Telecom: 'bg-rose-500/10 text-rose-600 dark:text-rose-400',
+  Infra: 'bg-orange-500/10 text-orange-600 dark:text-orange-400',
 };
 
 // ── Types ───────────────────────────────────────────────────────────────
