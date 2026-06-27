@@ -9,6 +9,8 @@ import {
   X as XIcon,
   Shield,
   User,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { useTradeStore, TradeProfile } from '../../store/useTradeStore';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -48,6 +50,8 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
   const { activeProfile, setActiveProfile, resetSession } = useTradeStore();
   const { user } = useAuthStore();
   const isFullscreen = useChartUIStore((s) => s.isFullscreen);
+  const theme = useChartUIStore((s) => s.theme);
+  const toggleTheme = useChartUIStore((s) => s.toggleTheme);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
 
@@ -89,18 +93,18 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
   return (
     <div className="flex h-screen flex-col bg-background font-sans text-text-primary">
       {/* Header */}
-      <header className="z-30 flex shrink-0 items-center gap-3 border-b border-border-default bg-surface px-3 py-1 panel-shadow-sm">
-        <div className="flex flex-1 items-center gap-3">
-          <img src="/strat.svg" alt="Strat Ai Logo" className="h-[22px] w-[22px] object-contain" />
-          <div>
-            <h1 className="text-lg font-semibold tracking-tight text-text-primary">STRAT AI TERMINAL</h1>
-            <p className="text-xs text-text-secondary">Live market decisions, signal flow, and execution review</p>
+      <header className="z-30 flex h-12 shrink-0 items-center gap-4 border-b border-border-default bg-surface px-4 py-1.5">
+        <div className="flex flex-1 items-center gap-2.5">
+          <img src="/strat.svg" alt="Strat Ai Logo" className="h-[18px] w-[18px] object-contain" />
+          <div className="flex items-baseline gap-1.5">
+            <h1 className="text-sm font-bold tracking-tight text-text-primary">Strat AI</h1>
+            <span className="text-[10px] text-text-muted border-l border-border-default pl-2">Terminal</span>
           </div>
         </div>
 
         {/* ── Segmented Profile Control ──────────────────────── */}
         <div className="flex shrink-0 items-center justify-center">
-          <div className="flex items-center gap-1 rounded-lg border border-border-default bg-surface p-0.5 shadow-sm">
+          <div className="flex items-center gap-0.5 rounded-none border border-border-default bg-card p-0.5 shadow-sm">
             {PROFILES.map(({ key, label, shortcut }) => {
               const isActive = activeProfile === key;
               return (
@@ -110,23 +114,19 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
                   type="button"
                   onClick={() => setActiveProfile(key)}
                   className={`
-                    relative flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-xs font-semibold
+                    relative flex items-center gap-1.5 rounded-none px-3 py-1 text-xs font-semibold
                     transition-all duration-200 ease-out select-none
-                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60
+                    focus-visible:outline-none
                     ${isActive
-                      ? 'bg-emerald-500/15 text-emerald-400'
-                      : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
+                      ? 'bg-elevated text-text-primary border border-border-default'
+                      : 'text-text-secondary hover:bg-elevated/20 hover:text-text-primary border border-transparent'
                     }
                   `}
                 >
-                  {/* Active glow dot */}
-                  {isActive && (
-                    <span className="absolute -top-px right-2 h-1.5 w-1.5 rounded-full bg-[#059669]" />
-                  )}
                   <span>{label}</span>
                   <span
-                    className={`rounded px-1 py-px text-[10px] font-medium leading-none ${isActive
-                        ? 'bg-emerald-500/10 text-[#059669]'
+                    className={`rounded-none px-1 py-px text-[9px] font-medium leading-none ${isActive
+                        ? 'bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
                         : 'bg-elevated text-text-secondary'
                       }`}
                   >
@@ -137,10 +137,19 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
             })}
           </div>
         </div>
-        <div className="flex flex-1 items-center justify-end gap-4 relative">
-          <button className="relative text-text-secondary hover:text-text-primary transition-colors">
-            <Bell size={18} />
-            <span className="absolute top-0 right-0 h-2 w-2 rounded-full bg-red-500 border border-surface"></span>
+        <div className="flex flex-1 items-center justify-end gap-3.5 relative">
+          <button 
+            type="button"
+            onClick={toggleTheme}
+            className="text-text-secondary hover:text-text-primary transition-colors p-1 hover:bg-elevated/20 rounded"
+            title={theme === 'dark' ? 'Switch to Light Theme' : 'Switch to Dark Theme'}
+          >
+            {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+          </button>
+
+          <button className="relative text-text-secondary hover:text-text-primary transition-colors p-1 hover:bg-elevated/20 rounded">
+            <Bell size={15} />
+            <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-red-500"></span>
           </button>
 
           {/* Quant Radar Dropdown */}
@@ -149,7 +158,7 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
           {/* User Profile Avatar Icon */}
           <button
             onClick={() => setProfileOpen(true)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border-default bg-surface/50 hover:bg-elevated/45 text-text-secondary hover:text-white transition-all shadow-sm overflow-hidden"
+            className="flex h-7 w-7 items-center justify-center rounded border border-border-default bg-surface/50 hover:bg-elevated/45 text-text-secondary hover:text-text-primary transition-all overflow-hidden"
             title="Account Profile & Settings"
           >
             {broker?.avatarUrl ? (
@@ -159,7 +168,7 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
                 className="h-full w-full object-cover"
               />
             ) : (
-              <div className="flex h-full w-full items-center justify-center bg-emerald-500/10 text-emerald-400 font-bold text-xs tracking-wider">
+              <div className="flex h-full w-full items-center justify-center bg-emerald-500/10 text-emerald-400 font-bold text-[10px] tracking-wider">
                 {getInitials(user?.name)}
               </div>
             )}
@@ -168,10 +177,10 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
       </header>
 
       {/* Main Content */}
-      <div className="flex flex-1 min-h-0 min-w-0 overflow-visible bg-background p-1.5 gap-1.5">
+      <div className="flex flex-1 min-h-0 min-w-0 overflow-visible bg-background p-0 gap-0">
         {/* Watchlist */}
         <aside 
-          className="relative flex shrink-0 min-h-0 flex-col overflow-visible border border-border-default rounded-lg bg-surface panel-shadow"
+          className="relative flex shrink-0 min-h-0 flex-col overflow-visible border-r border-border-default rounded-none bg-surface"
           style={{ width: `${leftPanelWidth}px` }}
         >
           {leftPanel}
@@ -180,7 +189,7 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
           <div
             onMouseDown={startResizing}
             className={`
-              absolute top-0 bottom-0 -right-1.5 w-3 cursor-col-resize z-20 hover:bg-emerald-500/10 transition-colors duration-150 rounded-r-md
+              absolute top-0 bottom-0 -right-1.5 w-3 cursor-col-resize z-20 hover:bg-emerald-500/10 transition-colors duration-150 rounded-none
               flex items-center justify-center group
               ${isResizing ? 'bg-emerald-500/20' : 'bg-transparent'}
             `}
@@ -188,7 +197,7 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
           >
             {/* Visual handle bar */}
             <div className={`
-              w-0.5 h-6 bg-border-default rounded group-hover:bg-emerald-400 transition-colors
+              w-0.5 h-6 bg-border-default rounded-[1px] group-hover:bg-emerald-400 transition-colors
               ${isResizing ? 'bg-emerald-400' : ''}
             `} />
           </div>
@@ -197,7 +206,7 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
         {/* Drawing Tools Bar — hidden in fullscreen because ChartSurface
             mounts its own copy inside the fullscreen overlay. */}
         {!isFullscreen && (
-          <ChartToolsBar className="border border-border-default rounded-lg bg-surface py-2 panel-shadow" />
+          <ChartToolsBar className="border-r border-border-default bg-surface py-2 rounded-none" />
         )}
 
         {/* Central Area — `min-w-0` lets this flex slot actually shrink back to

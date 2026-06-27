@@ -14,7 +14,7 @@ interface IntradayLayoutProps {
 
 export default function IntradayLayout({ activeProfile = 'INTRADAY', timeframe = '1m', isExpanded = false, onToggleExpand }: IntradayLayoutProps) {
   return (
-    <div id="intraday-hud" className="flex h-full flex-col min-h-0 rounded-lg border border-border-default bg-surface overflow-hidden">
+    <div id="intraday-hud" className="flex h-full flex-col min-h-0 rounded-none border-none bg-surface overflow-hidden">
       <MainTerminalChart
         activeProfile={activeProfile}
         timeframe={timeframe as Timeframe}
