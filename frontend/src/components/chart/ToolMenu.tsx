@@ -164,12 +164,12 @@ export function PremiumTooltip({ children, content, title, shortcut, position = 
     <div className="relative flex items-center justify-center" onMouseEnter={onEnter} onMouseLeave={onLeave}>
       {children}
       {show && (
-        <div className={`absolute z-[100] w-60 rounded-lg border border-border-default/80 bg-[#0d1222]/95 p-3 shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-150 ${positionClasses[position]}`}>
+        <div className={`absolute z-[100] w-60 rounded-none border border-border-default/80 bg-card/95 p-3 shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-150 ${positionClasses[position]}`}>
           {title && (
             <div className="flex items-center justify-between border-b border-border-default/40 pb-1.5 mb-1.5">
-              <span className="text-xs font-bold text-white tracking-wide">{title}</span>
+              <span className="text-xs font-bold text-text-primary tracking-wide">{title}</span>
               {shortcut && (
-                <span className="rounded bg-elevated/80 px-1 py-0.5 font-mono text-[9px] font-semibold text-emerald-400">
+                <span className="rounded bg-elevated/80 px-1 py-0.5 font-mono text-[9px] font-semibold text-emerald-600 dark:text-emerald-400">
                   {shortcut}
                 </span>
               )}
@@ -228,7 +228,7 @@ export function ToolMenu({ icon: Icon, isActive, options, onSelect }: ToolMenuPr
       {isOpen && (
         <div className="absolute left-full top-0 z-50 ml-1.5 flex gap-1.5 items-start">
           {/* Submenu Options List */}
-          <div className="w-56 max-h-[70vh] overflow-y-auto overscroll-contain rounded-md border border-border-default bg-surface shadow-lg panel-shadow py-1 scrollbar-none">
+          <div className="w-56 max-h-[70vh] overflow-y-auto overscroll-contain rounded-none border border-border-default bg-surface shadow-lg panel-shadow py-1 scrollbar-none">
             {options.map((entry, idx) => {
               if (isSection(entry)) {
                 return (
@@ -264,14 +264,14 @@ export function ToolMenu({ icon: Icon, isActive, options, onSelect }: ToolMenuPr
 
           {/* Interactive Symmetrical Detail Hover Card */}
           {hoveredOption && (
-            <div className="w-64 shrink-0 rounded-md border border-border-default bg-[#0d1222]/95 p-3.5 shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-100 flex flex-col gap-2">
+            <div className="w-64 shrink-0 rounded-none border border-border-default bg-card/95 p-3.5 shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-100 flex flex-col gap-2">
               <div className="flex items-center justify-between border-b border-border-default/40 pb-1.5">
                 <div className="flex items-center gap-2 min-w-0">
-                  {React.createElement(hoveredOption.icon, { size: 14, className: "text-emerald-400 shrink-0" })}
-                  <span className="text-xs font-bold text-white tracking-wide truncate">{hoveredOption.label}</span>
+                  {React.createElement(hoveredOption.icon, { size: 14, className: "text-emerald-600 dark:text-emerald-400 shrink-0" })}
+                  <span className="text-xs font-bold text-text-primary tracking-wide truncate">{hoveredOption.label}</span>
                 </div>
                 {hoveredOption.shortcut && (
-                  <span className="rounded bg-elevated px-1 py-0.5 font-mono text-[9px] font-semibold text-emerald-400 shrink-0">
+                  <span className="rounded bg-elevated px-1 py-0.5 font-mono text-[9px] font-semibold text-emerald-600 dark:text-emerald-400 shrink-0">
                     {hoveredOption.shortcut}
                   </span>
                 )}
