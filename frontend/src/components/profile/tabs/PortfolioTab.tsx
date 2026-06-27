@@ -15,38 +15,43 @@ export default function PortfolioTab({ paperPortfolio }: PortfolioTabProps) {
       </div>
 
       {/* Statistics Panel */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="rounded-xl border border-border-default/40 bg-surface/50 p-4 text-center">
-          <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Simulated Balance</span>
-          <span className="text-base font-black text-emerald-400 block mt-1">
-            ₹{paperPortfolio?.balance?.toLocaleString(undefined, { minimumFractionDigits: 2 }) || '1,000,000.00'}
-          </span>
-        </div>
-        <div className="rounded-xl border border-border-default/40 bg-surface/50 p-4 text-center">
-          <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Active Open Positions</span>
-          <span className="text-base font-black text-white block mt-1">
-            {paperPortfolio?.active_positions?.length || 0}
-          </span>
-        </div>
-        <div className="rounded-xl border border-border-default/40 bg-surface/50 p-4 text-center">
-          <span className="text-[10px] uppercase tracking-wider text-text-secondary block">History Count</span>
-          <span className="text-base font-black text-text-secondary block mt-1">
-            {paperPortfolio?.trade_history?.length || 0}
-          </span>
-        </div>
+      <div className="flex flex-col border-t border-border-default mb-4">
+        {[
+          { 
+            label: 'Simulated Balance', 
+            value: (
+              <span className="text-emerald-400 font-mono font-bold">
+                ₹{paperPortfolio?.balance?.toLocaleString(undefined, { minimumFractionDigits: 2 }) || '1,000,000.00'}
+              </span>
+            )
+          },
+          { 
+            label: 'Active Open Positions', 
+            value: <span className="font-semibold text-text-primary">{paperPortfolio?.active_positions?.length || 0}</span>
+          },
+          { 
+            label: 'History Count', 
+            value: <span className="font-semibold text-text-primary">{paperPortfolio?.trade_history?.length || 0}</span>
+          }
+        ].map((row, i) => (
+          <div key={i} className="flex items-center justify-between py-3 border-b border-border-default px-1">
+            <span className="text-[10px] uppercase tracking-wider text-text-secondary">{row.label}</span>
+            <div className="text-xs">{row.value}</div>
+          </div>
+        ))}
       </div>
 
       {/* Active Positions Sub-grid */}
       <div className="flex-1 min-h-0 flex flex-col space-y-2.5">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2">
             <Activity size={14} className="text-emerald-400 animate-pulse" />
             <h3 className="text-xs font-bold text-white uppercase tracking-wider">Active Open Positions</h3>
           </div>
-          <span className="text-[10px] text-text-secondary font-mono">Tauri Engine Subscription Sync</span>
+          <span className="text-[10px] text-text-secondary font-mono">Tauri Engine Sync</span>
         </div>
 
-        <div className="flex-1 min-h-0 rounded-xl border border-border-default/40 bg-muted/30 overflow-auto">
+        <div className="flex-1 min-h-0 rounded-none border-y border-x-0 border-border-default/40 bg-muted/30 overflow-auto">
           {!paperPortfolio || paperPortfolio.active_positions.length === 0 ? (
             <div className="flex h-32 flex-col items-center justify-center text-center p-4">
               <p className="text-xs text-text-secondary font-medium">No Active Open Positions</p>
@@ -71,18 +76,18 @@ export default function PortfolioTab({ paperPortfolio }: PortfolioTabProps) {
                   <tr key={pos.id} className="hover:bg-elevated/10">
                     <td className="px-4 py-2.5 text-xs font-bold text-white">{pos.symbol}</td>
                     <td className="px-4 py-2.5 text-xs">
-                      <span className={`rounded px-1.5 py-0.5 text-[8px] font-bold ${
-                        pos.side === 'BUY' 
-                          ? 'bg-emerald-500/10 text-emerald-400' 
-                          : 'bg-red-500/10 text-red-400'
+                      <span className={`rounded-none px-1.5 py-0.5 text-[8px] font-bold border ${
+                        pos.side === 'BUY'
+                          ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                          : 'bg-rose-500/10 border-rose-500/20 text-rose-400'
                       }`}>
                         {pos.side}
                       </span>
                     </td>
                     <td className="px-4 py-2.5 text-xs text-text-primary font-mono">{pos.quantity}</td>
-                    <td className="px-4 py-2.5 text-xs text-text-primary">₹{pos.entry_price.toFixed(2)}</td>
-                    <td className="px-4 py-2.5 text-xs text-red-400/90">₹{pos.stop_loss.toFixed(2)}</td>
-                    <td className="px-4 py-2.5 text-xs text-emerald-400/95 text-right">₹{pos.take_profit.toFixed(2)}</td>
+                    <td className="px-4 py-2.5 text-xs text-text-primary font-mono">₹{pos.entry_price.toFixed(2)}</td>
+                    <td className="px-4 py-2.5 text-xs text-rose-400/90 font-mono">₹{pos.stop_loss.toFixed(2)}</td>
+                    <td className="px-4 py-2.5 text-xs text-emerald-400/95 text-right font-mono">₹{pos.take_profit.toFixed(2)}</td>
                   </tr>
                 ))}
               </tbody>
