@@ -333,11 +333,11 @@ export default function Home() {
             <div className={
               isFullscreen
                 ? "fixed inset-0 z-[150] flex flex-col bg-background p-2"
-                : `flex min-h-0 min-w-0 flex-col rounded-lg border border-border-default bg-surface panel-shadow-lg ${
+                : `flex min-h-0 min-w-0 flex-col rounded-none bg-surface ${
                     sidebarOpen ? 'flex-1' : 'w-full'
                   }`
             }>
-              <div className="flex h-9 shrink-0 items-center justify-between gap-1.5 border-b border-border-default px-2 bg-surface rounded-t-lg">
+              <div className="flex h-9 shrink-0 items-center justify-between border-b border-border-default bg-surface rounded-none pl-3">
                 <div className="flex min-w-0 shrink items-center gap-1.5 overflow-hidden">
                   {symbolQuote ? (
                     <>
@@ -354,7 +354,7 @@ export default function Home() {
                   )}
                 </div>
 
-                <div className="flex shrink-0 items-center gap-1">
+                <div className="flex h-full shrink-0 items-center border-l border-border-default">
                   {/* Chart-mode toggle (Standard / Volume Profile / Footprint) */}
                   <ChartModeToggle />
 
@@ -375,9 +375,9 @@ export default function Home() {
                     type="button"
                     onClick={toggleIndicatorManager}
                     aria-label="Indicators"
-                    className={`flex h-7 items-center gap-1 rounded-md border px-2 text-[11px] font-semibold transition-colors ${showIndicatorManager
-                        ? 'border-primary/40 bg-primary/10 text-primary'
-                        : 'border-border-default bg-surface text-text-secondary hover:bg-elevated hover:text-text-primary'
+                    className={`flex h-full items-center gap-1.5 px-4 text-[11px] font-semibold transition-colors border-r border-border-default bg-surface ${showIndicatorManager
+                        ? 'text-primary bg-primary/10'
+                        : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
                       }`}
                   >
                     <LineChartIcon size={13} />
@@ -394,27 +394,24 @@ export default function Home() {
                   {/* Projection engine toggle (OLS / VWEPR ghost line) */}
                   <GhostLineToggle />
 
-                  {/* Divider */}
-                  <div className="h-5 w-px bg-border-default/50" />
-
                   {/* Timeframe dropdown */}
-                  <div className="relative" ref={tfDropdownRef}>
+                  <div className="relative h-full" ref={tfDropdownRef}>
                     <button
                       type="button"
                       onClick={() => setTfDropdownOpen(!tfDropdownOpen)}
-                      className={`flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold transition-all border ${
+                      className={`flex h-full items-center gap-1.5 px-4 text-[11px] font-semibold transition-all border-r border-border-default ${
                         tfDropdownOpen
-                          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40 shadow-[0_0_12px_rgba(16,185,129,0.15)]'
-                          : 'bg-surface text-text-secondary hover:bg-elevated border-border-default hover:text-text-primary'
+                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                          : 'bg-surface text-text-secondary hover:bg-elevated hover:text-text-primary'
                       }`}
                     >
-                      <Clock size={11} className={tfDropdownOpen ? 'text-emerald-400' : 'text-text-muted'} />
+                      <Clock size={11} className={tfDropdownOpen ? 'text-emerald-600 dark:text-emerald-400' : 'text-text-muted'} />
                       <span>{activeTimeframe}</span>
                       <ChevronDown size={11} className={`transition-transform duration-200 ${tfDropdownOpen ? 'rotate-180' : ''}`} />
                     </button>
 
                     {tfDropdownOpen && (
-                      <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-xl border border-border-default bg-surface/90 backdrop-blur-xl shadow-2xl p-3 scrollbar-none animate-in fade-in slide-in-from-top-2 duration-200">
+                      <div className="absolute right-0 top-full z-50 mt-px w-64 rounded-none border border-border-default bg-surface shadow-2xl p-3 scrollbar-none animate-in fade-in slide-in-from-top-2 duration-200">
                         {TIMEFRAME_GROUPS.map((group) => {
                           const isDays = group.label === 'Days';
                           return (
@@ -433,14 +430,14 @@ export default function Home() {
                                         setActiveTimeframe(item.tf as ChartTimeframe);
                                         setTfDropdownOpen(false);
                                       }}
-                                      className={`flex items-center justify-between rounded-md px-2 py-1.5 text-[11px] transition-all duration-150 border ${
+                                      className={`flex items-center justify-between rounded-none px-2 py-1.5 text-[11px] transition-all duration-150 border ${
                                         isActive
-                                          ? 'bg-emerald-500/10 text-emerald-400 font-bold border-emerald-500/30 shadow-[0_0_8px_rgba(16,185,129,0.08)]'
+                                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold border-emerald-500/30 shadow-[0_0_8px_rgba(16,185,129,0.08)]'
                                           : 'bg-card/40 text-text-secondary hover:bg-elevated hover:text-text-primary border-transparent hover:border-border-default'
                                       }`}
                                     >
                                       <span>{item.display}</span>
-                                      {isActive && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_6px_rgba(52,211,153,0.8)]" />}
+                                      {isActive && <span className="h-1.5 w-1.5 rounded-none bg-emerald-600 dark:bg-emerald-400 animate-pulse shadow-[0_0_6px_rgba(52,211,153,0.8)]" />}
                                     </button>
                                   );
                                 })}
@@ -452,15 +449,12 @@ export default function Home() {
                     )}
                   </div>
 
-                  {/* Divider */}
-                  <div className="h-5 w-px bg-border-default/50" />
-
                   {/* Fullscreen toggle */}
                   <button
                     type="button"
                     onClick={toggleFullscreen}
                     aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-                    className="flex h-7 w-7 items-center justify-center rounded-md border border-border-default bg-surface text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
+                    className="flex h-full w-9 items-center justify-center border-r border-border-default bg-surface text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
                   >
                     {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
                   </button>
@@ -470,9 +464,9 @@ export default function Home() {
                     <button
                       type="button"
                       onClick={() => setSidebarOpen(!sidebarOpen)}
-                      className={`rounded-md p-1.5 text-xs font-semibold transition-colors ${sidebarOpen
-                          ? 'bg-emerald-500/15 text-emerald-400'
-                          : 'bg-surface text-text-secondary hover:bg-elevated'
+                      className={`flex h-full w-9 items-center justify-center border-r border-border-default bg-surface text-text-secondary transition-colors hover:bg-elevated ${sidebarOpen
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : ''
                         }`}
                       title={sidebarOpen ? `Hide ${sidebarCfg.label}` : `Show ${sidebarCfg.label}`}
                     >
@@ -489,7 +483,7 @@ export default function Home() {
                 {isFullscreen && (
                   <ChartToolsBar className="border-r border-border-default/50 mr-1.5 py-2 bg-surface" />
                 )}
-                <div className="min-h-0 flex-1 bg-surface relative flex flex-col p-1 overflow-hidden">
+                <div className="min-h-0 flex-1 bg-surface relative flex flex-col p-0 overflow-hidden">
                   {renderProfileContent()}
                 </div>
               </div>
@@ -523,20 +517,20 @@ export default function Home() {
                         <div className="flex items-center gap-4 text-xs font-mono">
                           <div className="flex items-center gap-1.5 border-r border-border-default/50 pr-4">
                             <span className="text-[9px] uppercase font-bold text-text-muted font-sans">Equity:</span>
-                            <span className="font-bold text-white">
+                            <span className="font-bold text-text-primary">
                               ₹{paperPortfolio.balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </span>
                           </div>
                           <div className="flex items-center gap-1.5 border-r border-border-default/50 pr-4">
                             <span className="text-[9px] uppercase font-bold text-text-muted font-sans">PnL:</span>
-                            <span className={`font-black flex items-center gap-0.5 ${totalPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            <span className={`font-black flex items-center gap-0.5 ${totalPnL >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                               {totalPnL >= 0 ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
                               {totalPnL >= 0 ? '+' : ''}₹{totalPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </span>
                           </div>
                           <div className="flex items-center gap-1.5">
                             <span className="text-[9px] uppercase font-bold text-text-muted font-sans">Positions:</span>
-                            <span className="font-bold text-white">{paperPortfolio.active_positions.length} Active</span>
+                            <span className="font-bold text-text-primary">{paperPortfolio.active_positions.length} Active</span>
                           </div>
                         </div>
                       )}
@@ -545,7 +539,7 @@ export default function Home() {
                     <button
                       type="button"
                       onClick={() => setPaperPortfolioOpen(true)}
-                      className="flex items-center gap-1 rounded bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 text-[9px] font-bold text-emerald-400 uppercase tracking-wider hover:bg-emerald-500/20 transition-all duration-150"
+                      className="flex items-center gap-1 rounded bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 text-[9px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider hover:bg-emerald-500/20 transition-all duration-150"
                     >
                       <ChevronUp size={10} />
                       Expand Portfolio
@@ -556,7 +550,7 @@ export default function Home() {
 
               {/* Buy/Sell Panel */}
               {!isFullscreen && (
-                <div className="shrink-0 border-t border-border-default bg-surface rounded-b-lg">
+                <div className="shrink-0 border-t border-border-default bg-surface rounded-none">
                   <OrderExecutionPanel />
                 </div>
               )}
@@ -565,15 +559,15 @@ export default function Home() {
             {/* ── Right: Collapsible Profile Sidebar ─────────── */}
             <div
               className={`
-                flex flex-col min-h-0 overflow-hidden transition-all duration-300 ease-out
+                flex flex-col min-h-0 overflow-hidden transition-all duration-300 ease-out border-l border-border-default
                 ${sidebarOpen
-                  ? 'w-[300px] min-w-[260px] max-w-[340px] opacity-100 ml-1.5'
-                  : 'w-0 min-w-0 max-w-0 opacity-0 ml-0 pointer-events-none'
+                  ? 'w-[300px] min-w-[260px] max-w-[340px] opacity-100'
+                  : 'w-0 min-w-0 max-w-0 opacity-0 pointer-events-none'
                 }
               `}
             >
               {/* Sidebar Header with Tab Switcher */}
-              <div className="flex shrink-0 flex-col rounded-t-lg border border-b-0 border-border-default bg-surface">
+              <div className="flex shrink-0 flex-col border-b border-border-default bg-surface rounded-none">
                 <div className="flex items-center justify-between px-3 py-1.5">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-semibold text-text-primary tracking-wide">{sidebarTitle}</span>
@@ -581,7 +575,7 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => setSidebarOpen(false)}
-                    className="rounded p-1 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
+                    className="rounded-none p-1 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
                     title="Collapse sidebar"
                   >
                     <PanelRightClose size={14} />
@@ -589,21 +583,21 @@ export default function Home() {
                 </div>
 
                 {/* Tab row */}
-                <div className="flex gap-0.5 px-2 pb-1">
+                <div className="flex border-t border-border-default">
                   {[
                     { key: 'profile' as SidebarTab, label: sidebarCfg.badge },
                     { key: 'deepquant' as SidebarTab, label: 'AI QUANT' },
-                  ].map(({ key, label }) => (
+                  ].map(({ key, label }, idx) => (
                     <button
                       key={key}
                       type="button"
                       onClick={() => setSidebarTab(key)}
-                      className={`flex-1 rounded-md px-1.5 py-1 text-[9px] font-bold uppercase tracking-wider transition-all duration-200 ${
+                      className={`flex-1 rounded-none px-1.5 py-2 text-[9px] font-bold uppercase tracking-wider transition-all duration-200 ${
+                        idx > 0 ? 'border-l border-border-default' : ''
+                      } ${
                         sidebarTab === key
-                          ? key === 'deepquant'
-                            ? 'bg-gradient-to-r from-blue-500/15 to-violet-500/15 text-blue-400 border border-blue-500/30'
-                            : 'bg-elevated text-text-primary border border-border-default'
-                          : 'text-text-muted hover:text-text-secondary hover:bg-elevated/50 border border-transparent'
+                          ? 'bg-elevated text-text-primary'
+                          : 'text-text-muted hover:text-text-secondary hover:bg-elevated/50'
                       }`}
                     >
                       {label}
@@ -613,7 +607,7 @@ export default function Home() {
               </div>
 
               {/* Sidebar Content */}
-              <div className="flex-1 min-h-0 overflow-y-auto rounded-b-lg border border-t-0 border-border-default bg-surface">
+              <div className="flex-1 min-h-0 overflow-y-auto bg-surface rounded-none">
                 {renderSidebarContent()}
               </div>
             </div>
