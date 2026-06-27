@@ -16,19 +16,19 @@ export default function PortfolioTab({ paperPortfolio }: PortfolioTabProps) {
 
       {/* Statistics Panel */}
       <div className="grid grid-cols-3 gap-4">
-        <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4 text-center">
+        <div className="rounded-xl border border-border-default/40 bg-surface/50 p-4 text-center">
           <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Simulated Balance</span>
           <span className="text-base font-black text-emerald-400 block mt-1">
             ₹{paperPortfolio?.balance?.toLocaleString(undefined, { minimumFractionDigits: 2 }) || '1,000,000.00'}
           </span>
         </div>
-        <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4 text-center">
+        <div className="rounded-xl border border-border-default/40 bg-surface/50 p-4 text-center">
           <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Active Open Positions</span>
           <span className="text-base font-black text-white block mt-1">
             {paperPortfolio?.active_positions?.length || 0}
           </span>
         </div>
-        <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4 text-center">
+        <div className="rounded-xl border border-border-default/40 bg-surface/50 p-4 text-center">
           <span className="text-[10px] uppercase tracking-wider text-text-secondary block">History Count</span>
           <span className="text-base font-black text-text-secondary block mt-1">
             {paperPortfolio?.trade_history?.length || 0}
@@ -46,7 +46,7 @@ export default function PortfolioTab({ paperPortfolio }: PortfolioTabProps) {
           <span className="text-[10px] text-text-secondary font-mono">Tauri Engine Subscription Sync</span>
         </div>
 
-        <div className="flex-1 min-h-0 rounded-xl border border-border-default/40 bg-[#0c0f1d]/30 overflow-auto">
+        <div className="flex-1 min-h-0 rounded-xl border border-border-default/40 bg-muted/30 overflow-auto">
           {!paperPortfolio || paperPortfolio.active_positions.length === 0 ? (
             <div className="flex h-32 flex-col items-center justify-center text-center p-4">
               <p className="text-xs text-text-secondary font-medium">No Active Open Positions</p>
@@ -56,7 +56,7 @@ export default function PortfolioTab({ paperPortfolio }: PortfolioTabProps) {
             </div>
           ) : (
             <table className="w-full text-left border-collapse">
-              <thead className="bg-[#0e1222]/80 border-b border-border-default/40">
+              <thead className="bg-elevated/80 border-b border-border-default/40">
                 <tr>
                   <th className="px-4 py-2.5 text-[9px] font-bold uppercase tracking-wider text-text-secondary">Symbol</th>
                   <th className="px-4 py-2.5 text-[9px] font-bold uppercase tracking-wider text-text-secondary">Side</th>

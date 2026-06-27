@@ -53,33 +53,33 @@ export default function BrokerTab({
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4">
+            <div className="rounded-xl border border-border-default/40 bg-surface/50 p-4">
               <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Client User Name</span>
               <span className="text-sm font-bold text-white block mt-1">{broker.userName || 'N/A'}</span>
             </div>
-            <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4">
+            <div className="rounded-xl border border-border-default/40 bg-surface/50 p-4">
               <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Broker User ID</span>
               <span className="text-sm font-mono font-bold text-white block mt-1">{broker.brokerUserId || 'N/A'}</span>
             </div>
-            <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4">
+            <div className="rounded-xl border border-border-default/40 bg-surface/50 p-4">
               <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Account Type</span>
               <span className="text-xs font-bold text-white block mt-1 uppercase tracking-wide">
                 {broker.userType?.replace('/', ' / ') || 'N/A'}
               </span>
             </div>
-            <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4">
+            <div className="rounded-xl border border-border-default/40 bg-surface/50 p-4">
               <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Connected Account Email</span>
               <span className="text-sm font-bold text-white block mt-1 truncate">{broker.email || 'N/A'}</span>
             </div>
-            <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4">
+            <div className="rounded-xl border border-border-default/40 bg-surface/50 p-4">
               <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Kite API Key</span>
               <span className="text-xs font-mono font-bold text-white block mt-1">{maskValue(broker.apiKey)}</span>
             </div>
-            <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4">
+            <div className="rounded-xl border border-border-default/40 bg-surface/50 p-4">
               <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Public Token</span>
               <span className="text-xs font-mono font-bold text-white block mt-1">{maskValue(broker.publicToken, 6)}</span>
             </div>
-            <div className="col-span-2 rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4">
+            <div className="col-span-2 rounded-xl border border-border-default/40 bg-surface/50 p-4">
               <span className="text-[10px] uppercase tracking-wider text-text-secondary block">Session Auth Time</span>
               <span className="text-sm font-bold text-white block mt-1">{formatDate(broker.loginTime)}</span>
             </div>
@@ -93,7 +93,7 @@ export default function BrokerTab({
           </div>
 
           {/* Permissions & Capabilities */}
-          <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-5">
+          <div className="rounded-xl border border-border-default/40 bg-surface/50 p-5">
             <div className="flex items-center gap-2 mb-4">
               <Layers size={14} className="text-emerald-400" />
               <h4 className="text-xs font-bold text-white uppercase tracking-wider">Authorized Market Streams & Limits</h4>
