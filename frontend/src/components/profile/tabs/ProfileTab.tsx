@@ -67,7 +67,7 @@ export default function ProfileTab({
   };
 
   const getPnlClass = (val: number) => {
-    if (val > 0) return 'text-[#22c55e] font-bold';
+    if (val > 0) return 'text-bull font-bold';
     if (val < 0) return 'text-[#ef4444] font-bold';
     return 'text-text-secondary';
   };
@@ -132,21 +132,21 @@ export default function ProfileTab({
 
       {/* ── METADATA ACCOUNT DETAILS CARD GRID ── */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 shrink-0">
-        <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/40 p-4">
+        <div className="rounded-xl border border-border-default/40 bg-surface/40 p-4">
           <span className="text-[9px] uppercase font-black tracking-widest text-text-secondary">ACCOUNT TIER LEVEL</span>
           <p className="text-base font-black text-white mt-1.5 flex items-center gap-1.5">
             <Shield size={14} className="text-emerald-400" />
             <span>{user?.tier || 'FREE'} Tier</span>
           </p>
         </div>
-        <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/40 p-4">
+        <div className="rounded-xl border border-border-default/40 bg-surface/40 p-4">
           <span className="text-[9px] uppercase font-black tracking-widest text-text-secondary">MEMBER REGISTRATION</span>
           <div className="flex items-center gap-2 text-sm font-bold text-white mt-1.5">
             <Calendar size={14} className="text-text-muted" />
             <span>{formatDate(user?.createdAt)}</span>
           </div>
         </div>
-        <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/40 p-4">
+        <div className="rounded-xl border border-border-default/40 bg-surface/40 p-4">
           <span className="text-[9px] uppercase font-black tracking-widest text-text-secondary">LIVE WALLET BALANCE</span>
           <p className="text-base font-black text-emerald-400 mt-1.5 font-mono">
             {formatCurrency(realWalletBalance)}
@@ -165,7 +165,7 @@ export default function ProfileTab({
             
             <div className="flex items-center gap-3">
               {/* Segment Toggles */}
-              <div className="flex items-center gap-1 bg-[#070911]/50 border border-border-default/20 rounded p-0.5">
+              <div className="flex items-center gap-1 bg-muted/50 border border-border-default/20 rounded p-0.5">
                 <button
                   type="button"
                   onClick={() => setMarginSegment('equity')}
@@ -210,7 +210,7 @@ export default function ProfileTab({
           {activeSegmentData ? (
             <div className="space-y-4">
               {/* Giant Net Power Card */}
-              <div className="border border-border-default/30 rounded-lg bg-[#070911]/30 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="border border-border-default/30 rounded-lg bg-muted/30 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <span className="text-[9px] font-bold uppercase tracking-wider text-text-secondary">Available Net Margin</span>
                   <span className="text-2xl font-black tracking-tight text-white mt-0.5 block font-mono">
@@ -228,7 +228,7 @@ export default function ProfileTab({
               {/* Two Column Grid displaying ALL data points */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* COLUMN 1: AVAILABLE FUNDS BREAKDOWN */}
-                <div className="border border-border-default/30 rounded-lg bg-[#070911]/50 p-3.5 space-y-2">
+                <div className="border border-border-default/30 rounded-lg bg-muted/50 p-3.5 space-y-2">
                   <span className="text-[9px] font-black uppercase tracking-wider text-emerald-400 block mb-2 border-b border-border-default/20 pb-1">
                     AVAILABLE LIMITS & CASH
                   </span>
@@ -276,7 +276,7 @@ export default function ProfileTab({
                 </div>
 
                 {/* COLUMN 2: UTILISHED MARGINS BREAKDOWN */}
-                <div className="border border-border-default/30 rounded-lg bg-[#070911]/50 p-3.5 space-y-2">
+                <div className="border border-border-default/30 rounded-lg bg-muted/50 p-3.5 space-y-2">
                   <span className="text-[9px] font-black uppercase tracking-wider text-rose-400 block mb-2 border-b border-border-default/20 pb-1">
                     UTILISHED MARGIN DEBITS
                   </span>
@@ -352,7 +352,7 @@ export default function ProfileTab({
             
             <div className="flex items-center gap-4">
               {/* Positions SubTab switcher */}
-              <div className="flex items-center gap-1 bg-[#070911]/50 border border-border-default/20 rounded p-0.5">
+              <div className="flex items-center gap-1 bg-muted/50 border border-border-default/20 rounded p-0.5">
                 <button
                   type="button"
                   onClick={() => {
@@ -395,9 +395,9 @@ export default function ProfileTab({
             </div>
           </div>
 
-          <div className="overflow-x-auto border border-border-default/20 rounded-lg bg-[#070911]/30 max-h-[260px] scrollbar-thin">
+          <div className="overflow-x-auto border border-border-default/20 rounded-lg bg-muted/30 max-h-[260px] scrollbar-thin">
             <table className="w-full text-left text-xs border-collapse">
-              <thead className="bg-[#0e1222]/80 border-b border-border-default/30 sticky top-0 z-10">
+              <thead className="bg-elevated/80 border-b border-border-default/30 sticky top-0 z-10">
                 <tr>
                   <th className="w-8 pl-3"></th>
                   <th className="px-3 py-2 text-[8px] font-black uppercase tracking-wider text-text-secondary">Symbol</th>
@@ -440,17 +440,17 @@ export default function ProfileTab({
 
                       {/* Deep mathematical grids accordion drawer */}
                       {isExpanded && (
-                        <tr className="bg-[#0c0f1d]/40 border-b border-border-default/20">
+                        <tr className="bg-surface/40 border-b border-border-default/20">
                           <td colSpan={7} className="p-4">
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-[10px] font-sans text-left animate-in fade-in slide-in-from-top-1 duration-150">
                               {/* Card Column 1: Net Position Geometry */}
-                              <div className="border border-border-default/30 rounded-lg bg-[#070911]/50 p-3 space-y-1.5">
+                              <div className="border border-border-default/30 rounded-lg bg-muted/50 p-3 space-y-1.5">
                                 <span className="text-[8px] font-black uppercase tracking-wider text-text-secondary block border-b border-border-default/30 pb-1 mb-1">
                                   NET POSITION GEOMETRY
                                 </span>
                                 <div className="flex justify-between">
                                   <span className="text-text-muted">Net Position Value</span>
-                                  <span className={`font-mono font-semibold ${(pos.value ?? 0) >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>
+                                  <span className={`font-mono font-semibold ${(pos.value ?? 0) >= 0 ? 'text-bull' : 'text-[#ef4444]'}`}>
                                     {formatCurrency(pos.value)}
                                   </span>
                                 </div>
@@ -471,7 +471,7 @@ export default function ProfileTab({
                               </div>
 
                               {/* Card Column 2: Buy & Sell Accumulation */}
-                              <div className="border border-border-default/30 rounded-lg bg-[#070911]/50 p-3 space-y-1.5">
+                              <div className="border border-border-default/30 rounded-lg bg-muted/50 p-3 space-y-1.5">
                                 <span className="text-[8px] font-black uppercase tracking-wider text-emerald-400 block border-b border-border-default/30 pb-1 mb-1">
                                   BUY & SELL ACCUMULATION
                                 </span>
@@ -502,7 +502,7 @@ export default function ProfileTab({
                               </div>
 
                               {/* Card Column 3: Intraday Returns Logic */}
-                              <div className="border border-border-default/30 rounded-lg bg-[#070911]/50 p-3 space-y-1.5">
+                              <div className="border border-border-default/30 rounded-lg bg-muted/50 p-3 space-y-1.5">
                                 <span className="text-[8px] font-black uppercase tracking-wider text-rose-400 block border-b border-border-default/30 pb-1 mb-1">
                                   INTRADAY RETURNS LOGIC
                                 </span>
@@ -559,9 +559,9 @@ export default function ProfileTab({
             </div>
           </div>
 
-          <div className="overflow-x-auto border border-border-default/20 rounded-lg bg-[#070911]/30 max-h-[260px] scrollbar-thin">
+          <div className="overflow-x-auto border border-border-default/20 rounded-lg bg-muted/30 max-h-[260px] scrollbar-thin">
             <table className="w-full text-left text-xs border-collapse">
-              <thead className="bg-[#0e1222]/80 border-b border-border-default/30 sticky top-0 z-10">
+              <thead className="bg-elevated/80 border-b border-border-default/30 sticky top-0 z-10">
                 <tr>
                   <th className="w-8 pl-3"></th>
                   <th className="px-3 py-2 text-[8px] font-black uppercase tracking-wider text-text-secondary">Time</th>
@@ -612,7 +612,7 @@ export default function ProfileTab({
 
                       {/* Expandable Order Details Drawer */}
                       {isExpanded && (
-                        <tr className="bg-[#0c0f1d]/40 border-b border-border-default/20">
+                        <tr className="bg-surface/40 border-b border-border-default/20">
                           <td colSpan={7} className="p-4">
                             <div className="space-y-3 text-left font-sans">
                               {/* Rejection Banner */}
@@ -631,7 +631,7 @@ export default function ProfileTab({
 
                               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-[10px] font-sans">
                                 {/* Column 1: Order Properties & Route */}
-                                <div className="border border-border-default/30 rounded-lg bg-[#070911]/50 p-3 space-y-1.5">
+                                <div className="border border-border-default/30 rounded-lg bg-muted/50 p-3 space-y-1.5">
                                   <span className="text-[8px] font-black uppercase tracking-wider text-text-secondary block border-b border-border-default/30 pb-1 mb-1">
                                     ORDER PROPERTIES & ROUTE
                                   </span>
@@ -662,7 +662,7 @@ export default function ProfileTab({
                                 </div>
 
                                 {/* Column 2: Quantity & Slicing Ledgers */}
-                                <div className="border border-border-default/30 rounded-lg bg-[#070911]/50 p-3 space-y-1.5">
+                                <div className="border border-border-default/30 rounded-lg bg-muted/50 p-3 space-y-1.5">
                                   <span className="text-[8px] font-black uppercase tracking-wider text-emerald-400 block border-b border-border-default/30 pb-1 mb-1">
                                     QUANTITY & SLICING LEDGER
                                   </span>
@@ -700,7 +700,7 @@ export default function ProfileTab({
                                 </div>
 
                                 {/* Column 3: Order Pricing & Validity */}
-                                <div className="border border-border-default/30 rounded-lg bg-[#070911]/50 p-3 space-y-1.5">
+                                <div className="border border-border-default/30 rounded-lg bg-muted/50 p-3 space-y-1.5">
                                   <span className="text-[8px] font-black uppercase tracking-wider text-rose-400 block border-b border-border-default/30 pb-1 mb-1">
                                     PRICING & VALIDITY
                                   </span>
@@ -764,7 +764,7 @@ export default function ProfileTab({
       )}
 
       {/* ── MEMBERSHIP Visual Card ── */}
-      <div className="relative overflow-hidden rounded-2xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/10 via-[#0c0f1d]/80 to-slate-900 p-5 shadow-lg shrink-0">
+      <div className="relative overflow-hidden rounded-2xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/10 via-surface/80 to-elevated/30 p-5 shadow-lg shrink-0">
         <div className="absolute -right-16 -top-16 h-36 w-36 rounded-full bg-emerald-500/10 blur-2xl"></div>
 
         <div className="flex justify-between items-start">

@@ -60,7 +60,7 @@ export default function OrdersTab({ orders, loading, error, refetch }: OrdersTab
       {orders && (
         <div className="flex-1 min-h-0 overflow-auto border border-border-default/40 rounded-xl bg-surface/30">
           <table className="w-full text-left text-xs border-collapse">
-            <thead className="bg-[#0e1222]/80 border-b border-border-default/40 sticky top-0 z-10">
+            <thead className="bg-elevated/80 border-b border-border-default/40 sticky top-0 z-10">
               <tr>
                 <th className="w-8"></th>
                 <th className="px-4 py-2.5 text-[9px] font-bold uppercase tracking-wider text-text-secondary">Time</th>
@@ -116,7 +116,7 @@ export default function OrdersTab({ orders, loading, error, refetch }: OrdersTab
 
                     {/* Order Details Expanded Row */}
                     {isExpanded && (
-                      <tr className="bg-[#0c0f1d]/40 border-b border-border-default/20">
+                      <tr className="bg-surface/40 border-b border-border-default/20">
                         <td colSpan={7} className="p-4">
                           <div className="space-y-3">
                             
@@ -137,7 +137,7 @@ export default function OrdersTab({ orders, loading, error, refetch }: OrdersTab
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-[11px] animate-in fade-in slide-in-from-top-1 duration-150">
                               
                               {/* Column 1: Order Properties & Route */}
-                              <div className="border border-border-default/30 rounded-lg bg-[#070911]/50 p-3.5 space-y-2">
+                              <div className="border border-border-default/30 rounded-lg bg-muted/50 p-3.5 space-y-2">
                                 <span className="text-[9px] font-black uppercase tracking-wider text-text-secondary block border-b border-border-default/30 pb-1.5 mb-1.5">
                                   ORDER PROPERTIES & ROUTE
                                 </span>
@@ -168,7 +168,7 @@ export default function OrdersTab({ orders, loading, error, refetch }: OrdersTab
                               </div>
 
                               {/* Column 2: Quantity & Slicing Ledgers */}
-                              <div className="border border-border-default/30 rounded-lg bg-[#070911]/50 p-3.5 space-y-2">
+                              <div className="border border-border-default/30 rounded-lg bg-muted/50 p-3.5 space-y-2">
                                 <span className="text-[9px] font-black uppercase tracking-wider text-emerald-400 block border-b border-border-default/30 pb-1.5 mb-1.5">
                                   QUANTITY & SLICING LEDGER
                                 </span>
@@ -206,7 +206,7 @@ export default function OrdersTab({ orders, loading, error, refetch }: OrdersTab
                               </div>
 
                               {/* Column 3: Order Pricing & Validity */}
-                              <div className="border border-border-default/30 rounded-lg bg-[#070911]/50 p-3.5 space-y-2">
+                              <div className="border border-border-default/30 rounded-lg bg-muted/50 p-3.5 space-y-2">
                                 <span className="text-[9px] font-black uppercase tracking-wider text-rose-400 block border-b border-border-default/30 pb-1.5 mb-1.5">
                                   PRICING & VALIDITY
                                 </span>
