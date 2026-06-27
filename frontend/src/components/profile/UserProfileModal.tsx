@@ -180,7 +180,7 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md transition-all duration-300">
       <div 
-        className="relative flex h-[720px] w-full max-w-5xl overflow-hidden rounded-2xl border border-border-default/60 bg-[#0d1222]/80 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-200"
+        className="relative flex h-[720px] w-full max-w-5xl overflow-hidden rounded-2xl border border-border-default/60 bg-surface/80 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Close Button */}
@@ -192,7 +192,7 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
         </button>
 
         {/* ── LEFT SIDEBAR PANEL ── */}
-        <aside className="w-64 shrink-0 flex flex-col justify-between border-r border-border-default/40 bg-[#0b0e1a]/60 p-5">
+        <aside className="w-64 shrink-0 flex flex-col justify-between border-r border-border-default/40 bg-background/60 p-5">
           <div>
             {/* User Info Header */}
             <div className="mb-8 flex items-center gap-3">
@@ -324,7 +324,7 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
         </aside>
 
         {/* ── RIGHT DETAIL VIEW PANEL ── */}
-        <main className="flex-1 flex flex-col min-h-0 bg-[#090c16]/35 p-8 overflow-y-auto scrollbar-none">
+        <main className="flex-1 flex flex-col min-h-0 bg-background/35 p-8 overflow-y-auto scrollbar-none">
           {activeTab === 'profile' && (
             <ProfileTab 
               user={user} 
