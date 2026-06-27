@@ -199,21 +199,7 @@ export default function AgentTerminal() {
   };
 
   return (
-    <div className="flex h-full flex-col font-mono bg-black/85 border border-slate-800 rounded-xl overflow-hidden shadow-2xl relative">
-      {/* Terminal Header */}
-      <div className="flex items-center justify-between px-4 py-2 bg-slate-900/90 border-b border-slate-800 select-none">
-        <div className="flex items-center gap-2">
-          <Terminal size={14} className="text-emerald-400 animate-pulse" />
-          <span className="text-[10px] text-slate-300 font-bold uppercase tracking-wider">
-            Glass-Box Agent Console
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-red-500/80 hover:bg-red-400 cursor-pointer" onClick={resetTerminal} title="Reset logs" />
-          <span className="w-2 h-2 rounded-full bg-amber-500/80" />
-          <span className="w-2 h-2 rounded-full bg-emerald-500/80" />
-        </div>
-      </div>
+    <div className="flex h-full flex-col font-sans bg-black overflow-hidden relative">
 
       {/* Terminal Scrolling Log */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3.5 scrollbar-thin scrollbar-track-slate-950/20 scrollbar-thumb-slate-800">
@@ -237,21 +223,21 @@ export default function AgentTerminal() {
                   if (conviction !== undefined || validation || plan) {
                     return (
                       <div key={step.id} className="flex justify-start animate-fade-in font-sans w-full">
-                        <div className="max-w-[95%] bg-emerald-950/30 text-slate-100 border border-emerald-500/25 rounded-xl px-3 py-2 text-[11px] leading-relaxed shadow-sm w-full">
-                          <div className="flex items-center gap-1.5 text-[9px] text-emerald-400 font-bold uppercase tracking-wider mb-1.5 select-none">
+                        <div className="max-w-[95%] bg-elevated/40 text-text-primary border border-border-default rounded-none px-3 py-2 text-[11px] leading-relaxed shadow-sm w-full">
+                          <div className="flex items-center gap-1.5 text-[9px] text-text-primary font-bold uppercase tracking-wider mb-1.5 select-none">
                             <Target size={10} />
                             Final Trade Decision
                             {conviction !== undefined && (
-                              <span className="ml-auto rounded-md px-1.5 py-0.5 text-[8px] font-black bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
+                              <span className="ml-auto rounded-none px-1.5 py-0.5 text-[8px] font-black bg-elevated text-text-primary border border-border-default">
                                 {conviction}% CONVICTION
                               </span>
                             )}
                           </div>
                           {validation && (
-                            <p className="text-slate-300 mb-1">{parseInlineMarkdown(String(validation))}</p>
+                            <p className="text-text-primary mb-1">{parseInlineMarkdown(String(validation))}</p>
                           )}
                           {plan && (
-                            <p className="text-teal-300/90 text-[10px] font-mono mt-1 border-t border-slate-800/40 pt-1">
+                            <p className="text-text-secondary text-[10px] font-mono mt-1 border-t border-border-default/40 pt-1">
                               {parseInlineMarkdown(String(plan))}
                             </p>
                           )}
@@ -268,8 +254,8 @@ export default function AgentTerminal() {
 
             return (
               <div key={step.id} className="flex justify-start animate-fade-in font-sans w-full">
-                <div className="max-w-[95%] bg-slate-900/40 text-slate-100 border border-slate-800/40 rounded-xl px-3 py-2 text-[11px] leading-relaxed shadow-sm w-full">
-                  <div className="flex items-center gap-1.5 text-[9px] text-emerald-400 font-bold uppercase tracking-wider mb-1 select-none">
+                <div className="max-w-[95%] bg-elevated/40 text-text-primary border border-border-default/40 rounded-none px-3 py-2 text-[11px] leading-relaxed shadow-sm w-full">
+                  <div className="flex items-center gap-1.5 text-[9px] text-text-primary font-bold uppercase tracking-wider mb-1 select-none">
                     <Cpu size={10} className="animate-pulse" />
                     Agent Reasoning
                   </div>
@@ -292,40 +278,36 @@ export default function AgentTerminal() {
             const isCompleted = endsAfterHere >= startsUpToHere;
 
             return (
-              <div key={step.id} className="flex justify-start animate-fade-in font-mono pl-1 w-full my-1.5">
-                <div className={`rounded-xl px-3 py-2 text-[10px] leading-relaxed shadow-sm w-full max-w-[95%] ${
+              <div key={step.id} className="flex justify-start animate-fade-in font-sans pl-1 w-full my-1.5">
+                <div className={`rounded-none px-3 py-2 text-[10px] leading-relaxed shadow-sm w-full max-w-[95%] ${
                   isCompleted
-                    ? 'bg-slate-900/20 border border-emerald-500/15'
-                    : 'bg-slate-950/60 border border-teal-500/20'
+                    ? 'bg-elevated/20 border border-border-default'
+                    : 'bg-elevated/40 border border-border-default/80'
                 }`}>
-                  <div className={`flex items-center gap-2 font-bold uppercase tracking-wider mb-1.5 select-none ${
-                    isCompleted ? 'text-emerald-400' : 'text-teal-400'
-                  }`}>
+                  <div className="flex items-center gap-2 font-bold uppercase tracking-wider mb-1.5 select-none text-text-primary">
                     {isCompleted ? (
-                      <CheckCircle2 size={10} className="text-emerald-400 shrink-0" />
+                      <CheckCircle2 size={10} className="text-text-primary shrink-0" />
                     ) : (
-                      <Loader2 size={10} className="animate-spin text-teal-400 shrink-0" />
+                      <Loader2 size={10} className="animate-spin text-text-muted shrink-0" />
                     )}
                     <span>{isCompleted ? 'Tool Completed' : 'Executing Tool'}</span>
-                    <span className={`ml-auto text-[8px] font-mono px-1.5 py-0.5 rounded ${
+                    <span className={`ml-auto text-[8px] font-mono px-1.5 py-0.5 rounded-none ${
                       isCompleted
-                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/25'
-                        : 'bg-teal-500/10 text-teal-400 border border-teal-500/20'
+                        ? 'bg-elevated text-text-primary border border-border-default'
+                        : 'bg-elevated/40 text-text-muted border border-border-default/45'
                     }`}>
                       {isCompleted ? 'SUCCESS' : 'ACTIVE'}
                     </span>
                   </div>
-                  <div className={`text-[11px] font-extrabold font-mono tracking-wide ${
-                    isCompleted ? 'text-emerald-300' : 'text-teal-300'
-                  }`}>
+                  <div className="text-[11px] font-extrabold font-mono tracking-wide text-text-primary">
                     {step.toolName}
                   </div>
                   {step.args && Object.keys(step.args).length > 0 && (
-                    <div className="mt-1.5 bg-black/40 border border-slate-800/60 rounded px-2 py-1 text-[8.5px] text-slate-400 leading-normal font-sans space-y-0.5">
+                    <div className="mt-1.5 bg-black/40 border border-border-default/60 rounded-none px-2 py-1 text-[8.5px] text-text-secondary leading-normal font-sans space-y-0.5">
                       {Object.entries(step.args).map(([k, v]) => (
                         <div key={k} className="flex gap-1.5">
-                          <span className="text-slate-500 font-semibold">{k}:</span>
-                          <span className="text-teal-300/80 font-mono">{JSON.stringify(v)}</span>
+                          <span className="text-text-muted font-semibold">{k}:</span>
+                          <span className="text-text-secondary font-mono">{JSON.stringify(v)}</span>
                         </div>
                       ))}
                     </div>
@@ -339,9 +321,9 @@ export default function AgentTerminal() {
           } else {
             // Legacy / fallback 'tool'
             return (
-              <div key={step.id} className="flex justify-start animate-fade-in font-mono pl-2">
-                <div className="text-[10px] text-teal-400/80 font-semibold select-none flex items-center gap-1.5 py-0.5">
-                  <span className="text-teal-500/60">&gt;</span>
+              <div key={step.id} className="flex justify-start animate-fade-in font-sans pl-2">
+                <div className="text-[10px] text-text-secondary font-semibold select-none flex items-center gap-1.5 py-0.5">
+                  <span className="text-text-muted">&gt;</span>
                   {step.content}
                 </div>
               </div>
@@ -358,28 +340,28 @@ export default function AgentTerminal() {
             race, an early-ending stream that triggered a synthetic RUN_FINISHED,
             or a graph update that produced no surfaced events). */}
         {reasoningSteps.length === 0 && sessionStatus === 'running' && (
-          <div className="flex items-center gap-2 pl-3 py-2 text-[10px] text-teal-400/70 animate-pulse">
-            <Loader2 size={11} className="animate-spin text-teal-400" />
+          <div className="flex items-center gap-2 pl-3 py-2 text-[10px] text-text-muted/60 animate-pulse">
+            <Loader2 size={11} className="animate-spin text-text-muted" />
             <span>Connecting to Deep Quant agent — awaiting first reasoning step…</span>
           </div>
         )}
 
         {reasoningSteps.length === 0 && sessionStatus === 'complete' && (
-          <div className="flex items-start gap-3 p-3.5 bg-amber-500/10 border border-amber-500/25 rounded-xl mt-2 select-text font-sans shadow-lg shadow-amber-950/20">
-            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-400 text-[10px] font-bold select-none mt-0.5">
+          <div className="flex items-start gap-3 p-3.5 bg-amber-500/5 border border-amber-500/25 rounded-none mt-2 select-text font-sans shadow-lg shadow-amber-955/20">
+            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-none bg-amber-500/20 text-amber-500 dark:text-amber-400 text-[10px] font-bold select-none mt-0.5">
               !
             </div>
             <div className="flex flex-col">
-              <span className="text-[11px] font-bold text-amber-400">No reasoning was streamed</span>
-              <span className="text-[10px] text-amber-300/80 mt-1 leading-relaxed">
+              <span className="text-[11px] font-bold text-amber-500 dark:text-amber-400">No reasoning was streamed</span>
+              <span className="text-[10px] text-amber-600 dark:text-amber-300/80 mt-1 leading-relaxed">
                 The agent run completed but produced no visible reasoning, tool, or
                 decision steps. This usually means the Python agent (:8086) returned
                 an empty response or the stream ended early. Press
-                {' '}<span className="font-bold text-amber-200">Find Quant Trade</span>{' '}
+                {' '}<span className="font-bold text-amber-500 dark:text-amber-200">Find Quant Trade</span>{' '}
                 again to retry.
               </span>
               {analysisError && (
-                <span className="text-[9px] font-mono text-amber-400 bg-amber-950/30 rounded border border-amber-500/10 px-2 py-1 mt-2 leading-normal">
+                <span className="text-[9px] font-mono text-amber-500 dark:text-amber-400 bg-amber-500/5 rounded-none border border-amber-500/20 px-2 py-1 mt-2 leading-normal">
                   {analysisError}
                 </span>
               )}
@@ -389,24 +371,24 @@ export default function AgentTerminal() {
 
         {/* Streaming spinner inside console */}
         {sessionStatus === 'running' && (
-          <div className="flex items-center gap-2 pl-3 py-2 text-[10px] text-emerald-500/60 animate-pulse">
-            <Loader2 size={11} className="animate-spin text-emerald-500" />
+          <div className="flex items-center gap-2 pl-3 py-2 text-[10px] text-text-muted/60 animate-pulse">
+            <Loader2 size={11} className="animate-spin text-text-muted" />
             <span>Agent evaluating microstructure signals...</span>
           </div>
         )}
 
         {/* Error message display */}
         {sessionStatus === 'error' && (
-          <div className="flex items-start gap-3 p-3.5 bg-rose-500/10 border border-rose-500/25 rounded-xl mt-2 select-text font-sans shadow-lg shadow-rose-950/20">
-            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-rose-500/20 text-rose-400 text-[10px] font-bold select-none mt-0.5">
+          <div className="flex items-start gap-3 p-3.5 bg-rose-500/5 border border-rose-500/20 rounded-none mt-2 select-text font-sans shadow-lg shadow-rose-955/20">
+            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-none bg-rose-500/20 text-rose-500 dark:text-rose-400 text-[10px] font-bold select-none mt-0.5">
               ⚠
             </div>
             <div className="flex flex-col">
-              <span className="text-[11px] font-bold text-rose-400">Deep Quant Analysis Error</span>
-              <span className="text-[10px] text-rose-300/80 mt-1 leading-relaxed">
+              <span className="text-[11px] font-bold text-rose-500 dark:text-rose-400">Deep Quant Analysis Error</span>
+              <span className="text-[10px] text-rose-600 dark:text-rose-300/80 mt-1 leading-relaxed">
                 The LangGraph agent loop returned a pipeline error. This usually occurs if your LLM API key (e.g. Google Gemini or OpenAI) is expired, rate-limited, or out of quota.
               </span>
-              <span className="text-[9px] font-mono text-rose-400 bg-rose-950/30 rounded border border-rose-500/10 px-2 py-1 mt-2 leading-normal">
+              <span className="text-[9px] font-mono text-rose-500 dark:text-rose-400 bg-rose-500/5 rounded-none border border-rose-500/15 px-2 py-1 mt-2 leading-normal">
                 {analysisError || "Connection refused: Python service port :8086 unreachable."}
               </span>
             </div>
@@ -418,33 +400,33 @@ export default function AgentTerminal() {
 
       {/* Execution Plan Card Handoff */}
       {sessionStatus === 'complete' && finalTrade && parsedPlan && (
-        <div className="p-4 bg-slate-950 border-t border-slate-800/80 animate-slide-up shadow-xl shrink-0">
+        <div className="p-4 bg-surface border-t border-border-default animate-slide-up shadow-xl shrink-0">
           <div className="flex items-center gap-2 mb-3">
-            <Shield size={12} className="text-emerald-400" />
-            <h3 className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">
+            <Shield size={12} className="text-text-primary" />
+            <h3 className="text-[10px] font-bold text-text-primary uppercase tracking-widest">
               Actionable Trade Plan Ready
             </h3>
-            <span className="ml-auto rounded-md px-2 py-0.5 text-[9px] font-black tracking-widest bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+            <span className="ml-auto rounded-none px-2 py-0.5 text-[9px] font-black tracking-widest bg-elevated text-text-primary border border-border-default">
               {finalTrade.conviction_score}% CONVICTION
             </span>
           </div>
 
-          <div className="text-xs text-gray-300 italic mb-3 border-l-2 border-emerald-500 pl-2">
+          <div className="text-xs text-text-secondary italic mb-3 border-l-2 border-text-primary pl-2">
             "{finalTrade.setup_validation}"
           </div>
 
           <div className="grid grid-cols-3 gap-2 mb-3">
-            <div className="bg-slate-900 border border-slate-800 rounded-lg p-2 flex flex-col justify-center">
-              <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider select-none">Entry ({parsedPlan.side})</span>
-              <span className="text-[13px] text-slate-200 font-extrabold mt-0.5 font-mono">₹{parsedPlan.entryPrice.toFixed(2)}</span>
+            <div className="bg-elevated border border-border-default rounded-none p-2 flex flex-col justify-center">
+              <span className="text-[9px] text-text-muted font-bold uppercase tracking-wider select-none">Entry ({parsedPlan.side})</span>
+              <span className="text-[13px] text-text-primary font-extrabold mt-0.5 font-mono">₹{parsedPlan.entryPrice.toFixed(2)}</span>
             </div>
-            <div className="bg-slate-900 border border-slate-800 rounded-lg p-2 flex flex-col justify-center">
-              <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider select-none">Target (TP)</span>
-              <span className="text-[13px] text-emerald-400 font-extrabold mt-0.5 font-mono">₹{parsedPlan.takeProfit.toFixed(2)}</span>
+            <div className="bg-elevated border border-border-default rounded-none p-2 flex flex-col justify-center">
+              <span className="text-[9px] text-text-muted font-bold uppercase tracking-wider select-none">Target (TP)</span>
+              <span className="text-[13px] text-emerald-500 dark:text-emerald-400 font-extrabold mt-0.5 font-mono">₹{parsedPlan.takeProfit.toFixed(2)}</span>
             </div>
-            <div className="bg-slate-900 border border-slate-800 rounded-lg p-2 flex flex-col justify-center">
-              <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider select-none">Stop Loss (SL)</span>
-              <span className="text-[13px] text-rose-400 font-extrabold mt-0.5 font-mono">₹{parsedPlan.stopLoss.toFixed(2)}</span>
+            <div className="bg-elevated border border-border-default rounded-none p-2 flex flex-col justify-center">
+              <span className="text-[9px] text-text-muted font-bold uppercase tracking-wider select-none">Stop Loss (SL)</span>
+              <span className="text-[13px] text-rose-500 dark:text-rose-400 font-extrabold mt-0.5 font-mono">₹{parsedPlan.stopLoss.toFixed(2)}</span>
             </div>
           </div>
 
@@ -453,12 +435,12 @@ export default function AgentTerminal() {
             disabled={executed || isExecuting}
             onClick={handleApproveAndExecute}
             className={`
-              w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-xs font-black uppercase tracking-widest transition-all duration-300
+              w-full flex items-center justify-center gap-2 rounded-none py-2.5 text-xs font-black uppercase tracking-widest transition-all duration-300
               ${executed
-                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                ? 'bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border border-emerald-500/30'
                 : isExecuting
-                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 cursor-wait'
-                  : 'bg-emerald-500 text-black border border-emerald-400 hover:bg-emerald-400 hover:shadow-lg hover:shadow-emerald-500/20 active:scale-[0.98]'
+                  ? 'bg-emerald-500/20 text-emerald-500 dark:text-emerald-400 border border-emerald-500/40 cursor-wait'
+                  : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 active:scale-[0.98]'
               }
             `}
           >
@@ -469,7 +451,7 @@ export default function AgentTerminal() {
               </>
             ) : executed ? (
               <>
-                <CheckCircle2 size={13} className="text-emerald-400 animate-pulse" />
+                <CheckCircle2 size={13} className="text-emerald-500 animate-pulse" />
                 Simulated Trade Executed
               </>
             ) : (

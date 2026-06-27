@@ -17,7 +17,7 @@ export default function RiskTab({ marginsData, loading, error, refetch }: RiskTa
   };
 
   const getPnlClass = (val: number) => {
-    if (val > 0) return 'text-[#22c55e] font-bold';
+    if (val > 0) return 'text-bull font-bold';
     if (val < 0) return 'text-[#ef4444] font-bold';
     return 'text-text-secondary';
   };
