@@ -20,7 +20,7 @@ export default function SubscriptionTab({ user, formatDate, updatingTier, handle
       <div className={`flex items-center gap-3 rounded-xl border p-4 ${
         user?.subscription?.status === 'ACTIVE'
           ? 'border-emerald-500/20 bg-emerald-500/5 text-emerald-400'
-          : 'border-border-default/40 bg-[#0c0f1d]/50 text-text-secondary'
+          : 'border-border-default/40 bg-surface/50 text-text-secondary'
       }`}>
         <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
           user?.subscription?.status === 'ACTIVE' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-elevated/30 text-text-secondary'
@@ -41,7 +41,7 @@ export default function SubscriptionTab({ user, formatDate, updatingTier, handle
 
       {/* Grid details */}
       <div className="grid grid-cols-2 gap-4">
-        <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4">
+        <div className="rounded-xl border border-border-default/40 bg-surface/50 p-4">
           <span className="text-[10px] uppercase tracking-wider text-text-secondary">Current Billing Tier</span>
           <div className="flex items-center gap-2 mt-1">
             <span className={`rounded-md px-2.5 py-0.5 text-xs font-black ${
@@ -54,7 +54,7 @@ export default function SubscriptionTab({ user, formatDate, updatingTier, handle
           </div>
         </div>
 
-        <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4">
+        <div className="rounded-xl border border-border-default/40 bg-surface/50 p-4">
           <span className="text-[10px] uppercase tracking-wider text-text-secondary">Subscription Status</span>
           <div className="flex items-center gap-2 mt-1.5">
             <span className={`h-2.5 w-2.5 rounded-full ${
@@ -68,7 +68,7 @@ export default function SubscriptionTab({ user, formatDate, updatingTier, handle
           </div>
         </div>
 
-        <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4">
+        <div className="rounded-xl border border-border-default/40 bg-surface/50 p-4">
           <span className="text-[10px] uppercase tracking-wider text-text-secondary">Billing Cycle Period End</span>
           <div className="flex items-center gap-2 text-sm font-bold text-white mt-1">
             <Calendar size={14} className="text-emerald-400" />
@@ -80,7 +80,7 @@ export default function SubscriptionTab({ user, formatDate, updatingTier, handle
           </div>
         </div>
 
-        <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4">
+        <div className="rounded-xl border border-border-default/40 bg-surface/50 p-4">
           <span className="text-[10px] uppercase tracking-wider text-text-secondary">Payment Method Mapped</span>
           <div className="flex items-center gap-2 text-sm font-bold text-white mt-1.5">
             {user?.subscription?.stripeCustomerId === 'phonepe_merchant_cust' ? (
@@ -107,7 +107,7 @@ export default function SubscriptionTab({ user, formatDate, updatingTier, handle
 
       {/* Detailed Plan ID Reference */}
       {user?.subscription && (
-        <div className="rounded-xl border border-border-default/40 bg-[#0c0f1d]/50 p-4">
+        <div className="rounded-xl border border-border-default/40 bg-surface/50 p-4">
           <span className="text-[10px] uppercase tracking-wider text-text-secondary block mb-1">Subscription Reference ID</span>
           <span className="text-[11px] font-mono text-text-secondary break-all">
             {user.subscription.id}
