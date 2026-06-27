@@ -215,11 +215,11 @@ export function ToolMenu({ icon: Icon, isActive, options, onSelect }: ToolMenuPr
     >
       <button
         type="button"
-        className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${isActive
-            ? 'text-primary bg-primary/10'
+        className={`flex h-10 w-full items-center justify-center rounded-none transition-colors border-b border-border-default/30 ${isActive
+            ? 'text-emerald-400 bg-emerald-500/5'
             : isOpen
-              ? 'text-text-primary bg-elevated'
-              : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
+              ? 'text-text-primary bg-elevated/40'
+              : 'text-text-secondary hover:bg-elevated/20 hover:text-text-primary'
           }`}
       >
         <Icon size={15} />
