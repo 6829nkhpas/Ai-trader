@@ -33,19 +33,19 @@ export default function ChartTypeSelector({ value, onSelect }: ChartTypeSelector
   const ref = useOutsideClose<HTMLDivElement>(() => setOpen(false));
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative h-full" ref={ref}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-label="Chart type"
-        className="flex h-7 items-center gap-1 rounded-md border border-border-default bg-surface px-2 text-[11px] font-semibold text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
+        className="flex h-full items-center gap-1.5 px-4 text-[11px] font-semibold text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary border-r border-border-default bg-surface"
       >
         <CandlestickChart size={13} className="text-text-muted" />
         <span>{CHART_TYPE_LABELS[value]}</span>
         <ChevronDown size={11} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 w-44 rounded-lg border border-border-default bg-surface/95 p-1 shadow-2xl backdrop-blur-xl">
+        <div className="absolute left-0 top-full z-50 mt-px w-44 rounded-none border border-border-default bg-surface/95 p-1 shadow-2xl backdrop-blur-xl">
           {CHART_TYPES.map((t) => (
             <button
               key={t}
@@ -54,13 +54,13 @@ export default function ChartTypeSelector({ value, onSelect }: ChartTypeSelector
                 onSelect(t);
                 setOpen(false);
               }}
-              className={`flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-[11px] transition-colors ${t === value
+              className={`flex w-full items-center justify-between rounded-none px-2.5 py-1.5 text-left text-[11px] transition-colors ${t === value
                   ? 'bg-primary/10 font-semibold text-primary'
                   : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
                 }`}
             >
               <span>{CHART_TYPE_LABELS[t]}</span>
-              {t === value && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
+              {t === value && <span className="h-1.5 w-1.5 rounded-none bg-primary" />}
             </button>
           ))}
         </div>
