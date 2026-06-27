@@ -186,7 +186,7 @@ export default function QuantRadar() {
         onClick={() => setIsOpen((p) => !p)}
         className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold shadow-sm transition-all duration-200 select-none ${
           isOpen
-            ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+            ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
             : 'bg-card border-border-default text-text-secondary hover:bg-elevated hover:text-text-primary'
         }`}
         title="Open Quant Radar"
@@ -194,12 +194,12 @@ export default function QuantRadar() {
         <div className="relative flex items-center">
           <Radar
             size={13}
-            className={`${anyLoading ? 'animate-spin text-emerald-400' : symbols.length > 0 ? 'text-emerald-400 animate-pulse' : 'text-text-secondary'}`}
+            className={`${anyLoading ? 'animate-spin text-emerald-600 dark:text-emerald-400' : symbols.length > 0 ? 'text-emerald-600 dark:text-emerald-400 animate-pulse' : 'text-text-secondary'}`}
           />
         </div>
         <span>Radar</span>
         {totalDetections > 0 && (
-          <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400 tabular-nums">
+          <span className="rounded-full bg-emerald-500/10 dark:bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
             {totalDetections}
           </span>
         )}
@@ -207,15 +207,15 @@ export default function QuantRadar() {
 
       {/* ── Dropdown Panel ── */}
       {isOpen && (
-        <div className="absolute right-0 top-full mt-2 z-[999] flex flex-col w-[400px] max-h-[560px] rounded-xl border border-border-default bg-surface/95 backdrop-blur-xl shadow-2xl">
+        <div className="absolute right-0 top-full mt-2 z-[999] flex flex-col w-[400px] max-h-[560px] rounded-none border border-border-default bg-surface/95 backdrop-blur-xl shadow-2xl">
           {/* ── Header ── */}
-          <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border-default bg-surface/80 rounded-t-xl">
+          <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border-default bg-surface/80 rounded-none">
             <div className="flex items-center gap-2">
               <Radar size={15} className="text-emerald-400" />
               <span className="text-xs font-bold tracking-wide text-text-primary uppercase">
                 Quant Radar
               </span>
-              <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400 tabular-nums">
+              <span className="rounded-none bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400 tabular-nums">
                 {symbols.length} symbol{symbols.length !== 1 ? 's' : ''}
               </span>
             </div>

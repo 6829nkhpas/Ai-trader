@@ -30,7 +30,7 @@ export default function TransactionsTab({
         <p className="text-xs text-text-secondary mt-1">Completed trades stored permanently in the local SQLite db</p>
       </div>
 
-      <div className="flex-1 min-h-0 rounded-xl border border-border-default/40 bg-[#0c0f1d]/30 overflow-hidden flex flex-col">
+      <div className="flex-1 min-h-0 rounded-xl border border-border-default/40 bg-muted/30 overflow-hidden flex flex-col">
         {loadingTrades ? (
           <div className="flex flex-1 flex-col items-center justify-center p-8">
             <Loader2 size={32} className="animate-spin text-emerald-400 mb-2" />
@@ -47,7 +47,7 @@ export default function TransactionsTab({
         ) : (
           <div className="flex-1 overflow-auto">
             <table className="w-full text-left border-collapse">
-              <thead className="sticky top-0 z-10 bg-[#0e1222] border-b border-border-default/40">
+              <thead className="sticky top-0 z-10 bg-elevated border-b border-border-default/40">
                 <tr>
                   <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-text-secondary">Symbol</th>
                   <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-text-secondary">Action</th>
