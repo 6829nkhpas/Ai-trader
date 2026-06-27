@@ -30,10 +30,10 @@ export default function TransactionsTab({
         <p className="text-xs text-text-secondary mt-1">Completed trades stored permanently in the local SQLite db</p>
       </div>
 
-      <div className="flex-1 min-h-0 rounded-xl border border-border-default/40 bg-muted/30 overflow-hidden flex flex-col">
+      <div className="flex-1 min-h-0 rounded-none border-y border-x-0 border-border-default/40 bg-muted/30 overflow-hidden flex flex-col">
         {loadingTrades ? (
           <div className="flex flex-1 flex-col items-center justify-center p-8">
-            <Loader2 size={32} className="animate-spin text-emerald-400 mb-2" />
+            <Loader2 size={32} className="animate-spin text-text-muted mb-2" />
             <span className="text-xs text-text-secondary">Loading local trade journal...</span>
           </div>
         ) : sqlTrades.length === 0 ? (
@@ -65,7 +65,7 @@ export default function TransactionsTab({
                     <tr key={t.id} className="hover:bg-elevated/15 transition-colors">
                       <td className="px-4 py-3 text-xs font-bold text-white">{t.symbol}</td>
                       <td className="px-4 py-3 text-xs">
-                        <span className={`rounded-md px-2 py-0.5 text-[9px] font-bold ${
+                        <span className={`rounded-none px-2 py-0.5 text-[9px] font-bold ${
                           t.type === 'BUY' 
                             ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400' 
                             : 'bg-red-500/10 border border-red-500/20 text-red-400'
