@@ -214,6 +214,9 @@ interface ChartUIState {
   ) => void;
   /** Flip an instance's visibility without discarding its configuration. */
   toggleIndicatorVisible: (symbol: string, instanceId: string) => void;
+  theme: 'light' | 'dark';
+  setTheme: (theme: 'light' | 'dark') => void;
+  toggleTheme: () => void;
 }
 
 export const useChartUIStore = create<ChartUIState>((set, get) => ({
@@ -570,4 +573,20 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
         },
       };
     }),
+
+  theme: 'dark',
+  setTheme: (theme) => {
+    set({ theme });
+    if (typeof document !== 'undefined') {
+      if (theme === 'light') {
+        document.documentElement.classList.add('light');
+      } else {
+        document.documentElement.classList.remove('light');
+      }
+    }
+  },
+  toggleTheme: () => {
+    const nextTheme = get().theme === 'dark' ? 'light' : 'dark';
+    get().setTheme(nextTheme);
+  },
 }));
