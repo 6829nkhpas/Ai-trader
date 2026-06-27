@@ -83,7 +83,7 @@ export default function SystemConsole() {
   return (
     <div
       id="system-console"
-      className={`flex flex-col border-t border-border-default bg-[#0B1120] transition-all duration-300 ease-in-out ${
+      className={`flex flex-col border-t border-border-default bg-surface transition-all duration-300 ease-in-out ${
         isExpanded ? 'h-48' : 'h-8'
       }`}
     >
