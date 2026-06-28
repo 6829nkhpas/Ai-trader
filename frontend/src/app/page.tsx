@@ -19,6 +19,8 @@ import OrderBook from '../components/OrderBook';
 import DeepQuantPanel from '../components/quant/DeepQuantPanel';
 import ActivePositions from '../components/quant/ActivePositions';
 import PortfolioDashboard from '../components/quant/PortfolioDashboard';
+import FnoModeToggle from '../components/fno/FnoModeToggle';
+import FnoSection from '../components/fno/FnoSection';
 import { useTradeStore, TradeProfile, ChartTimeframe, hydratePaperPortfolio } from '../store/useTradeStore';
 import { useQuantStore } from '../store/useQuantStore';
 import { useChartUIStore } from '../store/useChartUIStore';
@@ -40,6 +42,7 @@ const SIDEBAR_CONFIG: Record<TradeProfile, { label: string; badge: string; badge
 
 export default function Home() {
   const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, connectOrderFlowWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, setActiveTimeframe, activeRange, setActiveRange, selectedSymbol, paperPortfolio } = useTradeStore();
+  const fnoMode = useTradeStore((s) => s.fnoMode);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const isBrokerConnected = useAuthStore((s) => s.isBrokerConnected);
   const setBrokerConnected = useAuthStore((s) => s.setBrokerConnected);
@@ -355,6 +358,9 @@ export default function Home() {
                 </div>
 
                 <div className="flex h-full shrink-0 items-center border-l border-border-default">
+                  {/* F&O mode toggle (distinct from profile/timeframe controls) */}
+                  <FnoModeToggle />
+
                   {/* Chart-mode toggle (Standard / Volume Profile / Footprint) */}
                   <ChartModeToggle />
 
@@ -484,7 +490,7 @@ export default function Home() {
                   <ChartToolsBar className="border-r border-border-default/50 mr-1.5 py-2 bg-surface" />
                 )}
                 <div className="min-h-0 flex-1 bg-surface relative flex flex-col p-0 overflow-hidden">
-                  {renderProfileContent()}
+                  {fnoMode ? <FnoSection /> : renderProfileContent()}
                 </div>
               </div>
 

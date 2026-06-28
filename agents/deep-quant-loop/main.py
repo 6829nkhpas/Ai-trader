@@ -7,6 +7,18 @@ from langgraph.types import Command
 # Import the compiled LangGraph state machine
 from graph import graph
 
+# F&O read layer + analytics (F1/F2) and the agent options-bias classifier (F3).
+# The /options/snapshot endpoint (F4 transport seam) strictly COMPOSES these
+# existing functions and adds no analytics of its own (see the F4 design, AD-2).
+from datetime import datetime, timezone, timedelta
+from options import (
+    read_latest_and_prior_snapshot,
+    compute_options_analytics,
+    _escape_sql_literal,
+    _questdb_select,
+)
+from options_bias import classify_options_bias, resolve_options_bias_config
+
 # Pure glass-box stream helpers (reasoning splitter, event-payload builders,
 # run-lifecycle builders, and the ordered per-update event expansion). Factored
 # into stream_events.py so they are unit/property-testable in isolation
@@ -176,6 +188,183 @@ async def qa_agent(payload: QARequest):
         event_generator(payload.thread_id, graph_input=qa_input),
         media_type="text/event-stream"
     )
+
+# ── F&O snapshot endpoint (F4 transport seam — composition only) ──────────────
+# The frontend F&O section consumes F1/F2/F3 through this single thin, read-only
+# endpoint. It performs NO analytics of its own (Requirements 9.1, 9.5): it reads
+# the chain strikes via the existing F2 read layer, calls
+# ``options.compute_options_analytics`` (F2) and ``options_bias.classify_options_bias``
+# (F3) verbatim, and assembles their outputs — preserving every ``null`` leaf as
+# ``null`` — into the IPC payload the bridge proxies to the UI. When no snapshot
+# exists it returns the F2 ``Unavailable_Marker`` shape unchanged (Requirements
+# 8.1, 8.4).
+
+# NSE trading session in IST (UTC+5:30): 09:15–15:30, Monday–Friday. Used only to
+# label the payload ``open``/``closed`` so the UI can show a live vs most-recent
+# indicator (Requirement 8.4); this is a status flag, not an analytic.
+_IST_OFFSET = timedelta(hours=5, minutes=30)
+_SESSION_OPEN_MIN = 9 * 60 + 15
+_SESSION_CLOSE_MIN = 15 * 60 + 30
+
+
+def _now_ist() -> datetime:
+    """Current wall-clock time in IST (UTC+5:30)."""
+    return datetime.now(timezone.utc) + _IST_OFFSET
+
+
+def _market_status() -> str:
+    """Return ``"open"`` during the NSE session, otherwise ``"closed"``."""
+    now = _now_ist()
+    if now.weekday() >= 5:  # Saturday / Sunday
+        return "closed"
+    minute_of_day = now.hour * 60 + now.minute
+    if _SESSION_OPEN_MIN <= minute_of_day <= _SESSION_CLOSE_MIN:
+        return "open"
+    return "closed"
+
+
+def _resolve_nearest_expiry(underlying: str) -> str:
+    """Resolve the nearest available expiry for ``underlying`` (composition only).
+
+    Reads the distinct expiries that have ``option_chain_snapshots`` for the
+    underlying (via the existing F2 read primitives), then picks the nearest one:
+    the soonest expiry on or after today's IST date, falling back to the latest
+    available expiry when every stored expiry is already in the past. F1 stores
+    expiries as ISO ``YYYY-MM-DD`` strings, which sort chronologically. Returns
+    ``""`` (never raises) when no expiry exists for the underlying.
+    """
+    u = _escape_sql_literal(underlying)
+    rows = _questdb_select(
+        "SELECT DISTINCT expiry FROM option_chain_snapshots "
+        f"WHERE underlying='{u}' ORDER BY expiry ASC"
+    )
+    if not rows:
+        return ""
+    expiries = [
+        row[0]
+        for row in rows
+        if isinstance(row, (list, tuple)) and row
+        and isinstance(row[0], str) and row[0].strip()
+    ]
+    if not expiries:
+        return ""
+    today = _now_ist().strftime("%Y-%m-%d")
+    upcoming = [e for e in expiries if e >= today]
+    return upcoming[0] if upcoming else expiries[-1]
+
+
+def _representative_iv(strike, ce_iv, pe_iv, spot):
+    """Select the single per-strike IV to surface, mirroring F2's skew rule.
+
+    F2 builds its IV-skew from the out-of-the-money side (put IV at/below spot,
+    call IV above spot), falling back to whichever leg is solvable when spot is
+    unavailable. This reuses that exact selection so the surfaced ``iv`` is
+    consistent with the analytics result — it composes (never recomputes) the
+    already-computed per-strike IVs and preserves ``null`` as ``null``.
+    """
+    if spot is not None and isinstance(strike, (int, float)) and not isinstance(strike, bool):
+        return pe_iv if strike <= spot else ce_iv
+    return ce_iv if ce_iv is not None else pe_iv
+
+
+def _build_chain_rows(latest, analytics: dict) -> list:
+    """Assemble one chain row per snapshot strike (composition only).
+
+    Each row carries the strike's CE/PE open interest and last price straight
+    from the F2 read-layer ``ChainSnapshot`` and the representative per-strike IV
+    drawn from the F2 ``per_strike`` output — preserving every ``null`` leaf as
+    ``null`` and never fabricating a value. Strikes are exactly those present in
+    the snapshot, in the snapshot's ascending order.
+    """
+    iv_by_strike: dict = {}
+    for entry in (analytics.get("per_strike") or []):
+        if not isinstance(entry, dict):
+            continue
+        ce = entry.get("ce") if isinstance(entry.get("ce"), dict) else {}
+        pe = entry.get("pe") if isinstance(entry.get("pe"), dict) else {}
+        iv_by_strike[entry.get("strike")] = (ce.get("iv"), pe.get("iv"))
+
+    spot = analytics.get("spot")
+    chain = []
+    for quote in getattr(latest, "strikes", ()) or ():
+        ce_iv, pe_iv = iv_by_strike.get(quote.strike, (None, None))
+        chain.append({
+            "strike": quote.strike,
+            "ce_oi": quote.ce_oi,
+            "pe_oi": quote.pe_oi,
+            "ce_price": quote.ce_price,
+            "pe_price": quote.pe_price,
+            "iv": _representative_iv(quote.strike, ce_iv, pe_iv, spot),
+        })
+    return chain
+
+
+@app.get("/options/snapshot")
+def options_snapshot(underlying: str, expiry: str = ""):
+    """Return the assembled F&O snapshot for a chain, or an Unavailable_Marker.
+
+    Composes the existing F1/F2/F3 layers (no new analytics — Requirements 9.1,
+    9.5):
+
+      1. Resolve the nearest available expiry when ``expiry`` is blank.
+      2. Read the latest chain snapshot's strikes via the F2 read layer.
+      3. Compute the ``Options_Analytics_Result`` via
+         ``options.compute_options_analytics`` (F2).
+      4. Derive the ``Options_Bias`` via ``options_bias.classify_options_bias`` (F3).
+
+    On success returns
+    ``{ underlying, expiry, snapshot_ts, market_status, chain, analytics, bias }``
+    with every ``null`` leaf preserved verbatim. When no snapshot exists (or F2
+    otherwise degrades) it returns the F2 ``Unavailable_Marker``
+    ``{ underlying, expiry, unavailable: true, reason, last_snapshot_ts? }``
+    (Requirements 8.1, 8.4). Never raises into the caller.
+    """
+    requested_expiry = expiry.strip() if isinstance(expiry, str) else ""
+
+    # 1. Resolve the nearest expiry when none was supplied.
+    resolved_expiry = requested_expiry or _resolve_nearest_expiry(underlying)
+    if not resolved_expiry:
+        return {
+            "underlying": underlying,
+            "expiry": "",
+            "unavailable": True,
+            "reason": f"no chain snapshot available for {underlying}",
+        }
+
+    # 2. Read the chain strikes via the existing F2 read layer.
+    latest, _prior = read_latest_and_prior_snapshot(underlying, resolved_expiry)
+    if latest is None:
+        return {
+            "underlying": underlying,
+            "expiry": resolved_expiry,
+            "unavailable": True,
+            "reason": (
+                f"no chain snapshot available for {underlying} / {resolved_expiry}"
+            ),
+        }
+
+    # 3. Compute analytics (F2). A snapshot exists, so if F2 still degrades to a
+    #    marker (e.g. spot unavailable) pass it through with the last snapshot
+    #    timestamp so the UI can show the most-recent state (Requirement 8.4).
+    analytics = compute_options_analytics(underlying, resolved_expiry)
+    if analytics.get("unavailable"):
+        marker = dict(analytics)
+        marker["last_snapshot_ts"] = latest.snapshot_ts
+        return marker
+
+    # 4. Derive the options bias (F3) from the analytics result.
+    bias = classify_options_bias(analytics, resolve_options_bias_config())
+
+    return {
+        "underlying": underlying,
+        "expiry": resolved_expiry,
+        "snapshot_ts": analytics.get("snapshot_ts", latest.snapshot_ts),
+        "market_status": _market_status(),
+        "chain": _build_chain_rows(latest, analytics),
+        "analytics": analytics,
+        "bias": bias,
+    }
+
 
 # ── Entrypoint ───────────────────────────────────────────────────────────────
 
