@@ -2237,6 +2237,97 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
     return record
 
 
+def _apply_weight_map_to_conviction(decision: dict, symbol=None) -> None:
+    """Opt-in Feature-Attribution Weight_Map consultation (feature-attribution-pruning).
+
+    GUARDED + INERT BY DEFAULT. When ``ATTRIBUTION_WEIGHT_MAP_ENABLED`` is false —
+    the default — this returns before touching the ``decision`` in any way, so the
+    finalize path is BYTE-FOR-BYTE identical to today and the pass has zero effect
+    on the running agent (R6.2, R6.3, R9.4). The only way the branch below runs is
+    an explicit opt-in.
+
+    When enabled it runs HERE, inside ``_finalize_decision`` — i.e. strictly AFTER
+    the hard risk rules / Trade_Validator have already accepted the trade (a
+    declare_trade the validator rejected never reaches finalize: it leaves the
+    decision unset and the bounded loop continues — see ``_decision_from_declare``
+    / ``_declare_was_rejected``). It then:
+
+      * loads the Weight_Map READ-ONLY from the journal (R9.3) — never writing,
+        and degrading to neutral weights on any failure;
+      * scales the conviction CONTRIBUTION of each fingerprint dimension present
+        in this decision by that dimension's weight (a dimension absent from the
+        map defaults to weight ``1.0`` — no change). Because the committed
+        conviction is a single aggregate score rather than a stored per-dimension
+        breakdown, scaling each equal contribution by its weight and re-aggregating
+        is the sample-weighted-neutral mean of the present dimensions' weights;
+      * records ``weight_map_applied: true`` with the resolved per-dimension
+        weights (and the before/after conviction) in the decision's defensibility
+        record so the committed decision stays auditable (R6.5).
+
+    The weight ONLY scales conviction; every derivable weight lies in ``(0.0, 1.0]``
+    so it can only attenuate, never amplify. It never touches the action or the
+    execution levels, so it can never, of itself, commit, block, override, or relax
+    a hard risk rule (R6.4) — the validator already ran and is independent of the
+    conviction score. TOTAL: any failure degrades to a no-op and never raises into
+    the run.
+    """
+    # Lazy import so the attribution module is only loaded on the opt-in path.
+    try:
+        import attribution
+        config = attribution.resolve_attribution_config()
+    except Exception:
+        return
+
+    # The single guard: disabled (default) => skip the entire branch (R6.2/6.3/9.4).
+    if not getattr(config, "weight_map_enabled", False):
+        return
+
+    try:
+        record = decision.get("defensibility")
+        if not isinstance(record, dict):
+            return
+
+        # READ-ONLY Weight_Map from the journal (R9.3); degrade to neutral on any
+        # failure (missing/locked DB, or the I/O helper not yet available).
+        try:
+            weight_map = attribution.weight_map_from_journal(symbol)
+        except Exception:
+            weight_map = {}
+        if not isinstance(weight_map, dict):
+            weight_map = {}
+
+        # The fingerprint dimensions present in THIS committed decision, derived
+        # from the same low-cardinality setup tags the journal records.
+        tags = journal.derive_setup_tags(decision)
+        key = journal.setup_key_from_tags(tags)
+        parsed = attribution.parse_setup_key(key)
+
+        # Weight applied per present dimension (absent => 1.0 / no change, R6.1).
+        applied = {dim: float(weight_map.get(dim, 1.0)) for dim in parsed}
+
+        # Record the consultation for auditability (R6.5), even when neutral.
+        record["weight_map_applied"] = True
+        record["weight_map"] = applied
+
+        conviction = decision.get("conviction_score")
+        if (
+            applied
+            and isinstance(conviction, (int, float))
+            and not isinstance(conviction, bool)
+        ):
+            mean_weight = sum(applied.values()) / len(applied)
+            scaled = int(round(conviction * mean_weight))
+            # conviction_score is an int in [0, 100]; clamp defensively. Weights
+            # in (0,1] can only attenuate, so this never raises conviction.
+            scaled = 0 if scaled < 0 else (100 if scaled > 100 else scaled)
+            record["conviction_before_weight_map"] = conviction
+            record["conviction_after_weight_map"] = scaled
+            decision["conviction_score"] = scaled
+    except Exception as e:
+        # Never let an opt-in analytics consultation break a committed decision.
+        print(f"[Attribution] WARN: Weight_Map consultation skipped: {e}")
+
+
 def _finalize_decision(state: AgentState, decision: dict) -> dict:
     """Attach the defensibility record AND persist the decision to the journal.
 
@@ -2251,6 +2342,12 @@ def _finalize_decision(state: AgentState, decision: dict) -> dict:
         mode=state.get("mode"),
         manual_trade=state.get("manual_trade"),
     )
+    # Opt-in Feature-Attribution Weight_Map consultation (feature-attribution-pruning,
+    # R6.2-6.5, R9.3-9.4). Runs AFTER the defensibility record is built (and thus
+    # after the Trade_Validator that gates which declare_trade reaches finalize),
+    # and is a no-op unless ATTRIBUTION_WEIGHT_MAP_ENABLED is explicitly set — so
+    # by default this line is byte-for-byte inert.
+    _apply_weight_map_to_conviction(decision, symbol=state.get("symbol"))
     try:
         journal.record_decision(
             decision,
