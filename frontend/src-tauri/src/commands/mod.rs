@@ -5,6 +5,7 @@
 
 pub mod charts;
 pub mod deep_quant;
+pub mod fno;
 pub mod instruments;
 pub mod quant;
 pub mod radar;
