@@ -24,14 +24,14 @@ function parseInlineMarkdown(text: string) {
 const AnswerText = ({ content }: { content: string }) => {
   const lines = content.split('\n');
   return (
-    <div className="space-y-1 text-[10.5px] font-sans leading-relaxed tracking-wide text-slate-100/90">
+    <div className="space-y-1 text-[10.5px] font-sans leading-relaxed tracking-wide text-text-primary/95">
       {lines.map((line, idx) => {
         const trimmed = line.trim();
         if (!trimmed) return <div key={idx} className="h-1" />;
 
         if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
           return (
-            <div key={idx} className="flex items-start gap-2 pl-1 my-0.5 text-slate-200">
+            <div key={idx} className="flex items-start gap-2 pl-1 my-0.5 text-text-primary">
               <span className="text-text-secondary font-bold select-none mt-0.5">•</span>
               <span className="flex-1">{parseInlineMarkdown(trimmed.substring(2))}</span>
             </div>
@@ -39,7 +39,7 @@ const AnswerText = ({ content }: { content: string }) => {
         }
 
         return (
-          <p key={idx} className="text-slate-300">
+          <p key={idx} className="text-text-secondary">
             {parseInlineMarkdown(line)}
           </p>
         );
@@ -81,7 +81,7 @@ export default function TradeQaPanel() {
   };
 
   return (
-    <div className="flex flex-col font-sans bg-black border border-border-default rounded-none overflow-hidden relative">
+    <div className="flex flex-col font-sans bg-surface border border-border-default rounded-none overflow-hidden relative">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2 bg-elevated border-b border-border-default select-none">
         <div className="flex items-center gap-2">
@@ -168,7 +168,7 @@ export default function TradeQaPanel() {
 
       {/* Composer */}
       <div className="shrink-0 border-t border-border-default bg-elevated/70 p-2.5">
-        <div className="flex items-end gap-2">
+        <div className="relative flex items-center w-full">
           <textarea
             rows={1}
             value={draft}
@@ -178,23 +178,23 @@ export default function TradeQaPanel() {
             placeholder={
               currentThreadId ? 'Ask a follow-up question…' : 'Run an analysis first…'
             }
-            className="flex-1 resize-none rounded-none bg-black border border-border-default px-3 py-2 text-[11px] font-sans text-text-primary placeholder:text-text-muted/65 focus:outline-none focus:border-text-primary/40 focus:ring-1 focus:ring-text-primary/20 disabled:opacity-50 disabled:cursor-not-allowed scrollbar-thin"
+            className="w-full resize-none rounded-full bg-surface border border-border-default pl-4 pr-10 py-2 text-[11px] font-sans text-text-primary placeholder:text-text-muted/65 focus:outline-none focus:border-text-primary/40 focus:ring-1 focus:ring-text-primary/20 disabled:opacity-50 disabled:cursor-not-allowed scrollbar-thin"
           />
           <button
             type="button"
             onClick={handleSend}
             disabled={!canSend}
             title="Send question"
-            className={`flex h-8 items-center justify-center gap-1.5 rounded-none px-3 text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border ${
+            className={`absolute right-1 h-7 w-7 rounded-full flex items-center justify-center transition-all duration-300 border ${
               canSend
-                ? 'bg-text-primary text-surface border-text-primary hover:bg-text-secondary hover:border-text-secondary active:scale-[0.98]'
-                : 'bg-elevated text-text-muted/50 border border-border-default opacity-50 cursor-not-allowed'
+                ? 'bg-text-primary text-surface border-text-primary hover:bg-text-secondary hover:border-text-secondary active:scale-[0.95]'
+                : 'bg-elevated/40 text-text-muted/30 border-transparent opacity-50 cursor-not-allowed'
             }`}
           >
             {isStreaming ? (
-              <Loader2 size={13} className="animate-spin" />
+              <Loader2 size={12} className="animate-spin" />
             ) : (
-              <Send size={13} />
+              <Send size={12} />
             )}
           </button>
         </div>
