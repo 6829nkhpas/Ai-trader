@@ -19,8 +19,9 @@ import OrderBook from '../components/OrderBook';
 import DeepQuantPanel from '../components/quant/DeepQuantPanel';
 import ActivePositions from '../components/quant/ActivePositions';
 import PortfolioDashboard from '../components/quant/PortfolioDashboard';
-import FnoModeToggle from '../components/fno/FnoModeToggle';
 import FnoSection from '../components/fno/FnoSection';
+import SplitChartContainer from '../components/chart/SplitChartContainer';
+import SplitViewToggle from '../components/chart/SplitViewToggle';
 import { useTradeStore, TradeProfile, ChartTimeframe, hydratePaperPortfolio } from '../store/useTradeStore';
 import { useQuantStore } from '../store/useQuantStore';
 import { useChartUIStore } from '../store/useChartUIStore';
@@ -38,11 +39,11 @@ const SIDEBAR_CONFIG: Record<TradeProfile, { label: string; badge: string; badge
   INTRADAY: { label: 'Order Book', badge: 'INTRADAY', badgeColor: 'bg-emerald-500/10 text-emerald-400' },
   SWING: { label: 'Confluence', badge: 'SWING', badgeColor: 'bg-amber-500/10 text-amber-400' },
   INVESTOR: { label: 'Macro Intelligence', badge: 'INVESTOR', badgeColor: 'bg-cyan-500/10 text-cyan-400' },
+  FNO: { label: 'Options Flow', badge: 'F&O', badgeColor: 'bg-emerald-500/10 text-emerald-400' },
 };
 
 export default function Home() {
   const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, connectOrderFlowWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, setActiveTimeframe, activeRange, setActiveRange, selectedSymbol, paperPortfolio } = useTradeStore();
-  const fnoMode = useTradeStore((s) => s.fnoMode);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const isBrokerConnected = useAuthStore((s) => s.isBrokerConnected);
   const setBrokerConnected = useAuthStore((s) => s.setBrokerConnected);
@@ -70,6 +71,7 @@ export default function Home() {
   const setActiveStrategyId = useChartUIStore((s) => s.setActiveStrategyId);
   const showIndicatorManager = useChartUIStore((s) => s.showIndicatorManager);
   const toggleIndicatorManager = useChartUIStore((s) => s.toggleIndicatorManager);
+  const splitView = useChartUIStore((s) => s.splitView);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('profile');
 
@@ -263,6 +265,7 @@ export default function Home() {
     INTRADAY: { label: 'INTRADAY MODE', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' },
     SWING: { label: 'SWING MODE', color: 'bg-amber-500/10 text-amber-400 border-amber-500/30' },
     INVESTOR: { label: 'INVESTOR MODE', color: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30' },
+    FNO: { label: 'F&O MODE', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' },
   };
   const badge = profileBadgeConfig[activeProfile];
   const sidebarCfg = SIDEBAR_CONFIG[activeProfile];
@@ -279,9 +282,15 @@ export default function Home() {
 
   // ── Profile-Driven Content Renderer ────────────────────────────────
   const renderProfileContent = () => {
+    // Split is only meaningful in Intraday & F&O (mode-gated). When on, the
+    // chart area mounts the dual-pane SplitChartContainer for those modes.
+    const split = splitView && (activeProfile === 'INTRADAY' || activeProfile === 'FNO');
+
     switch (activeProfile) {
       case 'INTRADAY':
-        return <IntradayLayout activeProfile={activeProfile} timeframe={activeTimeframe} isExpanded={!sidebarOpen} onToggleExpand={() => setSidebarOpen(!sidebarOpen)} />;
+        return split
+          ? <SplitChartContainer mode="INTRADAY" />
+          : <IntradayLayout activeProfile={activeProfile} timeframe={activeTimeframe} isExpanded={!sidebarOpen} onToggleExpand={() => setSidebarOpen(!sidebarOpen)} />;
 
       case 'SWING':
         return <SwingLayout activeProfile={activeProfile} timeframe={activeTimeframe} isExpanded={!sidebarOpen} onToggleExpand={() => setSidebarOpen(!sidebarOpen)} />;
@@ -289,8 +298,13 @@ export default function Home() {
       case 'INVESTOR':
         return <InvestorLayout activeProfile={activeProfile} timeframe={activeTimeframe} isExpanded={!sidebarOpen} onToggleExpand={() => setSidebarOpen(!sidebarOpen)} />;
 
+      case 'FNO':
+        return split ? <SplitChartContainer mode="FNO" /> : <FnoSection />;
+
       default:
-        return null;
+        // Unknown/unset mode falls back to the Intraday workspace so an
+        // unexpected stored value never blanks the terminal (design: Error Handling).
+        return <IntradayLayout activeProfile={activeProfile} timeframe={activeTimeframe} isExpanded={!sidebarOpen} onToggleExpand={() => setSidebarOpen(!sidebarOpen)} />;
     }
   };
 
@@ -358,8 +372,8 @@ export default function Home() {
                 </div>
 
                 <div className="flex h-full shrink-0 items-center border-l border-border-default">
-                  {/* F&O mode toggle (distinct from profile/timeframe controls) */}
-                  <FnoModeToggle />
+                  {/* Single / Split chart layout toggle (self-gating: Intraday & F&O only) */}
+                  <SplitViewToggle />
 
                   {/* Chart-mode toggle (Standard / Volume Profile / Footprint) */}
                   <ChartModeToggle />
@@ -490,7 +504,7 @@ export default function Home() {
                   <ChartToolsBar className="border-r border-border-default/50 mr-1.5 py-2 bg-surface" />
                 )}
                 <div className="min-h-0 flex-1 bg-surface relative flex flex-col p-0 overflow-hidden">
-                  {fnoMode ? <FnoSection /> : renderProfileContent()}
+                  {renderProfileContent()}
                 </div>
               </div>
 
