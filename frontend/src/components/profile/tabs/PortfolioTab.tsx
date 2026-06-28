@@ -10,7 +10,7 @@ export default function PortfolioTab({ paperPortfolio }: PortfolioTabProps) {
   return (
     <div className="flex flex-col h-full space-y-5">
       <div>
-        <h2 className="text-xl font-extrabold text-white tracking-tight">Paper Trading State</h2>
+        <h2 className="text-xl font-extrabold text-text-primary tracking-tight">Paper Trading State</h2>
         <p className="text-xs text-text-secondary mt-1">Real-time mock balance, active risk layers, and open orders</p>
       </div>
 
@@ -46,12 +46,12 @@ export default function PortfolioTab({ paperPortfolio }: PortfolioTabProps) {
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2">
             <Activity size={14} className="text-emerald-400 animate-pulse" />
-            <h3 className="text-xs font-bold text-white uppercase tracking-wider">Active Open Positions</h3>
+            <h3 className="text-xs font-bold text-text-primary uppercase tracking-wider">Active Open Positions</h3>
           </div>
           <span className="text-[10px] text-text-secondary font-mono">Tauri Engine Sync</span>
         </div>
 
-        <div className="flex-1 min-h-0 rounded-none border-y border-x-0 border-border-default/40 bg-muted/30 overflow-auto">
+        <div className="flex-1 min-h-0 rounded-none border border-border-default/40 bg-muted/30 overflow-auto">
           {!paperPortfolio || paperPortfolio.active_positions.length === 0 ? (
             <div className="flex h-32 flex-col items-center justify-center text-center p-4">
               <p className="text-xs text-text-secondary font-medium">No Active Open Positions</p>
@@ -74,7 +74,7 @@ export default function PortfolioTab({ paperPortfolio }: PortfolioTabProps) {
               <tbody className="divide-y divide-border-default/10">
                 {paperPortfolio.active_positions.map((pos: VirtualPosition) => (
                   <tr key={pos.id} className="hover:bg-elevated/10">
-                    <td className="px-4 py-2.5 text-xs font-bold text-white">{pos.symbol}</td>
+                    <td className="px-4 py-2.5 text-xs font-bold text-text-primary">{pos.symbol}</td>
                     <td className="px-4 py-2.5 text-xs">
                       <span className={`rounded-none px-1.5 py-0.5 text-[8px] font-bold border ${
                         pos.side === 'BUY'
