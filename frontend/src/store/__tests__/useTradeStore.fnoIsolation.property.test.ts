@@ -1,21 +1,24 @@
-// Feature: fno-frontend-section, Property 10
+// Feature: terminal-ux-overhaul
 //
-// Property 10: Toggling F&O mode never alters the existing profile state.
+// Property 1: Workspace modes are mutually exclusive
+//   "For any sequence of setActiveProfile calls, exactly one TradeProfile
+//    (including FNO) is active, and selecting a mode deselects all others."
+//   Validates: Requirements 1.2, 1.4
 //
-// "For any store state, invoking `toggleFnoMode` (activating or deactivating)
-//  leaves `activeProfile`, `activeTimeframe`, and `chartMode` unchanged, so the
-//  existing Intraday/Swing/Investor profiles and their charts are never
-//  disturbed by the F&O toggle."
+// Property 3: No second source of truth for F&O
+//   "For any state, whether the F&O workspace is active is determined solely by
+//    activeProfile === 'FNO'; no separate fnoMode flag exists."
+//   Validates: Requirements 1.4, 6.3
 //
-// Validates: Requirements 9.4
+// Isolation: switching workspace modes leaves the unrelated chart state
+//   (activeTimeframe, chartMode, selectedSymbol) intact.
+//   Validates: Requirements 6.2, 6.3, 6.4
 //
-// `toggleFnoMode` (and its sibling `setFnoMode`) are deliberately scoped to the
-// single `fnoMode` boolean source of truth. They must never write to the
-// existing profile/workspace state — `activeProfile`, `activeTimeframe`, or
-// `chartMode`. We seed the store with arbitrary values for those fields plus an
-// arbitrary starting `fnoMode`, invoke the toggle (and, for thoroughness, the
-// explicit setter), and assert the three profile fields are byte-for-byte
-// unchanged while only `fnoMode` flips.
+// This rewrites the former fno-frontend-section "Property 10" test, which was
+// written against the now-removed `fnoMode`/`toggleFnoMode`/`setFnoMode` flag.
+// Under the unified model (AD-1), F&O is a peer `TradeProfile` and
+// `setActiveProfile` is the only entry. Mutual exclusivity is intrinsic to a
+// single enum field, and there is no second boolean source of truth.
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import fc from 'fast-check';
@@ -26,21 +29,22 @@ import {
   type ChartTimeframe,
 } from '@/store/useTradeStore';
 
-const PROFILES: TradeProfile[] = ['INTRADAY', 'SWING', 'INVESTOR'];
+const PROFILES: TradeProfile[] = ['INTRADAY', 'SWING', 'INVESTOR', 'FNO'];
 const TIMEFRAMES: ChartTimeframe[] = ['1m', '5m', '10m', '15m', '1h', '1D', '1W'];
 const CHART_MODES = ['STANDARD', 'VOLUME_PROFILE', 'FOOTPRINT'] as const;
+const SYMBOLS = ['RELIANCE', 'TCS', 'INFY', 'NIFTY 50', 'BANKNIFTY'];
 
 function store() {
   return useTradeStore.getState();
 }
 
-/** Arbitrary slice of the store state relevant to toggle isolation. */
+/** Arbitrary slice of the store state relevant to mode isolation. */
 function storeStateArb() {
   return fc.record({
-    fnoMode: fc.boolean(),
     activeProfile: fc.constantFrom(...PROFILES),
     activeTimeframe: fc.constantFrom(...TIMEFRAMES),
     chartMode: fc.constantFrom(...CHART_MODES),
+    selectedSymbol: fc.constantFrom(...SYMBOLS),
     fnoUnderlying: fc.constantFrom('NIFTY 50', 'BANKNIFTY'),
     fnoExpiry: fc.constantFrom('', '2024-12-26', '2025-01-30'),
   });
@@ -49,104 +53,137 @@ function storeStateArb() {
 beforeEach(() => {
   // Reset only the fields this property exercises back to defaults.
   useTradeStore.setState({
-    fnoMode: false,
     activeProfile: 'INTRADAY',
     activeTimeframe: '10m',
     chartMode: 'STANDARD',
+    selectedSymbol: 'RELIANCE',
     fnoUnderlying: 'NIFTY 50',
     fnoExpiry: '',
   });
 });
 
-describe('Property 10: toggling F&O mode never alters the existing profile state', () => {
-  it('a single toggle leaves activeProfile/activeTimeframe/chartMode unchanged', () => {
+describe('Property 1: workspace modes are mutually exclusive', () => {
+  it('after any single setActiveProfile, exactly that mode is active', () => {
     fc.assert(
-      fc.property(storeStateArb(), (seed) => {
+      fc.property(storeStateArb(), fc.constantFrom(...PROFILES), (seed, target) => {
         useTradeStore.setState(seed);
 
-        const before = {
-          activeProfile: store().activeProfile,
-          activeTimeframe: store().activeTimeframe,
-          chartMode: store().chartMode,
-          fnoMode: store().fnoMode,
-        };
+        store().setActiveProfile(target);
 
-        store().toggleFnoMode();
-
-        // The F&O toggle flips ONLY fnoMode...
-        expect(store().fnoMode).toBe(!before.fnoMode);
-        // ...and never disturbs the existing profile workspace state.
-        expect(store().activeProfile).toBe(before.activeProfile);
-        expect(store().activeTimeframe).toBe(before.activeTimeframe);
-        expect(store().chartMode).toBe(before.chartMode);
+        // The selected mode is active...
+        expect(store().activeProfile).toBe(target);
+        // ...and it is exactly one of the known modes (a single enum value can
+        // never represent two active modes at once).
+        expect(PROFILES).toContain(store().activeProfile);
+        // Exactly one mode equals the active value; all others are deselected.
+        const activeCount = PROFILES.filter((p) => p === store().activeProfile).length;
+        expect(activeCount).toBe(1);
       }),
       { numRuns: 200 },
     );
   });
 
-  it('toggling to a specific target (activate or deactivate) preserves profile state', () => {
+  it('for any sequence of setActiveProfile calls, the last selected mode is the sole active mode', () => {
     fc.assert(
-      fc.property(storeStateArb(), (seed) => {
-        useTradeStore.setState(seed);
+      fc.property(
+        storeStateArb(),
+        fc.array(fc.constantFrom(...PROFILES), { minLength: 1, maxLength: 25 }),
+        (seed, sequence) => {
+          useTradeStore.setState(seed);
 
-        const before = {
-          activeProfile: store().activeProfile,
-          activeTimeframe: store().activeTimeframe,
-          chartMode: store().chartMode,
-        };
+          for (const mode of sequence) {
+            store().setActiveProfile(mode);
+            // Invariant after every step: exactly the just-selected mode is active.
+            expect(store().activeProfile).toBe(mode);
+          }
 
-        // Whether the toggle is an activation (false -> true) or a
-        // deactivation (true -> false), the profile fields are untouched.
-        store().toggleFnoMode();
+          // The final active mode is the last one selected — no residual mode.
+          const last = sequence[sequence.length - 1];
+          expect(store().activeProfile).toBe(last);
+          const activeCount = PROFILES.filter((p) => p === store().activeProfile).length;
+          expect(activeCount).toBe(1);
+        },
+      ),
+      { numRuns: 200 },
+    );
+  });
+});
 
-        expect(store().activeProfile).toBe(before.activeProfile);
-        expect(store().activeTimeframe).toBe(before.activeTimeframe);
-        expect(store().chartMode).toBe(before.chartMode);
+describe('Property 3: no second source of truth for F&O', () => {
+  it('F&O-active is determined solely by activeProfile === FNO', () => {
+    fc.assert(
+      fc.property(fc.constantFrom(...PROFILES), (target) => {
+        store().setActiveProfile(target);
+
+        const fnoActive = store().activeProfile === 'FNO';
+        expect(fnoActive).toBe(target === 'FNO');
       }),
       { numRuns: 200 },
     );
   });
 
-  it('repeated toggles never alter the profile state across many flips', () => {
+  it('the store state carries no legacy fnoMode flag (and no fno toggles)', () => {
     fc.assert(
-      fc.property(storeStateArb(), fc.integer({ min: 0, max: 20 }), (seed, count) => {
+      fc.property(fc.constantFrom(...PROFILES), (target) => {
+        store().setActiveProfile(target);
+
+        const state = store() as Record<string, unknown>;
+        // No second boolean source of truth.
+        expect('fnoMode' in state).toBe(false);
+        // The legacy actions are gone too — only setActiveProfile drives F&O.
+        expect('setFnoMode' in state).toBe(false);
+        expect('toggleFnoMode' in state).toBe(false);
+      }),
+      { numRuns: 50 },
+    );
+  });
+});
+
+describe('Isolation: switching modes leaves unrelated chart state intact', () => {
+  it('a single setActiveProfile leaves timeframe/chartMode/selectedSymbol unchanged', () => {
+    fc.assert(
+      fc.property(storeStateArb(), fc.constantFrom(...PROFILES), (seed, target) => {
         useTradeStore.setState(seed);
 
         const before = {
-          activeProfile: store().activeProfile,
           activeTimeframe: store().activeTimeframe,
           chartMode: store().chartMode,
+          selectedSymbol: store().selectedSymbol,
         };
 
-        for (let i = 0; i < count; i++) store().toggleFnoMode();
+        store().setActiveProfile(target);
 
-        // No number of F&O toggles ever leaks into the profile workspace state.
-        expect(store().activeProfile).toBe(before.activeProfile);
+        // Switching workspace mode never disturbs the chart state.
         expect(store().activeTimeframe).toBe(before.activeTimeframe);
         expect(store().chartMode).toBe(before.chartMode);
+        expect(store().selectedSymbol).toBe(before.selectedSymbol);
       }),
       { numRuns: 200 },
     );
   });
 
-  it('setFnoMode (the explicit setter) also leaves profile state untouched', () => {
+  it('any sequence of mode switches leaves timeframe/chartMode/selectedSymbol unchanged', () => {
     fc.assert(
-      fc.property(storeStateArb(), fc.boolean(), (seed, target) => {
-        useTradeStore.setState(seed);
+      fc.property(
+        storeStateArb(),
+        fc.array(fc.constantFrom(...PROFILES), { minLength: 0, maxLength: 25 }),
+        (seed, sequence) => {
+          useTradeStore.setState(seed);
 
-        const before = {
-          activeProfile: store().activeProfile,
-          activeTimeframe: store().activeTimeframe,
-          chartMode: store().chartMode,
-        };
+          const before = {
+            activeTimeframe: store().activeTimeframe,
+            chartMode: store().chartMode,
+            selectedSymbol: store().selectedSymbol,
+          };
 
-        store().setFnoMode(target);
+          for (const mode of sequence) store().setActiveProfile(mode);
 
-        expect(store().fnoMode).toBe(target);
-        expect(store().activeProfile).toBe(before.activeProfile);
-        expect(store().activeTimeframe).toBe(before.activeTimeframe);
-        expect(store().chartMode).toBe(before.chartMode);
-      }),
+          // No number of mode switches ever leaks into the chart state.
+          expect(store().activeTimeframe).toBe(before.activeTimeframe);
+          expect(store().chartMode).toBe(before.chartMode);
+          expect(store().selectedSymbol).toBe(before.selectedSymbol);
+        },
+      ),
       { numRuns: 200 },
     );
   });
