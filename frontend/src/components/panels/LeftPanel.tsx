@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   Search, Loader2, X, ArrowUpRight, ArrowDownRight,
   ChevronUp, ChevronDown, Plus, Trash2, GripVertical, Activity
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTradeStore } from '../../store/useTradeStore';
+import { useChartUIStore } from '../../store/useChartUIStore';
 import { useQuantStore } from '../../store/useQuantStore';
 import { hydrateWatchlist } from '../../store/useTradeStore';
 
@@ -41,21 +42,39 @@ interface QuoteData {
   open: number; high: number; low: number; close: number; volume: number;
 }
 
-interface SearchInstrument {
-  instrument_token: number;
-  tradingsymbol: string;
-  name: string;
-  instrument_type: string;
-  exchange: string;
-}
+// F&O-aware search results (task 9.1 backend). A discriminated union so equities
+// and NFO contracts are rendered distinctly (R3.1, R3.4).
+type SearchResult =
+  | { kind: 'EQ'; symbol: string; name: string; exchange: string }
+  | {
+      kind: 'FNO';
+      tradingsymbol: string;
+      underlying: string;
+      expiry: string;
+      strike: number | null;
+      optionType: 'CE' | 'PE' | 'FUT';
+    };
+
+// The instrument symbol used for charting/watchlist regardless of kind.
+const resultSymbol = (r: SearchResult): string =>
+  r.kind === 'EQ' ? r.symbol : r.tradingsymbol;
+
+// A stable key for React lists.
+const resultKey = (r: SearchResult): string =>
+  r.kind === 'EQ' ? `EQ:${r.symbol}` : `FNO:${r.tradingsymbol}`;
 
 export default function LeftPanel() {
   const [query, setQuery] = useState('');
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
   const [quotesLoading, setQuotesLoading] = useState(true);
-  const [searchResults, setSearchResults] = useState<SearchInstrument[]>([]);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
+  // Optional client-side FNO filter chips (R3.2): underlying / expiry / type.
+  const [fnoUnderlyingFilter, setFnoUnderlyingFilter] = useState<string | null>(null);
+  const [fnoExpiryFilter, setFnoExpiryFilter] = useState<string | null>(null);
+  const [fnoTypeFilter, setFnoTypeFilter] = useState<'CE' | 'PE' | 'FUT' | null>(null);
   const [watchlistCollapsed, setWatchlistCollapsed] = useState(false);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -69,6 +88,11 @@ export default function LeftPanel() {
   const addToWatchlist = useTradeStore((s) => s.addToWatchlist);
   const removeFromWatchlist = useTradeStore((s) => s.removeFromWatchlist);
   const reorderWatchlist = useTradeStore((s) => s.reorderWatchlist);
+  // Active_Pane routing (R3.3, R4.4): when split view is on, the search targets
+  // the active pane; otherwise it sets the single charted symbol as today.
+  const splitView = useChartUIStore((s) => s.splitView);
+  const activePaneId = useChartUIStore((s) => s.activePaneId);
+  const setPaneSymbol = useChartUIStore((s) => s.setPaneSymbol);
   const consensusData = useQuantStore((s) => s.consensusData);
   const loadConsensusForSymbol = useQuantStore((s) => s.loadConsensusForSymbol);
   const isFetchingPatterns = useQuantStore((s) => s.isFetchingPatterns);
@@ -143,26 +167,68 @@ export default function LeftPanel() {
   // ── Search via Tauri IPC (local SQLite) ─────────────────────────
   const handleSearch = useCallback(async (searchQuery: string) => {
     const normalized = searchQuery.trim();
-    if (normalized.length < 2) { setSearchResults([]); setShowDropdown(false); setIsSearching(false); return; }
-    setIsSearching(true); setShowDropdown(true);
+    if (normalized.length < 2) {
+      setSearchResults([]); setShowDropdown(false); setIsSearching(false); setSearchError(null);
+      return;
+    }
+    setIsSearching(true); setShowDropdown(true); setSearchError(null);
     try {
-      const results = await invoke<SearchInstrument[]>('search_instruments', { query: normalized });
+      const results = await invoke<SearchResult[]>('search_instruments', { query: normalized });
       setSearchResults(results || []);
     } catch (err) {
+      // On failure: surface an explicit error state and DO NOT change the
+      // selected symbol — the previously charted instrument is retained (R3.5).
       console.error('[LeftPanel] search_instruments failed:', err);
       setSearchResults([]);
+      setSearchError('Search failed — please try again');
     }
     finally { setIsSearching(false); }
   }, []);
 
   const handleInputChange = (value: string) => {
     setQuery(value);
+    // New query invalidates the prior FNO filter chips.
+    setFnoUnderlyingFilter(null);
+    setFnoExpiryFilter(null);
+    setFnoTypeFilter(null);
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    if (!value.trim() || value.trim().length < 2) { setSearchResults([]); setShowDropdown(false); return; }
+    if (!value.trim() || value.trim().length < 2) {
+      setSearchResults([]); setShowDropdown(false); setSearchError(null);
+      return;
+    }
     searchTimeoutRef.current = setTimeout(() => handleSearch(value), 400);
   };
 
-  const clearSearch = () => { setQuery(''); setSearchResults([]); setShowDropdown(false); };
+  const clearSearch = () => {
+    setQuery(''); setSearchResults([]); setShowDropdown(false); setSearchError(null);
+    setFnoUnderlyingFilter(null); setFnoExpiryFilter(null); setFnoTypeFilter(null);
+  };
+
+  // Route a selected instrument to the correct chart target and watchlist (R3.3, R4.4).
+  const handleSelectResult = useCallback((r: SearchResult) => {
+    const symbol = resultSymbol(r);
+    const sector = r.kind === 'EQ' ? 'EQ' : r.optionType; // CE/PE/FUT colored badge
+    const name = r.kind === 'EQ' ? (r.name || r.symbol) : r.underlying;
+    addToWatchlist({
+      symbol,
+      token: 0,
+      name: name || symbol,
+      sector,
+      lastPrice: 0,
+      change: 0,
+    });
+    // Single view → sole chart; split view → the active pane.
+    if (splitView) {
+      setPaneSymbol(activePaneId, symbol);
+    } else {
+      setSelectedSymbol(symbol);
+    }
+    setShowDropdown(false);
+    setQuery('');
+    setSearchResults([]);
+    setSearchError(null);
+    setFnoUnderlyingFilter(null); setFnoExpiryFilter(null); setFnoTypeFilter(null);
+  }, [addToWatchlist, splitView, setPaneSymbol, activePaneId, setSelectedSymbol]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -176,6 +242,37 @@ export default function LeftPanel() {
 
   const formatPrice = (price: number) => price ? '₹' + price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
   const formatChange = (change: number) => `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+
+  // ── FNO filter chip options + filtered result list (R3.2) ──────────
+  const fnoResults = useMemo(
+    () => searchResults.filter((r): r is Extract<SearchResult, { kind: 'FNO' }> => r.kind === 'FNO'),
+    [searchResults],
+  );
+  const hasFno = fnoResults.length > 0;
+  const underlyingOptions = useMemo(
+    () => Array.from(new Set(fnoResults.map((r) => r.underlying))).sort(),
+    [fnoResults],
+  );
+  const expiryOptions = useMemo(
+    () => Array.from(new Set(fnoResults.map((r) => r.expiry))).sort(),
+    [fnoResults],
+  );
+  const typeOptions = useMemo(
+    () => Array.from(new Set(fnoResults.map((r) => r.optionType))) as ('CE' | 'PE' | 'FUT')[],
+    [fnoResults],
+  );
+
+  // Apply the active filter chips to FNO rows; equities are always retained
+  // so existing equity search behavior is preserved (R3.6).
+  const filteredResults = useMemo(() => {
+    return searchResults.filter((r) => {
+      if (r.kind === 'EQ') return true;
+      if (fnoUnderlyingFilter && r.underlying !== fnoUnderlyingFilter) return false;
+      if (fnoExpiryFilter && r.expiry !== fnoExpiryFilter) return false;
+      if (fnoTypeFilter && r.optionType !== fnoTypeFilter) return false;
+      return true;
+    });
+  }, [searchResults, fnoUnderlyingFilter, fnoExpiryFilter, fnoTypeFilter]);
 
   return (
     <div className="flex h-full flex-col select-none">

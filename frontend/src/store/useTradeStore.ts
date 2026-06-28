@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { DataRange } from '../utils/chartTypes';
 
-export type TradeProfile = 'INTRADAY' | 'SWING' | 'INVESTOR';
+export type TradeProfile = 'INTRADAY' | 'SWING' | 'INVESTOR' | 'FNO';
 
 /**
  * Chart timeframe options. The backend predictive ML engine operates
@@ -141,11 +141,6 @@ interface TradeStore {
   watchlist: WatchlistItem[];
   chartMode: 'STANDARD' | 'VOLUME_PROFILE' | 'FOOTPRINT';
   orderFlowData: OrderFlowTick[];
-  /** F&O workspace mode — single source of truth for the F&O section (R1.4).
-   *  Held alongside activeProfile/activeTimeframe so every component reads
-   *  one consistent active mode. Toggling it never disturbs the existing
-   *  Intraday/Swing/Investor profiles or their charts. */
-  fnoMode: boolean;
   /** Selected configured index underlying for the F&O section (default 'NIFTY 50'). */
   fnoUnderlying: string;
   /** Selected expiry for the F&O section ('' => bridge's nearest available). */
@@ -177,12 +172,6 @@ interface TradeStore {
   setWatchlist: (items: WatchlistItem[]) => void;
   setChartMode: (mode: 'STANDARD' | 'VOLUME_PROFILE' | 'FOOTPRINT') => void;
   addOrderFlowTick: (tick: OrderFlowTick) => void;
-  /** Set the F&O workspace mode explicitly (R1.2, R1.3). MUST NOT touch
-   *  activeProfile/activeTimeframe/chartMode. */
-  setFnoMode: (on: boolean) => void;
-  /** Toggle the F&O workspace mode — command-bar button (R1.1). MUST NOT touch
-   *  activeProfile/activeTimeframe/chartMode. */
-  toggleFnoMode: () => void;
   /** Set the selected F&O underlying (R2.2, R9.3); resets fnoExpiry to ''. */
   setFnoUnderlying: (underlying: string) => void;
   /** Set the selected F&O expiry (R2.2). */
@@ -387,7 +376,6 @@ export const useTradeStore = create<TradeStore>((set) => {
     finalTradePlan: null,
     chartMode: 'STANDARD',
     orderFlowData: [],
-    fnoMode: false,
     fnoUnderlying: 'NIFTY 50',
     fnoExpiry: '',
     clearAgentChatLog: () => set({ agentChatLog: [], finalTradePlan: null }),
@@ -669,20 +657,11 @@ export const useTradeStore = create<TradeStore>((set) => {
       set({ chartMode: mode });
     },
 
-    // ── F&O mode slice (F4) ───────────────────────────────────────────────
-    // fnoMode is the single source of truth for the F&O workspace (R1.4).
-    // setFnoMode/toggleFnoMode deliberately set ONLY fnoMode so the existing
-    // Intraday/Swing/Investor profiles, timeframe, and chart mode are never
-    // disturbed by the F&O toggle (R9.4). Toggling twice is a round-trip that
-    // restores the prior workspace (R1.3).
-    setFnoMode: (on: boolean) => {
-      set({ fnoMode: on });
-    },
-
-    toggleFnoMode: () => {
-      set((state) => ({ fnoMode: !state.fnoMode }));
-    },
-
+    // ── F&O chain selectors (F4) ──────────────────────────────────────────
+    // The F&O workspace is now selected via activeProfile === 'FNO' (the
+    // unified Mode_Selector is the single source of truth — R1.4/R6.3); the
+    // legacy fnoMode boolean and its setters were removed. The underlying/
+    // expiry chain selectors below are retained unchanged.
     // Changing the underlying resets the expiry to '' (nearest) so the expiry
     // can't dangle on a stale chain (R2.2, R9.3).
     setFnoUnderlying: (underlying: string) => {
