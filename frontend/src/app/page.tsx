@@ -495,11 +495,11 @@ export default function Home() {
               {/* Simulated Paper Trading Dashboard */}
               {!isFullscreen && (
                 paperPortfolioOpen ? (
-                  <div className="p-2 border-t border-border-default bg-surface/30">
+                  <div className="border-t border-border-default bg-surface">
                     <PortfolioDashboard onCollapse={() => setPaperPortfolioOpen(false)} />
                   </div>
                 ) : (
-                  <div className="px-3 py-1.5 border-t border-border-default bg-surface/40 backdrop-blur-sm flex items-center justify-between transition-all duration-300">
+                  <div className="px-3 py-1.5 border-t border-border-default bg-surface backdrop-blur-sm flex items-center justify-between transition-all duration-300">
                     <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
                       {/* Live indicator and Title */}
                       <div className="flex items-center gap-2">
@@ -583,7 +583,7 @@ export default function Home() {
                 </div>
 
                 {/* Tab row */}
-                <div className="flex border-t border-border-default">
+                <div className="flex border-t border-border-default bg-muted/20">
                   {[
                     { key: 'profile' as SidebarTab, label: sidebarCfg.badge },
                     { key: 'deepquant' as SidebarTab, label: 'AI QUANT' },
@@ -596,8 +596,8 @@ export default function Home() {
                         idx > 0 ? 'border-l border-border-default' : ''
                       } ${
                         sidebarTab === key
-                          ? 'bg-elevated text-text-primary'
-                          : 'text-text-muted hover:text-text-secondary hover:bg-elevated/50'
+                          ? 'bg-surface text-text-primary border-b-2 border-emerald-500 dark:border-emerald-400'
+                          : 'text-text-muted hover:text-text-secondary bg-transparent hover:bg-muted/10'
                       }`}
                     >
                       {label}
