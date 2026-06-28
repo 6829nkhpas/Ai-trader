@@ -24,8 +24,8 @@ export default function PortfolioDashboard({ onCollapse }: PortfolioDashboardPro
 
   if (!paperPortfolio) {
     return (
-      <div className="flex flex-col items-center justify-center gap-3 p-8 border border-border-default/40 bg-surface/50 rounded-xl">
-        <Shield size={24} className="text-text-muted opacity-30 animate-pulse" />
+      <div className="flex flex-col items-center justify-center gap-3 p-8 border border-border-default/30 bg-black/40 rounded-none">
+        <Shield size={20} className="text-text-muted opacity-30 animate-pulse" />
         <span className="text-xs font-semibold text-text-muted">Loading paper engine state...</span>
       </div>
     );
@@ -46,10 +46,10 @@ export default function PortfolioDashboard({ onCollapse }: PortfolioDashboardPro
   const totalPnL = trade_history.reduce((sum, pos) => sum + calculateRealizedPnL(pos), 0);
 
   return (
-    <div className="flex flex-col gap-4 rounded-xl border border-border-default bg-surface/80 backdrop-blur-md p-4 shadow-lg">
+    <div className="flex flex-col bg-surface border border-border-default rounded-none w-full">
       
       {/* ── Top Header and Balance Card ── */}
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-border-default/50 pb-4">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-border-default/30 p-4">
         <div>
           <div className="flex items-center gap-2">
             <span className="relative flex h-2 w-2">
@@ -61,7 +61,7 @@ export default function PortfolioDashboard({ onCollapse }: PortfolioDashboardPro
               <button
                 type="button"
                 onClick={onCollapse}
-                className="ml-1 rounded p-1 text-text-muted hover:bg-white/5 hover:text-text-primary transition-colors"
+                className="ml-1 p-1 text-text-muted hover:bg-white/5 hover:text-text-primary transition-colors"
                 title="Collapse simulated paper portfolio"
               >
                 <ChevronDown size={14} />
@@ -72,18 +72,18 @@ export default function PortfolioDashboard({ onCollapse }: PortfolioDashboardPro
         </div>
 
         {/* Balance Display */}
-        <div className="flex items-center gap-4">
-          <div className="bg-black/30 border border-white/5 rounded-xl px-4 py-2 flex flex-col items-end">
+        <div className="flex items-center divide-x divide-border-default/50 font-mono text-xs">
+          <div className="pr-4 flex flex-col items-end">
             <span className="text-[9px] uppercase font-bold text-text-muted">Account Equity</span>
-            <span className="text-xl font-black text-white tracking-tight tabular-nums">
+            <span className="text-sm font-bold text-text-primary tabular-nums">
               ₹{balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
 
-          <div className={`bg-black/30 border border-white/5 rounded-xl px-4 py-2 flex flex-col items-end`}>
+          <div className="pl-4 flex flex-col items-end">
             <span className="text-[9px] uppercase font-bold text-text-muted">Realized PnL</span>
-            <span className={`text-base font-extrabold tracking-tight tabular-nums flex items-center gap-1 ${totalPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {totalPnL >= 0 ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
+            <span className={`text-sm font-bold tracking-tight tabular-nums flex items-center gap-1 ${totalPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {totalPnL >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
               {totalPnL >= 0 ? '+' : ''}₹{totalPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
@@ -91,20 +91,20 @@ export default function PortfolioDashboard({ onCollapse }: PortfolioDashboardPro
       </div>
 
       {/* ── Grid Layout: Active Positions & Trade Journal ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-4">
         
         {/* Left Side: Active Positions */}
-        <div className="flex flex-col gap-2 border border-border-default/40 bg-black/10 rounded-xl p-3">
-          <div className="flex items-center justify-between pb-2 border-b border-border-default/30">
-            <span className="text-[10px] font-black uppercase text-text-secondary tracking-wider flex items-center gap-1.5">
+        <div className="flex flex-col p-4 border border-border-default/60 bg-muted/10 rounded-none">
+          <div className="flex items-center justify-between pb-2 mb-2 border-b border-border-default/20">
+            <span className="text-[10px] font-black uppercase text-text-primary tracking-wider flex items-center gap-1.5">
               <Shield size={12} className="text-emerald-400" /> Active Positions ({active_positions.length})
             </span>
           </div>
 
           {active_positions.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
-              <AlertCircle size={20} className="text-text-muted opacity-40" />
-              <p className="text-xs font-medium text-text-secondary">No active positions</p>
+              <AlertCircle size={16} className="text-text-muted opacity-40" />
+              <p className="text-xs font-semibold text-text-secondary">No active positions</p>
               <p className="text-[10px] text-text-muted max-w-[220px]">Deploy strategies from the AI Deep Quant panel or trigger Sentinel signals.</p>
             </div>
           ) : (
@@ -122,11 +122,13 @@ export default function PortfolioDashboard({ onCollapse }: PortfolioDashboardPro
                 </thead>
                 <tbody className="divide-y divide-border-default/10 text-xs">
                   {active_positions.map((pos) => (
-                    <tr key={pos.id} className="hover:bg-white/5 transition-colors">
-                      <td className="py-2 font-bold text-white uppercase">{pos.symbol}</td>
+                    <tr key={pos.id} className="hover:bg-elevated/20 transition-colors">
+                      <td className="py-2 font-bold text-text-primary uppercase">{pos.symbol}</td>
                       <td className="py-2">
-                        <span className={`rounded-md px-1.5 py-0.5 text-[9px] font-black tracking-wide uppercase ${
-                          pos.side === 'BUY' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'
+                        <span className={`px-1.5 py-0.5 text-[9px] font-black tracking-wide uppercase border rounded-none ${
+                          pos.side === 'BUY' 
+                            ? 'bg-emerald-500/5 text-emerald-400 border-emerald-500/20' 
+                            : 'bg-rose-500/5 text-rose-400 border-rose-500/20'
                         }`}>
                           {pos.side}
                         </span>
@@ -138,7 +140,7 @@ export default function PortfolioDashboard({ onCollapse }: PortfolioDashboardPro
                         <div className="text-emerald-400">TP: ₹{pos.take_profit.toFixed(2)}</div>
                       </td>
                       <td className="py-2 text-center">
-                        <span className="rounded bg-emerald-500/10 border border-emerald-500/20 px-1 py-0.5 text-[9px] font-bold text-emerald-400 uppercase tracking-widest animate-pulse">
+                        <span className="bg-emerald-500/5 border border-emerald-500/20 px-1 py-0.5 text-[9px] font-bold text-emerald-400 uppercase tracking-widest rounded-none">
                           {pos.status}
                         </span>
                       </td>
@@ -151,17 +153,17 @@ export default function PortfolioDashboard({ onCollapse }: PortfolioDashboardPro
         </div>
 
         {/* Right Side: Trade Journal */}
-        <div className="flex flex-col gap-2 border border-border-default/40 bg-black/10 rounded-xl p-3">
-          <div className="flex items-center justify-between pb-2 border-b border-border-default/30">
-            <span className="text-[10px] font-black uppercase text-text-secondary tracking-wider flex items-center gap-1.5">
-              <BookOpen size={12} className="text-violet-400" /> Realized Trade Journal ({trade_history.length})
+        <div className="flex flex-col p-4 border border-border-default/60 bg-muted/10 rounded-none">
+          <div className="flex items-center justify-between pb-2 mb-2 border-b border-border-default/20">
+            <span className="text-[10px] font-black uppercase text-text-primary tracking-wider flex items-center gap-1.5">
+              <BookOpen size={12} className="text-emerald-400" /> Realized Trade Journal ({trade_history.length})
             </span>
           </div>
 
           {trade_history.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
-              <Clock size={20} className="text-text-muted opacity-40 animate-pulse" />
-              <p className="text-xs font-medium text-text-secondary">Journal is currently empty</p>
+              <Clock size={16} className="text-text-muted opacity-40" />
+              <p className="text-xs font-semibold text-text-secondary">Journal is currently empty</p>
               <p className="text-[10px] text-text-muted max-w-[220px]">Closed positions will be recorded here when stop losses or targets are hit.</p>
             </div>
           ) : (
@@ -181,11 +183,13 @@ export default function PortfolioDashboard({ onCollapse }: PortfolioDashboardPro
                     const pnl = calculateRealizedPnL(pos);
                     const isWin = pos.status === 'CLOSED_WIN';
                     return (
-                      <tr key={pos.id} className="hover:bg-white/5 transition-colors">
-                        <td className="py-2 font-bold text-white uppercase">{pos.symbol}</td>
+                      <tr key={pos.id} className="hover:bg-elevated/20 transition-colors">
+                        <td className="py-2 font-bold text-text-primary uppercase">{pos.symbol}</td>
                         <td className="py-2">
-                          <span className={`rounded-md px-1.5 py-0.5 text-[9px] font-black tracking-wide uppercase ${
-                            pos.side === 'BUY' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'
+                          <span className={`px-1.5 py-0.5 text-[9px] font-black tracking-wide uppercase border rounded-none ${
+                            pos.side === 'BUY' 
+                              ? 'bg-emerald-500/5 text-emerald-400 border-emerald-500/20' 
+                              : 'bg-rose-500/5 text-rose-400 border-rose-500/20'
                           }`}>
                             {pos.side}
                           </span>

@@ -11,6 +11,7 @@ import {
 } from 'lightweight-charts';
 import { COLORS } from '../utils/chartTypes';
 import type { ChartRefs } from '../utils/chartTypes';
+import { useChartUIStore } from '../store/useChartUIStore';
 
 /**
  * useChartInit — Creates the chart instance, all series, and a ResizeObserver.
@@ -19,6 +20,7 @@ import type { ChartRefs } from '../utils/chartTypes';
 export function useChartInit(
   containerRef: React.RefObject<HTMLDivElement | null>,
 ): ChartRefs {
+  const theme = useChartUIStore((s) => s.theme);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
@@ -31,16 +33,22 @@ export function useChartInit(
   useEffect(() => {
     if (!containerRef.current) return;
 
+    const rootStyle = getComputedStyle(document.documentElement);
+    const canvasBg = rootStyle.getPropertyValue('--chart-bg').trim() || COLORS.canvasBg;
+    const gridColor = rootStyle.getPropertyValue('--chart-grid').trim() || COLORS.grid;
+    const borderColor = rootStyle.getPropertyValue('--border-default').trim() || COLORS.border;
+    const textColor = rootStyle.getPropertyValue('--text-secondary').trim() || COLORS.text;
+
     const chart = createChart(containerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: COLORS.canvasBg },
-        textColor: COLORS.text,
+        background: { type: ColorType.Solid, color: canvasBg },
+        textColor: textColor,
         fontSize: 11,
         fontFamily: "'Inter', 'SF Mono', 'Menlo', monospace",
       },
       grid: {
-        vertLines: { color: COLORS.grid, style: LineStyle.Solid },
-        horzLines: { color: COLORS.grid, style: LineStyle.Solid },
+        vertLines: { color: gridColor, style: LineStyle.Solid },
+        horzLines: { color: gridColor, style: LineStyle.Solid },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
@@ -48,11 +56,11 @@ export function useChartInit(
         vertLine: { color: COLORS.crosshair, style: LineStyle.Dashed, labelBackgroundColor: COLORS.crosshairLabel },
       },
       rightPriceScale: {
-        borderColor: COLORS.border,
+        borderColor: borderColor,
         scaleMargins: { top: 0.05, bottom: 0.22 },
       },
       timeScale: {
-        borderColor: COLORS.border,
+        borderColor: borderColor,
         timeVisible: true,
         secondsVisible: false,
         rightOffset: 10,               // Breathing room after the latest candle
@@ -136,6 +144,33 @@ export function useChartInit(
       ghostLineRef.current = null;
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Synchronize chart options when theme changes
+  useEffect(() => {
+    if (!chartRef.current) return;
+    const rootStyle = getComputedStyle(document.documentElement);
+    const canvasBg = rootStyle.getPropertyValue('--chart-bg').trim() || COLORS.canvasBg;
+    const gridColor = rootStyle.getPropertyValue('--chart-grid').trim() || COLORS.grid;
+    const borderColor = rootStyle.getPropertyValue('--border-default').trim() || COLORS.border;
+    const textColor = rootStyle.getPropertyValue('--text-secondary').trim() || COLORS.text;
+
+    chartRef.current.applyOptions({
+      layout: {
+        background: { type: ColorType.Solid, color: canvasBg },
+        textColor: textColor,
+      },
+      grid: {
+        vertLines: { color: gridColor },
+        horzLines: { color: gridColor },
+      },
+      rightPriceScale: {
+        borderColor: borderColor,
+      },
+      timeScale: {
+        borderColor: borderColor,
+      },
+    });
+  }, [theme]);
 
   return {
     chartRef, candleSeriesRef, volumeSeriesRef,

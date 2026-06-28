@@ -35,20 +35,20 @@ export default function GhostLineToggle() {
   const ref = useOutsideClose<HTMLDivElement>(() => setOpen(false));
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative h-full" ref={ref}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-label="Projection engine"
         title="Predictive projection engine"
-        className="flex h-7 items-center gap-1 rounded-md border border-border-default bg-surface px-2 text-[11px] font-semibold text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
+        className="flex h-full items-center gap-1.5 px-4 text-[11px] font-semibold text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary border-r border-border-default bg-surface"
       >
         <Spline size={13} className="text-text-muted" />
         <span>{MODE_LABELS[ghostLineMode]}</span>
         <ChevronDown size={11} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 w-52 rounded-lg border border-border-default bg-surface/95 p-1 shadow-2xl backdrop-blur-xl">
+        <div className="absolute left-0 top-full z-50 mt-px w-52 rounded-none border border-border-default bg-surface/95 p-1 shadow-2xl backdrop-blur-xl">
           {MODES.map((m) => (
             <button
               key={m}
@@ -57,14 +57,14 @@ export default function GhostLineToggle() {
                 setGhostLineMode(m);
                 setOpen(false);
               }}
-              className={`flex w-full flex-col items-start rounded-md px-2.5 py-1.5 text-left transition-colors ${m === ghostLineMode
+              className={`flex w-full flex-col items-start rounded-none px-2.5 py-1.5 text-left transition-colors ${m === ghostLineMode
                   ? 'bg-primary/10 text-primary'
                   : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
                 }`}
             >
               <span className="flex w-full items-center justify-between text-[11px] font-semibold">
                 {MODE_LABELS[m]}
-                {m === ghostLineMode && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
+                {m === ghostLineMode && <span className="h-1.5 w-1.5 rounded-none bg-primary" />}
               </span>
               <span className="text-[9px] text-text-muted">{MODE_DESCRIPTIONS[m]}</span>
             </button>

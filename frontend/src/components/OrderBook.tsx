@@ -228,7 +228,7 @@ export default function OrderBook() {
   return (
     <div
       id="order-book-dom"
-      className="flex h-full flex-col rounded-lg border border-border-default bg-surface font-mono text-[11px] select-none overflow-hidden"
+      className="flex h-full flex-col rounded-none border-0 bg-surface font-mono text-[11px] select-none overflow-hidden"
     >
 
       {/* ── Column Headers ──────────────────────────────────── */}
@@ -242,7 +242,7 @@ export default function OrderBook() {
       {!isLive && book.asks.length === 0 && (
         <div className="flex flex-1 items-center justify-center">
           <div className="flex flex-col items-center gap-2 text-center px-4">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-elevated">
+            <div className="flex h-8 w-8 items-center justify-center rounded-none bg-elevated">
               <span className="text-sm">📊</span>
             </div>
             <p className="text-[11px] text-text-muted leading-snug">
@@ -315,7 +315,7 @@ export default function OrderBook() {
                 className="pointer-events-none absolute inset-y-0 right-0 bg-emerald-500/8"
                 style={{ width: `${depthPercent(level.size, globalMaxSize)}%` }}
               />
-              <span className="relative z-10 tabular-nums text-[#22c55e]">
+              <span className="relative z-10 tabular-nums text-bull">
                 {level.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
               <span className="relative z-10 tabular-nums text-right text-emerald-400/80">
@@ -336,7 +336,7 @@ export default function OrderBook() {
             <span className="text-emerald-400">{bidVolPct.toFixed(1)}% BIDS</span>
             <span className="text-red-400">{askVolPct.toFixed(1)}% ASKS</span>
           </div>
-          <div className="relative h-1.5 w-full rounded-full bg-border-default/30 flex overflow-hidden">
+          <div className="relative h-1.5 w-full rounded-none bg-border-default/30 flex overflow-hidden">
             {/* Bid Volume (Green) */}
             <div 
               className="h-full bg-emerald-500 transition-all duration-300 ease-out" 

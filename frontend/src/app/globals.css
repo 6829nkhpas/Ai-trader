@@ -1,27 +1,28 @@
 @import "tailwindcss";
 
 :root {
-  --bg-base: #06080F;
+  --bg-base: #000000;
   --bg-main: var(--bg-base);
-  --bg-surface: #0C1017;
-  --bg-card: #131922;
-  --bg-elevated: #1A2233;
-  --bg-muted: #080B12;
-  --border-default: #1E2A3A;
-  --border-subtle: #151D2B;
-  --text-primary: #f8fafc;   /* slate-50 */
-  --text-secondary: #94a3b8; /* slate-400 */
-  --text-muted: #64748b;     /* slate-500 */
-  --color-primary: #10b981;  /* emerald-500 */
-  --color-primary-hover: #34d399; /* emerald-400 */
-  --color-bull: #22c55e;
+  --bg-surface: #000000;
+  --bg-card: #0a0a0a;
+  --bg-elevated: #161616;
+  --bg-muted: #000000;
+  --border-default: #1a1a1a;
+  --border-subtle: #111111;
+  --text-primary: #f5f5f5;
+  --text-secondary: #d1d5db;
+  --text-muted: #9ca3af;
+  --text-muted-soft: #6b7280;
+  --color-primary: #10b981;
+  --color-primary-hover: #059669;
+  --color-bull: #10b981;
   --color-bear: #ef4444;
   --color-neutral: #f59e0b;
   --chart-bg: var(--bg-card);
   --chart-grid: var(--border-default);
-  --candle-green: #22c55e;
+  --candle-green: #10b981;
   --candle-red: #ef4444;
-  --status-live: #22c55e;
+  --status-live: #10b981;
   --status-warning: #f59e0b;
   --status-error: #ef4444;
   --background: var(--bg-main);
@@ -33,6 +34,25 @@
     0 4px 12px 0 rgba(0, 0, 0, 0.07), 0 2px 4px 0 rgba(0, 0, 0, 0.04);
   --shadow-lg:
     0 8px 24px 0 rgba(0, 0, 0, 0.08), 0 3px 6px 0 rgba(0, 0, 0, 0.05);
+}
+
+.light {
+  --bg-base: #f9fafb;
+  --bg-main: var(--bg-base);
+  --bg-surface: #ffffff;
+  --bg-card: #f3f4f6;
+  --bg-elevated: #e5e7eb;
+  --bg-muted: #f3f4f6;
+  --border-default: #e5e7eb;
+  --border-subtle: #f3f4f6;
+  --text-primary: #111827;
+  --text-secondary: #374151;
+  --text-muted: #6b7280;
+  --text-muted-soft: #9ca3af;
+  --chart-bg: var(--bg-card);
+  --chart-grid: var(--border-default);
+  --background: var(--bg-main);
+  --foreground: var(--text-primary);
 }
 
 @theme inline {
@@ -47,6 +67,7 @@
   --color-text-primary: var(--text-primary);
   --color-text-secondary: var(--text-secondary);
   --color-text-muted: var(--text-muted);
+  --color-text-muted-soft: var(--text-muted-soft);
   --color-primary: var(--color-primary);
   --color-primary-hover: var(--color-primary-hover);
   --color-bull: var(--color-bull);
@@ -95,23 +116,23 @@ body {
 /* ── Auth color tokens ───────────────────────────────────────────────────── */
 :root {
   --auth-bg-base: var(--bg-main);
-  --auth-bg-tint: #022c22;
-  --auth-card-bg: rgba(30, 41, 59, 0.92);
-  --auth-card-border: rgba(51, 65, 85, 0.5);
-  --auth-input-bg: #0f172a;
+  --auth-bg-tint: #111111;
+  --auth-card-bg: rgba(22, 22, 22, 0.92);
+  --auth-card-border: rgba(38, 38, 38, 0.5);
+  --auth-input-bg: #0a0a0a;
   --auth-input-border: var(--border-default);
   --auth-input-focus: rgba(16, 185, 129, 0.4);
   --auth-input-error: rgba(239, 68, 68, 0.35);
   --auth-text: var(--text-primary);
   --auth-muted: var(--text-secondary);
-  --auth-label: #cbd5e1;
+  --auth-label: #d1d5db;
   --auth-link: var(--color-primary);
   --auth-accent: var(--color-primary);
   --auth-accent-soft: rgba(16, 185, 129, 0.12);
   --auth-accent-strong: rgba(16, 185, 129, 0.3);
-  --orb-a: rgba(16, 185, 129, 0.15);
-  --orb-b: rgba(52, 211, 153, 0.1);
-  --orb-c: rgba(245, 158, 11, 0.1);
+  --orb-a: rgba(16, 185, 129, 0.08);
+  --orb-b: rgba(52, 211, 153, 0.05);
+  --orb-c: rgba(245, 158, 11, 0.05);
 }
 
 /* ── Full-screen shell ───────────────────────────────────────────────────── */
@@ -124,15 +145,15 @@ body {
   background:
     radial-gradient(
       120% 80% at 10% -10%,
-      rgba(16, 185, 129, 0.1) 0%,
-      rgba(15, 23, 42, 0.95) 55%
+      rgba(16, 185, 129, 0.05) 0%,
+      rgba(10, 10, 10, 0.95) 55%
     ),
     radial-gradient(
       100% 70% at 90% 10%,
-      rgba(245, 158, 11, 0.05) 0%,
-      rgba(15, 23, 42, 0.95) 60%
+      rgba(245, 158, 11, 0.02) 0%,
+      rgba(10, 10, 10, 0.95) 60%
     ),
-    linear-gradient(180deg, #0f172a 0%, #1e293b 70%, #022c22 100%);
+    linear-gradient(180deg, #0a0a0a 0%, #111111 70%, #000000 100%);
   overflow: hidden;
   padding: 2rem 1rem;
   font-family: var(--font-manrope), var(--font-inter), sans-serif;

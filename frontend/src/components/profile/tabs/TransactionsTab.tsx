@@ -26,20 +26,20 @@ export default function TransactionsTab({
   return (
     <div className="flex flex-col h-full space-y-4">
       <div>
-        <h2 className="text-xl font-extrabold text-white tracking-tight">Transaction Journal</h2>
+        <h2 className="text-xl font-extrabold text-text-primary tracking-tight">Transaction Journal</h2>
         <p className="text-xs text-text-secondary mt-1">Completed trades stored permanently in the local SQLite db</p>
       </div>
 
-      <div className="flex-1 min-h-0 rounded-xl border border-border-default/40 bg-[#0c0f1d]/30 overflow-hidden flex flex-col">
+      <div className="flex-1 min-h-0 rounded-none border border-border-default/40 bg-muted/30 overflow-hidden flex flex-col">
         {loadingTrades ? (
           <div className="flex flex-1 flex-col items-center justify-center p-8">
-            <Loader2 size={32} className="animate-spin text-emerald-400 mb-2" />
+            <Loader2 size={32} className="animate-spin text-text-muted mb-2" />
             <span className="text-xs text-text-secondary">Loading local trade journal...</span>
           </div>
         ) : sqlTrades.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
             <FileText size={40} className="text-text-secondary mb-3 opacity-40" />
-            <h4 className="text-sm font-bold text-white">No Completed Trades</h4>
+            <h4 className="text-sm font-bold text-text-primary">No Completed Trades</h4>
             <p className="text-xs text-text-secondary mt-1 leading-normal max-w-xs mx-auto">
               Transactions will appear here automatically when paper trading positions are closed or exit criteria are triggered.
             </p>
@@ -47,7 +47,7 @@ export default function TransactionsTab({
         ) : (
           <div className="flex-1 overflow-auto">
             <table className="w-full text-left border-collapse">
-              <thead className="sticky top-0 z-10 bg-[#0e1222] border-b border-border-default/40">
+              <thead className="sticky top-0 z-10 bg-elevated border-b border-border-default/40">
                 <tr>
                   <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-text-secondary">Symbol</th>
                   <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-text-secondary">Action</th>
@@ -63,9 +63,9 @@ export default function TransactionsTab({
                   const isProfit = t.pnl > 0;
                   return (
                     <tr key={t.id} className="hover:bg-elevated/15 transition-colors">
-                      <td className="px-4 py-3 text-xs font-bold text-white">{t.symbol}</td>
+                      <td className="px-4 py-3 text-xs font-bold text-text-primary">{t.symbol}</td>
                       <td className="px-4 py-3 text-xs">
-                        <span className={`rounded-md px-2 py-0.5 text-[9px] font-bold ${
+                        <span className={`rounded-none px-2 py-0.5 text-[9px] font-bold ${
                           t.type === 'BUY' 
                             ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400' 
                             : 'bg-red-500/10 border border-red-500/20 text-red-400'

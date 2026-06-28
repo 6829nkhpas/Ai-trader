@@ -18,7 +18,7 @@ export default function PositionsTab({ positionsData, loading, error, refetch }:
   };
 
   const getPnlClass = (val: number) => {
-    if (val > 0) return 'text-[#22c55e] font-bold';
+    if (val > 0) return 'text-bull font-bold';
     if (val < 0) return 'text-[#ef4444] font-bold';
     return 'text-text-secondary';
   };
@@ -31,7 +31,7 @@ export default function PositionsTab({ positionsData, loading, error, refetch }:
     <div className="space-y-5 flex flex-col h-full">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-extrabold text-white tracking-tight">Active Positions</h2>
+          <h2 className="text-xl font-extrabold text-text-primary tracking-tight">Active Positions</h2>
           <p className="text-xs text-text-secondary mt-1">Real-time positions linked directly to Kite broker</p>
         </div>
       </div>
@@ -53,14 +53,14 @@ export default function PositionsTab({ positionsData, loading, error, refetch }:
       {positionsData && (
         <div className="flex flex-col h-full min-h-0 space-y-3">
           {/* Sub tabs */}
-          <div className="flex items-center gap-1 border-b border-border-default/40 pb-2">
+          <div className="flex items-center gap-0 border-b border-border-default/40 pb-2">
             <button
               type="button"
               onClick={() => setSubTab('net')}
-              className={`rounded px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider transition-all ${
+              className={`rounded-none px-3 py-1 text-[10px] font-bold uppercase tracking-wider transition-all border ${
                 subTab === 'net'
-                  ? 'bg-elevated text-emerald-400 border border-border-default'
-                  : 'text-text-muted hover:text-text-secondary'
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                  : 'text-text-muted hover:text-text-secondary border-transparent'
               }`}
             >
               Net Positions ({positionsData.net?.length || 0})
@@ -68,10 +68,10 @@ export default function PositionsTab({ positionsData, loading, error, refetch }:
             <button
               type="button"
               onClick={() => setSubTab('day')}
-              className={`rounded px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider transition-all ${
+              className={`rounded-none px-3 py-1 text-[10px] font-bold uppercase tracking-wider transition-all border-y border-r border-l-0 ${
                 subTab === 'day'
-                  ? 'bg-elevated text-emerald-400 border border-border-default'
-                  : 'text-text-muted hover:text-text-secondary'
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                  : 'text-text-muted hover:text-text-secondary border-transparent'
               }`}
             >
               Day Positions ({positionsData.day?.length || 0})
@@ -79,9 +79,9 @@ export default function PositionsTab({ positionsData, loading, error, refetch }:
           </div>
 
           {/* Positions table */}
-          <div className="flex-1 min-h-0 overflow-auto border border-border-default/40 rounded-xl bg-surface/30">
+          <div className="flex-1 min-h-0 overflow-auto border border-border-default/40 rounded-none bg-surface/30">
             <table className="w-full text-left text-xs border-collapse">
-              <thead className="bg-[#0e1222]/80 border-b border-border-default/40 sticky top-0 z-10">
+              <thead className="bg-elevated/80 border-b border-border-default/40 sticky top-0 z-10">
                 <tr>
                   <th className="w-8"></th>
                   <th className="px-4 py-2.5 text-[9px] font-bold uppercase tracking-wider text-text-secondary">Symbol</th>
@@ -105,12 +105,12 @@ export default function PositionsTab({ positionsData, loading, error, refetch }:
                         onClick={() => toggleExpand(pos.tradingsymbol)}
                         className={`hover:bg-elevated/10 cursor-pointer transition-colors ${isExpanded ? 'bg-elevated/5' : ''}`}
                       >
-                        <td className="pl-3 py-2.5 text-center text-text-muted hover:text-white">
+                        <td className="pl-3 py-2.5 text-center text-text-muted hover:text-text-primary">
                           {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                         </td>
-                        <td className="px-4 py-2.5 font-bold text-white flex items-center gap-1.5">
+                        <td className="px-4 py-2.5 font-bold text-text-primary flex items-center gap-1.5">
                           <span>{pos.tradingsymbol}</span>
-                          <span className="text-[8px] bg-surface-elevated text-text-secondary px-1 py-0.5 rounded font-mono">
+                          <span className="text-[8px] bg-elevated border border-border-default text-text-secondary px-1 py-0.5 rounded-none font-mono">
                             {pos.exchange}
                           </span>
                         </td>
@@ -119,7 +119,7 @@ export default function PositionsTab({ positionsData, loading, error, refetch }:
                         <td className="px-4 py-2.5 text-right font-mono text-text-secondary">
                           {(pos.average_price ?? 0).toFixed(2)}
                         </td>
-                        <td className="px-4 py-2.5 text-right font-mono text-white">
+                        <td className="px-4 py-2.5 text-right font-mono text-text-primary">
                           {(pos.last_price ?? 0).toFixed(2)}
                         </td>
                         <td className={`px-4 py-2.5 text-right font-mono font-bold ${getPnlClass(pos.pnl)}`}>
@@ -129,28 +129,28 @@ export default function PositionsTab({ positionsData, loading, error, refetch }:
 
                       {/* Deep Analytics Card Expanded Grid */}
                       {isExpanded && (
-                        <tr className="bg-[#0c0f1d]/40 border-b border-border-default/20">
+                        <tr className="bg-surface/40 border-b border-border-default/20">
                           <td colSpan={7} className="p-4">
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-[11px] animate-in fade-in slide-in-from-top-1 duration-150">
                               
                               {/* Card Column 1: Net Position Geometry */}
-                              <div className="border border-border-default/30 rounded-lg bg-[#070911]/50 p-3.5 space-y-2">
+                              <div className="border border-border-default/30 rounded-none bg-muted/50 p-3.5 space-y-2">
                                 <span className="text-[9px] font-black uppercase tracking-wider text-text-secondary block border-b border-border-default/30 pb-1.5 mb-1.5">
                                   NET POSITION GEOMETRY
                                 </span>
                                 <div className="flex justify-between">
                                   <span className="text-text-muted">Net Position Value</span>
-                                  <span className={`font-mono font-bold ${(pos.value ?? 0) >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>
+                                  <span className={`font-mono font-bold ${(pos.value ?? 0) >= 0 ? 'text-bull' : 'text-[#ef4444]'}`}>
                                     {formatCurrency(pos.value)}
                                   </span>
                                 </div>
                                 <div className="flex justify-between">
                                   <span className="text-text-muted">Overnight Quantity</span>
-                                  <span className="font-mono text-white font-semibold">{pos.overnight_quantity ?? 0}</span>
+                                  <span className="font-mono text-text-primary font-semibold">{pos.overnight_quantity ?? 0}</span>
                                 </div>
                                 <div className="flex justify-between">
                                   <span className="text-text-muted">Lot Multiplier</span>
-                                  <span className="font-mono text-white font-semibold">x{pos.multiplier ?? 1}</span>
+                                  <span className="font-mono text-text-primary font-semibold">x{pos.multiplier ?? 1}</span>
                                 </div>
                                 <div className="flex justify-between border-t border-border-default/20 pt-2 mt-1">
                                   <span className="text-text-secondary font-bold">Mark to Market (M2M)</span>
@@ -161,7 +161,7 @@ export default function PositionsTab({ positionsData, loading, error, refetch }:
                               </div>
 
                               {/* Card Column 2: Buy & Sell Accumulation */}
-                              <div className="border border-border-default/30 rounded-lg bg-[#070911]/50 p-3.5 space-y-2">
+                              <div className="border border-border-default/30 rounded-none bg-muted/50 p-3.5 space-y-2">
                                 <span className="text-[9px] font-black uppercase tracking-wider text-emerald-400 block border-b border-border-default/30 pb-1.5 mb-1.5">
                                   BUY & SELL ACCUMULATION
                                 </span>
@@ -185,14 +185,14 @@ export default function PositionsTab({ positionsData, loading, error, refetch }:
                                 </div>
                                 <div className="border-t border-border-default/20 pt-2 mt-1 flex justify-between items-center text-[10px]">
                                   <span className="text-[8px] font-bold text-text-muted uppercase">Buy / Sell Value</span>
-                                  <span className="font-mono text-white font-semibold">
+                                  <span className="font-mono text-text-primary font-semibold">
                                     {formatCurrency(pos.buy_value)} / {formatCurrency(pos.sell_value)}
                                   </span>
                                 </div>
                               </div>
 
                               {/* Card Column 3: Intraday Returns Logic */}
-                              <div className="border border-border-default/30 rounded-lg bg-[#070911]/50 p-3.5 space-y-2">
+                              <div className="border border-border-default/30 rounded-none bg-muted/50 p-3.5 space-y-2">
                                 <span className="text-[9px] font-black uppercase tracking-wider text-rose-400 block border-b border-border-default/30 pb-1.5 mb-1.5">
                                   INTRADAY RETURNS LOGIC
                                 </span>
@@ -210,7 +210,7 @@ export default function PositionsTab({ positionsData, loading, error, refetch }:
                                 </div>
                                 <div className="flex justify-between border-t border-border-default/20 pt-2 mt-1">
                                   <span className="text-text-muted">Day Buy / Sell Qty</span>
-                                  <span className="font-mono text-white font-semibold">
+                                  <span className="font-mono text-text-primary font-semibold">
                                     +{pos.day_buy_quantity ?? 0} / -{pos.day_sell_quantity ?? 0}
                                   </span>
                                 </div>

@@ -194,7 +194,7 @@ export default function LeftPanel() {
               onFocus={() => { if (searchResults.length > 0) setShowDropdown(true); }}
               placeholder="Search NSE symbol..."
               aria-label="Search symbols"
-              className="h-8 w-full rounded-md border border-border-default bg-surface pl-8 pr-8 text-[11px] text-text-primary placeholder:text-text-muted transition-colors focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              className="h-8 w-full rounded-none border border-border-default bg-surface pl-8 pr-8 text-[11px] text-text-primary placeholder:text-text-muted transition-colors focus:border-text-primary focus:outline-none focus:ring-1 focus:ring-text-primary"
             />
             {query && (
               <button onClick={clearSearch} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary transition-colors" aria-label="Clear search">
@@ -202,10 +202,10 @@ export default function LeftPanel() {
               </button>
             )}
             {showDropdown && (
-              <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-52 overflow-y-auto scrollbar-none rounded-lg border border-border-default bg-surface shadow-lg panel-shadow">
+              <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-52 overflow-y-auto scrollbar-none rounded-none border border-border-default bg-surface shadow-lg panel-shadow">
                 {isSearching ? (
                   <div className="flex items-center justify-center gap-2 px-3 py-4">
-                    <Loader2 size={13} className="animate-spin text-primary" />
+                    <Loader2 size={13} className="animate-spin text-text-muted" />
                     <span className="text-[11px] text-text-secondary">Searching...</span>
                   </div>
                 ) : searchResults.length === 0 ? (
@@ -237,8 +237,8 @@ export default function LeftPanel() {
                         <span className="text-[9px] text-text-muted truncate">{inst.name}</span>
                       </div>
                       <div className="flex items-center gap-1">
-                        <Plus size={10} className="text-primary" />
-                        <span className="rounded px-1 py-px text-[7px] font-semibold uppercase tracking-wider bg-elevated text-text-muted">{inst.instrument_type || 'EQ'}</span>
+                        <Plus size={10} className="text-text-secondary" />
+                        <span className="rounded-none px-1 py-px text-[7px] font-semibold uppercase tracking-wider bg-elevated text-text-muted">{inst.instrument_type || 'EQ'}</span>
                       </div>
                     </button>
                   ))

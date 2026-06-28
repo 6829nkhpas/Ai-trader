@@ -426,33 +426,26 @@ export default function DeepQuantPanel() {
               }
             }}
             className={`
-              group relative flex-grow flex items-center justify-center gap-2
-              rounded-l-xl px-3 py-2.5 text-xs font-bold uppercase tracking-wider
-              transition-all duration-300 ease-out
+              relative flex-grow flex h-8 items-center justify-center gap-1.5
+              rounded-none px-3 text-[10px] font-bold uppercase tracking-wider
+              transition-all duration-300 ease-out border border-r-0
               ${!dataReady
-                ? 'bg-slate-500/10 text-slate-400 border-y border-l border-slate-500/20 opacity-50 cursor-not-allowed'
+                ? 'bg-elevated/40 text-text-muted/50 border-border-default opacity-50 cursor-not-allowed'
                 : isAnalyzing
-                  ? 'bg-emerald-500/10 text-emerald-300 border-y border-l border-emerald-500/20 cursor-wait'
-                  : activeMode === 'VERIFY'
-                    ? 'bg-gradient-to-r from-teal-600 to-cyan-600 text-white border-y border-l border-teal-500/40 hover:from-teal-500 hover:to-cyan-500 hover:shadow-lg hover:shadow-teal-500/20 active:scale-[0.99]'
-                    : 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white border-y border-l border-emerald-500/40 hover:from-emerald-500 hover:to-teal-500 hover:shadow-lg hover:shadow-emerald-500/20 active:scale-[0.99]'
+                  ? 'bg-elevated text-text-primary border-border-default cursor-wait'
+                  : 'bg-text-primary text-surface border-text-primary hover:bg-text-secondary hover:border-text-secondary active:scale-[0.99]'
               }
             `}
           >
-            {/* Glow ring */}
-            {!isAnalyzing && dataReady && (
-              <div className="absolute -inset-px rounded-l-xl bg-gradient-to-r from-emerald-400/20 to-teal-400/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300 blur-sm" />
-            )}
-
             <span className="relative flex items-center gap-1.5">
               {!dataReady ? (
-                <Loader2 size={14} className="animate-spin text-slate-400" />
+                <Loader2 size={11} className="animate-spin text-text-muted" />
               ) : isAnalyzing ? (
-                <Loader2 size={14} className="animate-spin" />
+                <Loader2 size={11} className="animate-spin text-surface" />
               ) : activeMode === 'VERIFY' ? (
-                <Shield size={14} className="group-hover:animate-pulse text-emerald-300" />
+                <Shield size={11} className="group-hover:animate-pulse" />
               ) : (
-                <Zap size={14} className="group-hover:animate-pulse" />
+                <Zap size={11} className="group-hover:animate-pulse" />
               )}
               {!dataReady
                 ? 'AWAITING DATA…'
@@ -470,16 +463,14 @@ export default function DeepQuantPanel() {
             disabled={isAnalyzing}
             onClick={() => setIsDropdownOpen(!isDropdownOpen)}
             className={`
-              px-2 py-2.5 rounded-r-xl border transition-all duration-300 flex items-center justify-center
+              h-8 w-8 rounded-none border transition-all duration-300 flex items-center justify-center
               ${isAnalyzing
-                ? 'bg-slate-500/10 border-slate-500/20 text-slate-500 cursor-not-allowed'
-                : activeMode === 'VERIFY'
-                  ? 'bg-gradient-to-r from-teal-600 to-teal-700 text-white border-y border-r border-teal-500/40 hover:from-teal-500 hover:to-teal-600'
-                  : 'bg-gradient-to-r from-emerald-600 to-emerald-700 text-white border-y border-r border-emerald-500/40 hover:from-emerald-500 hover:to-emerald-600'
+                ? 'bg-elevated/40 border-border-default text-text-muted/50 cursor-not-allowed'
+                : 'bg-text-primary text-surface border-text-primary hover:bg-text-secondary hover:border-text-secondary border-l-border-default/20'
               }
             `}
           >
-            <ChevronDown size={14} className={`transition-transform duration-300 ${isDropdownOpen ? 'rotate-180' : ''}`} />
+            <ChevronDown size={11} className={`transition-transform duration-300 ${isDropdownOpen ? 'rotate-180' : ''}`} />
           </button>
         </div>
 
@@ -487,19 +478,19 @@ export default function DeepQuantPanel() {
         {isDropdownOpen && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setIsDropdownOpen(false)} />
-            <div className="absolute right-3 left-3 mt-1.5 z-50 rounded-xl bg-slate-950/95 backdrop-blur-xl border border-slate-800/80 shadow-2xl p-1.5 flex flex-col gap-1">
+            <div className="absolute right-3 left-3 mt-1.5 z-50 rounded-none bg-surface/95 backdrop-blur-xl border border-border-default shadow-2xl p-1.5 flex flex-col gap-1">
               <button
                 type="button"
                 onClick={() => {
                   setActiveMode('FIND');
                   setIsDropdownOpen(false);
                 }}
-                className={`w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg text-left transition-all ${activeMode === 'FIND' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-300 hover:bg-slate-800/50'}`}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-none text-left transition-all ${activeMode === 'FIND' ? 'bg-elevated text-text-primary' : 'text-text-secondary hover:bg-elevated hover:text-text-primary'}`}
               >
-                <Zap size={13} className="text-emerald-400" />
+                <Zap size={13} className="text-text-secondary" />
                 <div className="flex flex-col">
                   <span>Find High-Probability Trade</span>
-                  <span className="text-[8px] font-normal text-slate-400">Autonomous breakouts & quant scanning</span>
+                  <span className="text-[8px] font-normal text-text-muted">Autonomous breakouts & quant scanning</span>
                 </div>
               </button>
 
@@ -509,12 +500,12 @@ export default function DeepQuantPanel() {
                   setActiveMode('VERIFY');
                   setIsDropdownOpen(false);
                 }}
-                className={`w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg text-left transition-all ${activeMode === 'VERIFY' ? 'bg-teal-500/15 text-teal-300' : 'text-slate-300 hover:bg-slate-800/50'}`}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-none text-left transition-all ${activeMode === 'VERIFY' ? 'bg-elevated text-text-primary' : 'text-text-secondary hover:bg-elevated hover:text-text-primary'}`}
               >
-                <Shield size={13} className="text-teal-400" />
+                <Shield size={13} className="text-text-secondary" />
                 <div className="flex flex-col">
                   <span>Verify My Trade Idea</span>
-                  <span className="text-[8px] font-normal text-slate-400">Co-pilot critical Risk Manager critique</span>
+                  <span className="text-[8px] font-normal text-text-muted">Co-pilot critical Risk Manager critique</span>
                 </div>
               </button>
             </div>
@@ -559,7 +550,7 @@ export default function DeepQuantPanel() {
       <div className="flex-grow flex-shrink min-h-0 overflow-y-auto scrollbar-thin">
 
         {reasoningSteps.length > 0 || sessionStatus !== 'idle' ? (
-          <div className="h-full p-2 min-h-[380px]">
+          <div className="h-full p-0 min-h-[380px]">
             <AgentTerminal />
           </div>
         ) : analysisError ? (
@@ -602,8 +593,8 @@ export default function DeepQuantPanel() {
           /* ── Empty State ─────────────────────────────────── */
           <div className="flex flex-col items-center justify-center gap-4 p-4 py-10">
             <div className="relative">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500/10 to-teal-500/10 border border-emerald-500/20">
-                <Zap size={24} className="text-emerald-400/60" />
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-elevated border border-border-default">
+                <Zap size={24} className="text-text-muted/60" />
               </div>
             </div>
             <div className="text-center">
@@ -619,7 +610,7 @@ export default function DeepQuantPanel() {
 
         {/* ── Trade Q&A Chat (post-analysis follow-up) ── */}
         {currentThreadId && (sessionStatus === 'complete' || aiPlan || analysisError) && (
-          <div className="px-2 pb-2">
+          <div className="pb-2">
             <TradeQaPanel />
           </div>
         )}

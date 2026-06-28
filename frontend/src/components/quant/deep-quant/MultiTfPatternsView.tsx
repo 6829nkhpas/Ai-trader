@@ -65,19 +65,19 @@ export default function MultiTfPatternsView() {
   };
 
   return (
-    <div className="border-b border-border-default px-3 py-2.5 bg-transparent select-none">
-      <div className="flex items-center gap-1.5 mb-2">
+    <div className="border-b border-border-default py-2.5 px-0 bg-transparent select-none">
+      <div className="flex items-center gap-1.5 mb-2 px-3">
         <Sparkles size={10} className="text-text-muted" />
         <h3 className="text-[9px] font-bold text-text-secondary uppercase tracking-wider">
           Dynamic Pattern Scanner
         </h3>
         {isFetchingPatterns && (
-          <Loader2 size={9} className="ml-auto animate-spin text-blue-400" />
+          <Loader2 size={9} className="ml-auto animate-spin text-text-muted" />
         )}
       </div>
 
       {/* Timeframe Selector Tabs */}
-      <div className="flex gap-1 overflow-x-auto pb-1.5 scrollbar-none">
+      <div className="flex gap-1 overflow-x-auto pb-1.5 px-3 scrollbar-none">
         {timeframes.map((tf) => {
           const count = getPatternCount(tf);
           const isActive = selectedTf === tf;
@@ -87,9 +87,9 @@ export default function MultiTfPatternsView() {
               type="button"
               onClick={() => setSelectedTf(tf)}
               className={`
-                flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold transition-all duration-150 shrink-0 border
+                flex items-center gap-1 px-2 py-0.5 rounded-none text-[9px] font-bold transition-all duration-150 shrink-0 border
                 ${isActive 
-                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 shadow-[0_0_8px_rgba(16,185,129,0.08)] scale-[1.01]' 
+                  ? 'bg-text-primary text-surface border-text-primary scale-[1.01]' 
                   : 'bg-elevated/40 text-text-muted hover:bg-elevated/70 hover:text-text-secondary border-border-default/40'
                 }
               `}
@@ -99,8 +99,8 @@ export default function MultiTfPatternsView() {
                 <Loader2 size={8} className="animate-spin text-text-muted" />
               ) : count > 0 ? (
                 <span className={`
-                  flex h-3.5 min-w-[14px] items-center justify-center rounded-full px-0.5 text-[8px] font-black
-                  ${isActive ? 'bg-emerald-400 text-slate-950' : 'bg-emerald-500/10 text-emerald-400'}
+                  flex h-3.5 min-w-[14px] items-center justify-center rounded-none px-0.5 text-[8px] font-black border
+                  ${isActive ? 'bg-text-primary text-surface border-text-primary' : 'bg-elevated text-text-primary border-border-default'}
                 `}>
                   {count}
                 </span>
@@ -113,23 +113,23 @@ export default function MultiTfPatternsView() {
       </div>
 
       {/* Patterns list */}
-      <div className="mt-2 space-y-1.5 max-h-[190px] overflow-y-auto scrollbar-thin pr-0.5">
+      <div className="mt-2 space-y-0 max-h-[190px] overflow-y-auto scrollbar-thin">
         {isFetchingPatterns ? (
           // Loading skeletons
-          <div className="space-y-1.5 py-1">
+          <div className="space-y-0 py-1">
             {[1, 2].map((i) => (
-              <div key={i} className="animate-pulse flex flex-col gap-1 p-2 rounded-lg bg-elevated/20 border border-border-default/40">
+              <div key={i} className="animate-pulse flex flex-col gap-1 px-3 py-2 border-y border-x-0 border-border-default/40 bg-elevated/10">
                 <div className="flex justify-between items-center">
-                  <div className="h-3 w-16 bg-elevated/60 rounded" />
-                  <div className="h-3 w-10 bg-elevated/60 rounded-full" />
+                  <div className="h-3 w-16 bg-elevated/60 rounded-none" />
+                  <div className="h-3 w-10 bg-elevated/60 rounded-none" />
                 </div>
-                <div className="h-2 w-full bg-elevated/30 rounded" />
+                <div className="h-2 w-full bg-elevated/30 rounded-none" />
               </div>
             ))}
           </div>
         ) : patterns.length === 0 ? (
           // Empty State
-          <div className="flex flex-col items-center justify-center py-4 text-center border border-border-default/50 bg-elevated/10 rounded-lg">
+          <div className="flex flex-col items-center justify-center py-4 text-center border-y border-x-0 border-border-default/50 bg-elevated/10 rounded-none">
             <Activity size={12} className="text-text-muted mb-0.5" />
             <span className="text-[9px] font-medium text-text-muted">No patterns forming</span>
             <span className="text-[8px] text-text-muted/40">Timeframe: {selectedTf}</span>
@@ -151,30 +151,22 @@ export default function MultiTfPatternsView() {
                 key={key}
                 onClick={() => handlePatternClick(p)}
                 className={`
-                  group relative flex flex-col gap-1 p-2 rounded-lg border transition-all duration-200 cursor-pointer hover:scale-[1.005] active:scale-[0.995]
+                  group relative flex flex-col gap-1 px-3 py-2 border-y border-x-0 border-border-default/45 bg-elevated/5 hover:bg-elevated/20 transition-all duration-200 cursor-pointer
                   ${isForming ? 'animate-[pulse_3s_ease-in-out_infinite]' : ''}
-                  ${isBullish 
-                    ? 'bg-emerald-500/[0.03] border-emerald-500/15 hover:border-emerald-500/35' 
-                    : isBearish 
-                      ? 'bg-rose-500/[0.03] border-rose-500/15 hover:border-rose-500/35' 
-                      : 'bg-elevated/10 border-border-default/60 hover:border-border-default'
-                  }
                 `}
               >
                 {/* Glowing edge indicator — pulsing for forming patterns */}
                 <div className={`
-                  absolute top-0 bottom-0 left-0 w-0.5 rounded-l-lg transition-opacity
+                  absolute top-0 bottom-0 left-0 w-0.5 rounded-none transition-opacity
                   ${isForming ? 'opacity-80 animate-pulse' : 'opacity-40 group-hover:opacity-100'}
-                  ${isBullish ? 'bg-emerald-400' : isBearish ? 'bg-rose-400' : 'bg-text-muted'}
+                  ${isBullish ? 'bg-text-primary' : isBearish ? 'bg-text-muted' : 'bg-border-default'}
                 `} />
 
                 {/* Pattern Header */}
                 <div className="flex justify-between items-start pl-1">
                   <div className="flex items-center gap-1 truncate max-w-[160px]">
                     {isForming && (
-                      <Radio size={8} className={`shrink-0 animate-pulse ${
-                        isBullish ? 'text-emerald-400' : isBearish ? 'text-rose-400' : 'text-amber-400'
-                      }`} />
+                      <Radio size={8} className="shrink-0 animate-pulse text-text-secondary" />
                     )}
                     <span className="text-[10px] font-bold text-text-primary tracking-tight truncate">
                       {p.pattern_type}
@@ -183,19 +175,11 @@ export default function MultiTfPatternsView() {
                   <div className="flex items-center gap-1">
                     {/* FORMING badge */}
                     {isForming && (
-                      <span className="flex items-center gap-0.5 px-1 py-0.5 rounded text-[7px] font-black uppercase tracking-wider border bg-amber-500/10 text-amber-400 border-amber-500/20 animate-pulse">
+                      <span className="flex items-center gap-0.5 px-1 py-0.5 rounded-none text-[7px] font-black uppercase tracking-wider border bg-elevated text-text-primary border-border-default animate-pulse">
                         FORMING
                       </span>
                     )}
-                    <span className={`
-                      flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] font-black uppercase tracking-wider border
-                      ${isBullish 
-                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
-                        : isBearish 
-                          ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' 
-                          : 'bg-elevated text-text-muted border-border-default'
-                      }
-                    `}>
+                    <span className="flex items-center gap-0.5 px-1 py-0.5 rounded-none text-[8px] font-black uppercase tracking-wider border bg-elevated text-text-primary border-border-default">
                       {isBullish ? (
                         <TrendingUp size={8} />
                       ) : isBearish ? (
@@ -216,14 +200,14 @@ export default function MultiTfPatternsView() {
                 {/* Formation Progress Bar (for forming patterns) */}
                 {isForming && progress > 0 && (
                   <div className="flex items-center gap-1.5 pl-1 mt-0.5">
-                    <span className="text-[8px] text-amber-400/70 font-bold">Progress:</span>
-                    <div className="flex-grow h-1.5 bg-surface border border-amber-500/20 rounded-full overflow-hidden">
+                    <span className="text-[8px] text-text-secondary font-bold">Progress:</span>
+                    <div className="flex-grow h-1.5 bg-surface border border-border-default rounded-none overflow-hidden">
                       <div 
-                        className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-amber-600 via-amber-500 to-amber-400"
+                        className="h-full rounded-none transition-all duration-500 bg-text-primary"
                         style={{ width: `${progressPct}%` }}
                       />
                     </div>
-                    <span className="text-[8px] font-black text-amber-400">
+                    <span className="text-[8px] font-black text-text-primary">
                       {progressPct}%
                     </span>
                   </div>
@@ -232,14 +216,14 @@ export default function MultiTfPatternsView() {
                 {/* Confidence Bar */}
                 <div className="flex items-center gap-1.5 pl-1 mt-0.5">
                   <span className="text-[8px] text-text-muted/60 font-bold">Conf:</span>
-                  <div className="flex-grow h-1 bg-surface border border-border-default/40 rounded-full overflow-hidden">
+                  <div className="flex-grow h-1 bg-surface border border-border-default/45 rounded-none overflow-hidden">
                     <div 
                       className={`
-                        h-full rounded-full transition-all duration-300
+                        h-full rounded-none transition-all duration-300
                         ${isBullish 
-                          ? 'bg-gradient-to-r from-emerald-500 to-emerald-400' 
+                          ? 'bg-text-primary' 
                           : isBearish 
-                            ? 'bg-gradient-to-r from-rose-500 to-rose-400' 
+                            ? 'bg-text-muted' 
                             : 'bg-text-secondary'
                         }
                       `}
@@ -254,33 +238,17 @@ export default function MultiTfPatternsView() {
                 {/* Volume Validation & Breakout Status */}
                 <div className="flex items-center gap-1 pl-1 mt-0.5 flex-wrap">
                   {p.volume_validation && (
-                    <span className={`
-                      inline-flex items-center gap-0.5 px-1 py-[1px] rounded text-[7px] font-bold uppercase tracking-wider border
-                      ${p.volume_validation.includes('Confirmed') 
-                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
-                        : p.volume_validation === 'Forming'
-                          ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                          : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                      }
-                    `}>
+                    <span className="inline-flex items-center gap-0.5 px-1 py-[1px] rounded-none text-[7px] font-bold uppercase tracking-wider border bg-elevated text-text-primary border-border-default">
                       {p.volume_validation.includes('Confirmed') ? '✓' : p.volume_validation === 'Forming' ? '◎' : '○'} Vol
                     </span>
                   )}
                   {p.breakout_status && (
-                    <span className={`
-                      inline-flex items-center gap-0.5 px-1 py-[1px] rounded text-[7px] font-bold tracking-wider border
-                      ${p.breakout_status.includes('Confirmed') || p.breakout_status.includes('Breaking')
-                        ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20' 
-                        : p.breakout_status === 'Forming'
-                          ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                          : 'bg-slate-500/10 text-slate-400 border-slate-500/20'
-                      }
-                    `}>
+                    <span className="inline-flex items-center gap-0.5 px-1 py-[1px] rounded-none text-[7px] font-bold tracking-wider border bg-elevated text-text-primary border-border-default">
                       {p.breakout_status}
                     </span>
                   )}
                   {p.structural_bias && (
-                    <span className="inline-flex items-center px-1 py-[1px] rounded text-[7px] font-bold tracking-wider bg-violet-500/10 text-violet-400 border border-violet-500/20">
+                    <span className="inline-flex items-center px-1 py-[1px] rounded-none text-[7px] font-bold tracking-wider bg-elevated text-text-primary border border-border-default">
                       {p.structural_bias}
                     </span>
                   )}

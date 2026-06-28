@@ -180,37 +180,39 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md transition-all duration-300">
       <div 
-        className="relative flex h-[720px] w-full max-w-5xl overflow-hidden rounded-2xl border border-border-default/60 bg-[#0d1222]/80 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-200"
+        className="relative flex h-[720px] w-full max-w-5xl overflow-hidden rounded-none border border-border-default/60 bg-surface/80 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Close Button */}
         <button 
           onClick={onClose}
-          className="absolute top-4 right-4 z-10 flex h-8 w-8 items-center justify-center rounded-lg border border-border-default/40 bg-elevated/20 text-text-secondary hover:bg-elevated hover:text-white transition-all"
+          className="absolute top-4 right-4 z-10 flex h-8 w-8 items-center justify-center rounded-none border border-border-default/40 bg-elevated/20 text-text-secondary hover:bg-elevated hover:text-text-primary transition-all"
         >
           <X size={16} />
         </button>
 
         {/* ── LEFT SIDEBAR PANEL ── */}
-        <aside className="w-64 shrink-0 flex flex-col justify-between border-r border-border-default/40 bg-[#0b0e1a]/60 p-5">
+        <aside className="w-64 shrink-0 flex flex-col justify-between border-r border-border-default/40 bg-background/60 p-0">
           <div>
             {/* User Info Header */}
-            <div className="mb-8 flex items-center gap-3">
+            <div className="p-5 border-b border-border-default/40 flex items-center gap-3">
               {/* User Info */}
               <div className="min-w-0">
-                <h3 className="text-sm font-bold text-white truncate">{user?.name}</h3>
-                <p className="text-[10px] text-emerald-400 font-semibold tracking-wider uppercase mt-0.5">{user?.tier} Tier</p>
+                <h3 className="text-sm font-bold text-text-primary truncate">{user?.name}</h3>
+                <p className={`text-[10px] font-semibold tracking-wider uppercase mt-0.5 ${user?.tier === 'PRO' ? 'text-amber-400' : 'text-text-secondary'}`}>
+                  {user?.tier} Tier
+                </p>
               </div>
             </div>
 
             {/* Sidebar Navigation */}
-            <nav className="space-y-1.5">
+            <nav className="flex flex-col">
               <button
                 onClick={() => setActiveTab('profile')}
-                className={`flex w-full items-center gap-3 rounded-lg px-3.5 py-2.5 text-xs font-semibold transition-all ${
+                className={`flex w-full items-center gap-3 border-b border-border-default/40 px-5 py-3 text-xs font-semibold transition-all ${
                   activeTab === 'profile'
-                    ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shadow-sm'
-                    : 'text-text-secondary border border-transparent hover:bg-elevated/40 hover:text-text-primary'
+                    ? 'bg-emerald-500/5 text-emerald-400'
+                    : 'text-text-secondary hover:bg-elevated/40 hover:text-text-primary'
                 }`}
               >
                 <User size={15} />
@@ -219,34 +221,22 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
 
               <button
                 onClick={() => setActiveTab('risk')}
-                className={`flex w-full items-center gap-3 rounded-lg px-3.5 py-2.5 text-xs font-semibold transition-all ${
+                className={`flex w-full items-center gap-3 border-b border-border-default/40 px-5 py-3 text-xs font-semibold transition-all ${
                   activeTab === 'risk'
-                    ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shadow-sm'
-                    : 'text-text-secondary border border-transparent hover:bg-elevated/40 hover:text-text-primary'
+                    ? 'bg-emerald-500/5 text-emerald-400'
+                    : 'text-text-secondary hover:bg-elevated/40 hover:text-text-primary'
                 }`}
               >
                 <Shield size={15} />
                 <span>Margins & Risk</span>
               </button>
 
-              {/* <button
-                onClick={() => setActiveTab('portfolio')}
-                className={`flex w-full items-center gap-3 rounded-lg px-3.5 py-2.5 text-xs font-semibold transition-all ${
-                  activeTab === 'portfolio'
-                    ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shadow-sm'
-                    : 'text-text-secondary border border-transparent hover:bg-elevated/40 hover:text-text-primary'
-                }`}
-              >
-                <Wallet size={15} />
-                <span>Simulated Portfolio</span>
-              </button> */}
-
               <button
                 onClick={() => setActiveTab('positions')}
-                className={`flex w-full items-center gap-3 rounded-lg px-3.5 py-2.5 text-xs font-semibold transition-all ${
+                className={`flex w-full items-center gap-3 border-b border-border-default/40 px-5 py-3 text-xs font-semibold transition-all ${
                   activeTab === 'positions'
-                    ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shadow-sm'
-                    : 'text-text-secondary border border-transparent hover:bg-elevated/40 hover:text-text-primary'
+                    ? 'bg-emerald-500/5 text-emerald-400'
+                    : 'text-text-secondary hover:bg-elevated/40 hover:text-text-primary'
                 }`}
               >
                 <Layers size={15} />
@@ -255,10 +245,10 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
 
               <button
                 onClick={() => setActiveTab('orders')}
-                className={`flex w-full items-center gap-3 rounded-lg px-3.5 py-2.5 text-xs font-semibold transition-all ${
+                className={`flex w-full items-center gap-3 border-b border-border-default/40 px-5 py-3 text-xs font-semibold transition-all ${
                   activeTab === 'orders'
-                    ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shadow-sm'
-                    : 'text-text-secondary border border-transparent hover:bg-elevated/40 hover:text-text-primary'
+                    ? 'bg-emerald-500/5 text-emerald-400'
+                    : 'text-text-secondary hover:bg-elevated/40 hover:text-text-primary'
                 }`}
               >
                 <ClipboardList size={15} />
@@ -267,10 +257,10 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
 
               <button
                 onClick={() => setActiveTab('subscription')}
-                className={`flex w-full items-center gap-3 rounded-lg px-3.5 py-2.5 text-xs font-semibold transition-all ${
+                className={`flex w-full items-center gap-3 border-b border-border-default/40 px-5 py-3 text-xs font-semibold transition-all ${
                   activeTab === 'subscription'
-                    ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shadow-sm'
-                    : 'text-text-secondary border border-transparent hover:bg-elevated/40 hover:text-text-primary'
+                    ? 'bg-emerald-500/5 text-emerald-400'
+                    : 'text-text-secondary hover:bg-elevated/40 hover:text-text-primary'
                 }`}
               >
                 <CreditCard size={15} />
@@ -279,10 +269,10 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
 
               <button
                 onClick={() => setActiveTab('broker')}
-                className={`flex w-full items-center justify-between rounded-lg px-3.5 py-2.5 text-xs font-semibold transition-all ${
+                className={`flex w-full items-center justify-between border-b border-border-default/40 px-5 py-3 text-xs font-semibold transition-all ${
                   activeTab === 'broker'
-                    ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shadow-sm'
-                    : 'text-text-secondary border border-transparent hover:bg-elevated/40 hover:text-text-primary'
+                    ? 'bg-emerald-500/5 text-emerald-400'
+                    : 'text-text-secondary hover:bg-elevated/40 hover:text-text-primary'
                 }`}
               >
                 <div className="flex items-center gap-3">
@@ -290,18 +280,18 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
                   <span>Broker Connection</span>
                 </div>
                 {broker ? (
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
+                  <span className="h-1.5 w-1.5 rounded-none bg-emerald-400 shadow-[0_0_8px_#34d399]" />
                 ) : (
-                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                  <span className="h-1.5 w-1.5 rounded-none bg-amber-500" />
                 )}
               </button>
 
               <button
                 onClick={() => setActiveTab('transactions')}
-                className={`flex w-full items-center gap-3 rounded-lg px-3.5 py-2.5 text-xs font-semibold transition-all ${
+                className={`flex w-full items-center gap-3 border-b border-border-default/40 px-5 py-3 text-xs font-semibold transition-all ${
                   activeTab === 'transactions'
-                    ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shadow-sm'
-                    : 'text-text-secondary border border-transparent hover:bg-elevated/40 hover:text-text-primary'
+                    ? 'bg-emerald-500/5 text-emerald-400'
+                    : 'text-text-secondary hover:bg-elevated/40 hover:text-text-primary'
                 }`}
               >
                 <FileText size={15} />
@@ -316,7 +306,7 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
               logout();
               onClose();
             }}
-            className="flex w-full items-center gap-3 rounded-lg border border-border-default/40 bg-elevated/10 hover:bg-red-500/10 hover:border-red-500/20 hover:text-red-400 px-3.5 py-2.5 text-xs font-semibold text-text-secondary transition-all"
+            className="flex w-full items-center gap-3 border-t border-border-default/40 bg-elevated/10 hover:bg-red-500/10 hover:text-red-400 px-5 py-4 text-xs font-semibold text-text-secondary transition-all"
           >
             <LogOut size={15} />
             <span>Log Out</span>
@@ -324,7 +314,7 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
         </aside>
 
         {/* ── RIGHT DETAIL VIEW PANEL ── */}
-        <main className="flex-1 flex flex-col min-h-0 bg-[#090c16]/35 p-8 overflow-y-auto scrollbar-none">
+        <main className="flex-1 flex flex-col min-h-0 bg-background/35 p-8 overflow-y-auto scrollbar-none">
           {activeTab === 'profile' && (
             <ProfileTab 
               user={user} 

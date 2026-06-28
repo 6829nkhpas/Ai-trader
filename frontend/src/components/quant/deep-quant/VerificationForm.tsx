@@ -45,21 +45,21 @@ export default function VerificationForm({
   dataReady,
 }: VerificationFormProps) {
   return (
-    <div className="mx-3 mt-3 p-3 rounded-xl border border-slate-800 bg-slate-900/30 backdrop-blur-md flex flex-col gap-3">
-      <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
-        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Configure Setup</span>
-        <span className="text-[9px] text-slate-500">Auto-filled via NSE LTP</span>
+    <div className="mx-3 mt-3 p-3 rounded-none border border-border-default bg-surface flex flex-col gap-3">
+      <div className="flex items-center justify-between border-b border-border-default pb-1.5">
+        <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Configure Setup</span>
+        <span className="text-[9px] text-text-muted">Auto-filled via NSE LTP</span>
       </div>
 
       {/* Side selector */}
-      <div className="flex rounded-lg bg-slate-950 p-0.5 border border-slate-800/50">
+      <div className="flex rounded-none bg-black p-0.5 border border-border-default">
         <button
           type="button"
           onClick={() => setSide('BUY')}
-          className={`flex-grow py-1 rounded-md text-[10px] font-bold transition-all ${
+          className={`flex-grow py-1 rounded-none text-[10px] font-bold transition-all ${
             side === 'BUY'
-              ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20'
-              : 'text-slate-400 hover:text-slate-200'
+              ? 'bg-emerald-500/15 text-emerald-500 border border-emerald-500/20'
+              : 'text-text-secondary hover:text-text-primary'
           }`}
         >
           BUY / LONG
@@ -67,10 +67,10 @@ export default function VerificationForm({
         <button
           type="button"
           onClick={() => setSide('SELL')}
-          className={`flex-grow py-1 rounded-md text-[10px] font-bold transition-all ${
+          className={`flex-grow py-1 rounded-none text-[10px] font-bold transition-all ${
             side === 'SELL'
-              ? 'bg-rose-500/15 text-rose-400 border border-rose-500/20'
-              : 'text-slate-400 hover:text-slate-200'
+              ? 'bg-rose-500/15 text-rose-500 border border-rose-500/20'
+              : 'text-text-secondary hover:text-text-primary'
           }`}
         >
           SELL / SHORT
@@ -80,7 +80,7 @@ export default function VerificationForm({
       {/* Input fields */}
       <div className="grid grid-cols-3 gap-2">
         <div className="flex flex-col gap-1">
-          <label className="text-[8px] font-semibold text-slate-400 uppercase">Entry Price</label>
+          <label className="text-[8px] font-semibold text-text-secondary uppercase">Entry Price</label>
           <input
             type="number"
             step="any"
@@ -89,12 +89,12 @@ export default function VerificationForm({
               setEntry(e.target.value);
               setHasManuallySetEntry(true);
             }}
-            className="w-full bg-slate-950/80 border border-slate-800 rounded px-2 py-1 text-xs text-white font-mono focus:border-emerald-500 focus:outline-none"
+            className="w-full bg-black border border-border-default rounded-none px-2 py-1 text-xs text-text-primary font-mono focus:border-emerald-500 focus:outline-none"
           />
         </div>
 
         <div className="flex flex-col gap-1">
-          <label className="text-[8px] font-semibold text-slate-400 uppercase">Stop Loss</label>
+          <label className="text-[8px] font-semibold text-text-secondary uppercase">Stop Loss</label>
           <input
             type="number"
             step="any"
@@ -103,16 +103,16 @@ export default function VerificationForm({
               setStopLoss(e.target.value);
               setHasManuallySetSL(true);
             }}
-            className={`w-full bg-slate-950/80 border rounded px-2 py-1 text-xs text-white font-mono focus:outline-none ${
+            className={`w-full bg-black border rounded-none px-2 py-1 text-xs text-text-primary font-mono focus:outline-none ${
               side === 'BUY'
-                ? 'border-rose-950/50 focus:border-rose-500'
-                : 'border-emerald-950/50 focus:border-emerald-500'
+                ? 'border-border-default focus:border-rose-500'
+                : 'border-border-default focus:border-emerald-500'
             }`}
           />
           {slPercent && (
             <span
               className={`text-[8px] self-end font-mono ${
-                parseFloat(slPercent) < 0 ? 'text-rose-400' : 'text-emerald-400'
+                parseFloat(slPercent) < 0 ? 'text-rose-500' : 'text-emerald-500'
               }`}
             >
               {slPercent}%
@@ -121,7 +121,7 @@ export default function VerificationForm({
         </div>
 
         <div className="flex flex-col gap-1">
-          <label className="text-[8px] font-semibold text-slate-400 uppercase">Take Profit</label>
+          <label className="text-[8px] font-semibold text-text-secondary uppercase">Take Profit</label>
           <input
             type="number"
             step="any"
@@ -130,16 +130,16 @@ export default function VerificationForm({
               setTakeProfit(e.target.value);
               setHasManuallySetTP(true);
             }}
-            className={`w-full bg-slate-950/80 border rounded px-2 py-1 text-xs text-white font-mono focus:outline-none ${
+            className={`w-full bg-black border rounded-none px-2 py-1 text-xs text-text-primary font-mono focus:outline-none ${
               side === 'BUY'
-                ? 'border-emerald-950/50 focus:border-emerald-500'
-                : 'border-rose-950/50 focus:border-rose-500'
+                ? 'border-border-default focus:border-emerald-500'
+                : 'border-border-default focus:border-rose-500'
             }`}
           />
           {tpPercent && (
             <span
               className={`text-[8px] self-end font-mono ${
-                parseFloat(tpPercent) >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                parseFloat(tpPercent) >= 0 ? 'text-emerald-500' : 'text-rose-500'
               }`}
             >
               {parseFloat(tpPercent) >= 0 ? '+' : ''}
@@ -151,16 +151,10 @@ export default function VerificationForm({
 
       {/* Risk-to-Reward Badge */}
       {riskToReward && (
-        <div className="flex justify-between items-center rounded-lg bg-slate-950 p-2 border border-slate-800/40 text-[10px]">
-          <span className="text-slate-400 font-semibold">Risk:Reward Ratio</span>
+        <div className="flex justify-between items-center rounded-none bg-black p-2 border border-border-default text-[10px]">
+          <span className="text-text-secondary font-semibold">Risk:Reward Ratio</span>
           <span
-            className={`font-black font-mono px-2 py-0.5 rounded ${
-              parseFloat(riskToReward) >= 2.0
-                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                : parseFloat(riskToReward) >= 1.5
-                ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-            }`}
+            className="font-black font-mono px-2 py-0.5 rounded-none bg-elevated text-text-primary border border-border-default"
           >
             1 : {riskToReward}
           </span>
@@ -169,13 +163,13 @@ export default function VerificationForm({
 
       {/* User Analysis Notes */}
       <div className="flex flex-col gap-1">
-        <label className="text-[8px] font-semibold text-slate-400 uppercase">My Analysis Notes / Setup Rationale</label>
+        <label className="text-[8px] font-semibold text-text-secondary uppercase">My Analysis Notes / Setup Rationale</label>
         <textarea
           rows={3}
           value={userAnalysis}
           onChange={(e) => setUserAnalysis(e.target.value)}
           placeholder="E.g. Bullish engulfing on 10m VWAP bounce, expecting target resistance test..."
-          className="w-full bg-slate-950/80 border border-slate-800 rounded px-2 py-1.5 text-xs text-white placeholder-slate-600 focus:border-emerald-500 focus:outline-none resize-none"
+          className="w-full bg-black border border-border-default rounded-none px-2 py-1.5 text-xs text-text-primary placeholder:text-text-muted/65 focus:border-text-primary focus:outline-none resize-none"
         />
       </div>
 
@@ -185,20 +179,21 @@ export default function VerificationForm({
         disabled={isAnalyzing || !dataReady}
         onClick={onSubmit}
         className={`
-          w-full flex items-center justify-center gap-1.5 rounded-lg py-2.5 text-xs font-bold text-white transition-all
-          bg-gradient-to-r from-teal-600 to-cyan-600 border border-teal-500/30
-          hover:from-teal-500 hover:to-cyan-500 hover:shadow-lg hover:shadow-teal-500/20 active:scale-[0.99]
-          ${(isAnalyzing || !dataReady) ? 'opacity-50 cursor-not-allowed' : ''}
+          w-full flex h-8 items-center justify-center gap-1.5 rounded-none text-[10px] font-bold uppercase tracking-wider transition-all duration-300
+          ${(isAnalyzing || !dataReady)
+            ? 'bg-elevated text-text-muted/50 border-border-default opacity-50 cursor-not-allowed'
+            : 'bg-text-primary text-surface border-text-primary hover:bg-text-secondary hover:border-text-secondary active:scale-[0.98]'
+          }
         `}
       >
         {isAnalyzing ? (
           <>
-            <Loader2 size={12} className="animate-spin text-teal-300" />
+            <Loader2 size={12} className="animate-spin text-surface" />
             VERIFYING SETUP...
           </>
         ) : (
           <>
-            <Shield size={12} className="text-emerald-300 animate-pulse" />
+            <Shield size={12} className="animate-pulse" />
             VERIFY MY SETUP
           </>
         )}

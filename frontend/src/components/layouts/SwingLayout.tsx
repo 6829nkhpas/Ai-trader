@@ -56,11 +56,11 @@ function InsightCard({ insight, isNew, index }: InsightCardProps) {
   return (
     <div
       className={`
-        group relative rounded-lg border transition-all duration-300 ease-out cursor-pointer
+        group relative rounded-none border-y border-x-0 border-border-default/40 transition-all duration-300 ease-out cursor-pointer -mt-px
         ${isNew ? 'animate-slide-in' : ''}
         ${isError
-          ? 'border-red-500/30 bg-red-500/5 hover:bg-red-500/10'
-          : 'border-border-subtle bg-elevated/40 hover:bg-elevated/70 hover:border-border-default'
+          ? 'bg-red-500/5 hover:bg-red-500/10'
+          : 'bg-elevated/10 hover:bg-elevated/20'
         }
       `}
       onClick={() => setExpanded(!expanded)}
@@ -68,7 +68,7 @@ function InsightCard({ insight, isNew, index }: InsightCardProps) {
     >
       {/* Glow pulse for newest insight */}
       {isNew && !isError && (
-        <div className="absolute inset-0 rounded-lg bg-emerald-500/5 animate-pulse pointer-events-none" />
+        <div className="absolute inset-0 rounded-none bg-text-primary/5 animate-pulse pointer-events-none" />
       )}
 
       <div className="relative p-3">
@@ -77,9 +77,9 @@ function InsightCard({ insight, isNew, index }: InsightCardProps) {
           {/* Sentiment dot with ring animation */}
           <div className="mt-0.5 shrink-0 relative">
             {isNew && (
-              <span className={`absolute inset-0 rounded-full animate-ping opacity-40 ${sentimentDotColor(insight.sentiment_score)}`} />
+              <span className={`absolute inset-0 rounded-none animate-ping opacity-40 ${sentimentDotColor(insight.sentiment_score)}`} />
             )}
-            <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${sentimentDotColor(insight.sentiment_score)} shadow-sm`} />
+            <span className={`relative inline-flex h-2.5 w-2.5 rounded-none ${sentimentDotColor(insight.sentiment_score)} shadow-sm`} />
           </div>
 
           {/* Content */}
@@ -90,16 +90,16 @@ function InsightCard({ insight, isNew, index }: InsightCardProps) {
 
             {/* Meta row */}
             <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
-              <span className="inline-flex items-center gap-1 rounded-full bg-surface px-1.5 py-0.5 text-[9px] font-semibold text-text-muted border border-border-subtle">
+              <span className="inline-flex items-center gap-1 rounded-none bg-surface px-1.5 py-0.5 text-[9px] font-semibold text-text-muted border border-border-subtle">
                 <Zap size={8} className="text-amber-400" />
                 {insight.symbol}
               </span>
-              <span className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-bold tabular-nums ${
+              <span className={`inline-flex items-center gap-0.5 rounded-none px-1.5 py-0.5 text-[9px] font-bold tabular-nums ${
                 insight.anomaly_pct >= 3 ? 'bg-red-500/10 text-red-400' : 'bg-amber-500/10 text-amber-400'
               }`}>
                 {insight.anomaly_pct >= 0 ? '+' : ''}{insight.anomaly_pct.toFixed(1)}%
               </span>
-              <span className="inline-flex items-center gap-0.5 rounded-full bg-surface px-1.5 py-0.5 text-[9px] text-text-muted border border-border-subtle">
+              <span className="inline-flex items-center gap-0.5 rounded-none bg-surface px-1.5 py-0.5 text-[9px] text-text-muted border border-border-subtle">
                 <SentimentIcon score={insight.sentiment_score} />
                 {insight.sentiment_score}/100
               </span>
@@ -112,13 +112,13 @@ function InsightCard({ insight, isNew, index }: InsightCardProps) {
           {/* Expand chevron */}
           <ChevronDown
             size={12}
-            className={`shrink-0 text-text-muted/50 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+            className="shrink-0 text-text-muted/50 transition-transform duration-200"
           />
         </div>
 
         {/* Expandable analysis text */}
         <div className={`overflow-hidden transition-all duration-300 ease-out ${expanded ? 'max-h-40 mt-2.5 opacity-100' : 'max-h-0 opacity-0'}`}>
-          <div className="rounded-md bg-surface/80 border border-border-subtle p-2.5">
+          <div className="rounded-none bg-surface/80 border-t border-b-0 border-x-0 border-border-subtle pt-2.5 mt-2">
             <p className="text-[10px] font-medium text-text-muted uppercase tracking-wider mb-1">AI Analysis</p>
             <p className={`text-[11px] leading-relaxed whitespace-pre-line ${isError ? 'text-red-300/80 font-mono text-[10px]' : 'text-text-secondary'}`}>
               {insight.analysis_text}
@@ -189,7 +189,7 @@ export function SwingConfluencePanel() {
   const score = sentimentPayload ? Math.round((sentimentPayload.score + 100) / 2) : null;
 
   return (
-    <div id="swing-confluence-panel" className="flex h-full flex-col rounded-lg border border-border-default bg-surface text-sm select-none overflow-hidden">
+    <div id="swing-confluence-panel" className="flex h-full flex-col rounded-none border-0 bg-surface text-sm select-none overflow-hidden">
       {/* ── Header ──────────────────────────────────────────── */}
       
 
@@ -203,9 +203,9 @@ export function SwingConfluencePanel() {
                 <span className="text-xs font-medium text-text-primary">{t.timeframe}</span>
                 <span className={`text-xs font-bold ${biasColor(t.bias)}`}>{t.bias}</span>
               </div>
-              <div className="h-1 w-full rounded-full bg-elevated">
+              <div className="h-1 w-full rounded-none bg-elevated">
                 <div
-                  className={`h-1 rounded-full transition-all duration-700 ease-out ${biasBarColor(t.bias)}`}
+                  className={`h-1 rounded-none transition-all duration-700 ease-out ${biasBarColor(t.bias)}`}
                   style={{ width: `${t.strength}%` }}
                 />
               </div>
@@ -235,21 +235,21 @@ export function SwingConfluencePanel() {
 
         {/* Sentiment Gauge Bar */}
         <div className="mx-3 mb-1.5">
-          <div className="h-2 w-full rounded-full bg-elevated overflow-hidden relative">
+          <div className="h-2 w-full rounded-none bg-elevated overflow-hidden relative">
             {score !== null ? (
               <>
                 <div
-                  className={`h-2 rounded-full transition-all duration-700 ease-out ${sentimentBarColor(score)}`}
+                  className={`h-2 rounded-none transition-all duration-700 ease-out ${sentimentBarColor(score)}`}
                   style={{ width: `${score}%` }}
                 />
                 {/* Animated glow on the leading edge */}
                 <div
-                  className={`absolute top-0 h-2 w-3 rounded-full blur-sm transition-all duration-700 ${sentimentBarColor(score)} opacity-60`}
+                  className={`absolute top-0 h-2 w-3 rounded-none blur-sm transition-all duration-700 ${sentimentBarColor(score)} opacity-60`}
                   style={{ left: `calc(${score}% - 6px)` }}
                 />
               </>
             ) : (
-              <div className="h-2 w-0 rounded-full" />
+              <div className="h-2 w-0 rounded-none" />
             )}
           </div>
           <div className="flex justify-between mt-1 text-[8px]">
@@ -263,11 +263,11 @@ export function SwingConfluencePanel() {
 
         {/* Active Sentiment News Card */}
         {sentimentPayload ? (
-          <div className="mx-3 mb-2.5 rounded-lg border border-border-subtle bg-elevated/20 p-2 text-left">
+          <div className="mb-2.5 border-y border-x-0 border-border-subtle bg-elevated/20 p-3 text-left">
             <div className="flex items-center gap-1.5 mb-1">
               <span className="relative flex h-1.5 w-1.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-500"></span>
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-none bg-cyan-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-none h-1.5 w-1.5 bg-cyan-500"></span>
               </span>
               <span className="text-[9px] font-semibold text-cyan-400 uppercase tracking-wider">Latest AI News Signal</span>
             </div>
@@ -286,7 +286,7 @@ export function SwingConfluencePanel() {
             )}
           </div>
         ) : (
-          <div className="mx-3 mb-2.5 rounded-lg border border-border-subtle bg-elevated/10 p-2.5 text-left">
+          <div className="mb-2.5 border-y border-x-0 border-border-subtle bg-elevated/10 p-3 text-left">
             <p className="text-[10.5px] text-text-muted italic leading-snug">
               Awaiting live news sentiment catalysts from the NLP Sentiment Agent...
             </p>
@@ -298,7 +298,7 @@ export function SwingConfluencePanel() {
         </div>
 
         {/* ── Scrollable Insight Feed ──────────────────────── */}
-        <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-2 pb-2 space-y-1.5 scrollbar-thin">
+        <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto scrollbar-thin space-y-0">
           {insightHistory.length > 0 ? (
             insightHistory.map((insight, i) => (
               <InsightCard
@@ -336,7 +336,7 @@ export function SwingConfluencePanel() {
 
 export default function SwingLayout({ activeProfile = 'SWING', timeframe = '1h', isExpanded = false, onToggleExpand }: SwingLayoutProps) {
   return (
-    <div id="swing-hud" className="flex h-full flex-col min-h-0 rounded-lg border border-border-default bg-surface overflow-hidden">
+    <div id="swing-hud" className="flex h-full flex-col min-h-0 rounded-none border-none bg-surface overflow-hidden">
       <MainTerminalChart
         activeProfile={activeProfile}
         timeframe={timeframe as Timeframe}

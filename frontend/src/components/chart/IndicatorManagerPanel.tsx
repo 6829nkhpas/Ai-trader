@@ -96,7 +96,7 @@ export default function IndicatorManagerPanel({
 
   return (
     <div
-      className={`flex w-80 flex-col overflow-hidden rounded-lg border border-border-default bg-surface text-text-primary shadow-xl ${className}`}
+      className={`flex w-80 flex-col overflow-hidden rounded-none border border-border-default bg-surface text-text-primary shadow-xl ${className}`}
     >
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border-default px-3 py-2">
@@ -110,7 +110,7 @@ export default function IndicatorManagerPanel({
             type="button"
             onClick={onClose}
             aria-label="Close indicator manager"
-            className="flex h-6 w-6 items-center justify-center rounded text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
+            className="flex h-6 w-6 items-center justify-center rounded-none text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
           >
             <X size={14} />
           </button>
@@ -119,7 +119,7 @@ export default function IndicatorManagerPanel({
 
       {/* Search */}
       <div className="border-b border-border-default p-2">
-        <div className="flex items-center gap-2 rounded-md border border-border-default bg-elevated px-2 py-1.5 focus-within:border-primary">
+        <div className="flex items-center gap-2 rounded-none border border-border-default bg-elevated px-2 py-1.5 focus-within:border-primary">
           <Search size={14} className="shrink-0 text-text-secondary" />
           <input
             type="text"
@@ -148,8 +148,8 @@ export default function IndicatorManagerPanel({
           role="status"
           className={`px-3 py-1.5 text-xs ${
             feedback.kind === 'error'
-              ? 'bg-red-500/10 text-red-400'
-              : 'bg-emerald-500/10 text-emerald-400'
+              ? 'bg-red-500/10 text-red-600 dark:text-red-400'
+              : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
           }`}
         >
           {feedback.message}
@@ -262,7 +262,7 @@ function ActiveIndicatorRow({ indicator, onToggleVisible, onRemove }: ActiveIndi
     <li className="flex items-center justify-between px-3 py-1.5 hover:bg-elevated">
       <div className="flex min-w-0 items-center gap-2">
         <span
-          className="h-2.5 w-2.5 shrink-0 rounded-full border border-border-default/50"
+          className="h-2.5 w-2.5 shrink-0 rounded-none border border-border-default/50"
           style={{ backgroundColor: indicator.style.color }}
         />
         <span
@@ -278,7 +278,7 @@ function ActiveIndicatorRow({ indicator, onToggleVisible, onRemove }: ActiveIndi
           type="button"
           onClick={onToggleVisible}
           aria-label={indicator.visible ? 'Hide indicator' : 'Show indicator'}
-          className="flex h-6 w-6 items-center justify-center rounded text-text-secondary transition-colors hover:bg-surface hover:text-text-primary"
+          className="flex h-6 w-6 items-center justify-center rounded-none text-text-secondary transition-colors hover:bg-surface hover:text-text-primary"
         >
           {indicator.visible ? <Eye size={14} /> : <EyeOff size={14} />}
         </button>
@@ -286,7 +286,7 @@ function ActiveIndicatorRow({ indicator, onToggleVisible, onRemove }: ActiveIndi
           type="button"
           onClick={onRemove}
           aria-label="Remove indicator"
-          className="flex h-6 w-6 items-center justify-center rounded text-text-secondary transition-colors hover:bg-surface hover:text-red-400"
+          className="flex h-6 w-6 items-center justify-center rounded-none text-text-secondary transition-colors hover:bg-surface hover:text-red-400"
         >
           <Trash2 size={14} />
         </button>

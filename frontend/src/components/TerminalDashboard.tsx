@@ -64,7 +64,7 @@ export default function TerminalDashboard() {
 
   // P&L class selection
   const getPnlClass = (val: number) => {
-    if (val > 0) return 'text-[#22c55e]';
+    if (val > 0) return 'text-bull';
     if (val < 0) return 'text-[#ef4444]';
     return 'text-text-secondary';
   };
@@ -81,7 +81,7 @@ export default function TerminalDashboard() {
   }, [activeTab]);
 
   return (
-    <div className="flex flex-col border border-border-default rounded-lg bg-surface/80 backdrop-blur-md panel-shadow-lg overflow-hidden mt-2">
+    <div className="flex flex-col border-t border-border-default bg-surface/80 backdrop-blur-md overflow-hidden">
       {/* Dashboard Top Header & Tabs */}
       <div className="flex items-center justify-between border-b border-border-default bg-surface/50 px-4 py-2 shrink-0">
         <div className="flex items-center gap-1.5">
@@ -96,10 +96,10 @@ export default function TerminalDashboard() {
           <button
             type="button"
             onClick={() => setActiveTab('risk')}
-            className={`rounded-md px-3 py-1 text-xs font-semibold transition-all duration-200 ${
+            className={`rounded-[4px] px-3 py-1 text-xs font-semibold transition-all duration-200 ${
               activeTab === 'risk'
-                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                : 'text-text-secondary hover:bg-elevated hover:text-text-primary border border-transparent'
+                ? 'bg-elevated text-text-primary border border-border-default'
+                : 'text-text-secondary hover:bg-elevated/20 hover:text-text-primary border border-transparent'
             }`}
           >
             <div className="flex items-center gap-1.5">
@@ -111,10 +111,10 @@ export default function TerminalDashboard() {
           <button
             type="button"
             onClick={() => setActiveTab('positions')}
-            className={`rounded-md px-3 py-1 text-xs font-semibold transition-all duration-200 ${
+            className={`rounded-[4px] px-3 py-1 text-xs font-semibold transition-all duration-200 ${
               activeTab === 'positions'
-                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                : 'text-text-secondary hover:bg-elevated hover:text-text-primary border border-transparent'
+                ? 'bg-elevated text-text-primary border border-border-default'
+                : 'text-text-secondary hover:bg-elevated/20 hover:text-text-primary border border-transparent'
             }`}
           >
             <div className="flex items-center gap-1.5">
@@ -126,10 +126,10 @@ export default function TerminalDashboard() {
           <button
             type="button"
             onClick={() => setActiveTab('orders')}
-            className={`rounded-md px-3 py-1 text-xs font-semibold transition-all duration-200 ${
+            className={`rounded-[4px] px-3 py-1 text-xs font-semibold transition-all duration-200 ${
               activeTab === 'orders'
-                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                : 'text-text-secondary hover:bg-elevated hover:text-text-primary border border-transparent'
+                ? 'bg-elevated text-text-primary border border-border-default'
+                : 'text-text-secondary hover:bg-elevated/20 hover:text-text-primary border border-transparent'
             }`}
           >
             <div className="flex items-center gap-1.5">
@@ -167,7 +167,7 @@ export default function TerminalDashboard() {
                   <div className="text-[10px] font-black uppercase tracking-wider text-text-muted">
                     Available Margin
                   </div>
-                  <div className="text-3xl font-black tracking-tight text-white mt-1 font-mono">
+                  <div className="text-3xl font-black tracking-tight text-text-primary mt-1 font-mono">
                     {formatCurrency(
                       marginsData.equity?.net !== undefined && marginsData.equity?.net !== 0
                         ? marginsData.equity.net
@@ -188,7 +188,7 @@ export default function TerminalDashboard() {
                   <div className="grid grid-cols-2 gap-x-8 gap-y-3 text-xs">
                     <div className="flex items-center justify-between border-b border-border-default/30 pb-1.5">
                       <span className="text-text-secondary font-medium">Total Margin Net</span>
-                      <span className="font-mono text-white font-semibold">
+                      <span className="font-mono text-text-primary font-semibold">
                         {formatCurrency(marginsData.equity?.net)}
                       </span>
                     </div>
@@ -205,7 +205,7 @@ export default function TerminalDashboard() {
                     </div>
                     <div className="flex items-center justify-between border-b border-border-default/30 pb-1.5">
                       <span className="text-text-secondary font-medium">Margin Utilised (Debits)</span>
-                      <span className="font-mono text-white font-semibold">
+                      <span className="font-mono text-text-primary font-semibold">
                         {formatCurrency(marginsData.equity?.utilised.debits)}
                       </span>
                     </div>
@@ -216,7 +216,7 @@ export default function TerminalDashboard() {
                           <HelpCircle size={10} className="text-text-muted" />
                         </span>
                       </span>
-                      <span className="font-mono text-white font-semibold">
+                      <span className="font-mono text-text-primary font-semibold">
                         {formatCurrency(marginsData.equity?.utilised.exposure)}
                       </span>
                     </div>
@@ -293,7 +293,7 @@ export default function TerminalDashboard() {
                         
                         return (
                           <tr key={`${pos.tradingsymbol}-${idx}`} className="hover:bg-elevated/20 transition-colors">
-                            <td className="py-2.5 font-bold text-white flex items-center gap-1.5">
+                            <td className="py-2.5 font-bold text-text-primary flex items-center gap-1.5">
                               <span>{pos.tradingsymbol}</span>
                               <span className="text-[8px] bg-surface-elevated text-text-secondary px-1 py-0.5 rounded font-mono">
                                 {pos.exchange}
@@ -304,7 +304,7 @@ export default function TerminalDashboard() {
                             <td className="py-2.5 text-right font-mono text-text-secondary">
                               {pos.average_price.toFixed(2)}
                             </td>
-                            <td className="py-2.5 text-right font-mono text-white">
+                            <td className="py-2.5 text-right font-mono text-text-primary">
                               {pos.last_price.toFixed(2)}
                             </td>
                             <td className={`py-2.5 text-right font-mono font-bold ${getPnlClass(pos.pnl)}`}>
@@ -372,18 +372,18 @@ export default function TerminalDashboard() {
                           </td>
                           <td className="py-2.5">
                             <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                              isBuy ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'
+                              isBuy ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
                             }`}>
                               {order.transaction_type}
                             </span>
                           </td>
-                          <td className="py-2.5 font-bold text-white">
+                          <td className="py-2.5 font-bold text-text-primary">
                             {order.tradingsymbol}
                             <span className="text-[8px] text-text-secondary ml-1 bg-surface-elevated px-1 py-0.5 rounded font-mono">
                               {order.product}
                             </span>
                           </td>
-                          <td className="py-2.5 text-right font-mono text-white">{order.quantity}</td>
+                          <td className="py-2.5 text-right font-mono text-text-primary">{order.quantity}</td>
                           <td className="py-2.5 text-right font-mono text-text-secondary">
                             {order.average_price > 0 ? order.average_price.toFixed(2) : order.price.toFixed(2)}
                           </td>
