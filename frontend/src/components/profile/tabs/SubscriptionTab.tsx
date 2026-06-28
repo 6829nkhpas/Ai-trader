@@ -12,12 +12,12 @@ export default function SubscriptionTab({ user, formatDate, updatingTier, handle
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-200">
       <div>
-        <h2 className="text-xl font-extrabold text-white tracking-tight">Subscription Plan</h2>
+        <h2 className="text-xl font-extrabold text-text-primary tracking-tight">Subscription Plan</h2>
         <p className="text-xs text-text-secondary mt-1">Manage billing schedules, renewal dates, and payment methods</p>
       </div>
 
       {/* Status banner */}
-      <div className={`flex items-center gap-3 rounded-none border-y border-x-0 p-4 ${
+      <div className={`flex items-center gap-3 rounded-none border p-4 ${
         user?.subscription?.status === 'ACTIVE'
           ? 'border-emerald-500/20 bg-emerald-500/5 text-emerald-400/90'
           : 'border-border-default/40 bg-elevated/40 text-text-secondary'
@@ -30,7 +30,7 @@ export default function SubscriptionTab({ user, formatDate, updatingTier, handle
           <Shield size={20} />
         </div>
         <div>
-          <h4 className="text-sm font-bold text-white">
+          <h4 className="text-sm font-bold text-text-primary">
             {user?.subscription?.status === 'ACTIVE' ? 'Premium Subscription Active' : 'Starter Account'}
           </h4>
           <p className="text-[11px] mt-0.5">
@@ -76,7 +76,7 @@ export default function SubscriptionTab({ user, formatDate, updatingTier, handle
           { 
             label: 'Billing Cycle Period End', 
             value: (
-              <span className="text-sm font-bold text-white">
+              <span className="text-sm font-bold text-text-primary">
                 {user?.subscription?.currentPeriodEnd 
                   ? formatDate(user.subscription.currentPeriodEnd) 
                   : 'Never Expires (Free Tier)'}
@@ -101,7 +101,7 @@ export default function SubscriptionTab({ user, formatDate, updatingTier, handle
 
       {/* Detailed Plan ID Reference */}
       {user?.subscription && (
-        <div className="rounded-none border-y border-x-0 border-border-default/40 bg-surface/50 p-4">
+        <div className="rounded-none border border-border-default/40 bg-surface/50 p-4">
           <span className="text-[10px] uppercase tracking-wider text-text-secondary block mb-1">Subscription Reference ID</span>
           <span className="text-[11px] font-mono text-text-secondary break-all">
             {user.subscription.id}
@@ -111,8 +111,8 @@ export default function SubscriptionTab({ user, formatDate, updatingTier, handle
 
       {/* Upgrade or Downgrade Action Promo Panels */}
       {(!user?.tier || user?.tier === 'FREE') ? (
-        <div className="rounded-none border-y border-x-0 border-emerald-500/20 bg-emerald-500/5 p-6 relative overflow-hidden">
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider">Unleash PRO Execution Power</h3>
+        <div className="rounded-none border border-emerald-500/20 bg-emerald-500/5 p-6 relative overflow-hidden">
+          <h3 className="text-sm font-bold text-text-primary uppercase tracking-wider">Unleash PRO Execution Power</h3>
           <p className="text-xs text-text-secondary mt-1 leading-relaxed max-w-lg">
             Upgrade to PRO to unlock continuous Ohlc ML curvature analysis, advanced ReAct LLM pipelines, live broker callbacks, and algorithmic execution.
           </p>
@@ -135,8 +135,8 @@ export default function SubscriptionTab({ user, formatDate, updatingTier, handle
           </div>
         </div>
       ) : (
-        <div className="rounded-none border-y border-x-0 border-border-default/40 bg-elevated/10 p-6">
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider">Downgrade Plan</h3>
+        <div className="rounded-none border border-border-default/40 bg-elevated/10 p-6">
+          <h3 className="text-sm font-bold text-text-primary uppercase tracking-wider">Downgrade Plan</h3>
           <p className="text-xs text-text-secondary mt-1 leading-relaxed max-w-lg">
             Downgrading to FREE will suspend automated agent pipelines and live broker callbacks. Standard indicators will remain fully active.
           </p>

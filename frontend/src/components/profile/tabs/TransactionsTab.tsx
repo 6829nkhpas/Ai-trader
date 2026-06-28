@@ -26,11 +26,11 @@ export default function TransactionsTab({
   return (
     <div className="flex flex-col h-full space-y-4">
       <div>
-        <h2 className="text-xl font-extrabold text-white tracking-tight">Transaction Journal</h2>
+        <h2 className="text-xl font-extrabold text-text-primary tracking-tight">Transaction Journal</h2>
         <p className="text-xs text-text-secondary mt-1">Completed trades stored permanently in the local SQLite db</p>
       </div>
 
-      <div className="flex-1 min-h-0 rounded-none border-y border-x-0 border-border-default/40 bg-muted/30 overflow-hidden flex flex-col">
+      <div className="flex-1 min-h-0 rounded-none border border-border-default/40 bg-muted/30 overflow-hidden flex flex-col">
         {loadingTrades ? (
           <div className="flex flex-1 flex-col items-center justify-center p-8">
             <Loader2 size={32} className="animate-spin text-text-muted mb-2" />
@@ -39,7 +39,7 @@ export default function TransactionsTab({
         ) : sqlTrades.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
             <FileText size={40} className="text-text-secondary mb-3 opacity-40" />
-            <h4 className="text-sm font-bold text-white">No Completed Trades</h4>
+            <h4 className="text-sm font-bold text-text-primary">No Completed Trades</h4>
             <p className="text-xs text-text-secondary mt-1 leading-normal max-w-xs mx-auto">
               Transactions will appear here automatically when paper trading positions are closed or exit criteria are triggered.
             </p>
@@ -63,7 +63,7 @@ export default function TransactionsTab({
                   const isProfit = t.pnl > 0;
                   return (
                     <tr key={t.id} className="hover:bg-elevated/15 transition-colors">
-                      <td className="px-4 py-3 text-xs font-bold text-white">{t.symbol}</td>
+                      <td className="px-4 py-3 text-xs font-bold text-text-primary">{t.symbol}</td>
                       <td className="px-4 py-3 text-xs">
                         <span className={`rounded-none px-2 py-0.5 text-[9px] font-bold ${
                           t.type === 'BUY' 
