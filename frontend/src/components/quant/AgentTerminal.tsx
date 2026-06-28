@@ -12,7 +12,7 @@ const WatchingIndicator = () => (
       ⏸️
     </div>
     <div className="flex flex-col">
-      <span className="text-[11px] font-bold text-teal-300">⏸️ AI paused. Waiting for market condition to trigger...</span>
+      <span className="text-[11px] font-bold text-emerald-600 dark:text-teal-400">⏸️ AI paused. Waiting for market condition to trigger...</span>
       <span className="text-[9px] text-teal-400/60 font-mono">Condition watcher registered in background</span>
     </div>
   </div>
@@ -24,7 +24,7 @@ function parseInlineMarkdown(text: string) {
   return parts.map((part, i) => {
     if (i % 2 === 1) {
       return (
-        <strong key={i} className="font-bold text-teal-300">
+        <strong key={i} className="font-bold text-emerald-600 dark:text-teal-400">
           {part}
         </strong>
       );
@@ -37,7 +37,7 @@ function parseInlineMarkdown(text: string) {
 const MarkdownRenderer = ({ content }: { content: string }) => {
   const lines = content.split('\n');
   return (
-    <div className="space-y-1.5 text-[10.5px] font-sans leading-relaxed tracking-wide text-slate-100/90">
+    <div className="space-y-1.5 text-[10.5px] font-sans leading-relaxed tracking-wide text-text-primary/95">
       {lines.map((line, idx) => {
         const trimmed = line.trim();
         if (!trimmed) return <div key={idx} className="h-1" />;
@@ -47,7 +47,7 @@ const MarkdownRenderer = ({ content }: { content: string }) => {
           return (
             <h3
               key={idx}
-              className="text-[11px] font-black text-emerald-400 border-b border-slate-800/40 pb-1 mt-3 mb-1.5 uppercase tracking-widest flex items-center gap-1.5 select-none"
+              className="text-[11px] font-black text-emerald-400 border-b border-border-default/40 pb-1 mt-3 mb-1.5 uppercase tracking-widest flex items-center gap-1.5 select-none"
             >
               <Target size={11} className="text-emerald-400" />
               {line.replace('### ', '')}
@@ -60,7 +60,7 @@ const MarkdownRenderer = ({ content }: { content: string }) => {
           return (
             <h2
               key={idx}
-              className="text-xs font-black text-teal-300 border-b border-teal-500/10 pb-1 mt-4 mb-2 tracking-widest uppercase flex items-center gap-1.5 select-none"
+              className="text-xs font-black text-emerald-600 dark:text-teal-400 border-b border-teal-500/10 pb-1 mt-4 mb-2 tracking-widest uppercase flex items-center gap-1.5 select-none"
             >
               <Cpu size={12} className="text-teal-400" />
               {line.replace('## ', '')}
@@ -72,7 +72,7 @@ const MarkdownRenderer = ({ content }: { content: string }) => {
         if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
           const listContent = trimmed.substring(2);
           return (
-            <div key={idx} className="flex items-start gap-2 pl-2 my-0.5 text-slate-200">
+            <div key={idx} className="flex items-start gap-2 pl-2 my-0.5 text-text-primary">
               <span className="text-emerald-500/80 font-bold select-none mt-0.5">•</span>
               <span className="flex-1">{parseInlineMarkdown(listContent)}</span>
             </div>
@@ -85,7 +85,7 @@ const MarkdownRenderer = ({ content }: { content: string }) => {
           const num = numMatch[1];
           const listContent = numMatch[2];
           return (
-            <div key={idx} className="flex items-start gap-2.5 pl-2 my-1.5 text-slate-200">
+            <div key={idx} className="flex items-start gap-2.5 pl-2 my-1.5 text-text-primary">
               <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded bg-emerald-500/15 text-emerald-400 text-[8.5px] font-black font-mono border border-emerald-500/20 mt-0.5 select-none">
                 {num}
               </span>
@@ -96,7 +96,7 @@ const MarkdownRenderer = ({ content }: { content: string }) => {
 
         // Standard line
         return (
-          <p key={idx} className="text-slate-300">
+          <p key={idx} className="text-text-secondary">
             {parseInlineMarkdown(line)}
           </p>
         );
@@ -199,7 +199,7 @@ export default function AgentTerminal() {
   };
 
   return (
-    <div className="flex h-full flex-col font-sans bg-black overflow-hidden relative">
+    <div className="flex h-full flex-col font-sans bg-surface overflow-hidden relative">
 
       {/* Terminal Scrolling Log */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3.5 scrollbar-thin scrollbar-track-slate-950/20 scrollbar-thumb-slate-800">
@@ -303,7 +303,7 @@ export default function AgentTerminal() {
                     {step.toolName}
                   </div>
                   {step.args && Object.keys(step.args).length > 0 && (
-                    <div className="mt-1.5 bg-black/40 border border-border-default/60 rounded-none px-2 py-1 text-[8.5px] text-text-secondary leading-normal font-sans space-y-0.5">
+                    <div className="mt-1.5 bg-elevated/10 border border-border-default/60 rounded-none px-2 py-1 text-[8.5px] text-text-secondary leading-normal font-sans space-y-0.5">
                       {Object.entries(step.args).map(([k, v]) => (
                         <div key={k} className="flex gap-1.5">
                           <span className="text-text-muted font-semibold">{k}:</span>
