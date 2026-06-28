@@ -39,6 +39,7 @@ const PROFILES: { key: TradeProfile; label: string; shortcut: string }[] = [
   { key: 'INTRADAY', label: 'Intraday', shortcut: 'Scalp' },
   { key: 'SWING', label: 'Swing', shortcut: '1H-4H' },
   { key: 'INVESTOR', label: 'Investor', shortcut: 'Macro' },
+  { key: 'FNO', label: 'F&O', shortcut: 'Options' },
 ];
 
 interface TerminalLayoutProps {

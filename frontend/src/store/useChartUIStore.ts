@@ -9,10 +9,48 @@ import {
   DEFAULT_WORKSPACE,
   type WorkspaceState,
 } from '../charting/workspace';
+import { useTradeStore, type ChartTimeframe } from './useTradeStore';
 
 type CursorMode = 'cross' | 'dot' | 'arrow' | 'eraser';
 type MagnetMode = 'off' | 'weak' | 'strong';
 export type GhostLineMode = 'linear' | 'curved';
+
+// ── Split-Chart (Dual-Pane) Model ──────────────────────────────────────
+//
+// The split-view slice models the Angel-One-style dual-pane chart layout
+// (Requirement 4). Each `ChartPaneState` is a fully independent chart — its
+// own symbol, timeframe, and chart type — with no cross-pane synchronization
+// in this phase (R4.3, R4.8). One pane is the `activePaneId`, the target the
+// Instrument_Search and global controls route to (R4.4). `splitView` is off by
+// default and is mode-gated: it can only be enabled in the INTRADAY or FNO
+// workspace modes (R4.7), enforced at the store boundary in `setSplitView`.
+
+export type PaneId = 'A' | 'B';
+
+export interface ChartPaneState {
+  /** Stable identifier for the pane (left = 'A', right = 'B'). */
+  id: PaneId;
+  /** The instrument this pane charts, independent of the other pane. */
+  symbol: string;
+  /** The pane's own timeframe selection. */
+  timeframe: ChartTimeframe;
+  /** The pane's own chart type. */
+  chartType: ChartType;
+}
+
+/** Workspace modes in which the Split_Chart_View is available (R4.7). */
+const SPLIT_ENABLED_PROFILES = ['INTRADAY', 'FNO'] as const;
+
+/** Whether the currently active workspace profile permits split view (R4.7). */
+function isSplitAllowed(): boolean {
+  const profile = useTradeStore.getState().activeProfile;
+  return (SPLIT_ENABLED_PROFILES as readonly string[]).includes(profile);
+}
+
+/** Seed a fresh pane with the default symbol/timeframe/chart type. */
+function defaultPane(id: PaneId): ChartPaneState {
+  return { id, symbol: 'RELIANCE', timeframe: '10m', chartType: 'candlestick' };
+}
 
 export type Point = { time: number; price: number };
 export type Drawing = {
@@ -147,6 +185,13 @@ interface ChartUIState {
   /** Whether the drawing Layers panel is visible. */
   showLayersPanel: boolean;
 
+  // ── Split-Chart (Dual-Pane) State (Requirement 4) ──────────────────
+  /** Whether the chart area is split into two independent panes (off by default). */
+  splitView: boolean;
+  /** The two independent chart panes; index 0 = 'A', index 1 = 'B'. */
+  panes: [ChartPaneState, ChartPaneState];
+  /** The pane that search/global controls target (the Active_Pane). */
+  activePaneId: PaneId;
   setActiveCursor: (cursor: CursorMode) => void;
   setActiveDrawingTool: (tool: string | null) => void;
   setMagnetMode: (mode: MagnetMode) => void;
@@ -187,6 +232,18 @@ interface ChartUIState {
   setShowLayersPanel: (value: boolean) => void;
   toggleLayersPanel: () => void;
 
+  // ── Split-Chart (Dual-Pane) Actions (Requirement 4) ────────────────
+  /** Enable/disable split view. Enabling is a no-op unless the active
+   *  workspace profile is INTRADAY or FNO (mode-gating, R4.7). */
+  setSplitView: (on: boolean) => void;
+  /** Designate which pane is the Active_Pane (R4.4, R4.5). */
+  setActivePane: (id: PaneId) => void;
+  /** Set a single pane's symbol without affecting the other pane (R4.3, R4.8). */
+  setPaneSymbol: (id: PaneId, symbol: string) => void;
+  /** Set a single pane's timeframe without affecting the other pane (R4.3, R4.8). */
+  setPaneTimeframe: (id: PaneId, tf: ChartTimeframe) => void;
+  /** Set a single pane's chart type without affecting the other pane (R4.3, R4.8). */
+  setPaneChartType: (id: PaneId, t: ChartType) => void;
   // ── Workspace Persistence ──────────────────────────────────────────
   loadWorkspaceFromDB: (symbol: string) => Promise<void>;
   saveWorkspaceToDB: (symbol: string) => Promise<void>;
@@ -238,6 +295,9 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
   strategyParams: {},
   showIndicatorManager: false,
   showLayersPanel: false,
+  splitView: false,
+  panes: [defaultPane('A'), defaultPane('B')],
+  activePaneId: 'A',
   activeIndicators: {},
   setActiveCursor: (cursor) => set({ activeCursor: cursor, activeDrawingTool: null }),
   setActiveDrawingTool: (tool) => set({ activeDrawingTool: tool, selectedDrawingId: null }),
@@ -379,6 +439,50 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
     set((s) => ({ showIndicatorManager: !s.showIndicatorManager })),
   setShowLayersPanel: (value) => set({ showLayersPanel: value }),
   toggleLayersPanel: () => set((s) => ({ showLayersPanel: !s.showLayersPanel })),
+
+  // ── Split-Chart (Dual-Pane) Actions ────────────────────────────────
+
+  /**
+   * Toggle the dual-pane split view. Enabling is mode-gated: when the active
+   * workspace profile is not INTRADAY or FNO, `setSplitView(true)` is a no-op
+   * and the view stays single (Requirement 4.7). Disabling is always allowed
+   * (returning to single view is valid in any mode).
+   */
+  setSplitView: (on) =>
+    set((state) => {
+      if (on && !isSplitAllowed()) return state;
+      return { splitView: on };
+    }),
+
+  /** Designate the Active_Pane that search/global controls target (R4.4). */
+  setActivePane: (id) => set({ activePaneId: id }),
+
+  /** Update one pane's symbol, leaving the sibling pane untouched (R4.3, R4.8). */
+  setPaneSymbol: (id, symbol) =>
+    set((state) => ({
+      panes: state.panes.map((p) => (p.id === id ? { ...p, symbol } : p)) as [
+        ChartPaneState,
+        ChartPaneState,
+      ],
+    })),
+
+  /** Update one pane's timeframe, leaving the sibling pane untouched (R4.3, R4.8). */
+  setPaneTimeframe: (id, tf) =>
+    set((state) => ({
+      panes: state.panes.map((p) => (p.id === id ? { ...p, timeframe: tf } : p)) as [
+        ChartPaneState,
+        ChartPaneState,
+      ],
+    })),
+
+  /** Update one pane's chart type, leaving the sibling pane untouched (R4.3, R4.8). */
+  setPaneChartType: (id, t) =>
+    set((state) => ({
+      panes: state.panes.map((p) => (p.id === id ? { ...p, chartType: t } : p)) as [
+        ChartPaneState,
+        ChartPaneState,
+      ],
+    })),
 
   // ── Workspace Persistence Actions ──────────────────────────────────
 
