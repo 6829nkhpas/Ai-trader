@@ -132,7 +132,11 @@ export default function ChartPane({ pane }: ChartPaneProps) {
       {/* The independent chart instance for this pane. */}
       <div className="relative min-h-0 flex-1">
         <PaneErrorBoundary paneId={pane.id}>
-          <MainTerminalChart timeframe={pane.timeframe as Timeframe} />
+          <MainTerminalChart
+            symbolOverride={pane.symbol}
+            timeframeOverride={pane.timeframe as Timeframe}
+            chartTypeOverride={pane.chartType}
+          />
         </PaneErrorBoundary>
       </div>
     </div>

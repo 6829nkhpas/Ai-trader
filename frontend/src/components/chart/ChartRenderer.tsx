@@ -71,6 +71,17 @@ export interface ChartRendererProps extends AlphaPredictiveChartProps {
   activeStrategyId?: string | null;
   /** Optional per-strategy parameter overrides. */
   strategyParams?: StrategyParams;
+  /**
+   * Per-pane symbol override (split view). When provided, this renderer charts
+   * this symbol instead of the global `selectedSymbol`, so each split pane can
+   * display a different instrument simultaneously (R4.3). Its presence also
+   * marks the renderer as "isolated": it skips the global side effects
+   * (live-buffer clear, workspace auto-load/save) that would otherwise let one
+   * pane clobber the other's shared state.
+   */
+  symbolOverride?: string;
+  /** Per-pane timeframe override (split view); falls back to the store. */
+  timeframeOverride?: Timeframe;
 }
 
 export default function ChartRenderer({
@@ -81,6 +92,8 @@ export default function ChartRenderer({
   chartTypeParams,
   activeStrategyId = null,
   strategyParams,
+  symbolOverride,
+  timeframeOverride,
 }: ChartRendererProps) {
   // ── Store Subscriptions ─────────────────────────────────────────────
   const ohlcCandles = useTradeStore((s) => s.ohlcCandles);
@@ -94,11 +107,15 @@ export default function ChartRenderer({
   const { activeCursor, activeDrawingTool, drawings } = useChartUIStore();
   const showLayersPanel = useChartUIStore((s) => s.showLayersPanel);
 
+  // In split view each pane passes its own symbol; that takes priority over the
+  // global selection so two panes can chart different instruments at once.
+  const isolated = !!symbolOverride;
   const activeSymbol = useMemo(() => {
+    if (symbolOverride) return symbolOverride.toUpperCase();
     if (selectedSymbol) return selectedSymbol.toUpperCase();
     const d = activeDecision ?? liveDecisions[liveDecisions.length - 1];
     return d?.symbol ?? 'RELIANCE';
-  }, [selectedSymbol, activeDecision, liveDecisions]);
+  }, [symbolOverride, selectedSymbol, activeDecision, liveDecisions]);
 
   // Active indicators for this symbol (stable empty fallback for unknowns).
   const activeIndicators = useChartUIStore(
@@ -114,13 +131,15 @@ export default function ChartRenderer({
   const previousSymbolRef = useRef<string>(activeSymbol);
   useEffect(() => {
     if (previousSymbolRef.current !== activeSymbol) {
-      useTradeStore.getState().clearLiveBuffer();
+      // Only the single (non-isolated) chart owns the shared live buffer; an
+      // isolated pane must not wipe the sibling pane's live candles.
+      if (!isolated) useTradeStore.getState().clearLiveBuffer();
       previousSymbolRef.current = activeSymbol;
     }
-  }, [activeSymbol]);
+  }, [activeSymbol, isolated]);
 
   // ── Historical Data ──────────────────────────────────────────────────
-  const effectiveTimeframe = (activeTimeframe as Timeframe) ?? timeframe;
+  const effectiveTimeframe = timeframeOverride ?? (activeTimeframe as Timeframe) ?? timeframe;
   const rangeDays = RANGE_DAYS[activeRange] ?? 365;
   const kiteInterval = KITE_INTERVAL_MAP[effectiveTimeframe] ?? '10minute';
   const { candles: historicalCandles, loading: histLoading } = useHistoricalData(
@@ -212,10 +231,12 @@ export default function ChartRenderer({
   );
 
   // ── Workspace Persistence: Auto-Load on Symbol Change ─────────────
+  // Skipped for isolated split panes: the drawings/workspace slice is global,
+  // so per-pane auto-load/save would let two panes clobber each other.
   useEffect(() => {
-    if (!activeSymbol) return;
+    if (!activeSymbol || isolated) return;
     useChartUIStore.getState().loadWorkspaceFromDB(activeSymbol);
-  }, [activeSymbol]);
+  }, [activeSymbol, isolated]);
 
   // ── Workspace Persistence: Debounced Auto-Save on Drawing Change ──
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -225,11 +246,11 @@ export default function ChartRenderer({
   const debouncedSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      if (activeSymbol) {
+      if (activeSymbol && !isolated) {
         useChartUIStore.getState().saveWorkspaceToDB(activeSymbol);
       }
     }, 1000);
-  }, [activeSymbol]);
+  }, [activeSymbol, isolated]);
 
   const isFirstRender = useRef(true);
   useEffect(() => {
@@ -242,13 +263,13 @@ export default function ChartRenderer({
 
   useEffect(() => {
     const handleBeforeUnload = () => {
-      if (activeSymbol && drawingsRef.current.length > 0) {
+      if (activeSymbol && !isolated && drawingsRef.current.length > 0) {
         useChartUIStore.getState().saveWorkspaceToDB(activeSymbol);
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [activeSymbol]);
+  }, [activeSymbol, isolated]);
 
   // ── Render Helpers ───────────────────────────────────────────────────
   const cursorClass = useMemo(() => {

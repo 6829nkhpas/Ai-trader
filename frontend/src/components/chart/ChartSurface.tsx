@@ -23,9 +23,17 @@ import FootprintChart from './FootprintChart';
 import { useTradeStore } from '../../store/useTradeStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
 import type { Timeframe } from '../../utils/chartTypes';
+import type { ChartType } from '../../charting/engines';
 
 export interface ChartSurfaceProps {
   className?: string;
+  /** Per-pane symbol (split view). Charts this instrument instead of the global
+   *  `selectedSymbol` so two panes can show different stocks at once (R4.3). */
+  symbolOverride?: string;
+  /** Per-pane timeframe (split view); falls back to the store. */
+  timeframeOverride?: Timeframe;
+  /** Per-pane chart type (split view); falls back to the store. */
+  chartTypeOverride?: ChartType;
 }
 
 /**
@@ -34,7 +42,12 @@ export interface ChartSurfaceProps {
  * indicator-manager overlay. Chart mode, timeframe and fullscreen are owned by
  * the page header.
  */
-export default function ChartSurface({ className = '' }: ChartSurfaceProps) {
+export default function ChartSurface({
+  className = '',
+  symbolOverride,
+  timeframeOverride,
+  chartTypeOverride,
+}: ChartSurfaceProps) {
   // Chart mode + timeframe are owned by the page header (read-only here).
   const chartMode = useTradeStore((s) => s.chartMode);
   const activeTimeframe = useTradeStore((s) => s.activeTimeframe);
@@ -47,9 +60,15 @@ export default function ChartSurface({ className = '' }: ChartSurfaceProps) {
   const showIndicatorManager = useChartUIStore((s) => s.showIndicatorManager);
   const setShowIndicatorManager = useChartUIStore((s) => s.setShowIndicatorManager);
 
-  const showVolumeProfile = chartMode === 'VOLUME_PROFILE';
-  const isFootprint = chartMode === 'FOOTPRINT';
-  const effectiveTimeframe = (activeTimeframe as Timeframe) ?? '1m';
+  // In isolated (split-pane) mode each pane drives its OWN chart type and
+  // timeframe and ignores the global footprint/volume-profile mode, so the two
+  // panes stay fully independent (R4.3, R4.8).
+  const isolated = !!symbolOverride;
+  const effectiveChartType = chartTypeOverride ?? chartType;
+  const showVolumeProfile = !isolated && chartMode === 'VOLUME_PROFILE';
+  const isFootprint = !isolated && chartMode === 'FOOTPRINT';
+  const effectiveTimeframe =
+    timeframeOverride ?? (activeTimeframe as Timeframe) ?? '1m';
 
   return (
     <div className={`relative h-full w-full ${className}`}>
@@ -58,8 +77,10 @@ export default function ChartSurface({ className = '' }: ChartSurfaceProps) {
       ) : (
         <ChartRenderer
           timeframe={effectiveTimeframe}
+          timeframeOverride={timeframeOverride}
+          symbolOverride={symbolOverride}
           showVolumeProfile={showVolumeProfile}
-          chartType={chartType}
+          chartType={effectiveChartType}
           chartTypeParams={chartTypeParams}
           activeStrategyId={activeStrategyId}
           strategyParams={strategyParams}

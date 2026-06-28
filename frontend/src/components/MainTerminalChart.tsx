@@ -30,8 +30,29 @@
 
 import React from 'react';
 import ChartSurface from './chart/ChartSurface';
-import type { AlphaPredictiveChartProps } from '../utils/chartTypes';
+import type { AlphaPredictiveChartProps, Timeframe } from '../utils/chartTypes';
+import type { ChartType } from '../charting/engines';
 
-export default function MainTerminalChart(_props: AlphaPredictiveChartProps) {
-  return <ChartSurface className="h-full w-full" />;
+interface MainTerminalChartProps extends AlphaPredictiveChartProps {
+  /** Per-pane symbol (split view) — charts this instrument independently. */
+  symbolOverride?: string;
+  /** Per-pane timeframe (split view). */
+  timeframeOverride?: Timeframe;
+  /** Per-pane chart type (split view). */
+  chartTypeOverride?: ChartType;
+}
+
+export default function MainTerminalChart({
+  symbolOverride,
+  timeframeOverride,
+  chartTypeOverride,
+}: MainTerminalChartProps) {
+  return (
+    <ChartSurface
+      className="h-full w-full"
+      symbolOverride={symbolOverride}
+      timeframeOverride={timeframeOverride}
+      chartTypeOverride={chartTypeOverride}
+    />
+  );
 }

@@ -44,13 +44,14 @@ vi.mock('../../MainTerminalChart', async () => {
   const ReactNs = await import('react');
   return {
     __esModule: true,
-    default: ({ timeframe }: any) => {
+    default: ({ symbolOverride, timeframeOverride }: any) => {
       ReactNs.useEffect(() => {
         charts.mounts += 1;
       }, []);
       return ReactNs.createElement('div', {
         'data-testid': 'main-chart',
-        'data-timeframe': String(timeframe ?? ''),
+        'data-symbol': String(symbolOverride ?? ''),
+        'data-timeframe': String(timeframeOverride ?? ''),
       });
     },
   };
@@ -117,10 +118,15 @@ describe('SplitChartContainer — dual-pane render (R4.2)', () => {
     expect(chartInstances).toHaveLength(2);
     expect(charts.mounts).toBe(2);
 
-    // Each pane drives its OWN independent timeframe into its chart (R4.3 surface).
+    // Each pane drives its OWN independent symbol + timeframe into its chart
+    // instance (proving panes can chart different stocks at once — R4.3).
     const timeframes = chartInstances.map((c) => c.getAttribute('data-timeframe'));
     expect(timeframes).toContain('10m');
     expect(timeframes).toContain('1h');
+
+    const symbols = chartInstances.map((c) => c.getAttribute('data-symbol'));
+    expect(symbols).toContain('RELIANCE');
+    expect(symbols).toContain('TCS');
 
     // Each pane surfaces its own independent symbol in its header.
     expect(a).toHaveTextContent('RELIANCE');
