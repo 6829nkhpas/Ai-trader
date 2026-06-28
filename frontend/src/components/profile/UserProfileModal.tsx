@@ -186,7 +186,7 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
         {/* Close Button */}
         <button 
           onClick={onClose}
-          className="absolute top-4 right-4 z-10 flex h-8 w-8 items-center justify-center rounded-none border border-border-default/40 bg-elevated/20 text-text-secondary hover:bg-elevated hover:text-white transition-all"
+          className="absolute top-4 right-4 z-10 flex h-8 w-8 items-center justify-center rounded-none border border-border-default/40 bg-elevated/20 text-text-secondary hover:bg-elevated hover:text-text-primary transition-all"
         >
           <X size={16} />
         </button>
@@ -198,7 +198,7 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
             <div className="p-5 border-b border-border-default/40 flex items-center gap-3">
               {/* User Info */}
               <div className="min-w-0">
-                <h3 className="text-sm font-bold text-white truncate">{user?.name}</h3>
+                <h3 className="text-sm font-bold text-text-primary truncate">{user?.name}</h3>
                 <p className={`text-[10px] font-semibold tracking-wider uppercase mt-0.5 ${user?.tier === 'PRO' ? 'text-amber-400' : 'text-text-secondary'}`}>
                   {user?.tier} Tier
                 </p>
