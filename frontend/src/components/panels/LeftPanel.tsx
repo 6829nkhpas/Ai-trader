@@ -299,46 +299,123 @@ export default function LeftPanel() {
               </button>
             )}
             {showDropdown && (
-              <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-52 overflow-y-auto scrollbar-none rounded-none border border-border-default bg-surface shadow-lg panel-shadow">
+              <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-72 overflow-y-auto scrollbar-none rounded-none border border-border-default bg-surface shadow-lg panel-shadow">
+                {/* Optional FNO filter chips (R3.2) — token-only, shown when the
+                    results include F&O contracts. */}
+                {!isSearching && !searchError && hasFno && (
+                  <div className="sticky top-0 z-10 flex flex-wrap gap-1 border-b border-border-default bg-surface px-2 py-1.5">
+                    {/* Underlying chips */}
+                    {underlyingOptions.map((u) => (
+                      <button
+                        key={`u:${u}`}
+                        type="button"
+                        onClick={() => setFnoUnderlyingFilter(fnoUnderlyingFilter === u ? null : u)}
+                        className={`rounded-none px-1.5 py-px text-[8px] font-semibold uppercase tracking-wider transition-colors ${
+                          fnoUnderlyingFilter === u
+                            ? 'bg-primary/20 text-text-primary'
+                            : 'bg-elevated text-text-muted hover:text-text-secondary'
+                        }`}
+                      >
+                        {u}
+                      </button>
+                    ))}
+                    {/* Expiry chips */}
+                    {expiryOptions.map((ex) => (
+                      <button
+                        key={`e:${ex}`}
+                        type="button"
+                        onClick={() => setFnoExpiryFilter(fnoExpiryFilter === ex ? null : ex)}
+                        className={`rounded-none px-1.5 py-px text-[8px] font-semibold uppercase tracking-wider transition-colors ${
+                          fnoExpiryFilter === ex
+                            ? 'bg-primary/20 text-text-primary'
+                            : 'bg-elevated text-text-muted hover:text-text-secondary'
+                        }`}
+                      >
+                        {ex}
+                      </button>
+                    ))}
+                    {/* Type chips (CE/PE/FUT) */}
+                    {typeOptions.map((t) => (
+                      <button
+                        key={`t:${t}`}
+                        type="button"
+                        onClick={() => setFnoTypeFilter(fnoTypeFilter === t ? null : t)}
+                        className={`rounded-none px-1.5 py-px text-[8px] font-semibold uppercase tracking-wider transition-colors ${
+                          fnoTypeFilter === t
+                            ? (SECTOR_COLORS[t] ?? 'bg-primary/20 text-text-primary')
+                            : 'bg-elevated text-text-muted hover:text-text-secondary'
+                        }`}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 {isSearching ? (
                   <div className="flex items-center justify-center gap-2 px-3 py-4">
                     <Loader2 size={13} className="animate-spin text-text-muted" />
                     <span className="text-[11px] text-text-secondary">Searching...</span>
                   </div>
-                ) : searchResults.length === 0 ? (
+                ) : searchError ? (
+                  // Distinct error state — the previously charted instrument is
+                  // retained (R3.5); we never blank the chart on a failed search.
+                  <div className="px-3 py-4 text-center text-[11px] text-bear">{searchError}</div>
+                ) : filteredResults.length === 0 ? (
                   <div className="px-3 py-4 text-center text-[11px] text-text-muted">No instruments found</div>
                 ) : (
-                  searchResults.map((inst) => (
-                    <button
-                      key={inst.instrument_token}
-                      type="button"
-                      onClick={() => {
-                        // Add to dynamic watchlist + select
-                        addToWatchlist({
-                          symbol: inst.tradingsymbol,
-                          token: inst.instrument_token,
-                          name: inst.name || inst.tradingsymbol,
-                          sector: inst.instrument_type || 'EQ',
-                          lastPrice: 0,
-                          change: 0,
-                        });
-                        setSelectedSymbol(inst.tradingsymbol);
-                        setShowDropdown(false);
-                        setQuery('');
-                        setSearchResults([]);
-                      }}
-                      className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition-colors hover:bg-elevated/70"
-                    >
-                      <div className="flex flex-col min-w-0">
-                        <span className="text-[11px] font-semibold text-text-primary truncate">{inst.tradingsymbol}</span>
-                        <span className="text-[9px] text-text-muted truncate">{inst.name}</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Plus size={10} className="text-text-secondary" />
-                        <span className="rounded-none px-1 py-px text-[7px] font-semibold uppercase tracking-wider bg-elevated text-text-muted">{inst.instrument_type || 'EQ'}</span>
-                      </div>
-                    </button>
-                  ))
+                  filteredResults.map((inst) => {
+                    if (inst.kind === 'EQ') {
+                      // Equity row — preserves existing equity search behavior (R3.6).
+                      const eqColor = SECTOR_COLORS['EQ'] ?? 'bg-slate-500/10 text-slate-400';
+                      return (
+                        <button
+                          key={resultKey(inst)}
+                          type="button"
+                          onClick={() => handleSelectResult(inst)}
+                          className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition-colors hover:bg-elevated/70"
+                        >
+                          <div className="flex flex-col min-w-0">
+                            <span className="text-[11px] font-semibold text-text-primary truncate">{inst.symbol}</span>
+                            <span className="text-[9px] text-text-muted truncate">{inst.name}</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <Plus size={10} className="text-text-secondary" />
+                            <span className={`rounded-none px-1 py-px text-[7px] font-semibold uppercase tracking-wider ${eqColor}`}>
+                              {inst.exchange || 'EQ'}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    }
+                    // FNO row — visually distinct, showing underlying·expiry·strike
+                    // and a CE/PE/FUT type badge (R3.4).
+                    const typeColor = SECTOR_COLORS[inst.optionType] ?? 'bg-indigo-500/10 text-indigo-400';
+                    const meta = [
+                      inst.underlying,
+                      inst.expiry,
+                      inst.strike != null ? inst.strike.toString() : null,
+                    ].filter(Boolean).join(' · ');
+                    return (
+                      <button
+                        key={resultKey(inst)}
+                        type="button"
+                        onClick={() => handleSelectResult(inst)}
+                        className="flex w-full items-center justify-between gap-2 border-l-2 border-l-primary/30 px-3 py-1.5 text-left transition-colors hover:bg-elevated/70"
+                      >
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-[11px] font-semibold text-text-primary truncate">{inst.tradingsymbol}</span>
+                          <span className="text-[9px] text-text-muted truncate">{meta}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Plus size={10} className="text-text-secondary" />
+                          <span className={`rounded-none px-1 py-px text-[7px] font-semibold uppercase tracking-wider ${typeColor}`}>
+                            {inst.optionType}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })
                 )}
               </div>
             )}
@@ -393,7 +470,7 @@ export default function LeftPanel() {
                     setDragOverIndex(null);
                   }}
                   onDragEnd={() => { setDragIndex(null); setDragOverIndex(null); }}
-                  className={`group flex w-full items-center gap-1 px-1.5 py-1.5 text-[11px] text-left transition-all border-l-2 ${
+                  className={`group flex w-full items-center gap-1 px-1.5 py-1 text-[11px] text-left transition-all border-l-2 ${
                     isDragging ? 'opacity-40 scale-95' : ''
                   } ${isDragOver ? 'bg-primary/5 border-t-2 border-t-primary/40' : ''} ${
                     isActive

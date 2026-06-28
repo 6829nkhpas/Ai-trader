@@ -92,7 +92,6 @@ describe('F4 scope boundary — source discovery', () => {
         'IvSkewChart.tsx',
         'OptionsHud.tsx',
         'FnoUnavailableState.tsx',
-        'FnoModeToggle.tsx',
         'viewModel.ts',
       ]),
     );

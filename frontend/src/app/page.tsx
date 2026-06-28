@@ -365,6 +365,15 @@ export default function Home() {
                         {symbolQuote.change >= 0 ? <ArrowUpRight size={11} /> : <ArrowDownRight size={11} />}
                         {symbolQuote.change >= 0 ? '+' : ''}{symbolQuote.change.toFixed(2)}%
                       </div>
+                      {/* OHLC + volume strip — reclaim the otherwise-empty left region (R8.1).
+                          Token-only; collapses on narrow widths so no control is pushed out. */}
+                      <div className="ml-1 hidden shrink-0 items-center gap-2.5 border-l border-border-default pl-2.5 text-[10px] tabular-nums text-text-secondary lg:flex">
+                        <span className="flex items-center gap-1"><span className="font-medium uppercase tracking-wider text-text-muted">O</span>{symbolQuote.open.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="flex items-center gap-1"><span className="font-medium uppercase tracking-wider text-text-muted">H</span><span className="text-bull">{symbolQuote.high.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></span>
+                        <span className="flex items-center gap-1"><span className="font-medium uppercase tracking-wider text-text-muted">L</span><span className="text-bear">{symbolQuote.low.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></span>
+                        <span className="flex items-center gap-1"><span className="font-medium uppercase tracking-wider text-text-muted">C</span>{symbolQuote.close.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="flex items-center gap-1"><span className="font-medium uppercase tracking-wider text-text-muted">Vol</span>{symbolQuote.volume.toLocaleString('en-IN', { notation: 'compact', maximumFractionDigits: 1 })}</span>
+                      </div>
                     </>
                   ) : (
                     <div className="truncate text-xs font-semibold text-text-primary">{symbol}</div>
@@ -372,9 +381,8 @@ export default function Home() {
                 </div>
 
                 <div className="flex h-full shrink-0 items-center border-l border-border-default">
-                  {/* Single / Split chart layout toggle (self-gating: Intraday & F&O only) */}
-                  <SplitViewToggle />
-
+                  {/* ── Chart cluster: mode · type · indicators · strategy · projection (R8.2) ── */}
+                  <div className="flex h-full items-center" role="group" aria-label="Chart controls">
                   {/* Chart-mode toggle (Standard / Volume Profile / Footprint) */}
                   <ChartModeToggle />
 
@@ -413,6 +421,12 @@ export default function Home() {
 
                   {/* Projection engine toggle (OLS / VWEPR ghost line) */}
                   <GhostLineToggle />
+                  </div>
+
+                  {/* ── View cluster: single/split · timeframe · fullscreen (R8.2) ── */}
+                  <div className="flex h-full items-center" role="group" aria-label="View controls">
+                  {/* Single / Split chart layout toggle (self-gating: Intraday & F&O only) */}
+                  <SplitViewToggle />
 
                   {/* Timeframe dropdown */}
                   <div className="relative h-full" ref={tfDropdownRef}>
@@ -478,7 +492,10 @@ export default function Home() {
                   >
                     {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
                   </button>
+                  </div>
 
+                  {/* ── Analytics cluster: sidebar / Deep Quant (R8.2) ── */}
+                  <div className="flex h-full items-center" role="group" aria-label="Analytics controls">
                   {/* Sidebar toggle button */}
                   {!isFullscreen && (
                     <button
@@ -493,6 +510,7 @@ export default function Home() {
                       {sidebarOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
                     </button>
                   )}
+                  </div>
                 </div>
               </div>
 

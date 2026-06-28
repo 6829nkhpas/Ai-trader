@@ -127,7 +127,7 @@ describe('Property 3: no second source of truth for F&O', () => {
       fc.property(fc.constantFrom(...PROFILES), (target) => {
         store().setActiveProfile(target);
 
-        const state = store() as Record<string, unknown>;
+        const state = store() as unknown as Record<string, unknown>;
         // No second boolean source of truth.
         expect('fnoMode' in state).toBe(false);
         // The legacy actions are gone too — only setActiveProfile drives F&O.

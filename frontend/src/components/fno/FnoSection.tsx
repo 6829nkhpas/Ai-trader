@@ -210,7 +210,7 @@ export default function FnoSection() {
   return (
     <div className="flex h-full w-full min-h-0 flex-col bg-background font-sans">
       {/* ── Section toolbar: underlying + expiry selectors and status ──────── */}
-      <div className="flex items-center justify-between gap-4 border-b border-border-default bg-surface px-4 py-2">
+      <div className="flex items-center justify-between gap-4 border-b border-border-default bg-surface px-3 py-1.5">
         <div className="flex items-center gap-3">
           <span className="text-[11px] font-bold uppercase tracking-widest text-text-muted">
             F&amp;O

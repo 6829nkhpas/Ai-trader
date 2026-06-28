@@ -16,7 +16,8 @@
  *     snapshot events with advancing data updates the rendered view-models IN
  *     PLACE — the chart/HUD children are NOT recreated (mount count stays 1) and
  *     the section root node identity is stable (R6.2, R7.1).
- *  3. Unmounting the section (mimicking `fnoMode` → false) calls `fno_unsubscribe`
+ *  3. Unmounting the section (mimicking leaving the F&O Workspace_Mode) calls
+ *     `fno_unsubscribe`
  *     and the `listen` unlisten function (R7.3).
  *
  * The chart/HUD stand-ins render their props so in-place updates are observable,
@@ -208,8 +209,10 @@ beforeEach(() => {
   });
   tauri.invokeMock = vi.fn((cmd: string) => defaultInvoke(cmd));
 
-  // Deterministic store state (the section's mount selectors).
-  useTradeStore.setState({ fnoMode: true, fnoUnderlying: 'NIFTY 50', fnoExpiry: '' });
+  // Deterministic store state (the section's mount selectors). The F&O workspace
+  // is now selected via the unified Mode_Selector — activeProfile === 'FNO' — the
+  // single source of truth (AD-1, R1.4/R6.3); the legacy fnoMode flag was removed.
+  useTradeStore.setState({ activeProfile: 'FNO', fnoUnderlying: 'NIFTY 50', fnoExpiry: '' });
 });
 
 afterEach(() => {
@@ -284,14 +287,14 @@ describe('FnoSection — streaming + lifecycle integration (R6.2, R7.1, R7.3)', 
     expect(container.firstChild).toBe(rootBefore);
   });
 
-  it('calls fno_unsubscribe and the unlisten fn on unmount (fnoMode → false) (R7.3)', async () => {
+  it('calls fno_unsubscribe and the unlisten fn on unmount (leaving F&O mode) (R7.3)', async () => {
     const { unmount } = render(<FnoSection />);
 
     // Wait for the listener to be registered so its unlisten fn is captured.
     await waitFor(() => expect(tauri.snapshotHandler.current).not.toBeNull());
     await screen.findByTestId('oi-chart');
 
-    // Unmounting mimics page.tsx dropping <FnoSection/> when fnoMode flips false.
+    // Unmounting mimics page.tsx dropping <FnoSection/> when activeProfile leaves 'FNO'.
     unmount();
 
     await waitFor(() => {
