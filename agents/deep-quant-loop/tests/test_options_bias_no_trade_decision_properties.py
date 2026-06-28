@@ -254,10 +254,16 @@ def test_property_19_classifier_emits_no_trade_decision(analytics, proposed_dire
                 f"forbidden trade-decision key {item!r} present in label: {label!r}"
             )
 
-    # No string value anywhere within the result equals a BUY/SELL/HOLD action
-    # (Requirement 10.1) — even though a BUY/SELL/HOLD proposed_direction may have
-    # been supplied as input, it never leaks out as a decision value.
-    for kind, item in _walk_strings_and_keys(label):
+    # No string value in the DECISION-bearing part of the label equals a
+    # BUY/SELL/HOLD action (Requirement 10.1) — even though a BUY/SELL/HOLD
+    # proposed_direction may have been supplied as input, it never leaks out as a
+    # decision value. The ``signals`` subtree is deliberately EXCLUDED here: per
+    # Property 3 it echoes the driving analytics verbatim, so an action-word
+    # string the test itself injected as garbage input (e.g. an ``oi_buildup``
+    # label of "BUY") legitimately reappears there — that is a faithful echo of
+    # input, not a trade decision emitted by the classifier.
+    decision_bearing = {k: v for k, v in label.items() if k != "signals"}
+    for kind, item in _walk_strings_and_keys(decision_bearing):
         if kind == "value" and isinstance(item, str):
             assert item.strip().upper() not in _ACTION_WORDS, (
                 f"BUY/SELL/HOLD action value {item!r} present in label: {label!r}"
