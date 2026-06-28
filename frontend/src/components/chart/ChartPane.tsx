@@ -1,6 +1,6 @@
 'use client';
 
-// Feature: terminal-ux-overhaul (Task 5.1)
+// Feature: terminal-ux-overhaul (Task 5.1 + per-pane controls)
 //
 // ChartPane — one independent chart within the Split_Chart_View (Requirement 4).
 //
@@ -15,17 +15,22 @@
 //     `setActivePane(id)` (R4.4, R4.5);
 //   · the Active_Pane (activePaneId === id) shows the existing emerald ring
 //     accent — no new colors are introduced (R8.4);
+//   · the pane header carries its OWN timeframe and chart-type controls so each
+//     pane can chart a different instrument at a different timeframe/type at the
+//     same time (R4.3) — these drive the per-pane store setters directly and do
+//     NOT touch the global command-bar selections;
 //   · if the pane fails to initialize, an inline error placeholder is rendered
 //     WITHIN this pane only, so the sibling pane and the rest of the terminal
 //     keep working (Error Handling: "Pane mount failure").
-//
-// The pane header strip surfaces the pane's own {symbol · timeframe · chartType}
-// so each pane visibly reflects its independent state.
 
-import React from 'react';
-import { AlertTriangle } from 'lucide-react';
+import React, { useState } from 'react';
+import { AlertTriangle, Clock, CandlestickChart, ChevronDown } from 'lucide-react';
 import MainTerminalChart from '../MainTerminalChart';
-import type { Timeframe } from '../../utils/chartTypes';
+import { CHART_TYPE_LABELS } from './ChartTypeSelector';
+import { CHART_TYPES, type ChartType } from '../../charting/engines';
+import { TIMEFRAME_GROUPS, type Timeframe } from '../../utils/chartTypes';
+import { useOutsideClose } from '../../hooks/useOutsideClose';
+import { type ChartTimeframe } from '../../store/useTradeStore';
 import {
   useChartUIStore,
   type ChartPaneState,
@@ -93,10 +98,120 @@ class PaneErrorBoundary extends React.Component<
   }
 }
 
+// ── Per-pane timeframe selector (compact) ──────────────────────────────
+// Drives `setPaneTimeframe(paneId, tf)` so this pane's timeframe is fully
+// independent of the other pane and of the global command-bar timeframe.
+function PaneTimeframeSelect({ paneId, value }: { paneId: PaneId; value: ChartTimeframe }) {
+  const [open, setOpen] = useState(false);
+  const ref = useOutsideClose<HTMLDivElement>(() => setOpen(false));
+  const setPaneTimeframe = useChartUIStore((s) => s.setPaneTimeframe);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        aria-label="Pane timeframe"
+        onClick={() => setOpen((v) => !v)}
+        className={`flex items-center gap-1 rounded-none border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider transition-colors ${
+          open
+            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+            : 'border-border-default bg-surface text-text-secondary hover:bg-elevated hover:text-text-primary'
+        }`}
+      >
+        <Clock size={9} className="text-text-muted" />
+        <span>{value}</span>
+        <ChevronDown size={9} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-px w-52 rounded-none border border-border-default bg-surface/95 p-2 shadow-2xl backdrop-blur-xl">
+          {TIMEFRAME_GROUPS.map((group) => (
+            <div key={group.label} className="mb-2 last:mb-0">
+              <div className="px-1 pb-1 text-[9px] font-bold uppercase tracking-wider text-text-muted/80">
+                {group.label}
+              </div>
+              <div className="grid grid-cols-3 gap-1">
+                {group.items.map((item) => {
+                  const isActive = value === item.tf;
+                  return (
+                    <button
+                      key={item.tf}
+                      type="button"
+                      onClick={() => {
+                        setPaneTimeframe(paneId, item.tf as ChartTimeframe);
+                        setOpen(false);
+                      }}
+                      className={`rounded-none border px-1.5 py-1 text-[10px] transition-colors ${
+                        isActive
+                          ? 'border-emerald-500/30 bg-emerald-500/10 font-bold text-emerald-600 dark:text-emerald-400'
+                          : 'border-transparent bg-card/40 text-text-secondary hover:bg-elevated hover:text-text-primary'
+                      }`}
+                    >
+                      {item.tf}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Per-pane chart-type selector (compact) ─────────────────────────────
+// Drives `setPaneChartType(paneId, type)` independently of the other pane.
+function PaneChartTypeSelect({ paneId, value }: { paneId: PaneId; value: ChartType }) {
+  const [open, setOpen] = useState(false);
+  const ref = useOutsideClose<HTMLDivElement>(() => setOpen(false));
+  const setPaneChartType = useChartUIStore((s) => s.setPaneChartType);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        aria-label="Pane chart type"
+        onClick={() => setOpen((v) => !v)}
+        className={`flex items-center gap-1 rounded-none border px-1.5 py-0.5 text-[9px] font-semibold transition-colors ${
+          open
+            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+            : 'border-border-default bg-surface text-text-secondary hover:bg-elevated hover:text-text-primary'
+        }`}
+      >
+        <CandlestickChart size={9} className="text-text-muted" />
+        <span>{CHART_TYPE_LABELS[value]}</span>
+        <ChevronDown size={9} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-px w-40 rounded-none border border-border-default bg-surface/95 p-1 shadow-2xl backdrop-blur-xl">
+          {CHART_TYPES.map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => {
+                setPaneChartType(paneId, t);
+                setOpen(false);
+              }}
+              className={`flex w-full items-center justify-between rounded-none px-2 py-1 text-left text-[10px] transition-colors ${
+                t === value
+                  ? 'bg-primary/10 font-semibold text-primary'
+                  : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
+              }`}
+            >
+              <span>{CHART_TYPE_LABELS[t]}</span>
+              {t === value && <span className="h-1.5 w-1.5 rounded-none bg-primary" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * One independent chart pane. Renders its own `MainTerminalChart`, reflects its
- * own pane state, designates itself active on click, and shows the emerald ring
- * when it is the Active_Pane.
+ * own pane state, designates itself active on click, shows the emerald ring when
+ * it is the Active_Pane, and exposes its own timeframe + chart-type controls.
  */
 export default function ChartPane({ pane }: ChartPaneProps) {
   const activePaneId = useChartUIStore((s) => s.activePaneId);
@@ -113,7 +228,7 @@ export default function ChartPane({ pane }: ChartPaneProps) {
         isActive ? 'ring-2 ring-inset ring-emerald-500/70' : 'ring-1 ring-inset ring-border-default'
       }`}
     >
-      {/* Pane header — surfaces this pane's own independent state (R4.3). */}
+      {/* Pane header — surfaces this pane's own independent state + controls (R4.3). */}
       <div className="flex shrink-0 items-center gap-2 border-b border-border-default bg-surface/80 px-2 py-1">
         <span
           className={`text-[9px] font-black uppercase tracking-wider ${
@@ -122,11 +237,13 @@ export default function ChartPane({ pane }: ChartPaneProps) {
         >
           {pane.id}
         </span>
-        <span className="text-[11px] font-bold text-text-primary">{pane.symbol}</span>
-        <span className="text-[9px] font-semibold uppercase text-text-muted">
-          {pane.timeframe}
-        </span>
-        <span className="text-[9px] uppercase text-text-muted">{pane.chartType}</span>
+        <span className="truncate text-[11px] font-bold text-text-primary">{pane.symbol}</span>
+
+        {/* Per-pane controls — independent timeframe + chart type. */}
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          <PaneTimeframeSelect paneId={pane.id} value={pane.timeframe} />
+          <PaneChartTypeSelect paneId={pane.id} value={pane.chartType} />
+        </div>
       </div>
 
       {/* The independent chart instance for this pane. */}

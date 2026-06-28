@@ -134,6 +134,39 @@ describe('SplitChartContainer — dual-pane render (R4.2)', () => {
   });
 });
 
+describe('SplitChartContainer — per-pane controls are independent (R4.3)', () => {
+  it('changing pane B timeframe leaves pane A timeframe untouched', () => {
+    render(<SplitChartContainer mode="INTRADAY" />);
+
+    // Open pane B's timeframe selector and pick a different timeframe.
+    const bTimeframeBtn = paneEl('B').querySelector(
+      '[aria-label="Pane timeframe"]',
+    ) as HTMLElement;
+    fireEvent.click(bTimeframeBtn);
+    fireEvent.click(screen.getByRole('button', { name: '15m' }));
+
+    const panes = useChartUIStore.getState().panes;
+    expect(panes.find((p) => p.id === 'B')?.timeframe).toBe('15m');
+    // Pane A keeps its own timeframe — the two panes are independent.
+    expect(panes.find((p) => p.id === 'A')?.timeframe).toBe('10m');
+  });
+
+  it('changing pane A chart type leaves pane B chart type untouched', () => {
+    render(<SplitChartContainer mode="INTRADAY" />);
+
+    const aTypeBtn = paneEl('A').querySelector(
+      '[aria-label="Pane chart type"]',
+    ) as HTMLElement;
+    fireEvent.click(aTypeBtn);
+    fireEvent.click(screen.getByRole('button', { name: 'Area' }));
+
+    const panes = useChartUIStore.getState().panes;
+    expect(panes.find((p) => p.id === 'A')?.chartType).toBe('area');
+    // Pane B keeps its own chart type.
+    expect(panes.find((p) => p.id === 'B')?.chartType).toBe('line');
+  });
+});
+
 describe('SplitChartContainer — active-pane indication switches on click (R4.5)', () => {
   it('starts with A active and B inactive', () => {
     render(<SplitChartContainer mode="INTRADAY" />);

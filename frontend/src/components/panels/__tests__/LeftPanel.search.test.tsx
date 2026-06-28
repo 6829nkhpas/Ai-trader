@@ -126,6 +126,43 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+describe('LeftPanel — symbol selection routes to the active pane in split view (R4.4)', () => {
+  it('clicking a watchlist row in split view sets the ACTIVE pane symbol, not the global selected symbol', async () => {
+    // Split view ON, pane B is the active pane.
+    useChartUIStore.setState({ splitView: true, activePaneId: 'B' });
+    render(<LeftPanel />);
+
+    // The watchlist hydrates from the mocked load_workspace (one WLITEM row).
+    const row = await screen.findByText('WLITEM');
+
+    const selectedBefore = useTradeStore.getState().selectedSymbol;
+    fireEvent.click(row);
+
+    // The selection routed to the ACTIVE pane (B), leaving the sibling pane and
+    // the global selected symbol untouched — this is the split-view fix.
+    expect(useChartUIStore.getState().panes.find((p) => p.id === 'B')?.symbol).toBe('WLITEM');
+    expect(useChartUIStore.getState().panes.find((p) => p.id === 'A')?.symbol).toBe('PANEA_INIT');
+    expect(useTradeStore.getState().selectedSymbol).toBe(selectedBefore);
+  });
+
+  it('clicking a search result in split view sets the ACTIVE pane symbol', async () => {
+    useChartUIStore.setState({ splitView: true, activePaneId: 'A' });
+    setSearchResults([EQ_RESULT]);
+    render(<LeftPanel />);
+
+    typeQuery('RELI');
+    const eqRow = await screen.findByText('RELIANCE');
+    const selectedBefore = useTradeStore.getState().selectedSymbol;
+    fireEvent.click(eqRow);
+
+    await waitFor(() => {
+      expect(useChartUIStore.getState().panes.find((p) => p.id === 'A')?.symbol).toBe('RELIANCE');
+    });
+    // Global single-view symbol is NOT touched while in split view.
+    expect(useTradeStore.getState().selectedSymbol).toBe(selectedBefore);
+  });
+});
+
 describe('LeftPanel search — distinct EQ vs FNO rows (R3.4)', () => {
   it('renders an equity row (symbol + name) and an F&O row (tradingsymbol + meta + CE badge) distinctly', async () => {
     setSearchResults([EQ_RESULT, FNO_RESULT]);

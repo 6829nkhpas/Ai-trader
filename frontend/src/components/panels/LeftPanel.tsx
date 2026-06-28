@@ -88,11 +88,13 @@ export default function LeftPanel() {
   const addToWatchlist = useTradeStore((s) => s.addToWatchlist);
   const removeFromWatchlist = useTradeStore((s) => s.removeFromWatchlist);
   const reorderWatchlist = useTradeStore((s) => s.reorderWatchlist);
-  // Active_Pane routing (R3.3, R4.4): when split view is on, the search targets
-  // the active pane; otherwise it sets the single charted symbol as today.
+  // Active_Pane routing (R3.3, R4.4): when split view is on, a symbol selection
+  // (from search OR the watchlist) targets the active pane; otherwise it sets
+  // the single charted symbol as today.
   const splitView = useChartUIStore((s) => s.splitView);
   const activePaneId = useChartUIStore((s) => s.activePaneId);
   const setPaneSymbol = useChartUIStore((s) => s.setPaneSymbol);
+  const panes = useChartUIStore((s) => s.panes);
   const consensusData = useQuantStore((s) => s.consensusData);
   const loadConsensusForSymbol = useQuantStore((s) => s.loadConsensusForSymbol);
   const isFetchingPatterns = useQuantStore((s) => s.isFetchingPatterns);
@@ -204,6 +206,18 @@ export default function LeftPanel() {
     setFnoUnderlyingFilter(null); setFnoExpiryFilter(null); setFnoTypeFilter(null);
   };
 
+  // Single routing point for "chart this symbol". In split view it targets the
+  // active pane; in single view it sets the global selected symbol (R3.3/R4.4).
+  // Both the watchlist rows and the search results funnel through here so the
+  // behavior is identical regardless of where the symbol was picked.
+  const routeSymbolToChart = useCallback((symbol: string) => {
+    if (splitView) {
+      setPaneSymbol(activePaneId, symbol);
+    } else {
+      setSelectedSymbol(symbol);
+    }
+  }, [splitView, setPaneSymbol, activePaneId, setSelectedSymbol]);
+
   // Route a selected instrument to the correct chart target and watchlist (R3.3, R4.4).
   const handleSelectResult = useCallback((r: SearchResult) => {
     const symbol = resultSymbol(r);
@@ -218,17 +232,13 @@ export default function LeftPanel() {
       change: 0,
     });
     // Single view → sole chart; split view → the active pane.
-    if (splitView) {
-      setPaneSymbol(activePaneId, symbol);
-    } else {
-      setSelectedSymbol(symbol);
-    }
+    routeSymbolToChart(symbol);
     setShowDropdown(false);
     setQuery('');
     setSearchResults([]);
     setSearchError(null);
     setFnoUnderlyingFilter(null); setFnoExpiryFilter(null); setFnoTypeFilter(null);
-  }, [addToWatchlist, splitView, setPaneSymbol, activePaneId, setSelectedSymbol]);
+  }, [addToWatchlist, routeSymbolToChart]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -447,7 +457,12 @@ export default function LeftPanel() {
             </div>
           ) : (
             watchlist.map((item, idx) => {
-              const isActive = selectedSymbol === item.symbol;
+              // In split view the "active" row reflects the ACTIVE pane's symbol;
+              // in single view it reflects the global selected symbol.
+              const chartedSymbol = splitView
+                ? panes.find((p) => p.id === activePaneId)?.symbol
+                : selectedSymbol;
+              const isActive = chartedSymbol === item.symbol;
               const quote = quotes[item.symbol];
               const isPositive = quote ? quote.change >= 0 : item.change >= 0;
               const sectorColor = SECTOR_COLORS[item.sector] ?? SECTOR_COLORS['EQ'] ?? 'bg-slate-500/10 text-slate-400';
@@ -484,7 +499,7 @@ export default function LeftPanel() {
 
                   <button
                     type="button"
-                    onClick={() => setSelectedSymbol(item.symbol)}
+                    onClick={() => routeSymbolToChart(item.symbol)}
                     className="flex items-center gap-1.5 min-w-0 flex-1 cursor-pointer"
                   >
                     <span className="font-semibold text-text-primary truncate">{item.symbol}</span>
