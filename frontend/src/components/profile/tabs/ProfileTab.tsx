@@ -117,7 +117,7 @@ export default function ProfileTab({
           </div>
         )}
         <div>
-          <h2 className="text-2xl font-black text-white tracking-tight leading-none">{user?.name || 'Strat AI Client'}</h2>
+          <h2 className="text-2xl font-black text-text-primary tracking-tight leading-none">{user?.name || 'Strat AI Client'}</h2>
           <div className="flex items-center gap-2 mt-2">
             <p className="text-xs text-text-secondary font-medium">{user?.email || 'No email registered'}</p>
             {broker && (
@@ -169,11 +169,11 @@ export default function ProfileTab({
 
       {/* ── LIVE DEEP FUNDS & MARGINS BREAKDOWN ── */}
       {broker && marginsData && (
-        <div className="border-y border-x-0 border-border-default/40 bg-surface/30 p-4 space-y-4 rounded-none">
+        <div className="border border-border-default/40 bg-surface/30 p-4 space-y-4 rounded-none">
           <div className="flex items-center justify-between border-b border-border-default/20 pb-2">
             <div className="flex items-center gap-2">
               <Wallet size={14} className="text-emerald-400" />
-              <h3 className="text-xs font-black uppercase tracking-wider text-white">Live Segment Funds & Limits</h3>
+              <h3 className="text-xs font-black uppercase tracking-wider text-text-primary">Live Segment Funds & Limits</h3>
             </div>
             
             <div className="flex items-center gap-3">
@@ -223,15 +223,15 @@ export default function ProfileTab({
           {activeSegmentData ? (
             <div className="space-y-4">
               {/* Giant Net Power Card */}
-              <div className="border-y border-x-0 border-border-default/30 bg-muted/30 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-none">
+              <div className="border border-border-default/30 bg-muted/30 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-none">
                 <div>
                   <span className="text-[9px] font-bold uppercase tracking-wider text-text-secondary">Available Net Margin</span>
-                  <span className="text-2xl font-black tracking-tight text-white mt-0.5 block font-mono">
+                  <span className="text-2xl font-black tracking-tight text-text-primary mt-0.5 block font-mono">
                     {formatCurrency(activeSegmentData.net)}
                   </span>
                 </div>
                 <div className="text-[9px] text-text-secondary font-medium sm:text-right">
-                  <span className="block font-bold text-white">True Segment Purchasing Power</span>
+                  <span className="block font-bold text-text-primary">True Segment Purchasing Power</span>
                   <span className="text-text-muted mt-0.5 block leading-normal">
                     This net balance reflects absolute leverage power for the {marginSegment} segment.
                   </span>
@@ -265,7 +265,7 @@ export default function ProfileTab({
                   ].map((row, i) => (
                     <div key={i} className="flex items-center justify-between py-2 border-b border-border-default px-1 text-xs">
                       <span className="text-text-secondary font-medium">{row.label}</span>
-                      <span className="font-mono text-white font-semibold">{row.value}</span>
+                      <span className="font-mono text-text-primary font-semibold">{row.value}</span>
                     </div>
                   ))}
                 </div>
@@ -306,7 +306,7 @@ export default function ProfileTab({
                   ].map((row, i) => (
                     <div key={i} className="flex items-center justify-between py-2 border-b border-border-default px-1 text-xs">
                       <span className="text-text-secondary font-medium">{row.label}</span>
-                      <span className="font-mono text-white font-semibold">{row.value}</span>
+                      <span className="font-mono text-text-primary font-semibold">{row.value}</span>
                     </div>
                   ))}
                 </div>
@@ -318,11 +318,11 @@ export default function ProfileTab({
         </div>
       )}
       {broker && positionsData && (
-        <div className="border-y border-x-0 border-border-default/40 bg-surface/30 p-4 space-y-3 rounded-none">
+        <div className="border border-border-default/40 bg-surface/30 p-4 space-y-3 rounded-none">
           <div className="flex items-center justify-between border-b border-border-default/20 pb-2">
             <div className="flex items-center gap-2">
               <Layers size={14} className="text-emerald-400" />
-              <h3 className="text-xs font-black uppercase tracking-wider text-white">Active Positions Ledger ({positionsCount})</h3>
+              <h3 className="text-xs font-black uppercase tracking-wider text-text-primary">Active Positions Ledger ({positionsCount})</h3>
             </div>
             
             <div className="flex items-center gap-4">
@@ -370,7 +370,7 @@ export default function ProfileTab({
             </div>
           </div>
 
-          <div className="overflow-x-auto border-y border-x-0 border-border-default/20 rounded-none bg-muted/30 max-h-[260px] scrollbar-thin">
+          <div className="overflow-x-auto border border-border-default/20 rounded-none bg-muted/30 max-h-[260px] scrollbar-thin">
             <table className="w-full text-left text-xs border-collapse">
               <thead className="bg-elevated/80 border-b border-border-default/30 sticky top-0 z-10">
                 <tr>
@@ -393,10 +393,10 @@ export default function ProfileTab({
                         onClick={() => toggleExpandPosition(pos.tradingsymbol)}
                         className={`hover:bg-elevated/5 cursor-pointer transition-colors ${isExpanded ? 'bg-elevated/5' : ''}`}
                       >
-                        <td className="pl-3 py-2 text-center text-text-muted hover:text-white">
+                        <td className="pl-3 py-2 text-center text-text-muted hover:text-text-primary">
                           {isExpanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
                         </td>
-                        <td className="px-3 py-2 font-sans font-bold text-white flex items-center gap-1.5">
+                        <td className="px-3 py-2 font-sans font-bold text-text-primary flex items-center gap-1.5">
                           <span>{pos.tradingsymbol}</span>
                           <span className="text-[7px] bg-elevated border border-border-default text-text-secondary px-1 py-0.2 rounded-none font-mono">
                             {pos.exchange}
@@ -407,7 +407,7 @@ export default function ProfileTab({
                           {isShort ? '' : pos.quantity > 0 ? '+' : ''}{pos.quantity}
                         </td>
                         <td className="px-3 py-2 text-right text-text-secondary">{(pos.average_price ?? 0).toFixed(2)}</td>
-                        <td className="px-3 py-2 text-right text-white">{(pos.last_price ?? 0).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right text-text-primary">{(pos.last_price ?? 0).toFixed(2)}</td>
                         <td className={`px-3 py-2 text-right font-bold ${getPnlClass(pos.pnl ?? 0)}`}>
                           {pos.pnl >= 0 ? '+' : ''}{(pos.pnl ?? 0).toFixed(2)}
                         </td>
@@ -420,7 +420,7 @@ export default function ProfileTab({
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-[10px] font-sans text-left animate-in fade-in slide-in-from-top-1 duration-150">
                               
                               {/* Card Column 1: Net Position Geometry */}
-                              <div className="border-y border-x-0 border-border-default/30 rounded-none bg-muted/50 p-3 space-y-1.5">
+                              <div className="border border-border-default/30 rounded-none bg-muted/50 p-3 space-y-1.5">
                                 <span className="text-[8px] font-black uppercase tracking-wider text-text-secondary block border-b border-border-default/30 pb-1 mb-1">
                                   NET POSITION GEOMETRY
                                 </span>
@@ -432,11 +432,11 @@ export default function ProfileTab({
                                 </div>
                                 <div className="flex justify-between">
                                   <span className="text-text-muted">Overnight Quantity</span>
-                                  <span className="font-mono text-white font-semibold">{pos.overnight_quantity ?? 0}</span>
+                                  <span className="font-mono text-text-primary font-semibold">{pos.overnight_quantity ?? 0}</span>
                                 </div>
                                 <div className="flex justify-between">
                                   <span className="text-text-muted">Lot Multiplier</span>
-                                  <span className="font-mono text-white font-semibold">x{pos.multiplier ?? 1}</span>
+                                  <span className="font-mono text-text-primary font-semibold">x{pos.multiplier ?? 1}</span>
                                 </div>
                                 <div className="flex justify-between border-t border-border-default/20 pt-1.5 mt-1">
                                   <span className="text-text-secondary font-bold">Mark to Market (M2M)</span>
@@ -447,7 +447,7 @@ export default function ProfileTab({
                               </div>
 
                               {/* Card Column 2: Buy & Sell Accumulation */}
-                              <div className="border-y border-x-0 border-border-default/30 rounded-none bg-muted/50 p-3 space-y-1.5">
+                              <div className="border border-border-default/30 rounded-none bg-muted/50 p-3 space-y-1.5">
                                 <span className="text-[8px] font-black uppercase tracking-wider text-emerald-400 block border-b border-border-default/30 pb-1 mb-1">
                                   BUY & SELL ACCUMULATION
                                 </span>
@@ -471,14 +471,14 @@ export default function ProfileTab({
                                 </div>
                                 <div className="border-t border-border-default/20 pt-1.5 mt-1 flex justify-between items-center text-[9px]">
                                   <span className="text-[7px] font-bold text-text-muted uppercase">Buy / Sell Value</span>
-                                  <span className="font-mono text-white font-semibold">
+                                  <span className="font-mono text-text-primary font-semibold">
                                     {formatCurrency(pos.buy_value)} / {formatCurrency(pos.sell_value)}
                                   </span>
                                 </div>
                               </div>
 
                               {/* Card Column 3: Intraday Returns Logic */}
-                              <div className="border-y border-x-0 border-border-default/30 rounded-none bg-muted/50 p-3 space-y-1.5">
+                              <div className="border border-border-default/30 rounded-none bg-muted/50 p-3 space-y-1.5">
                                 <span className="text-[8px] font-black uppercase tracking-wider text-rose-400 block border-b border-border-default/30 pb-1 mb-1">
                                   INTRADAY RETURNS LOGIC
                                 </span>
@@ -496,7 +496,7 @@ export default function ProfileTab({
                                 </div>
                                 <div className="flex justify-between border-t border-border-default/20 pt-1.5 mt-1">
                                   <span className="text-text-muted">Day Buy / Sell Qty</span>
-                                  <span className="font-mono text-white font-semibold">
+                                  <span className="font-mono text-text-primary font-semibold">
                                     +{pos.day_buy_quantity ?? 0} / -{pos.day_sell_quantity ?? 0}
                                   </span>
                                 </div>
@@ -523,11 +523,11 @@ export default function ProfileTab({
 
       {/* ── LIVE DAILY ORDERS LOG ── */}
       {broker && orders && (
-        <div className="border-y border-x-0 border-border-default/40 bg-surface/30 p-4 space-y-3 rounded-none">
+        <div className="border border-border-default/40 bg-surface/30 p-4 space-y-3 rounded-none">
           <div className="flex items-center justify-between border-b border-border-default/20 pb-2">
             <div className="flex items-center gap-2">
               <ClipboardList size={14} className="text-emerald-400" />
-              <h3 className="text-xs font-black uppercase tracking-wider text-white">Daily Order Execution Log ({totalOrders})</h3>
+              <h3 className="text-xs font-black uppercase tracking-wider text-text-primary">Daily Order Execution Log ({totalOrders})</h3>
             </div>
             <div className="flex items-center gap-1.5 text-[9px] font-bold tracking-wider font-mono">
               <span className="text-emerald-400 bg-emerald-500/5 px-1.5 py-0.5 rounded-none border border-emerald-500/10">Done: {completedOrders}</span>
@@ -535,7 +535,7 @@ export default function ProfileTab({
             </div>
           </div>
 
-          <div className="overflow-x-auto border-y border-x-0 border-border-default/20 rounded-none bg-muted/30 max-h-[260px] scrollbar-thin">
+          <div className="overflow-x-auto border border-border-default/20 rounded-none bg-muted/30 max-h-[260px] scrollbar-thin">
             <table className="w-full text-left text-xs border-collapse">
               <thead className="bg-elevated/80 border-b border-border-default/30 sticky top-0 z-10">
                 <tr>
@@ -559,7 +559,7 @@ export default function ProfileTab({
                         onClick={() => toggleExpandOrder(order.order_id)}
                         className={`hover:bg-elevated/5 cursor-pointer transition-colors ${isExpanded ? 'bg-elevated/5' : ''}`}
                       >
-                        <td className="pl-3 py-2 text-center text-text-muted hover:text-white">
+                        <td className="pl-3 py-2 text-center text-text-muted hover:text-text-primary">
                           {isExpanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
                         </td>
                         <td className="px-3 py-2 text-text-muted flex items-center gap-1 font-sans">
@@ -575,11 +575,11 @@ export default function ProfileTab({
                             {order.transaction_type}
                           </span>
                         </td>
-                        <td className="px-3 py-2 font-sans font-bold text-white">
+                        <td className="px-3 py-2 font-sans font-bold text-text-primary">
                           {order.tradingsymbol}
                           <span className="text-[7px] text-text-secondary ml-1 bg-elevated border border-border-default px-1 py-0.2 rounded-none">{order.product}</span>
                         </td>
-                        <td className="px-3 py-2 text-right text-white">{order.quantity}</td>
+                        <td className="px-3 py-2 text-right text-text-primary">{order.quantity}</td>
                         <td className="px-3 py-2 text-right text-text-secondary">
                           {order.average_price > 0 ? (order.average_price ?? 0).toFixed(2) : (order.price ?? 0).toFixed(2)}
                         </td>
@@ -597,7 +597,7 @@ export default function ProfileTab({
                             <div className="space-y-3 text-left font-sans">
                               {/* Rejection Banner */}
                               {order.status === 'REJECTED' && order.status_message && (
-                                <div className="flex items-start gap-2 rounded-none border-y border-x-0 border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-400">
+                                <div className="flex items-start gap-2 rounded-none border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-400">
                                   <AlertCircle size={14} className="shrink-0 mt-0.5" />
                                   <div className="space-y-0.5">
                                     <span className="font-bold block text-[11px]">OMS Rejection Reason:</span>
@@ -611,27 +611,27 @@ export default function ProfileTab({
 
                               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-[10px] font-sans">
                                 {/* Column 1: Order Properties & Route */}
-                                <div className="border-y border-x-0 border-border-default/30 rounded-none bg-muted/50 p-3 space-y-1.5">
+                                <div className="border border-border-default/30 rounded-none bg-muted/50 p-3 space-y-1.5">
                                   <span className="text-[8px] font-black uppercase tracking-wider text-text-secondary block border-b border-border-default/30 pb-1 mb-1">
                                     ORDER PROPERTIES & ROUTE
                                   </span>
                                   <div className="flex justify-between">
                                     <span className="text-text-muted">Order Variety</span>
-                                    <span className="font-mono text-white font-semibold uppercase">{order.variety ?? 'regular'}</span>
+                                    <span className="font-mono text-text-primary font-semibold uppercase">{order.variety ?? 'regular'}</span>
                                   </div>
                                   <div className="flex justify-between">
                                     <span className="text-text-muted">Order ID</span>
-                                    <span className="font-mono text-white font-semibold">{order.order_id}</span>
+                                    <span className="font-mono text-text-primary font-semibold">{order.order_id}</span>
                                   </div>
                                   <div className="flex justify-between">
                                     <span className="text-text-muted">Exchange ID</span>
-                                    <span className="font-mono text-white font-semibold truncate max-w-[120px]" title={order.exchange_order_id}>
+                                    <span className="font-mono text-text-primary font-semibold truncate max-w-[120px]" title={order.exchange_order_id}>
                                       {order.exchange_order_id ?? 'Pending Submission'}
                                     </span>
                                   </div>
                                   <div className="flex justify-between">
                                     <span className="text-text-muted">Placed By</span>
-                                    <span className="font-mono text-white font-semibold">{order.placed_by ?? 'Client Terminal'}</span>
+                                    <span className="font-mono text-text-primary font-semibold">{order.placed_by ?? 'Client Terminal'}</span>
                                   </div>
                                   {order.parent_order_id && (
                                     <div className="flex justify-between border-t border-border-default/10 pt-1 mt-0.5">
@@ -642,17 +642,17 @@ export default function ProfileTab({
                                 </div>
 
                                 {/* Column 2: Quantity & Slicing Ledgers */}
-                                <div className="border-y border-x-0 border-border-default/30 rounded-none bg-muted/50 p-3 space-y-1.5">
+                                <div className="border border-border-default/30 rounded-none bg-muted/50 p-3 space-y-1.5">
                                   <span className="text-[8px] font-black uppercase tracking-wider text-emerald-400 block border-b border-border-default/30 pb-1 mb-1">
                                     QUANTITY & SLICING LEDGER
                                   </span>
                                   <div className="flex justify-between">
                                     <span className="text-text-muted">Total Ordered Qty</span>
-                                    <span className="font-mono text-white font-semibold">{order.quantity}</span>
+                                    <span className="font-mono text-text-primary font-semibold">{order.quantity}</span>
                                   </div>
                                   <div className="flex justify-between">
                                     <span className="text-text-muted">Filled Quantity</span>
-                                    <span className="font-mono text-white font-semibold">{order.filled_quantity ?? 0}</span>
+                                    <span className="font-mono text-text-primary font-semibold">{order.filled_quantity ?? 0}</span>
                                   </div>
                                   <div className="flex justify-between">
                                     <span className="text-text-muted">Pending Quantity</span>
@@ -664,7 +664,7 @@ export default function ProfileTab({
                                   </div>
                                   <div className="flex justify-between border-t border-border-default/20 pt-1 mt-0.5">
                                     <span className="text-text-muted">Disclosed Qty</span>
-                                    <span className="font-mono text-white font-semibold">{order.disclosed_quantity ?? 0}</span>
+                                    <span className="font-mono text-text-primary font-semibold">{order.disclosed_quantity ?? 0}</span>
                                   </div>
                                   
                                   {/* Iceberg metadata slicing */}
@@ -680,29 +680,29 @@ export default function ProfileTab({
                                 </div>
 
                                 {/* Column 3: Order Pricing & Validity */}
-                                <div className="border-y border-x-0 border-border-default/30 rounded-none bg-muted/50 p-3 space-y-1.5">
+                                <div className="border border-border-default/30 rounded-none bg-muted/50 p-3 space-y-1.5">
                                   <span className="text-[8px] font-black uppercase tracking-wider text-rose-400 block border-b border-border-default/30 pb-1 mb-1">
                                     PRICING & VALIDITY
                                   </span>
                                   <div className="flex justify-between">
                                     <span className="text-text-muted">Order Type</span>
-                                    <span className="font-mono text-white font-semibold uppercase">{order.order_type}</span>
+                                    <span className="font-mono text-text-primary font-semibold uppercase">{order.order_type}</span>
                                   </div>
                                   <div className="flex justify-between">
                                     <span className="text-text-muted">Limit Price</span>
-                                    <span className="font-mono text-white font-semibold">{formatCurrency(order.price)}</span>
+                                    <span className="font-mono text-text-primary font-semibold">{formatCurrency(order.price)}</span>
                                   </div>
                                   <div className="flex justify-between">
                                     <span className="text-text-muted">Trigger Price</span>
-                                    <span className="font-mono text-white font-semibold">{formatCurrency(order.trigger_price)}</span>
+                                    <span className="font-mono text-text-primary font-semibold">{formatCurrency(order.trigger_price)}</span>
                                   </div>
                                   <div className="flex justify-between">
                                     <span className="text-text-muted">Average Price</span>
-                                    <span className="font-mono text-white font-semibold">{formatCurrency(order.average_price)}</span>
+                                    <span className="font-mono text-text-primary font-semibold">{formatCurrency(order.average_price)}</span>
                                   </div>
                                   <div className="flex justify-between border-t border-border-default/20 pt-1 mt-0.5">
                                     <span className="text-text-muted">Validity Range</span>
-                                    <span className="font-mono text-white font-semibold uppercase">
+                                    <span className="font-mono text-text-primary font-semibold uppercase">
                                       {order.validity} {order.validity_ttl > 0 ? `(${order.validity_ttl}m)` : ''}
                                     </span>
                                   </div>

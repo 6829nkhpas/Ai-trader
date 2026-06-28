@@ -29,13 +29,13 @@ export default function RiskTab({ marginsData, loading, error, refetch }: RiskTa
       {/* Title Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-extrabold text-white tracking-tight">Margins & Risk</h2>
+          <h2 className="text-xl font-extrabold text-text-primary tracking-tight">Margins & Risk</h2>
           <p className="text-xs text-text-secondary mt-1">Real-time Kite broker purchasing power and limits</p>
         </div>
       </div>
 
       {error && (
-        <div className="flex items-start gap-2 rounded-none border-y border-x-0 border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-400">
+        <div className="flex items-start gap-2 rounded-none border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-400">
           <AlertCircle size={14} className="shrink-0 mt-0.5" />
           <span>{error}</span>
         </div>
@@ -96,15 +96,15 @@ export default function RiskTab({ marginsData, loading, error, refetch }: RiskTa
           {activeSegmentData && (
             <div className="space-y-4 flex-1 overflow-y-auto pr-1 scrollbar-none">
               {/* Giant Net Power Card */}
-              <div className="border-y border-x-0 border-border-default/30 bg-muted/30 p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 rounded-none">
+              <div className="border border-border-default/30 bg-muted/30 p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 rounded-none">
                 <div>
                   <span className="text-[9px] font-black uppercase tracking-widest text-text-secondary">Available Net Margin</span>
-                  <span className="text-3xl font-black tracking-tight text-white mt-1 block font-mono">
+                  <span className="text-3xl font-black tracking-tight text-text-primary mt-1 block font-mono">
                     {formatCurrency(activeSegmentData.net)}
                   </span>
                 </div>
                 <div className="text-[10px] text-text-secondary font-medium md:text-right">
-                  <span className="block font-semibold text-white">True Purchasing Power</span>
+                  <span className="block font-semibold text-text-primary">True Purchasing Power</span>
                   <span className="text-text-muted mt-0.5 block leading-normal">
                     This net balance reflects absolute leverage power across all active open structures.
                   </span>
@@ -140,7 +140,7 @@ export default function RiskTab({ marginsData, loading, error, refetch }: RiskTa
                   ].map((row, i) => (
                     <div key={i} className="flex items-center justify-between py-2.5 border-b border-border-default px-1 text-xs">
                       <span className="text-text-secondary font-medium">{row.label}</span>
-                      <span className="font-mono text-white font-semibold">{row.value}</span>
+                      <span className="font-mono text-text-primary font-semibold">{row.value}</span>
                     </div>
                   ))}
                 </div>
@@ -187,7 +187,7 @@ export default function RiskTab({ marginsData, loading, error, refetch }: RiskTa
                   ].map((row, i) => (
                     <div key={i} className="flex items-center justify-between py-2.5 border-b border-border-default px-1 text-xs">
                       <span className="text-text-secondary font-medium">{row.label}</span>
-                      <span className="font-mono text-white font-semibold">{row.value}</span>
+                      <span className="font-mono text-text-primary font-semibold">{row.value}</span>
                     </div>
                   ))}
                 </div>
