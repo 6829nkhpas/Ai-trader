@@ -25,14 +25,14 @@ export default function BrokerTab({
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-extrabold text-white tracking-tight">Kite Broker Status</h2>
+        <h2 className="text-xl font-extrabold text-text-primary tracking-tight">Kite Broker Status</h2>
         <p className="text-xs text-text-secondary mt-1">Live market data streaming session & transaction authority details</p>
       </div>
 
       {broker ? (
         /* Connected State View */
         <div className="space-y-5">
-          <div className="flex items-center gap-4 rounded-none border-y border-x-0 border-emerald-500/20 bg-emerald-500/5 p-4">
+          <div className="flex items-center gap-4 rounded-none border border-emerald-500/20 bg-emerald-500/5 p-4">
             {broker.avatarUrl ? (
               <img 
                 src={broker.avatarUrl} 
@@ -45,7 +45,7 @@ export default function BrokerTab({
               </div>
             )}
             <div>
-              <h4 className="text-sm font-bold text-white">Zerodha Kite Connected</h4>
+              <h4 className="text-sm font-bold text-text-primary">Zerodha Kite Connected</h4>
               <p className="text-[11px] text-emerald-400/80 mt-0.5">
                 Active Session for {broker.userName || 'User'}. Credentials securely stored in Tauri Key Vault.
               </p>
@@ -70,7 +70,7 @@ export default function BrokerTab({
           </div>
 
           {/* Daily Reconnection Tip */}
-          <div className="flex items-start gap-2.5 rounded-none bg-blue-500/5 border-y border-x-0 border-blue-500/20 p-3.5 text-[10px] text-blue-400 leading-relaxed">
+          <div className="flex items-start gap-2.5 rounded-none bg-blue-500/5 border border-blue-500/20 p-3.5 text-[10px] text-blue-400 leading-relaxed">
             <Info size={14} className="shrink-0 text-blue-400 mt-0.5" />
             <span>
               <strong>Daily Reconnection Required:</strong> Zerodha Kite API requires you to refresh your access token by reconnecting your broker account every day after <strong>6:00 AM IST</strong>.
@@ -78,10 +78,10 @@ export default function BrokerTab({
           </div>
 
           {/* Permissions & Capabilities */}
-          <div className="rounded-none border-y border-x-0 border-border-default/40 bg-surface/50 p-5">
+          <div className="rounded-none border border-border-default/40 bg-surface/50 p-5">
             <div className="flex items-center gap-2 mb-4">
               <Layers size={14} className="text-emerald-400" />
-              <h4 className="text-xs font-bold text-white uppercase tracking-wider">Authorized Market Streams & Limits</h4>
+              <h4 className="text-xs font-bold text-text-primary uppercase tracking-wider">Authorized Market Streams & Limits</h4>
             </div>
             
             <div className="space-y-4">
@@ -122,17 +122,17 @@ export default function BrokerTab({
         </div>
       ) : (
         /* Disconnected / Connect Action Panel */
-        <div className="rounded-none border-y border-x-0 border-amber-500/15 bg-amber-500/5 p-8 text-center transition-all duration-300">
+        <div className="rounded-none border border-amber-500/15 bg-amber-500/5 p-8 text-center transition-all duration-300">
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-none bg-amber-500/10 border border-amber-500/20 text-amber-400">
             <AlertTriangle size={28} />
           </div>
-          <h3 className="text-lg font-extrabold text-white">No Broker Linked</h3>
+          <h3 className="text-lg font-extrabold text-text-primary">No Broker Linked</h3>
           <p className="text-xs text-text-secondary mt-1.5 leading-relaxed max-w-sm mx-auto">
             Authorize your Zerodha Kite broker connection to enable live institutional market feed ingestion and portfolio execution.
           </p>
 
           <div className="mt-6 flex flex-col items-center gap-4">
-            <div className="max-w-sm mx-auto flex items-start gap-2.5 rounded-none bg-amber-500/5 border-y border-x-0 border-amber-500/10 p-3.5 text-[10px] text-amber-400 text-left leading-relaxed">
+            <div className="max-w-sm mx-auto flex items-start gap-2.5 rounded-none bg-amber-500/5 border border-amber-500/10 p-3.5 text-[10px] text-amber-400 text-left leading-relaxed">
               <Info size={14} className="shrink-0 mt-0.5 text-amber-400" />
               <span>
                 <strong>Daily Reconnection Required:</strong> Zerodha access tokens expire daily. Please connect your Zerodha account every day after <strong>6:00 AM IST</strong> to start a new active session.
@@ -153,7 +153,7 @@ export default function BrokerTab({
                 <span className="text-xs text-text-secondary">Waiting for Zerodha authentication...</span>
                 <button
                   onClick={() => setConnectingBroker(false)}
-                  className="mt-3 text-[10px] font-bold text-text-secondary hover:text-white uppercase transition-colors"
+                  className="mt-3 text-[10px] font-bold text-text-secondary hover:text-text-primary uppercase transition-colors"
                 >
                   Cancel
                 </button>
