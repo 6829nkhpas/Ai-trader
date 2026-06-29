@@ -466,6 +466,25 @@ api_key = _env_nonempty("LLM_API_KEY", "GEMINI_API_KEY")
 base_url = _env_nonempty("LLM_API_URL", default=GEMINI_DEFAULT_URL)
 model_name = _env_nonempty("LLM_MODEL", default=GEMINI_DEFAULT_MODEL)
 
+# ── Reasoning effort (FreeModel / OpenAI-compatible) ─────────────────────────
+# LLM_EFFORT selects how hard the model "thinks": low | medium | high | xhigh.
+# LLM_EFFORT_FIELD is the JSON body key carrying that value — FreeModel is
+# OpenAI-compatible so it defaults to the standard ``reasoning_effort``; set it
+# to ``effort`` if the provider expects that name instead. When LLM_EFFORT is
+# unset/blank we send nothing, preserving prior behavior for plain models.
+_effort = _env_nonempty("LLM_EFFORT")
+_effort_field = _env_nonempty("LLM_EFFORT_FIELD", default="reasoning_effort")
+
+
+def _effort_extra_body() -> dict:
+    """Return the provider-specific body fragment carrying the effort level.
+
+    Sent through ChatOpenAI's ``extra_body`` so non-standard values (e.g.
+    ``xhigh``) pass through verbatim without client-side enum validation.
+    Returns an empty dict when no effort is configured.
+    """
+    return {_effort_field: _effort} if _effort else {}
+
 # Fail loud (in the log) on misconfiguration rather than silently using a fake
 # key — every LLM call would otherwise 401, and the cause would be opaque.
 if not api_key:
@@ -487,6 +506,7 @@ llm = ChatOpenAI(
     openai_api_key=api_key,
     openai_api_base=base_url,
     temperature=0.2,
+    extra_body=_effort_extra_body(),
     # Honor the provider's Retry-After on 429s. This transparently absorbs
     # per-minute rate/token throttles (e.g. Groq's TPM window, which resets in
     # seconds) so a single throttled turn doesn't fail the whole run. It does
@@ -561,6 +581,7 @@ def _build_readonly_llm_for_model(role_model: str):
             openai_api_key=api_key,
             openai_api_base=base_url,
             temperature=0.2,
+            extra_body=_effort_extra_body(),
             max_retries=int(_env_nonempty("LLM_MAX_RETRIES", default="4")),
             timeout=float(_env_nonempty("LLM_TIMEOUT_SECS", default="90")),
         )
@@ -627,6 +648,7 @@ def _build_full_llm_for_model(role_model: str):
             openai_api_key=api_key,
             openai_api_base=base_url,
             temperature=0.2,
+            extra_body=_effort_extra_body(),
             max_retries=int(_env_nonempty("LLM_MAX_RETRIES", default="4")),
             timeout=float(_env_nonempty("LLM_TIMEOUT_SECS", default="90")),
         )

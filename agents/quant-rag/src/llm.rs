@@ -15,8 +15,8 @@ use std::error::Error;
 use std::time::Duration;
 use tokio::time::sleep;
 
-/// Default endpoint (HuggingFace Inference Router).
-const DEFAULT_API_URL: &str = "https://router.huggingface.co/v1/chat/completions";
+/// Default endpoint (FreeModel — OpenAI-compatible).
+const DEFAULT_API_URL: &str = "https://api.freemodel.dev/v1/chat/completions";
 
 /// Default model.
 const DEFAULT_MODEL: &str = "deepseek-ai/DeepSeek-V3-0324";
@@ -26,6 +26,10 @@ pub struct LlmClient {
     api_key: String,
     api_url: String,
     model: String,
+    /// Reasoning effort level (low|medium|high|xhigh); empty = omit.
+    effort: String,
+    /// JSON body key carrying the effort value (default: reasoning_effort).
+    effort_field: String,
 }
 
 impl LlmClient {
@@ -40,11 +44,21 @@ impl LlmClient {
             .unwrap_or_else(|_| DEFAULT_API_URL.to_string());
         let model = env::var("LLM_MODEL")
             .unwrap_or_else(|_| DEFAULT_MODEL.to_string());
+        let effort = env::var("LLM_EFFORT")
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        let effort_field = env::var("LLM_EFFORT_FIELD")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "reasoning_effort".to_string());
         Ok(Self {
             client: Client::new(),
             api_key,
             api_url,
             model,
+            effort,
+            effort_field,
         })
     }
 
@@ -106,6 +120,19 @@ impl LlmClient {
             "max_tokens": 1024,
             "stream": false
         });
+
+        // Attach the reasoning-effort level (e.g. low|medium|high|xhigh) under the
+        // configured body key when set. Omitted entirely when LLM_EFFORT is blank
+        // so plain (non-reasoning) models receive an unchanged payload.
+        let mut payload = payload;
+        if !self.effort.is_empty() {
+            if let Value::Object(ref mut map) = payload {
+                map.insert(
+                    self.effort_field.clone(),
+                    Value::String(self.effort.clone()),
+                );
+            }
+        }
 
         // ── Send the request (with retry for 429 rate-limiting) ───────────
         let max_retries: u32 = 3;

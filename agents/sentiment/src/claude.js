@@ -20,7 +20,7 @@
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const DEFAULT_URL = 'https://router.huggingface.co/v1/chat/completions';
+const DEFAULT_URL = 'https://api.freemodel.dev/v1/chat/completions';
 const DEFAULT_MODEL = 'deepseek-ai/DeepSeek-V3-0324';
 const MAX_TOKENS = 256;
 const TEMPERATURE = 0;
@@ -60,6 +60,12 @@ export async function scoreArticle(symbol, article) {
   const endpoint = process.env.LLM_API_URL || DEFAULT_URL;
   const model = process.env.LLM_MODEL || DEFAULT_MODEL;
 
+  // Reasoning effort (low|medium|high|xhigh). Sent under LLM_EFFORT_FIELD
+  // (default: reasoning_effort). Omitted entirely when LLM_EFFORT is blank.
+  const effort = (process.env.LLM_EFFORT || '').trim();
+  const effortField = (process.env.LLM_EFFORT_FIELD || 'reasoning_effort').trim();
+  const effortBody = effort ? { [effortField]: effort } : {};
+
   const headline    = article.title ?? '(no title)';
   const description = article.description ?? '';
 
@@ -85,6 +91,7 @@ export async function scoreArticle(symbol, article) {
         ],
         max_tokens: MAX_TOKENS,
         temperature: TEMPERATURE,
+        ...effortBody,
       }),
     });
 

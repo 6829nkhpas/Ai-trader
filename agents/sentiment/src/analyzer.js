@@ -26,7 +26,7 @@
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const DEFAULT_URL = 'https://router.huggingface.co/v1/chat/completions';
+const DEFAULT_URL = 'https://api.freemodel.dev/v1/chat/completions';
 const DEFAULT_MODEL = 'deepseek-ai/DeepSeek-V3-0324';
 const MAX_TOKENS = 256;
 const STRATEGIC_MAX_TOKENS = 700; // richer structured verdict needs more room.
@@ -99,6 +99,9 @@ function resolveLlmConfig() {
     apiKey,
     endpoint: process.env.LLM_API_URL || DEFAULT_URL,
     model:    process.env.LLM_MODEL || DEFAULT_MODEL,
+    // Reasoning effort (low|medium|high|xhigh) + its body key. Empty effort => omit.
+    effort:      (process.env.LLM_EFFORT || '').trim(),
+    effortField: (process.env.LLM_EFFORT_FIELD || 'reasoning_effort').trim(),
   };
 }
 
@@ -201,6 +204,7 @@ async function callLlm(cfg, systemPrompt, userMessage, maxTokens) {
       ],
       max_tokens:  maxTokens,
       temperature: TEMPERATURE,
+      ...(cfg.effort ? { [cfg.effortField]: cfg.effort } : {}),
     }),
   });
 

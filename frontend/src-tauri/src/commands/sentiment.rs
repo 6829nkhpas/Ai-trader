@@ -178,7 +178,7 @@ Do NOT include any text outside the JSON object. Do NOT wrap in markdown code fe
 Output ONLY the raw JSON object.";
 
 async fn analyze_sentiment_via_llm(symbol: &str, news: &str, headlines: Vec<String>) -> Result<SentimentPayload, String> {
-    use crate::services::llm::{ChatMessage, ChatRequest};
+    use crate::services::llm::{ChatMessage, ChatRequest, resolve_effort_params};
 
     let api_url = resolve_llm_endpoint();
     let api_key = resolve_llm_key()?;
@@ -210,6 +210,7 @@ async fn analyze_sentiment_via_llm(symbol: &str, news: &str, headlines: Vec<Stri
         max_tokens: 512,
         response_format: None,
         tools: None,
+        extra: resolve_effort_params(),
     };
 
     let timeout_secs: u64 = std::env::var("LLM_TIMEOUT_SECS")
@@ -326,7 +327,7 @@ async fn analyze_sentiment_via_llm(symbol: &str, news: &str, headlines: Vec<Stri
 
 fn resolve_llm_endpoint() -> String {
     std::env::var("LLM_API_URL")
-        .unwrap_or_else(|_| "https://router.huggingface.co/v1/chat/completions".to_string())
+        .unwrap_or_else(|_| "https://api.freemodel.dev/v1/chat/completions".to_string())
 }
 
 fn resolve_llm_model() -> String {

@@ -73,6 +73,11 @@ pub struct ChatRequest {
     pub response_format: Option<ResponseFormat>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<serde_json::Value>,
+    // Provider-specific passthrough params (e.g. the reasoning effort level).
+    // Flattened so its entries serialize at the top level of the request body;
+    // an empty map serializes to nothing, preserving the prior wire format.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Serialize, Clone)]
@@ -245,7 +250,7 @@ pub fn build_system_prompt(
 
 // ── Defaults ────────────────────────────────────────────────────────────────
 
-const DEFAULT_LLM_URL: &str = "https://router.huggingface.co/v1/chat/completions";
+const DEFAULT_LLM_URL: &str = "https://api.freemodel.dev/v1/chat/completions";
 const DEFAULT_LLM_MODEL: &str = "deepseek-ai/DeepSeek-V3-0324";
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 
@@ -278,6 +283,28 @@ fn resolve_timeout() -> u64 {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_TIMEOUT_SECS)
+}
+
+/// Resolve the provider-specific reasoning-effort body fragment.
+///
+/// Reads `LLM_EFFORT` (low | medium | high | xhigh) and `LLM_EFFORT_FIELD`
+/// (the JSON key; defaults to the OpenAI-standard `reasoning_effort`). Returns
+/// an empty map when `LLM_EFFORT` is unset/blank so the request body is
+/// unchanged for plain (non-reasoning) models.
+pub fn resolve_effort_params() -> serde_json::Map<String, serde_json::Value> {
+    let mut map = serde_json::Map::new();
+    if let Ok(effort) = std::env::var("LLM_EFFORT") {
+        let effort = effort.trim();
+        if !effort.is_empty() {
+            let field = std::env::var("LLM_EFFORT_FIELD")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "reasoning_effort".to_string());
+            map.insert(field, serde_json::Value::String(effort.to_string()));
+        }
+    }
+    map
 }
 
 /// Mask all but the first 6 chars of an API key for safe logging.
@@ -360,6 +387,7 @@ pub fn build_request_body(
         max_tokens: 1024,
         response_format: None,
         tools: None,
+        extra: resolve_effort_params(),
     }
 }
 
@@ -535,6 +563,7 @@ pub async fn generate_deep_quant_plan_with_url(
             max_tokens: 1024,
             response_format: None,
             tools: Some(tools.clone()),
+            extra: resolve_effort_params(),
         };
 
         let req_json = serde_json::to_value(&current_request).unwrap_or(serde_json::Value::Null);
@@ -1131,6 +1160,7 @@ pub async fn generate_sentinel_plan(
         max_tokens: 512,
         response_format: None,
         tools: None,
+        extra: resolve_effort_params(),
     };
 
     let client = reqwest::Client::builder()
@@ -1230,6 +1260,7 @@ pub async fn generate_autonomous_step(
         max_tokens: 1024,
         response_format: None,
         tools: Some(tools),
+        extra: resolve_effort_params(),
     };
 
     let client = reqwest::Client::builder()
