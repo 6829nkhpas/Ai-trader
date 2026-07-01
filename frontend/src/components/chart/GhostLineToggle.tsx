@@ -41,7 +41,7 @@ export default function GhostLineToggle() {
         onClick={() => setOpen((v) => !v)}
         aria-label="Projection engine"
         title="Predictive projection engine"
-        className="flex h-full items-center gap-1.5 px-4 text-[11px] font-semibold text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary border-r border-border-default bg-surface"
+        className="flex h-full items-center gap-1.5 px-2.5 text-[11px] font-semibold text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary border-r border-border-default bg-surface"
       >
         <Spline size={13} className="text-text-muted" />
         <span>{MODE_LABELS[ghostLineMode]}</span>
