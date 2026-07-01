@@ -36,7 +36,7 @@ export default function ChartModeToggle() {
         type="button"
         id="chart-mode-dropdown-trigger"
         onClick={() => setIsOpen(!isOpen)}
-        className={`flex h-full items-center gap-1.5 px-4 text-[11px] font-semibold transition-all border-r border-border-default ${
+        className={`flex h-full items-center gap-1.5 px-2.5 text-[11px] font-semibold transition-all border-r border-border-default ${
           isOpen
             ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
             : 'bg-surface text-text-secondary hover:bg-elevated hover:text-text-primary'

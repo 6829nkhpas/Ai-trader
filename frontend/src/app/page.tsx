@@ -354,8 +354,8 @@ export default function Home() {
                     sidebarOpen ? 'flex-1' : 'w-full'
                   }`
             }>
-              <div className="flex h-9 shrink-0 items-center justify-between border-b border-border-default bg-surface rounded-none pl-3">
-                <div className="flex min-w-0 shrink items-center gap-1.5 overflow-hidden">
+              <div className="flex h-9 shrink-0 items-center justify-between border-b border-border-default bg-surface rounded-none pl-2">
+                <div className="flex min-w-0 shrink items-center gap-1 overflow-hidden">
                   {symbolQuote ? (
                     <>
                       <div className="shrink-0 text-xs font-semibold text-text-primary tabular-nums">
@@ -364,15 +364,6 @@ export default function Home() {
                       <div className={`flex shrink-0 items-center gap-0.5 text-[11px] font-medium tabular-nums ${symbolQuote.change >= 0 ? 'text-bull' : 'text-bear'}`}>
                         {symbolQuote.change >= 0 ? <ArrowUpRight size={11} /> : <ArrowDownRight size={11} />}
                         {symbolQuote.change >= 0 ? '+' : ''}{symbolQuote.change.toFixed(2)}%
-                      </div>
-                      {/* OHLC + volume strip — reclaim the otherwise-empty left region (R8.1).
-                          Token-only; collapses on narrow widths so no control is pushed out. */}
-                      <div className="ml-1 hidden shrink-0 items-center gap-2.5 border-l border-border-default pl-2.5 text-[10px] tabular-nums text-text-secondary lg:flex">
-                        <span className="flex items-center gap-1"><span className="font-medium uppercase tracking-wider text-text-muted">O</span>{symbolQuote.open.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        <span className="flex items-center gap-1"><span className="font-medium uppercase tracking-wider text-text-muted">H</span><span className="text-bull">{symbolQuote.high.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></span>
-                        <span className="flex items-center gap-1"><span className="font-medium uppercase tracking-wider text-text-muted">L</span><span className="text-bear">{symbolQuote.low.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></span>
-                        <span className="flex items-center gap-1"><span className="font-medium uppercase tracking-wider text-text-muted">C</span>{symbolQuote.close.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        <span className="flex items-center gap-1"><span className="font-medium uppercase tracking-wider text-text-muted">Vol</span>{symbolQuote.volume.toLocaleString('en-IN', { notation: 'compact', maximumFractionDigits: 1 })}</span>
                       </div>
                     </>
                   ) : (
@@ -403,7 +394,7 @@ export default function Home() {
                     type="button"
                     onClick={toggleIndicatorManager}
                     aria-label="Indicators"
-                    className={`flex h-full items-center gap-1.5 px-4 text-[11px] font-semibold transition-colors border-r border-border-default bg-surface ${showIndicatorManager
+                    className={`flex h-full items-center gap-1 px-2.5 text-[11px] font-semibold transition-colors border-r border-border-default bg-surface ${showIndicatorManager
                         ? 'text-primary bg-primary/10'
                         : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
                       }`}
@@ -433,7 +424,7 @@ export default function Home() {
                     <button
                       type="button"
                       onClick={() => setTfDropdownOpen(!tfDropdownOpen)}
-                      className={`flex h-full items-center gap-1.5 px-4 text-[11px] font-semibold transition-all border-r border-border-default ${
+                      className={`flex h-full items-center gap-1 px-2.5 text-[11px] font-semibold transition-all border-r border-border-default ${
                         tfDropdownOpen
                           ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
                           : 'bg-surface text-text-secondary hover:bg-elevated hover:text-text-primary'
