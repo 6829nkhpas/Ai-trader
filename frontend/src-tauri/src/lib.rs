@@ -232,6 +232,11 @@ pub fn run() {
               // control port (:8085). Skips underlyings without spot; retries
               // push failures on the next tick. Runs on its own task — never
               // blocks the equity tick path.
+              //
+              // The RequestedUnderlyings registry lets the UI dynamically add
+              // stock/extra chains (opened from search) that the subscriber
+              // ingests alongside the configured indexes.
+              app.manage(services::option_chain_subscriber::RequestedUnderlyings::default());
               let app_handle_chain = app.handle().clone();
               tauri::async_runtime::spawn(async move {
                   services::option_chain_subscriber::run_option_chain_subscriber(app_handle_chain).await;
@@ -330,6 +335,7 @@ pub fn run() {
         commands::radar::get_radar_symbols,
         commands::fno::get_fno_analytics,
         commands::fno::fno_list_chains,
+        commands::fno::fno_request_underlying,
         commands::fno::fno_subscribe,
         commands::fno::fno_unsubscribe,
         commands::security::save_api_key,

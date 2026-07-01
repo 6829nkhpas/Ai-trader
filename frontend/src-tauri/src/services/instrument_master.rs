@@ -222,15 +222,15 @@ pub async fn run_instrument_sync(app: tauri::AppHandle) {
                 Err(_) => { skipped += 1; continue; }
             };
 
-            let tradingsymbol = fields[symbol_idx].trim();
-            let name = fields[name_idx].trim();
+            let tradingsymbol = clean_csv_field(fields[symbol_idx]);
+            let name = clean_csv_field(fields[name_idx]);
             let instrument_type = type_idx
                 .and_then(|i| fields.get(i))
-                .map(|s| s.trim())
+                .map(|s| clean_csv_field(s))
                 .unwrap_or("EQ");
             let exchange = exchange_idx
                 .and_then(|i| fields.get(i))
-                .map(|s| s.trim())
+                .map(|s| clean_csv_field(s))
                 .unwrap_or("NSE");
 
             // Skip empty symbols
@@ -345,8 +345,25 @@ impl NfoColumnIndex {
 /// instrument_token, empty tradingsymbol, or empty instrument_type) so malformed rows
 /// are skipped rather than fatal. Optional fields default when absent or unparseable
 /// (`strike` → 0.0, `lot_size` → 0, `expiry` → "", `segment` → "NFO", `name` → "").
+/// Trim surrounding whitespace and a single pair of wrapping double-quotes from a
+/// raw CSV field.
+///
+/// Kite's instrument CSV wraps some textual fields (notably `name`) in double
+/// quotes, e.g. `"NIFTY 50"`. A naive comma split keeps those quotes in the value,
+/// so without stripping them the stored `name` becomes `"NIFTY 50"` and the
+/// derived `underlying` becomes `"NIFTY"` (quotes included) — which then corrupts
+/// the displayed name, the option grouping, the configured-underlying match, and
+/// every downstream lookup. Pure and total: trims whitespace, removes at most one
+/// leading and one trailing `"`, then trims again.
+pub fn clean_csv_field(raw: &str) -> &str {
+    let t = raw.trim();
+    let t = t.strip_prefix('"').unwrap_or(t);
+    let t = t.strip_suffix('"').unwrap_or(t);
+    t.trim()
+}
+
 pub fn parse_nfo_row(fields: &[&str], idx: &NfoColumnIndex) -> Option<NfoInstrument> {
-    let get = |i: usize| fields.get(i).map(|s| s.trim());
+    let get = |i: usize| fields.get(i).map(|s| clean_csv_field(s));
 
     // Required: instrument_token must parse.
     let instrument_token: i64 = get(idx.token)?.parse().ok()?;
@@ -1107,6 +1124,34 @@ mod nfo_sync_unit_tests {
     }
 
     // ── R1.6: a download/parse failure aborts before the upsert (data left intact) ──
+
+    #[test]
+    fn clean_csv_field_strips_wrapping_quotes() {
+        // Kite wraps textual fields in double quotes; a naive split keeps them.
+        assert_eq!(clean_csv_field("\"NIFTY 50\""), "NIFTY 50");
+        assert_eq!(clean_csv_field("\"NIFTY\""), "NIFTY");
+        // Unquoted values (e.g. tradingsymbol) are unchanged.
+        assert_eq!(clean_csv_field("NIFTY24DEC24000CE"), "NIFTY24DEC24000CE");
+        assert_eq!(clean_csv_field("RELIANCE"), "RELIANCE");
+        // Surrounding whitespace is trimmed, inside and outside the quotes.
+        assert_eq!(clean_csv_field("  \" RELIANCE \"  "), "RELIANCE");
+        // Only a single pair is removed; empty/degenerate inputs are safe.
+        assert_eq!(clean_csv_field(""), "");
+        assert_eq!(clean_csv_field("\"\""), "");
+    }
+
+    #[test]
+    fn parse_nfo_row_strips_quotes_from_name() {
+        // A realistic quoted `name` column must yield an unquoted stored name so
+        // the derived underlying is clean (e.g. "NIFTY", not "\"NIFTY\"").
+        let header = "instrument_token,tradingsymbol,name,instrument_type,strike,expiry,lot_size,segment";
+        let idx = NfoColumnIndex::from_header(header).expect("header resolves");
+        let row = "12001,NIFTY24DEC24000CE,\"NIFTY\",CE,24000,2024-12-26,50,NFO-OPT";
+        let fields: Vec<&str> = row.split(',').collect();
+        let rec = parse_nfo_row(&fields, &idx).expect("row parses");
+        assert_eq!(rec.name, "NIFTY");
+        assert_eq!(derive_underlying(&rec), "NIFTY");
+    }
 
     #[test]
     fn header_missing_required_columns_aborts_before_upsert() {

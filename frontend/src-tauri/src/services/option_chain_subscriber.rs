@@ -143,7 +143,12 @@ pub async fn push_chain_set(selection: &ChainSelection, interval_secs: u64) -> R
     let addr = format!("127.0.0.1:{}", control_port);
     let mut stream = tokio::net::TcpStream::connect(&addr)
         .await
-        .map_err(|e| format!("cannot reach ingestion control :{} — {}", control_port, e))?;
+        .map_err(|e| {
+            format!(
+                "cannot connect to INGESTION_CONTROL_PORT :{} — is the ingestion service running? ({})",
+                control_port, e
+            )
+        })?;
 
     stream
         .write_all(cmd.as_bytes())
@@ -153,14 +158,95 @@ pub async fn push_chain_set(selection: &ChainSelection, interval_secs: u64) -> R
     Ok(())
 }
 
+/// Resolve the name under which `nfo_instruments` groups an underlying's option
+/// ladder, given the configured underlying.
+///
+/// The equity/spot side and the NFO side use different symbols for index
+/// underlyings: the spot side keys by the NSE index tradingsymbol (`"NIFTY 50"`,
+/// `"NIFTY BANK"`), while NFO options group under the shorter derivative name
+/// (`"NIFTY"`, `"BANKNIFTY"`). A configured `"NIFTY 50"` therefore never matches
+/// the NFO `underlying` column directly, leaving the ladder empty and the chain
+/// permanently unavailable. For single-stock underlyings the two names coincide
+/// (e.g. `"RELIANCE"`), so the identity fallback is correct there.
+///
+/// PURE and total: maps the known NSE index names to their NFO derivative names
+/// (case-insensitively) and returns the configured string unchanged otherwise.
+pub fn resolve_nfo_underlying_name(configured: &str) -> String {
+    match configured.trim().to_uppercase().as_str() {
+        "NIFTY 50" | "NIFTY50" | "NIFTY" => "NIFTY".to_string(),
+        "NIFTY BANK" | "BANKNIFTY" => "BANKNIFTY".to_string(),
+        "NIFTY FIN SERVICE" | "FINNIFTY" => "FINNIFTY".to_string(),
+        "NIFTY MIDCAP SELECT" | "MIDCPNIFTY" => "MIDCPNIFTY".to_string(),
+        "NIFTY NEXT 50" | "NIFTYNXT50" => "NIFTYNXT50".to_string(),
+        // Single-stock underlyings: the NFO underlying equals the tradingsymbol.
+        _ => configured.trim().to_string(),
+    }
+}
+
+/// Thread-safe registry of dynamically-requested F&O underlyings.
+///
+/// In addition to the statically-configured index underlyings, the user can open
+/// the F&O chain for any NFO underlying (e.g. a stock like `"RELIANCE"`) from the
+/// symbol search. Those selections are registered here so the subscriber ingests
+/// their chains too. Managed as Tauri state; entries are the underlying keys the
+/// snapshots are stored under (for stocks this equals the NFO name).
+#[derive(Default)]
+pub struct RequestedUnderlyings(pub std::sync::Mutex<std::collections::BTreeSet<String>>);
+
+impl RequestedUnderlyings {
+    /// Insert an underlying into the registry. Returns `true` when newly added.
+    /// Trims and ignores blank input. Never panics on a poisoned lock.
+    pub fn add(&self, underlying: &str) -> bool {
+        let u = underlying.trim();
+        if u.is_empty() {
+            return false;
+        }
+        match self.0.lock() {
+            Ok(mut set) => set.insert(u.to_string()),
+            Err(_) => false,
+        }
+    }
+
+    /// Snapshot the current requested set (empty on a poisoned lock).
+    pub fn snapshot(&self) -> std::collections::BTreeSet<String> {
+        self.0.lock().map(|s| s.clone()).unwrap_or_default()
+    }
+}
+
+/// Compute the effective underlyings the subscriber should ingest this tick:
+/// the statically-configured list first (in order), then any dynamically
+/// requested underlyings that are not already covered.
+///
+/// PURE and total. De-duplication is by the resolved NFO ladder name
+/// (case-insensitive), so a requested `"NIFTY"` is not ingested twice when
+/// `"NIFTY 50"` is already configured (they resolve to the same ladder), while
+/// distinct stock underlyings (`"RELIANCE"`) are appended.
+pub fn effective_underlyings(
+    configured: &[String],
+    requested: &std::collections::BTreeSet<String>,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for u in configured.iter().chain(requested.iter()) {
+        let key = resolve_nfo_underlying_name(u).to_uppercase();
+        if !key.is_empty() && seen.insert(key) {
+            out.push(u.trim().to_string());
+        }
+    }
+    out
+}
+
 /// Load one underlying's NFO option ladder from SQLite into `OptionContract`s.
 ///
-/// Reads CE/PE/FUT contracts for `underlying` from `nfo_instruments`. Expiry is
+/// Reads CE/PE/FUT contracts for `underlying` from `nfo_instruments`. The
+/// configured underlying may be the NSE index tradingsymbol (e.g. `"NIFTY 50"`),
+/// whereas `nfo_instruments.underlying` groups by the shorter NFO name
+/// (e.g. `"NIFTY"`); `resolve_nfo_underlying_name` reconciles them. Expiry is
 /// stored as an ISO date string; rows whose expiry fails to parse into a
 /// `NaiveDate`, or whose `instrument_type` is not CE/PE/FUT, are skipped (robust
 /// against malformed rows). Returns an empty vector when the underlying has no
-/// rows or the DB is unavailable — `build_chain_selection` handles an empty
-/// ladder gracefully.
+/// rows (under the resolved name) or the DB is unavailable — `build_chain_selection`
+/// handles an empty ladder gracefully.
 fn load_ladder(db_state: &DbState, underlying: &str) -> Vec<OptionContract> {
     let conn = match db_state.conn.lock() {
         Ok(c) => c,
@@ -169,6 +255,16 @@ fn load_ladder(db_state: &DbState, underlying: &str) -> Vec<OptionContract> {
             return Vec::new();
         }
     };
+
+    // The NFO ladder groups under the shorter derivative name, while the
+    // configured underlying may be the NSE index tradingsymbol — reconcile them.
+    let nfo_name = resolve_nfo_underlying_name(underlying);
+    if nfo_name != underlying {
+        info!(
+            "[OptionChainSub] resolved NFO ladder name for {} → {}.",
+            underlying, nfo_name
+        );
+    }
 
     let mut stmt = match conn.prepare(
         "SELECT instrument_token, tradingsymbol, instrument_type, strike, expiry \
@@ -182,7 +278,7 @@ fn load_ladder(db_state: &DbState, underlying: &str) -> Vec<OptionContract> {
         }
     };
 
-    let rows = stmt.query_map([underlying], |row| {
+    let rows = stmt.query_map([nfo_name.as_str()], |row| {
         let token: i64 = row.get(0)?;
         let tradingsymbol: String = row.get(1)?;
         let instrument_type: String = row.get(2)?;
@@ -302,11 +398,12 @@ async fn resolve_once(
     pool: &PgPool,
     db_state: &DbState,
     cfg: &FnoConfig,
+    underlyings: &[String],
     last_atm: &mut HashMap<String, f64>,
 ) {
     let today = Local::now().date_naive();
 
-    for underlying in &cfg.underlyings {
+    for underlying in underlyings {
         let spot = read_spot(pool, underlying).await;
 
         // Resolve the selection only when a spot is available; otherwise an empty
@@ -315,6 +412,17 @@ async fn resolve_once(
         let selection = match spot {
             Some(s) => {
                 let ladder = load_ladder(db_state, underlying);
+                if ladder.is_empty() {
+                    // Precondition A1: no NFO ladder for this underlying. Without a
+                    // ladder there is nothing to resolve, so the subscriber would
+                    // silently push nothing — surface a distinct, actionable warning
+                    // pointing at the NFO master sync (run_nfo_sync / nfo_instruments).
+                    warn!(
+                        "[OptionChainSub] NFO ladder empty for {} — no rows in nfo_instruments \
+                         (has run_nfo_sync populated the NFO master yet?). Pushing nothing this tick.",
+                        underlying
+                    );
+                }
                 build_chain_selection(&ladder, underlying, s, today, &cfg.chain)
             }
             None => empty_selection(underlying),
@@ -328,8 +436,12 @@ async fn resolve_once(
         ) {
             // R4.5: spot unavailable → skip + log, never push.
             PushDecision::SkipSpotUnavailable => {
-                info!(
-                    "[OptionChainSub] spot unavailable for {} — skipping chain subscription this tick.",
+                // Precondition A1: spot missing from QuestDB live_ticks. Distinct,
+                // actionable warning — without a spot the ATM cannot be resolved so
+                // nothing is pushed; points at the live equity/index tick feed.
+                warn!(
+                    "[OptionChainSub] spot missing from live_ticks for {} — no recent tick to \
+                     resolve ATM (is the equity/index feed live?). Skipping chain subscription this tick.",
                     underlying
                 );
             }
@@ -346,7 +458,20 @@ async fn resolve_once(
                 // resolved once in `cfg` that drives selection here.
                 match push_chain_set(&selection, cfg.chain.snapshot_interval_secs).await {
                     Ok(()) => {
+                        // Startup confirmation: the FIRST successful push for an
+                        // underlying means the ingestion pipeline is live for it —
+                        // log a distinct line so pipeline continuity is observable.
+                        let first_push = !last_atm.contains_key(underlying);
                         last_atm.insert(underlying.clone(), selection.atm_strike);
+                        if first_push {
+                            info!(
+                                "[OptionChainSub] ✓ FIRST successful push_chain_set for {} — \
+                                 ingestion pipeline live ({} tokens, ATM {:.2}).",
+                                underlying,
+                                selection.entries.len(),
+                                selection.atm_strike,
+                            );
+                        }
                         info!(
                             "[OptionChainSub] ✓ pushed {} tokens for {} (ATM {:.2}).",
                             selection.entries.len(),
@@ -357,6 +482,8 @@ async fn resolve_once(
                     Err(e) => {
                         // R7.3: log and retry on the next iteration; do not update
                         // last_atm so the same selection is re-attempted next tick.
+                        // A control-port connect failure surfaces here with its
+                        // distinct, actionable message from push_chain_set.
                         warn!(
                             "[OptionChainSub] push failed for {}: {} — will retry next iteration.",
                             underlying, e
@@ -405,7 +532,15 @@ pub async fn run_option_chain_subscriber(app: tauri::AppHandle) {
         };
 
         if let Some(db_state) = app.try_state::<DbState>() {
-            resolve_once(&pool, &db_state, &cfg, &mut last_atm).await;
+            // Config underlyings plus any dynamically-requested ones (e.g. a
+            // stock chain the user opened from search). The registry is optional
+            // state, so fall back to config-only when it is not registered.
+            let requested = app
+                .try_state::<RequestedUnderlyings>()
+                .map(|s| s.snapshot())
+                .unwrap_or_default();
+            let underlyings = effective_underlyings(&cfg.underlyings, &requested);
+            resolve_once(&pool, &db_state, &cfg, &underlyings, &mut last_atm).await;
         } else {
             warn!("[OptionChainSub] SQLite DbState not available yet — retrying.");
         }
@@ -619,5 +754,88 @@ mod tests {
         assert_eq!(option_type_str(OptionType::Ce), "CE");
         assert_eq!(option_type_str(OptionType::Pe), "PE");
         assert_eq!(option_type_str(OptionType::Fut), "FUT");
+    }
+
+    // ── NFO underlying-name reconciliation (spot tradingsymbol → NFO name) ──
+
+    #[test]
+    fn nfo_name_resolves_index_tradingsymbol_to_short_name() {
+        // The NSE index tradingsymbol "NIFTY 50" maps to the NFO grouping name
+        // "NIFTY"; the ladder must be looked up under "NIFTY".
+        assert_eq!(resolve_nfo_underlying_name("NIFTY 50"), "NIFTY");
+        assert_eq!(resolve_nfo_underlying_name("NIFTY BANK"), "BANKNIFTY");
+        assert_eq!(resolve_nfo_underlying_name("NIFTY FIN SERVICE"), "FINNIFTY");
+    }
+
+    #[test]
+    fn nfo_name_is_case_insensitive() {
+        assert_eq!(resolve_nfo_underlying_name("nifty 50"), "NIFTY");
+        assert_eq!(resolve_nfo_underlying_name("  NIFTY 50  "), "NIFTY");
+    }
+
+    #[test]
+    fn nfo_name_passthrough_for_configured_derivative_name() {
+        // A config that already uses the NFO name is preserved.
+        assert_eq!(resolve_nfo_underlying_name("BANKNIFTY"), "BANKNIFTY");
+        assert_eq!(resolve_nfo_underlying_name("FINNIFTY"), "FINNIFTY");
+    }
+
+    #[test]
+    fn nfo_name_identity_for_single_stock_underlyings() {
+        // Single stocks: the NFO underlying equals the tradingsymbol.
+        assert_eq!(resolve_nfo_underlying_name("RELIANCE"), "RELIANCE");
+        assert_eq!(resolve_nfo_underlying_name("TCS"), "TCS");
+    }
+
+    // ── Dynamic underlyings registry + effective set ────────────────────────
+
+    fn set_of(items: &[&str]) -> std::collections::BTreeSet<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn effective_is_config_only_when_no_requests() {
+        let cfg = vec!["NIFTY 50".to_string(), "BANKNIFTY".to_string()];
+        let requested = std::collections::BTreeSet::new();
+        assert_eq!(
+            effective_underlyings(&cfg, &requested),
+            vec!["NIFTY 50".to_string(), "BANKNIFTY".to_string()]
+        );
+    }
+
+    #[test]
+    fn effective_appends_requested_stock_underlyings() {
+        let cfg = vec!["NIFTY 50".to_string(), "BANKNIFTY".to_string()];
+        let requested = set_of(&["RELIANCE", "TCS"]);
+        let out = effective_underlyings(&cfg, &requested);
+        // Config first (in order), then requested stocks.
+        assert_eq!(out[0], "NIFTY 50");
+        assert_eq!(out[1], "BANKNIFTY");
+        assert!(out.contains(&"RELIANCE".to_string()));
+        assert!(out.contains(&"TCS".to_string()));
+        assert_eq!(out.len(), 4);
+    }
+
+    #[test]
+    fn effective_dedups_requested_index_alias_against_config() {
+        // "NIFTY" resolves to the same ladder as configured "NIFTY 50" — it must
+        // not be ingested twice.
+        let cfg = vec!["NIFTY 50".to_string()];
+        let requested = set_of(&["NIFTY", "RELIANCE"]);
+        let out = effective_underlyings(&cfg, &requested);
+        assert_eq!(out, vec!["NIFTY 50".to_string(), "RELIANCE".to_string()]);
+    }
+
+    #[test]
+    fn registry_add_is_idempotent_and_trims() {
+        let reg = RequestedUnderlyings::default();
+        assert!(reg.add("RELIANCE"));
+        assert!(!reg.add("RELIANCE")); // already present
+        assert!(!reg.add("  ")); // blank ignored
+        assert!(reg.add("  TCS  ")); // trimmed then added
+        let snap = reg.snapshot();
+        assert!(snap.contains("RELIANCE"));
+        assert!(snap.contains("TCS"));
+        assert_eq!(snap.len(), 2);
     }
 }
