@@ -45,6 +45,7 @@ import OiProfileChart from './OiProfileChart';
 import IvSkewChart from './IvSkewChart';
 import OptionsHud from './OptionsHud';
 import FnoUnavailableState from './FnoUnavailableState';
+import FnoServiceState from './FnoServiceState';
 
 /** Bridge payload delivered by both `get_fno_analytics` and `fno-snapshot`. */
 type FnoSnapshot = FnoPayload | FnoUnavailableMarker;
@@ -154,13 +155,18 @@ export default function FnoSection() {
         }
       } catch (err) {
         if (!cancelled) {
+          // A REJECTED invoke is a transport failure: the F&O service is
+          // unreachable or `FNO_SERVICE_URL` is misconfigured. This is a
+          // fixable setup problem, distinct from a resolved no-data marker, so
+          // surface the actionable service/config state rather than the generic
+          // unavailable panel (Defect A2 render, R2.3). The bridge error string
+          // already names the offending URL — carry it verbatim as the detail.
           setViewState({
-            kind: 'unavailable',
-            reason:
+            kind: 'service-error',
+            detail:
               typeof err === 'string'
                 ? err
                 : 'The F&O service returned an error or is unreachable.',
-            lastSnapshotTs: null,
           });
         }
       } finally {
@@ -201,7 +207,7 @@ export default function FnoSection() {
 
   // ── Header status label (snapshot time / market status) ───────────────────
   const statusLabel = useMemo(() => {
-    if (!viewState || viewState.kind === 'unavailable') return null;
+    if (!viewState || (viewState.kind !== 'ready' && viewState.kind !== 'partial')) return null;
     const ts = formatSnapshotTs(viewState.snapshotTs);
     const closed = viewState.marketStatus === 'closed';
     return { ts, closed };
@@ -284,6 +290,11 @@ export default function FnoSection() {
               Loading F&amp;O analytics…
             </span>
           </div>
+        ) : viewState?.kind === 'service-error' ? (
+          // Transport Err (service down / FNO_SERVICE_URL misconfigured) — a
+          // fixable setup problem, distinct from a resolved no-data marker
+          // (R2.3).
+          <FnoServiceState detail={viewState.detail} />
         ) : viewState === null || viewState.kind === 'unavailable' ? (
           // Honest empty/error state (R6.4, R6.5, R8.1, R8.4).
           <FnoUnavailableState

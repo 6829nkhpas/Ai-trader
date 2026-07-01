@@ -171,7 +171,13 @@ export type FnoViewState =
       snapshotTs: number;
       marketStatus: MarketStatus;
     }
-  | { kind: 'unavailable'; reason: string; lastSnapshotTs: NaOr<number> };
+  | { kind: 'unavailable'; reason: string; lastSnapshotTs: NaOr<number> }
+  // Distinct from `unavailable` (a resolved no-data marker): the bridge invoke
+  // itself was REJECTED (transport Err) — the F&O service is unreachable or
+  // `FNO_SERVICE_URL` is misconfigured. This is a fixable setup problem, not an
+  // honest empty market, so it must surface an actionable service/config state
+  // rather than the generic no-data panel (Defect A2 render, R2.3).
+  | { kind: 'service-error'; detail: string };
 
 // ---------------------------------------------------------------------------
 // Selectors (task 4.2): buildOiProfile

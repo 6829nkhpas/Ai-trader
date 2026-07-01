@@ -78,6 +78,38 @@ pub async fn subscribe_ticker(
     Ok(())
 }
 
+/// Ensure `symbol`'s spot ticks are being ingested into QuestDB `live_ticks`,
+/// WITHOUT changing the active chart symbol.
+///
+/// Reuses the same token-resolution + ingestion-control path as
+/// `subscribe_ticker` (local SQLite cache first, then the aggregator HTTP
+/// lookup), and bootstraps the live WS→IPC bridges if needed. Intended for
+/// callers that need a symbol's spot available for a side feature (e.g. the F&O
+/// option-chain subscriber needs the underlying's spot to resolve the ATM) but
+/// must not disturb the user's charted instrument. Fire-and-forget; never panics.
+pub async fn ensure_spot_subscribed(app: &tauri::AppHandle, symbol: &str) {
+    let upper = symbol.trim().to_uppercase();
+    if upper.is_empty() {
+        return;
+    }
+
+    // Bring up the internal WS → IPC bridges so ticks actually flow.
+    crate::services::live_bridges::ensure_bootstrapped(app);
+
+    let local_token: Option<u32> = {
+        use tauri::Manager;
+        let db_state: tauri::State<'_, crate::db::DbState> = app.state();
+        crate::commands::instruments::resolve_instrument_token(&db_state, &upper)
+    };
+
+    if let Some(token) = local_token {
+        info!("[ensure_spot_subscribed] Token {} resolved locally for {}", token, upper);
+        send_subscribe_to_ingestion(&upper, token).await;
+    } else {
+        notify_ingestion_subscribe(&upper).await;
+    }
+}
+
 /// Direct path: send subscribe command to ingestion when token is already known.
 /// Skips the HTTP lookup entirely — used when the local SQLite cache has the token.
 async fn send_subscribe_to_ingestion(symbol: &str, token: u32) {
