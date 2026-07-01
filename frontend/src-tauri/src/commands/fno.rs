@@ -201,6 +201,15 @@ pub async fn fno_request_underlying(app: AppHandle, underlying: String) -> Resul
                     u, nfo_name
                 );
             }
+            // Ensure the underlying's spot flows into `live_ticks` so the
+            // option-chain subscriber can resolve its ATM. For a stock the
+            // underlying IS its NSE tradingsymbol, so this subscribes the right
+            // instrument. Fire-and-forget so the command returns immediately.
+            let app_bg = app.clone();
+            let sym_bg = u.clone();
+            tauri::async_runtime::spawn(async move {
+                crate::commands::ticker::ensure_spot_subscribed(&app_bg, &sym_bg).await;
+            });
             Ok(true)
         }
         None => {
