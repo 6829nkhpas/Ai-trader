@@ -63,6 +63,35 @@ const resultSymbol = (r: SearchResult): string =>
 const resultKey = (r: SearchResult): string =>
   r.kind === 'EQ' ? `EQ:${r.symbol}` : `FNO:${r.tradingsymbol}`;
 
+// Default configured F&O index underlyings (mirrors the Rust `resolve_fno_config`
+// default — FNO_UNDERLYINGS = "NIFTY 50,BANKNIFTY"). Used as the bounded guard
+// for activating F&O mode from a search selection until the live configured set
+// is fetched via `fno_list_chains` (R3.6). Compared case-insensitively.
+const DEFAULT_FNO_UNDERLYINGS = ['NIFTY 50', 'BANKNIFTY'];
+
+// NSE index tradingsymbol → NFO derivative name. The spot/config side keys an
+// index by its NSE tradingsymbol ("NIFTY 50"), while NFO option contracts group
+// under the shorter derivative name ("NIFTY"). Search results carry the NFO name,
+// so to open the F&O view (which reads snapshots stored under the CONFIGURED
+// underlying) we match a selected contract's underlying against each configured
+// underlying by either its literal value or its NFO-name alias. Mirrors the Rust
+// `resolve_nfo_underlying_name`.
+const INDEX_NFO_ALIASES: Record<string, string> = {
+  'NIFTY 50': 'NIFTY',
+  'NIFTY BANK': 'BANKNIFTY',
+  'BANKNIFTY': 'BANKNIFTY',
+  'NIFTY FIN SERVICE': 'FINNIFTY',
+  'FINNIFTY': 'FINNIFTY',
+  'NIFTY MIDCAP SELECT': 'MIDCPNIFTY',
+  'MIDCPNIFTY': 'MIDCPNIFTY',
+  'NIFTY NEXT 50': 'NIFTYNXT50',
+  'NIFTYNXT50': 'NIFTYNXT50',
+};
+
+/** The NFO derivative name for a configured underlying (identity for stocks). */
+const nfoNameOf = (configured: string): string =>
+  INDEX_NFO_ALIASES[configured.trim().toUpperCase()] ?? configured.trim();
+
 export default function LeftPanel() {
   const [query, setQuery] = useState('');
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
@@ -78,12 +107,21 @@ export default function LeftPanel() {
   const [watchlistCollapsed, setWatchlistCollapsed] = useState(false);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  // Configured F&O index underlyings (bounded selector, R3.6). Seeded with the
+  // documented defaults and refreshed from the bridge's `fno_list_chains` so the
+  // guard that activates F&O mode from search stays bounded to configured
+  // underlyings even before/while the live set loads.
+  const [configuredUnderlyings, setConfiguredUnderlyings] = useState<string[]>(
+    DEFAULT_FNO_UNDERLYINGS,
+  );
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const quoteIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
   const setSelectedSymbol = useTradeStore((s) => s.setSelectedSymbol);
+  const setActiveProfile = useTradeStore((s) => s.setActiveProfile);
+  const setFnoUnderlying = useTradeStore((s) => s.setFnoUnderlying);
   const watchlist = useTradeStore((s) => s.watchlist);
   const addToWatchlist = useTradeStore((s) => s.addToWatchlist);
   const removeFromWatchlist = useTradeStore((s) => s.removeFromWatchlist);
@@ -103,6 +141,28 @@ export default function LeftPanel() {
   // ── Hydrate persisted watchlist on mount ───────────────────────────
   useEffect(() => {
     hydrateWatchlist();
+  }, []);
+
+  // ── Load the bounded configured F&O underlyings (R3.6) ──────────────
+  // The search-selection guard uses this set to decide whether an FNO result
+  // may activate F&O mode. It falls back to the seeded defaults if the bridge
+  // is unavailable, so an F&O pick still activates for a configured index.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const chains = await invoke<{ underlyings?: string[] }>('fno_list_chains');
+        if (!cancelled && Array.isArray(chains?.underlyings) && chains.underlyings.length > 0) {
+          setConfiguredUnderlyings(chains.underlyings);
+        }
+      } catch (err) {
+        // Bridge unavailable — keep the seeded defaults (never blocks search).
+        console.warn('[LeftPanel] fno_list_chains failed; using default underlyings:', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // ── Decoupled Sentiment (independent of tick data) ────────────────
@@ -218,8 +278,14 @@ export default function LeftPanel() {
     }
   }, [splitView, setPaneSymbol, activePaneId, setSelectedSymbol]);
 
-  // Route a selected instrument to the correct chart target and watchlist (R3.3, R4.4).
-  const handleSelectResult = useCallback((r: SearchResult) => {
+  // Route a selected instrument based on its kind (R2.5, R2.6, R3.4).
+  //  - FNO result with a CONFIGURED underlying → activate F&O mode
+  //    (setActiveProfile('FNO') + setFnoUnderlying, which resets fnoExpiry to
+  //    '' / nearest) instead of routing to the price chart.
+  //  - EQ result (or an FNO result whose underlying is NOT configured) →
+  //    unchanged: route to the price chart via routeSymbolToChart.
+  // Watchlist add is preserved for every kind.
+  const handleSelectResult = useCallback(async (r: SearchResult) => {
     const symbol = resultSymbol(r);
     const sector = r.kind === 'EQ' ? 'EQ' : r.optionType; // CE/PE/FUT colored badge
     const name = r.kind === 'EQ' ? (r.name || r.symbol) : r.underlying;
@@ -231,14 +297,66 @@ export default function LeftPanel() {
       lastPrice: 0,
       change: 0,
     });
-    // Single view → sole chart; split view → the active pane.
+
+    // Resolve the selected contract's underlying to a CONFIGURED underlying so
+    // the F&O view reads snapshots under the key they were ingested with. A
+    // contract's `underlying` may be the NFO name ("NIFTY") or the config name
+    // ("NIFTY 50"); match either against each configured underlying (by literal
+    // value or its NFO-name alias).
+    const matchedConfig =
+      r.kind === 'FNO' && typeof r.underlying === 'string'
+        ? configuredUnderlyings.find((u) => {
+            const ru = r.underlying.toUpperCase();
+            return u.toUpperCase() === ru || nfoNameOf(u).toUpperCase() === ru;
+          })
+        : undefined;
+
+    // Close the dropdown before any async work so selection feels immediate.
+    const closeDropdown = () => {
+      setShowDropdown(false);
+      setQuery('');
+      setSearchResults([]);
+      setSearchError(null);
+      setFnoUnderlyingFilter(null); setFnoExpiryFilter(null); setFnoTypeFilter(null);
+    };
+
+    if (r.kind === 'FNO' && matchedConfig) {
+      // A configured index (already ingested): open F&O with the config name so
+      // the backend /options/snapshot query matches the ingested snapshots.
+      // setFnoUnderlying resets fnoExpiry to '' (nearest) in the store.
+      setActiveProfile('FNO');
+      setFnoUnderlying(matchedConfig);
+      closeDropdown();
+      return;
+    }
+
+    if (r.kind === 'FNO' && typeof r.underlying === 'string') {
+      // A non-configured F&O underlying (e.g. a stock): ask the backend to start
+      // ingesting its chain. The command validates against the NFO master and
+      // returns false for non-derivative symbols → fall back to chart routing.
+      closeDropdown();
+      try {
+        const ok = await invoke<boolean>('fno_request_underlying', {
+          underlying: r.underlying,
+        });
+        if (ok) {
+          // For stocks the NFO name == the snapshot key, so open F&O directly.
+          setActiveProfile('FNO');
+          setFnoUnderlying(r.underlying);
+          return;
+        }
+      } catch (err) {
+        console.warn('[LeftPanel] fno_request_underlying failed:', err);
+      }
+      // No F&O data for this underlying — behave like an equity selection.
+      routeSymbolToChart(symbol);
+      return;
+    }
+
+    // EQ result: single view → sole chart; split view → the active pane (R3.4).
     routeSymbolToChart(symbol);
-    setShowDropdown(false);
-    setQuery('');
-    setSearchResults([]);
-    setSearchError(null);
-    setFnoUnderlyingFilter(null); setFnoExpiryFilter(null); setFnoTypeFilter(null);
-  }, [addToWatchlist, routeSymbolToChart]);
+    closeDropdown();
+  }, [addToWatchlist, routeSymbolToChart, configuredUnderlyings, setActiveProfile, setFnoUnderlying]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -283,6 +401,66 @@ export default function LeftPanel() {
       return true;
     });
   }, [searchResults, fnoUnderlyingFilter, fnoExpiryFilter, fnoTypeFilter]);
+
+  // Render a single result row (equity or F&O), shared by the grouped sections.
+  const renderResultRow = (inst: SearchResult) => {
+    if (inst.kind === 'EQ') {
+      // Equity row — preserves existing equity search behavior (R3.6).
+      const eqColor = SECTOR_COLORS['EQ'] ?? 'bg-slate-500/10 text-slate-400';
+      return (
+        <button
+          key={resultKey(inst)}
+          type="button"
+          onClick={() => handleSelectResult(inst)}
+          className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition-colors hover:bg-elevated/70"
+        >
+          <div className="flex flex-col min-w-0">
+            <span className="text-[11px] font-semibold text-text-primary truncate">{inst.symbol}</span>
+            <span className="text-[9px] text-text-muted truncate">{inst.name}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <Plus size={10} className="text-text-secondary" />
+            <span className={`rounded-none px-1 py-px text-[7px] font-semibold uppercase tracking-wider ${eqColor}`}>
+              {inst.exchange || 'EQ'}
+            </span>
+          </div>
+        </button>
+      );
+    }
+    // FNO row — visually distinct, showing underlying·expiry·strike and a
+    // CE/PE/FUT type badge (R3.4).
+    const typeColor = SECTOR_COLORS[inst.optionType] ?? 'bg-indigo-500/10 text-indigo-400';
+    const meta = [
+      inst.underlying,
+      inst.expiry,
+      inst.strike != null ? inst.strike.toString() : null,
+    ].filter(Boolean).join(' · ');
+    return (
+      <button
+        key={resultKey(inst)}
+        type="button"
+        onClick={() => handleSelectResult(inst)}
+        className="flex w-full items-center justify-between gap-2 border-l-2 border-l-primary/30 px-3 py-1.5 text-left transition-colors hover:bg-elevated/70"
+      >
+        <div className="flex flex-col min-w-0">
+          <span className="text-[11px] font-semibold text-text-primary truncate">{inst.tradingsymbol}</span>
+          <span className="text-[9px] text-text-muted truncate">{meta}</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <Plus size={10} className="text-text-secondary" />
+          <span className={`rounded-none px-1 py-px text-[7px] font-semibold uppercase tracking-wider ${typeColor}`}>
+            {inst.optionType}
+          </span>
+        </div>
+      </button>
+    );
+  };
+
+  // Partition the filtered results into Stocks / F&O groups so option contracts
+  // are always visible in their own section (Zerodha/Groww-style), rather than
+  // buried below a page of equity/index matches.
+  const eqRows = filteredResults.filter((r): r is Extract<SearchResult, { kind: 'EQ' }> => r.kind === 'EQ');
+  const fnoRows = filteredResults.filter((r): r is Extract<SearchResult, { kind: 'FNO' }> => r.kind === 'FNO');
 
   return (
     <div className="flex h-full flex-col select-none">
@@ -374,58 +552,26 @@ export default function LeftPanel() {
                 ) : filteredResults.length === 0 ? (
                   <div className="px-3 py-4 text-center text-[11px] text-text-muted">No instruments found</div>
                 ) : (
-                  filteredResults.map((inst) => {
-                    if (inst.kind === 'EQ') {
-                      // Equity row — preserves existing equity search behavior (R3.6).
-                      const eqColor = SECTOR_COLORS['EQ'] ?? 'bg-slate-500/10 text-slate-400';
-                      return (
-                        <button
-                          key={resultKey(inst)}
-                          type="button"
-                          onClick={() => handleSelectResult(inst)}
-                          className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition-colors hover:bg-elevated/70"
-                        >
-                          <div className="flex flex-col min-w-0">
-                            <span className="text-[11px] font-semibold text-text-primary truncate">{inst.symbol}</span>
-                            <span className="text-[9px] text-text-muted truncate">{inst.name}</span>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <Plus size={10} className="text-text-secondary" />
-                            <span className={`rounded-none px-1 py-px text-[7px] font-semibold uppercase tracking-wider ${eqColor}`}>
-                              {inst.exchange || 'EQ'}
-                            </span>
-                          </div>
-                        </button>
-                      );
-                    }
-                    // FNO row — visually distinct, showing underlying·expiry·strike
-                    // and a CE/PE/FUT type badge (R3.4).
-                    const typeColor = SECTOR_COLORS[inst.optionType] ?? 'bg-indigo-500/10 text-indigo-400';
-                    const meta = [
-                      inst.underlying,
-                      inst.expiry,
-                      inst.strike != null ? inst.strike.toString() : null,
-                    ].filter(Boolean).join(' · ');
-                    return (
-                      <button
-                        key={resultKey(inst)}
-                        type="button"
-                        onClick={() => handleSelectResult(inst)}
-                        className="flex w-full items-center justify-between gap-2 border-l-2 border-l-primary/30 px-3 py-1.5 text-left transition-colors hover:bg-elevated/70"
-                      >
-                        <div className="flex flex-col min-w-0">
-                          <span className="text-[11px] font-semibold text-text-primary truncate">{inst.tradingsymbol}</span>
-                          <span className="text-[9px] text-text-muted truncate">{meta}</span>
+                  <>
+                    {/* Stocks group */}
+                    {eqRows.length > 0 && (
+                      <>
+                        <div className="sticky top-0 z-[5] bg-surface px-3 py-1 text-[8px] font-bold uppercase tracking-widest text-text-muted/70 border-b border-border-default/50">
+                          Stocks
                         </div>
-                        <div className="flex items-center gap-1">
-                          <Plus size={10} className="text-text-secondary" />
-                          <span className={`rounded-none px-1 py-px text-[7px] font-semibold uppercase tracking-wider ${typeColor}`}>
-                            {inst.optionType}
-                          </span>
+                        {eqRows.map(renderResultRow)}
+                      </>
+                    )}
+                    {/* F&O group */}
+                    {fnoRows.length > 0 && (
+                      <>
+                        <div className="bg-surface px-3 py-1 text-[8px] font-bold uppercase tracking-widest text-primary/80 border-y border-border-default/50">
+                          F&amp;O · Futures &amp; Options
                         </div>
-                      </button>
-                    );
-                  })
+                        {fnoRows.map(renderResultRow)}
+                      </>
+                    )}
+                  </>
                 )}
               </div>
             )}
