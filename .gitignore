@@ -43,6 +43,7 @@ env/
 
 # ----- Trade Journal (local measurement DB, not source) -----
 trade_journal.db
+telemetry.db
 *.sqlite
 *.sqlite3
 

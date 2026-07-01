@@ -60,6 +60,23 @@ pub struct WatchConditionRequest {
     /// silently waiting forever. Defaults to `None` when omitted.
     #[serde(default)]
     pub invalidation_level: Option<f64>,
+    /// Opt-in Heartbeat_Monitor toggle (Adaptive Opportunity Engine R5.1, R5.4).
+    /// When `true` the watcher additionally emits bounded, cadence-driven
+    /// `/resume` POSTs (`trigger_kind = "heartbeat"`) so the suspended run can
+    /// re-evaluate mid-wait. Omitted ⇒ `false` (heartbeat off), so existing
+    /// payloads deserialize unchanged and behave exactly as before.
+    #[serde(default)]
+    pub heartbeat_enabled: bool,
+    /// Heartbeat cadence in seconds (R5.1, R11.1). Interpreted only when
+    /// `heartbeat_enabled` is `true` and the value is `> 0`. Omitted ⇒ `0.0`.
+    #[serde(default)]
+    pub heartbeat_cadence_secs: f64,
+    /// Maximum number of heartbeats emitted for this watcher (R5.2 — bounded so
+    /// heartbeats can never run unbounded). Omitted ⇒ `0` (no heartbeats even
+    /// if enabled). The Python-side checkpointed `heartbeat_count` remains the
+    /// Session_Budget authority; this is the Rust-side hard ceiling.
+    #[serde(default)]
+    pub heartbeat_max: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -77,6 +94,15 @@ pub struct Watcher {
     /// Opposite-side invalidation level (Bug #1). `Some(level)` enables the
     /// opposite-side fallback trigger; `None` disables it.
     pub invalidation_level: Option<f64>,
+    /// Opt-in Heartbeat_Monitor toggle (Adaptive Opportunity Engine R5.1). When
+    /// `true` the watcher task emits bounded cadence-driven heartbeat resumes in
+    /// addition to (and without altering) the target/invalidation triggers.
+    pub heartbeat_enabled: bool,
+    /// Heartbeat cadence in seconds; only meaningful when `heartbeat_enabled`
+    /// and `> 0`.
+    pub heartbeat_cadence_secs: f64,
+    /// Hard ceiling on the number of heartbeats this watcher may emit (R5.2).
+    pub heartbeat_max: u32,
 }
 
 // ── Server State ────────────────────────────────────────────────────────────
@@ -404,6 +430,9 @@ fn build_watcher(
     volume_multiplier: f64,
     reference_price: f64,
     invalidation_level: Option<f64>,
+    heartbeat_enabled: bool,
+    heartbeat_cadence_secs: f64,
+    heartbeat_max: u32,
 ) -> Watcher {
     Watcher {
         thread_id,
@@ -414,6 +443,9 @@ fn build_watcher(
         volume_multiplier,
         reference_price,
         invalidation_level,
+        heartbeat_enabled,
+        heartbeat_cadence_secs,
+        heartbeat_max,
     }
 }
 
@@ -424,6 +456,115 @@ fn build_watcher(
 /// keying through deref coercion of the write guard.
 fn register_watcher(registry: &mut HashMap<String, Watcher>, watcher: Watcher) {
     registry.insert(watcher.thread_id.clone(), watcher);
+}
+
+/// POST a `/resume` handoff to the Python service and stream the returned SSE
+/// events back to the frontend via the `deep-quant-stream` Tauri event.
+///
+/// Shared by the target/invalidation trigger path and the heartbeat cadence
+/// path so the SSE relay logic lives in one place. `trigger_kind` is the
+/// contract value the Python side branches on (`"target"` / `"invalidation"`
+/// serialized from [`WatcherTrigger`], or the literal `"heartbeat"`). When
+/// `heartbeat_seq` is `Some`, a monotonic `heartbeat_seq` field is added to the
+/// payload (R5.1).
+///
+/// Returns `Ok(())` when the outbound POST succeeds (regardless of stream
+/// content) and `Err(String)` when the POST itself fails, so a heartbeat caller
+/// can log-and-skip a failed POST without crashing the watcher task while the
+/// target/invalidation caller can surface its existing ERROR event.
+async fn post_resume_and_stream(
+    app: &AppHandle,
+    thread_id: &str,
+    candle: &OhlcCandle,
+    trigger_kind: serde_json::Value,
+    heartbeat_seq: Option<u32>,
+) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let mut response_payload = serde_json::json!({
+        "thread_id": thread_id,
+        "triggered_candle": candle,
+        "trigger_kind": trigger_kind,
+    });
+    if let Some(seq) = heartbeat_seq {
+        response_payload["heartbeat_seq"] = serde_json::json!(seq);
+    }
+
+    info!(
+        "[watcher] Making handoff resume POST to port 8086 for thread_id={} (trigger_kind={})",
+        thread_id, response_payload["trigger_kind"]
+    );
+    match client
+        .post("http://localhost:8086/resume")
+        .json(&response_payload)
+        .send()
+        .await
+    {
+        Ok(res) => {
+            info!("[watcher] Outbound handoff resume POST response status: {}", res.status());
+
+            // Consume the SSE stream returned by /resume
+            let mut stream = res.bytes_stream();
+            use futures_util::StreamExt;
+            let mut buffer = String::new();
+
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(bytes) => {
+                        let text = String::from_utf8_lossy(&bytes);
+                        buffer.push_str(&text);
+
+                        while let Some(pos) = buffer.find("\n\n") {
+                            let event_block = buffer.drain(..pos + 2).collect::<String>();
+
+                            let mut event_type = None;
+                            // Bug 8 fix: Accumulate ALL data: lines per SSE spec
+                            let mut data_lines: Vec<String> = Vec::new();
+
+                            for line in event_block.lines() {
+                                if line.starts_with("event: ") {
+                                    event_type = Some(line["event: ".len()..].trim().to_string());
+                                } else if line.starts_with("data: ") {
+                                    data_lines.push(line["data: ".len()..].trim().to_string());
+                                }
+                            }
+
+                            if let Some(ev_type) = event_type {
+                                let json_val = if !data_lines.is_empty() {
+                                    let joined_data = data_lines.join("\n");
+                                    serde_json::from_str::<serde_json::Value>(&joined_data)
+                                        .unwrap_or(serde_json::Value::Null)
+                                } else {
+                                    serde_json::Value::Null
+                                };
+
+                                let outbound = serde_json::json!({
+                                    "event": ev_type,
+                                    "data": json_val
+                                });
+                                let _ = app.emit("deep-quant-stream", outbound);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("[watcher] Resume stream read error: {}", e);
+                        let _ = app.emit("deep-quant-stream", serde_json::json!({
+                            "event": "ERROR",
+                            "data": { "error": format!("Resume stream read error: {}", e) }
+                        }));
+                        break;
+                    }
+                }
+            }
+            Ok(())
+        }
+        Err(err) => {
+            error!(
+                "[watcher] Failed to send outbound handoff resume POST for thread_id={}: {}",
+                thread_id, err
+            );
+            Err(format!("{}", err))
+        }
+    }
 }
 
 /// POST /tools/watch_condition
@@ -588,6 +729,9 @@ async fn watch_condition(
         payload.volume_multiplier,
         reference_price,
         payload.invalidation_level,
+        payload.heartbeat_enabled,
+        payload.heartbeat_cadence_secs,
+        payload.heartbeat_max,
     );
 
     // Register watcher keyed by thread_id (R14.1).
@@ -634,7 +778,39 @@ async fn watch_condition(
             watcher.symbol, watcher.thread_id, watcher.direction, watcher.price_level, watcher.volume_multiplier, avg_volume
         );
 
-        while let Ok((sym, candle)) = rx.recv().await {
+        // Heartbeat_Monitor state (Adaptive Opportunity Engine R5.1, R5.2).
+        // `latest_candle` holds the freshest candle so a cadence tick has real
+        // data to carry; `heartbeat_seq` is the monotonic sequence, bounded by
+        // the hard ceiling `watcher.heartbeat_max`.
+        let mut latest_candle: Option<OhlcCandle> = None;
+        let mut heartbeat_seq: u32 = 0;
+        let heartbeat_active = watcher.heartbeat_enabled
+            && watcher.heartbeat_max > 0
+            && watcher.heartbeat_cadence_secs > 0.0;
+        // Only build a ticking interval when heartbeat is actually active; a
+        // disabled heartbeat leaves this `None` so the cadence branch stays
+        // inert and behaviour is identical to the pre-engine watcher.
+        let mut heartbeat_interval = if heartbeat_active {
+            let mut iv = tokio::time::interval(std::time::Duration::from_secs_f64(
+                watcher.heartbeat_cadence_secs,
+            ));
+            iv.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            // Skip the immediate first tick so the first heartbeat fires only
+            // after one full cadence has elapsed.
+            iv.reset();
+            Some(iv)
+        } else {
+            None
+        };
+
+        loop {
+            tokio::select! {
+                // Live-candle branch — UNCHANGED target/invalidation semantics.
+                recv_result = rx.recv() => {
+                    let (sym, candle) = match recv_result {
+                        Ok(pair) => pair,
+                        Err(_) => break, // channel closed or lagged — exit as before
+                    };
             // Verify if watcher is still active and hasn't been removed/overwritten
             let still_active = {
                 let map = watchers_clone.read().await;
@@ -649,6 +825,9 @@ async fn watch_condition(
             }
 
             if sym.to_uppercase() == watcher.symbol.to_uppercase() {
+                // Retain the freshest candle for the heartbeat cadence path.
+                latest_candle = Some(candle.clone());
+
                 if !matches!(watcher.direction.as_str(), "above" | "up" | "below" | "down") {
                     error!("[watcher] Unknown direction: {}", watcher.direction);
                 }
@@ -759,6 +938,74 @@ async fn watch_condition(
                     }
 
                     break; // Exit background task
+                }
+            }
+                }
+
+                // Heartbeat cadence branch (R5.1): emits up to `heartbeat_max`
+                // `/resume` POSTs carrying the freshest candle with
+                // `trigger_kind = "heartbeat"` and a monotonic `heartbeat_seq`,
+                // WITHOUT removing the watcher from the registry (R5.5 — only a
+                // target/invalidation trigger removes it). The branch future
+                // pends forever when heartbeat is disabled (no interval), so it
+                // is never selected in that case.
+                _ = async {
+                    match heartbeat_interval.as_mut() {
+                        Some(iv) => { iv.tick().await; }
+                        None => std::future::pending::<()>().await,
+                    }
+                } => {
+                    // A heartbeat re-checks liveness but NEVER removes the watcher.
+                    let still_active = {
+                        let map = watchers_clone.read().await;
+                        map.get(&watcher.thread_id)
+                            .map(|w| w.price_level == watcher.price_level && w.symbol == watcher.symbol)
+                            .unwrap_or(false)
+                    };
+                    if !still_active {
+                        info!("[watcher] Watcher for thread_id={} gone; stopping heartbeat cadence.", watcher.thread_id);
+                        break;
+                    }
+
+                    // Enforce the hard heartbeat ceiling (R5.2): once reached,
+                    // drop the cadence but keep the watcher live so a
+                    // target/invalidation can still fire.
+                    if heartbeat_seq >= watcher.heartbeat_max {
+                        heartbeat_interval = None;
+                        continue;
+                    }
+
+                    // Carry the freshest candle; if none has arrived yet, skip
+                    // this tick without consuming a heartbeat.
+                    let candle = match latest_candle.clone() {
+                        Some(c) => c,
+                        None => continue,
+                    };
+
+                    let seq = heartbeat_seq + 1;
+                    info!(
+                        "[watcher] Emitting heartbeat #{}/{} for thread_id={} (close={:.2})",
+                        seq, watcher.heartbeat_max, watcher.thread_id, candle.close
+                    );
+
+                    // Log-and-skip a failed heartbeat POST so a transient error
+                    // never crashes the watcher task; the attempt still counts
+                    // toward the ceiling so emission stays bounded.
+                    if let Err(err) = post_resume_and_stream(
+                        &app_clone,
+                        &watcher.thread_id,
+                        &candle,
+                        serde_json::json!("heartbeat"),
+                        Some(seq),
+                    )
+                    .await
+                    {
+                        error!(
+                            "[watcher] Heartbeat #{} POST failed for thread_id={}: {} (skipping)",
+                            seq, watcher.thread_id, err
+                        );
+                    }
+                    heartbeat_seq = seq;
                 }
             }
         }
@@ -1951,6 +2198,9 @@ mod watcher_registry_proptests {
                 volume_multiplier,
                 reference_price,
                 invalidation_level,
+                false, // heartbeat_enabled
+                0.0,   // heartbeat_cadence_secs
+                0,     // heartbeat_max
             );
 
             let mut registry: HashMap<String, Watcher> = HashMap::new();
@@ -2071,6 +2321,9 @@ mod watcher_registry_proptests {
                 volume_multiplier,
                 price_level, // reference_price (arbitrary for this pure test)
                 invalidation_level,
+                false, // heartbeat_enabled
+                0.0,   // heartbeat_cadence_secs
+                0,     // heartbeat_max
             );
 
             let mut registry: HashMap<String, Watcher> = HashMap::new();
@@ -2127,6 +2380,9 @@ mod watcher_registry_proptests {
             1.5,
             2400.0, // reference_price (below the target, as the handler requires)
             None,   // no invalidation level for this lifecycle test
+            false,  // heartbeat_enabled
+            0.0,    // heartbeat_cadence_secs
+            0,      // heartbeat_max
         );
         let mut registry: HashMap<String, Watcher> = HashMap::new();
         register_watcher(&mut registry, watcher);
@@ -2264,6 +2520,9 @@ mod watcher_registry_proptests {
             1.5,
             2400.0,
             Some(2375.0),
+            false, // heartbeat_enabled
+            0.0,   // heartbeat_cadence_secs
+            0,     // heartbeat_max
         );
         assert_eq!(w.direction, "above", "direction is trimmed + lowercased");
         assert_eq!(w.reference_price, 2400.0);
@@ -2583,5 +2842,261 @@ mod commit_iff_pass_proptests {
             // commit decision is exactly the validator's pass result.
             prop_assert_ne!(is_pass, is_fail);
         }
+    }
+}
+
+// ── Integration test: heartbeat cadence is bounded & leaves trigger semantics
+//    unchanged (Adaptive Opportunity Engine R5.1, R5.5) ────────────────────────
+//
+// The live heartbeat cadence lives inside the spawned Tokio watcher task and
+// POSTs `/resume` over HTTP, so — exactly like `watcher_registry_proptests`
+// models the target/invalidation branch with `remove_on_fire` instead of
+// spawning the task — this module models the cadence branch's bounded-emission
+// ceiling deterministically with `emit_heartbeats`, and asserts:
+//
+//   * an enabled heartbeat emits a BOUNDED number of `/resume` POSTs that never
+//     exceeds `heartbeat_max` no matter how many cadence ticks elapse (R5.1,
+//     R5.2), and
+//   * the `watcher_triggered` target/invalidation semantics are UNCHANGED — the
+//     heartbeat is a separate emission path (`trigger_kind = "heartbeat"`), not
+//     a new `WatcherTrigger` variant, and a heartbeat never removes the watcher
+//     from the registry while a target/invalidation still does (R5.5).
+#[cfg(test)]
+mod heartbeat_cadence_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Deterministic model of the live watcher's heartbeat cadence branch
+    /// (`tool_server.rs`, R5.1/R5.2). Each iteration represents one cadence
+    /// `interval.tick()`. It mirrors the live control flow exactly:
+    ///
+    ///   * the branch is inert unless `heartbeat_enabled && heartbeat_max > 0 &&
+    ///     heartbeat_cadence_secs > 0.0` (the `heartbeat_active` gate that
+    ///     decides whether a ticking interval is even built),
+    ///   * once `heartbeat_seq >= heartbeat_max` the cadence is dropped
+    ///     (`heartbeat_interval = None`) so no further heartbeats are emitted
+    ///     (the hard ceiling, R5.2),
+    ///   * a tick with no freshest candle yet is skipped WITHOUT consuming a
+    ///     heartbeat, and
+    ///   * otherwise `seq = heartbeat_seq + 1` is emitted and becomes the new
+    ///     `heartbeat_seq`.
+    ///
+    /// Returns the monotonic sequence of `heartbeat_seq` values actually
+    /// emitted (i.e. one entry per `/resume` POST). Modeling the ceiling here —
+    /// rather than spawning the Tokio task and a real HTTP endpoint — is the
+    /// same technique `remove_on_fire` uses to test the trigger branch.
+    fn emit_heartbeats(
+        heartbeat_enabled: bool,
+        heartbeat_cadence_secs: f64,
+        heartbeat_max: u32,
+        candle_ready_from_tick: Option<u32>,
+        ticks: u32,
+    ) -> Vec<u32> {
+        let heartbeat_active =
+            heartbeat_enabled && heartbeat_max > 0 && heartbeat_cadence_secs > 0.0;
+        if !heartbeat_active {
+            // No interval is built ⇒ the cadence branch never fires.
+            return Vec::new();
+        }
+        let mut heartbeat_seq: u32 = 0;
+        let mut emitted: Vec<u32> = Vec::new();
+        for tick in 0..ticks {
+            // Ceiling reached: the live loop sets `heartbeat_interval = None`
+            // and `continue`s, so the branch is never selected again (R5.2).
+            if heartbeat_seq >= heartbeat_max {
+                break;
+            }
+            // No freshest candle yet ⇒ skip this tick without consuming a
+            // heartbeat (the live `None => continue`).
+            let candle_ready = match candle_ready_from_tick {
+                Some(from) => tick >= from,
+                None => false,
+            };
+            if !candle_ready {
+                continue;
+            }
+            let seq = heartbeat_seq + 1;
+            emitted.push(seq);
+            heartbeat_seq = seq;
+        }
+        emitted
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        // Feature: adaptive-opportunity-engine — an enabled heartbeat emits a
+        // BOUNDED number of `/resume` POSTs (never exceeding `heartbeat_max`),
+        // regardless of how many cadence ticks elapse.
+        // Validates: Requirements 5.1
+        #[test]
+        fn heartbeat_emission_is_bounded_by_max(
+            heartbeat_enabled in any::<bool>(),
+            heartbeat_cadence_secs in 0.0f64..600.0,
+            heartbeat_max in 0u32..50,
+            // Candles start arriving at some tick (or never), exercising the
+            // "skip without consuming" path.
+            candle_from in prop::option::of(0u32..20),
+            // Far more ticks than the ceiling, to prove emission still bounds.
+            ticks in 0u32..500,
+        ) {
+            let emitted = emit_heartbeats(
+                heartbeat_enabled,
+                heartbeat_cadence_secs,
+                heartbeat_max,
+                candle_from,
+                ticks,
+            );
+
+            // R5.1/R5.2: emission NEVER exceeds the hard ceiling, no matter how
+            // many cadence ticks elapse.
+            prop_assert!(
+                emitted.len() <= heartbeat_max as usize,
+                "emitted {} heartbeats > ceiling {}",
+                emitted.len(),
+                heartbeat_max
+            );
+
+            // The emitted sequence numbers are a strictly-increasing 1..=N run
+            // (monotonic `heartbeat_seq`), matching the live loop's numbering.
+            for (i, seq) in emitted.iter().enumerate() {
+                prop_assert_eq!(*seq, (i as u32) + 1);
+            }
+
+            // A disabled / zero-cadence / zero-ceiling heartbeat emits nothing:
+            // the cadence branch is inert and behaviour is identical to the
+            // pre-engine watcher.
+            let active = heartbeat_enabled
+                && heartbeat_max > 0
+                && heartbeat_cadence_secs > 0.0;
+            if !active {
+                prop_assert!(emitted.is_empty());
+            }
+        }
+
+        // Feature: adaptive-opportunity-engine — the heartbeat is a SEPARATE
+        // emission path, not a new `WatcherTrigger` variant, so the pure
+        // `watcher_triggered` predicate keeps returning ONLY Target /
+        // Invalidation / None for the existing kinds (R5.5 — target/invalidation
+        // semantics unchanged by the heartbeat cadence).
+        // Validates: Requirements 5.5
+        #[test]
+        fn watcher_triggered_semantics_unchanged_by_heartbeat(
+            price_level in -1.0e6f64..1.0e6,
+            volume_multiplier in 0.0f64..10.0,
+            average_volume in 0.0f64..1.0e6,
+            candle_close in -1.0e6f64..1.0e6,
+            candle_volume in 0.0f64..1.0e7,
+            invalidation_level in prop::option::of(-1.0e6f64..1.0e6),
+            dir_idx in 0usize..4,
+        ) {
+            let directions = ["above", "up", "below", "down"];
+            let direction = directions[dir_idx];
+
+            let fired = watcher_triggered(
+                direction,
+                price_level,
+                invalidation_level,
+                volume_multiplier,
+                average_volume,
+                candle_close,
+                candle_volume,
+            );
+
+            // The predicate only ever yields the two existing kinds or None;
+            // there is no "heartbeat" variant to return.
+            match fired {
+                None
+                | Some(WatcherTrigger::Target)
+                | Some(WatcherTrigger::Invalidation) => {}
+            }
+
+            // A fired trigger serializes to exactly "target"/"invalidation" —
+            // never the heartbeat contract string, which is emitted on a
+            // distinct path (`serde_json::json!("heartbeat")`), not from the
+            // WatcherTrigger enum.
+            if let Some(trigger) = fired {
+                let kind = serde_json::to_value(trigger).unwrap();
+                prop_assert!(kind == serde_json::json!("target")
+                    || kind == serde_json::json!("invalidation"));
+                prop_assert_ne!(kind, serde_json::json!("heartbeat"));
+            }
+        }
+    }
+
+    // Concrete lifecycle example (task 11.2): an enabled heartbeat emits at most
+    // `heartbeat_max` POSTs over a long run of cadence ticks, keeps the watcher
+    // REGISTERED across every heartbeat (R5.5 — a heartbeat never removes the
+    // watcher), and a subsequent target candle still fires and removes it via
+    // the unchanged `watcher_triggered` path.
+    #[test]
+    fn heartbeat_is_bounded_and_preserves_target_invalidation_semantics() {
+        // Register an "above" 2450 watcher with heartbeat enabled: max 3
+        // heartbeats on a 30s cadence.
+        let thread_id = "thread-hb-11-2";
+        let watcher = build_watcher(
+            thread_id.to_string(),
+            "RELIANCE".to_string(),
+            "15m".to_string(),
+            2450.0,
+            "above",
+            1.5,
+            2400.0,      // reference_price (below the target)
+            Some(2375.0),
+            true,        // heartbeat_enabled
+            30.0,        // heartbeat_cadence_secs
+            3,           // heartbeat_max
+        );
+        let mut registry: HashMap<String, Watcher> = HashMap::new();
+        register_watcher(&mut registry, watcher);
+        assert!(registry.contains_key(thread_id));
+
+        // 20 cadence ticks elapse (candles ready from the first tick), but the
+        // ceiling is 3 ⇒ exactly 3 heartbeats are emitted, numbered 1,2,3.
+        let emitted = emit_heartbeats(true, 30.0, 3, Some(0), 20);
+        assert_eq!(emitted, vec![1, 2, 3], "heartbeat emission is bounded by heartbeat_max");
+        assert!(emitted.len() <= 3, "R5.2: emission never exceeds the ceiling");
+
+        // R5.5: none of those heartbeats removed the watcher — it is still live
+        // and awaiting a target/invalidation. (Heartbeats do not touch the
+        // registry in the live loop.)
+        assert!(
+            registry.contains_key(thread_id),
+            "R5.5: a heartbeat must NOT remove the watcher from the registry"
+        );
+
+        // The target/invalidation semantics are UNCHANGED: a price+volume
+        // candle still fires Target and removes the watcher (the /resume
+        // handoff), exactly as without the heartbeat cadence.
+        let average_volume = 100_000.0;
+        let fired = match registry.get(thread_id) {
+            Some(w) => watcher_triggered(
+                &w.direction,
+                w.price_level,
+                w.invalidation_level,
+                w.volume_multiplier,
+                average_volume,
+                2451.0,     // close >= 2450
+                250_000.0,  // volume >= 150_000 (surge met)
+            ),
+            None => None,
+        };
+        assert_eq!(fired, Some(WatcherTrigger::Target));
+        registry.remove(thread_id);
+        assert!(
+            !registry.contains_key(thread_id),
+            "target trigger still removes the watcher (semantics unchanged)"
+        );
+    }
+
+    // A disabled heartbeat (the A+-only default) emits nothing even over many
+    // cadence ticks — the cadence branch is inert, so behaviour is identical to
+    // the pre-engine watcher.
+    #[test]
+    fn disabled_heartbeat_emits_nothing() {
+        assert!(emit_heartbeats(false, 30.0, 5, Some(0), 100).is_empty());
+        // Enabled but zero ceiling / zero cadence are equally inert.
+        assert!(emit_heartbeats(true, 30.0, 0, Some(0), 100).is_empty());
+        assert!(emit_heartbeats(true, 0.0, 5, Some(0), 100).is_empty());
     }
 }

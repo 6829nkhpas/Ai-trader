@@ -36,7 +36,41 @@ from stream_events import (
     ERROR,
 )
 
+# Session Telemetry (measurement-only, best-effort). Imported defensively so a
+# telemetry import failure can NEVER break the run/resume endpoints (Requirements
+# 6.4, 10.3): telemetry is a non-invasive observation layer, so if it cannot even
+# be imported the endpoints fall back to the bare, un-teed event_generator.
+try:
+    import telemetry  # type: ignore
+except Exception as _telemetry_import_error:  # noqa: BLE001 - never block the app
+    telemetry = None  # type: ignore
+    print(
+        f"[main] WARN: session telemetry unavailable ({_telemetry_import_error}); "
+        "run/resume will stream without telemetry."
+    )
+
 app = FastAPI(title="LangGraph Deep Quant Loop Service")
+
+
+def _observe(thread_id: str, entry_kind: str, gen, **entry_kwargs):
+    """Wrap ``gen`` (an ``event_generator`` SSE iterator) in the telemetry tee.
+
+    Returns ``telemetry.observe_stream(thread_id, RunEntry(...), gen)`` when the
+    telemetry layer is available, otherwise the bare ``gen`` unchanged. The whole
+    wrapping — including building the ``RunEntry`` — is guarded so that ANY failure
+    (missing module, bad RunEntry kwargs, an error inside observe_stream setup)
+    degrades to the un-teed generator. Telemetry can never take the endpoint down
+    (Requirements 6.4, 10.3); the tee itself is a passthrough, so the streamed
+    bytes are identical either way (Requirement 6.1).
+    """
+    if telemetry is None:
+        return gen
+    try:
+        entry = telemetry.RunEntry(entry_kind, **entry_kwargs)
+        return telemetry.observe_stream(thread_id, entry, gen)
+    except Exception as exc:  # noqa: BLE001 - telemetry must never break the stream
+        print(f"[main] WARN: telemetry wrap failed ({exc}); streaming without telemetry.")
+        return gen
 
 # ── Pydantic Request Models ──────────────────────────────────────────────────
 
@@ -129,10 +163,17 @@ async def run_agent(payload: RunRequest):
         "manual_trade": payload.manual_trade,
         "timeframe": payload.timeframe
     }
-    return StreamingResponse(
-        event_generator(payload.thread_id, graph_input=initial_state),
-        media_type="text/event-stream"
+    gen = event_generator(payload.thread_id, graph_input=initial_state)
+    # Best-effort telemetry tee (passthrough; falls back to bare gen on any failure).
+    gen = _observe(
+        payload.thread_id,
+        "run",
+        gen,
+        symbol=payload.symbol,
+        timeframe=payload.timeframe,
+        mode=payload.mode,
     )
+    return StreamingResponse(gen, media_type="text/event-stream")
 
 @app.post("/resume")
 async def resume_agent(payload: ResumeRequest):
@@ -147,16 +188,23 @@ async def resume_agent(payload: ResumeRequest):
             detail=f"Thread_id '{payload.thread_id}' is not in a paused/interruptible state."
         )
     
-    return StreamingResponse(
-        event_generator(
-            payload.thread_id,
-            resume_command=Command(resume={
-                "candle": payload.triggered_candle,
-                "trigger_kind": payload.trigger_kind,
-            }),
-        ),
-        media_type="text/event-stream"
+    gen = event_generator(
+        payload.thread_id,
+        resume_command=Command(resume={
+            "candle": payload.triggered_candle,
+            "trigger_kind": payload.trigger_kind,
+        }),
     )
+    # Best-effort telemetry tee. ResumeRequest carries no symbol/timeframe/mode
+    # (those belong to the originating /run and are folded into the same Session
+    # by thread_id), so only trigger_kind is tagged here.
+    gen = _observe(
+        payload.thread_id,
+        "resume",
+        gen,
+        trigger_kind=payload.trigger_kind,
+    )
+    return StreamingResponse(gen, media_type="text/event-stream")
 
 @app.post("/qa")
 async def qa_agent(payload: QARequest):
