@@ -253,6 +253,35 @@ def _resolve_nearest_expiry(underlying: str) -> str:
     return upcoming[0] if upcoming else expiries[-1]
 
 
+def _latest_snapshot_ts(underlying: str):
+    """Most-recent ``option_chain_snapshots`` capture timestamp for ``underlying``.
+
+    Reads the single newest snapshot timestamp across *all* expiries for the
+    underlying (via the same F2 read primitive) so an ``Unavailable_Marker`` can
+    surface ``last_snapshot_ts`` even when the nearest expiry itself has no rows
+    (Requirement 2.2). Returns the epoch-ms timestamp, or ``None`` (never raises)
+    when no prior snapshot exists or the read degrades.
+    """
+    try:
+        u = _escape_sql_literal(underlying)
+        rows = _questdb_select(
+            "SELECT max(cast(snapshot_ts AS LONG)) FROM option_chain_snapshots "
+            f"WHERE underlying='{u}'"
+        )
+    except Exception:  # noqa: BLE001 — degrade to sentinel, never raise
+        return None
+    if not rows:
+        return None
+    try:
+        raw = rows[0][0]
+        if raw is None:
+            return None
+        # F1 stores snapshot_ts in epoch micros; ChainSnapshot exposes epoch ms.
+        return int(raw) // 1000
+    except (ValueError, TypeError, IndexError):
+        return None
+
+
 def _representative_iv(strike, ce_iv, pe_iv, spot):
     """Select the single per-strike IV to surface, mirroring F2's skew rule.
 
@@ -324,24 +353,42 @@ def options_snapshot(underlying: str, expiry: str = ""):
     # 1. Resolve the nearest expiry when none was supplied.
     resolved_expiry = requested_expiry or _resolve_nearest_expiry(underlying)
     if not resolved_expiry:
-        return {
+        marker = {
             "underlying": underlying,
             "expiry": "",
             "unavailable": True,
             "reason": f"no chain snapshot available for {underlying}",
+            # Machine-readable cause: no expiry could be resolved for the
+            # underlying (Requirement 2.2). Human `reason` preserved above.
+            "reason_code": "no_expiry",
         }
+        # Surface the most-recent capture across all expiries when one exists so
+        # the UI can show "most recent as of …" even here (Requirement 2.2).
+        last_ts = _latest_snapshot_ts(underlying)
+        if last_ts is not None:
+            marker["last_snapshot_ts"] = last_ts
+        return marker
 
     # 2. Read the chain strikes via the existing F2 read layer.
     latest, _prior = read_latest_and_prior_snapshot(underlying, resolved_expiry)
     if latest is None:
-        return {
+        marker = {
             "underlying": underlying,
             "expiry": resolved_expiry,
             "unavailable": True,
             "reason": (
                 f"no chain snapshot available for {underlying} / {resolved_expiry}"
             ),
+            # Machine-readable cause: an expiry resolved but no snapshot rows
+            # exist for it (Requirement 2.2). Human `reason` preserved above.
+            "reason_code": "no_snapshot",
         }
+        # A prior snapshot may still exist for the underlying under a different
+        # expiry — surface its timestamp when available (Requirement 2.2).
+        last_ts = _latest_snapshot_ts(underlying)
+        if last_ts is not None:
+            marker["last_snapshot_ts"] = last_ts
+        return marker
 
     # 3. Compute analytics (F2). A snapshot exists, so if F2 still degrades to a
     #    marker (e.g. spot unavailable) pass it through with the last snapshot
@@ -350,6 +397,9 @@ def options_snapshot(underlying: str, expiry: str = ""):
     if analytics.get("unavailable"):
         marker = dict(analytics)
         marker["last_snapshot_ts"] = latest.snapshot_ts
+        # Machine-readable cause: a snapshot exists but F2 analytics degraded
+        # (e.g. spot unavailable) (Requirement 2.2). Human `reason` preserved.
+        marker["reason_code"] = "analytics_degraded"
         return marker
 
     # 4. Derive the options bias (F3) from the analytics result.

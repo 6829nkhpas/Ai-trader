@@ -973,6 +973,74 @@ def _is_tool_message(message) -> bool:
     return getattr(message, "type", None) == "tool"
 
 
+def _is_human_message(message) -> bool:
+    """True when ``message`` is a HumanMessage (user turn)."""
+    if isinstance(message, HumanMessage):
+        return True
+    return getattr(message, "type", None) == "human"
+
+
+def _ai_message_has_tool_calls(message) -> bool:
+    """True when an AIMessage carries tool calls (typed or raw kwargs)."""
+    if getattr(message, "tool_calls", None):
+        return True
+    raw = (getattr(message, "additional_kwargs", None) or {}).get("tool_calls")
+    return bool(raw)
+
+
+def flatten_prior_tool_history(messages):
+    """Return a provider-safe message list for a Q&A replay.
+
+    Strict OpenAI-compatible providers (e.g. FreeModel / GPT-5-family via the
+    Responses API) reject any request that replays an assistant *function call*
+    without its paired *tool output* — surfacing as
+    ``400 No tool output found for function call ...``. A PAUSED analysis thread
+    carries exactly such pairs (notably the ``watch_price_condition`` exchange),
+    and re-sending that raw history on a Q&A turn trips the provider. Gemini
+    tolerated it; GPT-5-family does not.
+
+    The Q&A grounding system prompt already embeds the recorded analysis facts,
+    so the raw prior tool exchange is not needed. This helper keeps:
+      * everything from the CURRENT turn onward (the last HumanMessage and after)
+        verbatim — so a freshly fetched read-only tool call stays paired with its
+        output, and
+      * only the plain TEXT of the PRIOR conversation (Human turns and any AI
+        prose), dropping prior ToolMessages and stripping tool-call metadata from
+        prior AIMessages.
+
+    The result can never contain an orphaned function call, so it is safe to
+    replay against a strict provider.
+    """
+    msgs = list(messages)
+    last_human = -1
+    for idx, m in enumerate(msgs):
+        if _is_human_message(m):
+            last_human = idx
+
+    safe = []
+    for idx, m in enumerate(msgs):
+        # Current turn (last user question + its in-turn tool exchange): verbatim.
+        if last_human != -1 and idx >= last_human:
+            safe.append(m)
+            continue
+        # Prior history: drop tool outputs outright.
+        if _is_tool_message(m):
+            continue
+        # Prior assistant turns: keep prose only, never the tool-call metadata.
+        if isinstance(m, AIMessage) or getattr(m, "type", None) == "ai":
+            if _ai_message_has_tool_calls(m):
+                content = getattr(m, "content", "") or ""
+                if isinstance(content, str) and content.strip():
+                    safe.append(AIMessage(content=content))
+                # else: a pure tool-call turn carries no prose — drop it.
+                continue
+            safe.append(m)
+            continue
+        # Human / other text turns: keep.
+        safe.append(m)
+    return safe
+
+
 def _tool_result_is_error(content) -> bool:
     """Heuristically decide whether a tool result represents a failure.
 
@@ -2992,6 +3060,12 @@ def qa_node(state: AgentState):
     # Drop any FIND/VERIFY system message left in history; ground this turn on
     # the Q&A system prompt while preserving the full conversation (R18.5).
     convo = [m for m in messages if not _is_system_message(m)]
+    # Flatten the PRIOR analysis tool exchange to plain text so a paused thread's
+    # orphaned function call (e.g. watch_price_condition) can never be replayed
+    # to a strict OpenAI-compatible provider — which would otherwise reject it
+    # with "400 No tool output found for function call ...". The current turn's
+    # in-turn tool call/output pair is preserved intact.
+    convo = flatten_prior_tool_history(convo)
     llm_messages = [SystemMessage(content=system_prompt)] + list(convo)
 
     response = llm_with_tools.invoke(llm_messages)
