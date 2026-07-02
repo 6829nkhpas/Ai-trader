@@ -1,41 +1,69 @@
 'use client';
 
-/**
- * TradingViewWidget — React wrapper for the TradingView Advanced Charts widget.
- *
- * Mounts the TV widget into a container div, wires it to the custom datafeed
- * adapter (which reads from the existing Zerodha/Kite pipeline), and syncs
- * symbol/timeframe changes from the Zustand stores.
- *
- * The widget owns its own toolbar, drawing tools, indicator search, chart type
- * selector, and timeframe selector — replacing the custom ChartToolsBar,
- * IndicatorManagerPanel, ChartTypeSelector, and timeframe dropdown.
- */
-
-import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { useTradeStore } from '../../store/useTradeStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
-import { createDatafeed, RESOLUTION_TO_TIMEFRAME } from '../../charting/datafeed';
+import { createDatafeed } from '../../charting/datafeed';
 import { useGhostLine } from '../../hooks/useGhostLine';
-import type {
-  IChartingLibraryWidget,
-  ChartingLibraryWidgetOptions,
-  ResolutionString,
-} from '../../charting/datafeedTypes';
+import type { IChartingLibraryWidget } from '../../charting/datafeedTypes';
 import { TIMEFRAME_TO_RESOLUTION, getThemeOverrides } from '../../utils/tvThemeOverrides';
+import { useTradingViewScript } from '../../hooks/useTradingViewScript';
+import { getTvWidgetOptions } from '../../utils/tvWidgetOptions';
+import { showIframeDropdown } from '../../utils/iframeDropdown';
+import { SVGS } from './toolbarIcons';
 
-
-
-
-
-// ── Props ─────────────────────────────────────────────────────────────────
 export interface TradingViewWidgetProps {
-  /** Per-pane symbol (split view); overrides the global selectedSymbol. */
   symbolOverride?: string;
-  /** Per-pane timeframe (split view); overrides the global activeTimeframe. */
   timeframeOverride?: string;
-  /** Additional CSS class for the container. */
   className?: string;
+}
+
+function syncButtonStates(doc: Document) {
+  const chartMode = useTradeStore.getState().chartMode;
+  const ghostLineMode = useChartUIStore.getState().ghostLineMode;
+  const splitView = useChartUIStore.getState().splitView;
+  const sidebarOpen = useChartUIStore.getState().sidebarOpen;
+
+  const chartModeBtn = doc.getElementById('tv-btn-chart-mode');
+  if (chartModeBtn) {
+    if (chartMode === 'STANDARD') {
+      chartModeBtn.innerHTML = SVGS.standard;
+    } else if (chartMode === 'VOLUME_PROFILE') {
+      chartModeBtn.innerHTML = SVGS.volProfile;
+    } else {
+      chartModeBtn.innerHTML = SVGS.footprint;
+    }
+  }
+
+  const ghostLineBtn = doc.getElementById('tv-btn-ghost-line');
+  if (ghostLineBtn) {
+    ghostLineBtn.innerHTML = SVGS.ghostLine;
+    if (ghostLineMode === 'curved') {
+      ghostLineBtn.classList.add('active');
+    } else {
+      ghostLineBtn.classList.remove('active');
+    }
+  }
+
+  const splitViewBtn = doc.getElementById('tv-btn-split-view');
+  if (splitViewBtn) {
+    splitViewBtn.innerHTML = splitView ? SVGS.splitView : SVGS.singleView;
+    if (splitView) {
+      splitViewBtn.classList.add('active');
+    } else {
+      splitViewBtn.classList.remove('active');
+    }
+  }
+
+  const sidebarBtn = doc.getElementById('tv-btn-sidebar');
+  if (sidebarBtn) {
+    sidebarBtn.innerHTML = sidebarOpen ? SVGS.sidebarClose : SVGS.sidebarOpen;
+    if (sidebarOpen) {
+      sidebarBtn.classList.add('active');
+    } else {
+      sidebarBtn.classList.remove('active');
+    }
+  }
 }
 
 export default function TradingViewWidget({
@@ -46,231 +74,234 @@ export default function TradingViewWidget({
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetRef = useRef<IChartingLibraryWidget | null>(null);
   const [widgetState, setWidgetState] = useState<IChartingLibraryWidget | null>(null);
+  const [buttonsCreated, setButtonsCreated] = useState(false);
   const datafeedRef = useRef(createDatafeed());
 
-  // ── Store selectors ──────────────────────────────────────────────────
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
   const activeDecision = useTradeStore((s) => s.activeDecision);
   const liveDecisions = useTradeStore((s) => s.liveDecisions);
   const activeTimeframe = useTradeStore((s) => s.activeTimeframe);
-  const predictiveSignals = useTradeStore((s) => s.predictiveSignals);
-  const theme = useChartUIStore((s) => s.theme);
-  const ghostLineMode = useChartUIStore((s) => s.ghostLineMode);
+  const chartMode = useTradeStore((s) => s.chartMode);
 
-  // Derive active symbol
+  const theme = useChartUIStore((s) => s.theme);
+  const isFullscreen = useChartUIStore((s) => s.isFullscreen);
+  const sidebarOpen = useChartUIStore((s) => s.sidebarOpen);
+  const ghostLineMode = useChartUIStore((s) => s.ghostLineMode);
+  const splitView = useChartUIStore((s) => s.splitView);
+
   const activeSymbol = useMemo(() => {
     if (symbolOverride) return symbolOverride.toUpperCase();
     if (selectedSymbol) return selectedSymbol.toUpperCase();
-    const d = activeDecision ?? liveDecisions[liveDecisions.length - 1];
-    return d?.symbol ?? 'RELIANCE';
+    return (activeDecision ?? liveDecisions[liveDecisions.length - 1])?.symbol ?? 'RELIANCE';
   }, [symbolOverride, selectedSymbol, activeDecision, liveDecisions]);
 
-  // Derive resolution
   const effectiveTimeframe = timeframeOverride ?? activeTimeframe ?? '15m';
-  const resolution =
-    TIMEFRAME_TO_RESOLUTION[effectiveTimeframe] ?? '15';
+  const resolution = TIMEFRAME_TO_RESOLUTION[effectiveTimeframe] ?? '15';
+  const scriptReady = useTradingViewScript();
 
-  // ── Script loader ────────────────────────────────────────────────────
-  const loadTVScript = useCallback((): Promise<void> => {
-    return new Promise((resolve, reject) => {
-      if (window.TradingView) {
-        resolve();
-        return;
-      }
-
-      const existingScript = document.querySelector(
-        'script[src="/static/charting_library/charting_library/charting_library.standalone.js"]',
-      );
-      if (existingScript) {
-        existingScript.addEventListener('load', () => resolve());
-        existingScript.addEventListener('error', () =>
-          reject(new Error('Failed to load TradingView library')),
-        );
-        return;
-      }
-
-      const script = document.createElement('script');
-      script.src = '/static/charting_library/charting_library/charting_library.standalone.js';
-      script.async = true;
-      script.onload = () => resolve();
-      script.onerror = () =>
-        reject(new Error('Failed to load TradingView library'));
-      document.head.appendChild(script);
-    });
-  }, []);
-
-  // ── Widget Initialization ────────────────────────────────────────────
+  // ── Widget Initialization & Button Injection ─────────────────────────
   useEffect(() => {
-    if (!containerRef.current) return;
-    let mounted = true;
+    if (!scriptReady || !containerRef.current || !window.TradingView) return;
 
-    const initWidget = async () => {
-      try {
-        await loadTVScript();
-      } catch (err) {
-        console.error('[TradingViewWidget] Script load failed:', err);
-        return;
-      }
+    const widgetOptions = getTvWidgetOptions({
+      container: containerRef.current,
+      datafeed: datafeedRef.current,
+      activeSymbol,
+      resolution,
+      theme,
+    });
 
-      if (!mounted || !containerRef.current || !window.TradingView) return;
+    try {
+      const tvWidget = new window.TradingView.widget(widgetOptions);
+      widgetRef.current = tvWidget;
+      setWidgetState(tvWidget);
 
-      const widgetOptions: ChartingLibraryWidgetOptions = {
-        container: containerRef.current,
-        datafeed: datafeedRef.current,
-        library_path: '/static/charting_library/charting_library/',
-        symbol: `NSE:${activeSymbol}`,
-        interval: resolution,
-        timezone: 'Asia/Kolkata',
-        theme: theme === 'light' ? 'light' : 'dark',
-        locale: 'en',
-        // custom_css_url is relative to library_path (charting_library/charting_library/)
-        // so we go up two levels to reach public/static/tvThemeOverrides.css
-        custom_css_url: '../../tvThemeOverrides.css',
-        fullscreen: false,
-        autosize: true,
-        overrides: getThemeOverrides(theme),
-        studies_overrides: {
-          'volume.volume.color.0': '#ef4444',
-          'volume.volume.color.1': '#10b981',
-          'volume.volume.transparency': 50,
-        },
-        loading_screen: {
-          backgroundColor: theme === 'light' ? '#f9fafb' : '#000000',
-          foregroundColor: '#10b981',
-        },
-        disabled_features: [
-          'use_localstorage_for_settings',
-          'header_compare',
-          'display_market_status',
-          'popup_hints',
-        ],
-        enabled_features: [
-          'study_templates',
-          'side_toolbar_in_fullscreen_mode',
-          'items_favoriting',
-          'save_chart_properties_to_local_storage',
-          // Advanced chart types
-          'chart_style_hilo',
-          'chart_style_range',
-          'chart_style_renko',
-          'chart_style_kagi',
-          'chart_style_pnf',
-          'chart_style_line_break',
-          // Volume & Profile chart types
-          'chart_style_vol_footprint',
-          'chart_style_tpo',
-          'chart_style_svp',
-          'chart_style_vol_candle',
-        ],
-        debug: false,
-        auto_save_delay: 5,
-      };
+      tvWidget.onChartReady(() => {
+        const iframe = containerRef.current?.querySelector('iframe');
+        const doc = iframe?.contentDocument;
+        if (!doc) return;
 
-      try {
-        const tvWidget = new window.TradingView.widget(widgetOptions);
-        widgetRef.current = tvWidget;
-        setWidgetState(tvWidget);
+        try {
+          const chartModeBtn = (tvWidget as any).createButton();
+          chartModeBtn.id = 'tv-btn-chart-mode';
+          chartModeBtn.className = 'tv-custom-toolbar-btn';
+          chartModeBtn.title = 'Chart Mode';
+          chartModeBtn.addEventListener('click', () => {
+            const currentMode = useTradeStore.getState().chartMode;
+            showIframeDropdown(chartModeBtn, [
+              { value: 'STANDARD' as const, label: 'Standard' },
+              { value: 'VOLUME_PROFILE' as const, label: 'Vol Profile' },
+              { value: 'FOOTPRINT' as const, label: 'Footprint' }
+            ], currentMode, (v) => {
+              useTradeStore.getState().setChartMode(v);
+              syncButtonStates(doc);
+            }, doc);
+          });
 
-        tvWidget.onChartReady(() => {
-          if (!mounted) return;
-          console.log(
-            `[TradingViewWidget] Chart ready: ${activeSymbol} @ ${resolution}`,
-          );
+          const ghostLineBtn = (tvWidget as any).createButton();
+          ghostLineBtn.id = 'tv-btn-ghost-line';
+          ghostLineBtn.className = 'tv-custom-toolbar-btn';
+          ghostLineBtn.title = 'Projection Engine';
+          ghostLineBtn.addEventListener('click', () => {
+            const currentMode = useChartUIStore.getState().ghostLineMode;
+            showIframeDropdown(ghostLineBtn, [
+              { value: 'linear' as const, label: 'OLS', description: 'Linear regression baseline' },
+              { value: 'curved' as const, label: 'VWEPR', description: 'Volume-weighted polynomial' }
+            ], currentMode, (v) => {
+              useChartUIStore.getState().setGhostLineMode(v);
+              syncButtonStates(doc);
+            }, doc);
+          });
 
-          try {
-            (tvWidget.activeChart() as any).onIntervalChanged().subscribe(null, (interval: string) => {
-              const tf = RESOLUTION_TO_TIMEFRAME[interval];
-              if (tf) {
-                useTradeStore.getState().setActiveTimeframe(tf as any);
-              }
+          let splitViewBtn: HTMLElement | undefined;
+          const activeProfile = useTradeStore.getState().activeProfile;
+          if (activeProfile === 'INTRADAY' || activeProfile === 'FNO') {
+            const btn = (tvWidget as any).createButton();
+            btn.id = 'tv-btn-split-view';
+            btn.className = 'tv-custom-toolbar-btn';
+            btn.title = 'Chart Layout';
+            btn.addEventListener('click', () => {
+              const currentVal = useChartUIStore.getState().splitView;
+              showIframeDropdown(btn, [
+                { value: false, label: 'Single Pane' },
+                { value: true, label: 'Split Pane' }
+              ], currentVal, (v) => {
+                useChartUIStore.getState().setSplitView(v);
+                syncButtonStates(doc);
+              }, doc);
             });
-          } catch (e) {
-            console.warn('[TradingViewWidget] Failed to subscribe to interval changes:', e);
+            splitViewBtn = btn;
           }
-        });
-      } catch (err) {
-        console.error('[TradingViewWidget] Widget creation failed:', err);
-      }
-    };
 
-    initWidget();
+          const sidebarBtn = (tvWidget as any).createButton();
+          sidebarBtn.id = 'tv-btn-sidebar';
+          sidebarBtn.className = 'tv-custom-toolbar-btn';
+          sidebarBtn.title = 'Right Panel Toggle';
+          sidebarBtn.addEventListener('click', () => {
+            const cur = useChartUIStore.getState().sidebarOpen;
+            useChartUIStore.getState().setSidebarOpen(!cur);
+            syncButtonStates(doc);
+          });
+
+          // Relocate sidebarBtn directly to the right side of screenshot/camera button
+          try {
+            const findCameraBtn = (d: Document) => {
+              const btn = d.querySelector('[data-name="screenshot"]') || 
+                          d.querySelector('[data-name="take-a-snapshot"]') || 
+                          d.querySelector('[class*="screenshot"]') ||
+                          d.querySelector('[class*="camera"]');
+              if (btn) return btn as HTMLElement;
+              const all = d.querySelectorAll('button, div[role="button"]');
+              for (const b of all) {
+                const title = b.getAttribute('title') || '';
+                if (title.toLowerCase().includes('snapshot') || title.toLowerCase().includes('screenshot') || title.toLowerCase().includes('camera')) {
+                  return b as HTMLElement;
+                }
+              }
+              return null;
+            };
+
+            const relocate = () => {
+              const cameraBtn = findCameraBtn(doc);
+              if (cameraBtn && cameraBtn.parentNode) {
+                cameraBtn.parentNode.insertBefore(sidebarBtn, cameraBtn.nextSibling);
+              } else {
+                let retries = 0;
+                const interval = setInterval(() => {
+                  retries++;
+                  const btn = findCameraBtn(doc);
+                  if (btn && btn.parentNode) {
+                    btn.parentNode.insertBefore(sidebarBtn, btn.nextSibling);
+                    clearInterval(interval);
+                  } else if (retries >= 30) {
+                    clearInterval(interval);
+                  }
+                }, 100);
+              }
+            };
+            relocate();
+          } catch (err) {
+            console.warn('[TradingViewWidget] Failed to relocate sidebar button next to camera icon:', err);
+          }
+
+          setButtonsCreated(true);
+          syncButtonStates(doc);
+        } catch (err) {
+          console.error('[TradingViewWidget] Custom button registration failed:', err);
+        }
+      });
+    } catch (err) {
+      console.error('[TradingViewWidget] Widget creation failed:', err);
+    }
 
     return () => {
-      mounted = false;
       if (widgetRef.current) {
         try {
           widgetRef.current.remove();
-        } catch {
-          // Widget may already be destroyed
-        }
+        } catch {}
         widgetRef.current = null;
         setWidgetState(null);
+        setButtonsCreated(false);
       }
     };
-    // Only re-create widget on mount/unmount — symbol/timeframe changes
-    // are handled reactively below via setSymbol/setResolution.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [scriptReady]);
 
-  // ── Sync symbol changes ──────────────────────────────────────────────
+  // Sync symbol changes
   const prevSymbolRef = useRef(activeSymbol);
   useEffect(() => {
     if (prevSymbolRef.current === activeSymbol) return;
     prevSymbolRef.current = activeSymbol;
-
     if (widgetRef.current) {
       try {
-        widgetRef.current.setSymbol(
-          `NSE:${activeSymbol}`,
-          resolution,
-        );
-      } catch {
-        // Widget not ready yet
-      }
+        widgetRef.current.setSymbol(`NSE:${activeSymbol}`, resolution);
+      } catch {}
     }
   }, [activeSymbol, resolution]);
 
-  // ── Sync timeframe changes ───────────────────────────────────────────
+  // Sync timeframe changes
   const prevResolutionRef = useRef(resolution);
   useEffect(() => {
     if (prevResolutionRef.current === resolution) return;
     prevResolutionRef.current = resolution;
-
     if (widgetRef.current) {
       try {
         widgetRef.current.activeChart().setResolution(resolution);
-      } catch {
-        // Widget not ready yet
-      }
+      } catch {}
     }
   }, [resolution]);
 
-  // ── Sync theme changes ───────────────────────────────────────────────
+  // Sync theme changes
   useEffect(() => {
     if (!widgetRef.current) return;
-    const tvTheme = theme === 'light' ? 'light' : 'dark';
     try {
-      widgetRef.current.changeTheme(tvTheme);
-      // applyOverrides after a short delay to let changeTheme complete
+      widgetRef.current.changeTheme(theme === 'light' ? 'light' : 'dark');
       setTimeout(() => {
-        if (!widgetRef.current) return;
-        try {
-          widgetRef.current.applyOverrides(getThemeOverrides(theme));
-        } catch { /* widget not ready */ }
+        if (widgetRef.current) {
+          try {
+            widgetRef.current.applyOverrides(getThemeOverrides(theme));
+          } catch {}
+        }
       }, 150);
-    } catch {
-      // Widget not ready
-    }
+    } catch {}
   }, [theme]);
 
-  // ── Predictive Ghost Line (VWEPR / OLS) ───────────────────────────────
+  // React state synchronization to iframe buttons
+  useEffect(() => {
+    const doc = containerRef.current?.querySelector('iframe')?.contentDocument;
+    if (doc && buttonsCreated) {
+      syncButtonStates(doc);
+    }
+  }, [chartMode, ghostLineMode, splitView, sidebarOpen, buttonsCreated]);
+
   useGhostLine(widgetState, activeSymbol, effectiveTimeframe);
 
   return (
-    <div
-      ref={containerRef}
-      className={`h-full w-full min-h-0 overflow-hidden ${className}`}
-      style={{ minHeight: '320px' }}
-    />
+    <div className="relative h-full w-full min-h-0 overflow-hidden flex flex-col">
+      <div
+        ref={containerRef}
+        className={`flex-1 min-h-0 ${className}`}
+        style={{ minHeight: '320px' }}
+      />
+    </div>
   );
 }
