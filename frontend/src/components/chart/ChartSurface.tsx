@@ -4,20 +4,17 @@
 //
 // ChartSurface — the host for the TradingView Advanced Charts widget.
 //
-// Replaces the custom lightweight-charts-based ChartRenderer with the full
-// TradingView Advanced Charts widget, which provides native drawing tools,
-// indicators, chart types, and timeframe controls.
+// Now renders the TV widget for ALL chart modes including Volume Footprint,
+// TPO (Market Profile), Session Volume Profile, and Volume Candle — all
+// natively supported by TradingView Advanced Charts v31.
 //
-// The FootprintChart mode is retained as a custom component (TV does not
-// provide a native footprint view). When chartMode === 'FOOTPRINT', the
-// legacy FootprintChart is rendered instead of the TV widget.
+// The user can switch between chart types via TV's built-in chart type
+// dropdown in the header bar.
 
 import React from 'react';
 
 import TradingViewWidget from './TradingViewWidget';
-import FootprintChart from './FootprintChart';
 
-import { useTradeStore } from '../../store/useTradeStore';
 import type { Timeframe } from '../../utils/chartTypes';
 import type { ChartType } from '../../charting/engines';
 
@@ -34,36 +31,23 @@ export interface ChartSurfaceProps {
 
 /**
  * The chart surface shell. Renders the TradingView Advanced Charts widget for
- * the standard chart view, and the custom FootprintChart for the footprint mode.
+ * ALL chart views. Volume Footprint, TPO, SVP, and Volume Candle are now
+ * available natively through TV's chart type selector.
  *
  * All chart UI (drawing tools, indicators, chart types, timeframe selection) is
- * now delegated to the TradingView widget's native interface.
+ * delegated to the TradingView widget's native interface.
  */
 export default function ChartSurface({
   className = '',
   symbolOverride,
   timeframeOverride,
 }: ChartSurfaceProps) {
-  // Chart mode is owned by the page header (read-only here).
-  const chartMode = useTradeStore((s) => s.chartMode);
-  const activeTimeframe = useTradeStore((s) => s.activeTimeframe);
-
-  // Footprint is our custom concept — TV doesn't have a native footprint view.
-  const isolated = !!symbolOverride;
-  const isFootprint = !isolated && chartMode === 'FOOTPRINT';
-  const effectiveTimeframe =
-    timeframeOverride ?? (activeTimeframe as Timeframe) ?? '15m';
-
   return (
     <div className={`relative h-full w-full ${className}`}>
-      {isFootprint ? (
-        <FootprintChart timeframe={effectiveTimeframe} />
-      ) : (
-        <TradingViewWidget
-          symbolOverride={symbolOverride}
-          timeframeOverride={timeframeOverride}
-        />
-      )}
+      <TradingViewWidget
+        symbolOverride={symbolOverride}
+        timeframeOverride={timeframeOverride}
+      />
     </div>
   );
 }

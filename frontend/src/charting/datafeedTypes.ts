@@ -29,6 +29,10 @@ export interface LibrarySymbolInfo {
   has_daily: boolean;
   has_weekly_and_monthly: boolean;
   supported_resolutions: ResolutionString[];
+  intraday_multipliers?: string[];
+  daily_multipliers?: string[];
+  weekly_multipliers?: string[];
+  monthly_multipliers?: string[];
   volume_precision: number;
   data_status: 'streaming' | 'endofday' | 'pulsed' | 'delayed_streaming';
   currency_code?: string;
