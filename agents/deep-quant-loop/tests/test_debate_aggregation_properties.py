@@ -161,10 +161,11 @@ def test_property_25_setup_key_groups_by_debate_dimension(consensus_a, consensus
     key_a = journal.setup_key_from_tags(tags_a)
     key_b = journal.setup_key_from_tags(tags_b)
 
-    # Exactly one db: dimension, at the FIXED final position.
+    # Exactly one db: dimension at its fixed position; the options ``opt:`` and
+    # opportunity ``tier:`` dimensions are appended after it (tier: is now final).
     db_tags_a = [t for t in tags_a if t.startswith("db:")]
     assert len(db_tags_a) == 1, f"expected exactly one db: tag, got {db_tags_a}"
-    assert tags_a[-1] == db_tags_a[0], "db: tag must be at the fixed final position"
+    assert tags_a[-1].startswith("tier:"), "tier: tag must be at the fixed final position"
 
     # Determinism: re-deriving the same decision yields an identical key.
     assert journal.setup_key_from_tags(journal.derive_setup_tags(decision_a)) == key_a
@@ -209,10 +210,16 @@ def test_property_25_distinct_consensus_yields_distinct_keys(consensus_a, consen
             f"consensus {consensus_a!r} vs {consensus_b!r} must yield distinct "
             f"setup_keys, got {key_a!r} == {key_b!r}"
         )
-        # And the only difference is the db: dimension.
-        assert key_a.endswith(f"|db:{consensus_a}")
-        assert key_b.endswith(f"|db:{consensus_b}")
-        assert key_a[: key_a.rfind("|db:")] == key_b[: key_b.rfind("|db:")]
+        # And the only difference is the db: dimension (the opt: and opportunity
+        # tier: dimensions follow it, identical for both decisions).
+        parts_a = key_a.split("|")
+        parts_b = key_b.split("|")
+        assert f"db:{consensus_a}" in parts_a
+        assert f"db:{consensus_b}" in parts_b
+        # Every component EXCEPT the db: one is identical across the two keys.
+        non_db_a = [p for p in parts_a if not p.startswith("db:")]
+        non_db_b = [p for p in parts_b if not p.startswith("db:")]
+        assert non_db_a == non_db_b
 
 
 # ─────────────────────────────────────────────────────────────────────────────

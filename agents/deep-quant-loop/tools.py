@@ -69,6 +69,11 @@ from options_bias import classify_options_bias
 import validator
 import trade_manager
 
+# Adaptive Opportunity Engine (adaptive-opportunity-engine). Used to pass the
+# resolved heartbeat/cap configuration to the Rust watcher on registration and to
+# classify + scope a resume's cheap Delta_Recheck. Pure module; no market-data source.
+import opportunity
+
 RUST_SERVER_URL = "http://localhost:8084"
 
 # ── Price-watch registration retry policy (Requirement 14.3) ─────────────────
@@ -2087,6 +2092,19 @@ def watch_price_condition(
             "volume_multiplier": volume_multiplier,
             "invalidation_level": invalidation_level
         }
+        # ── Adaptive Opportunity Engine heartbeat configuration (R5.1) ────────
+        # Pass the resolved heartbeat fields so the Rust watcher emits bounded,
+        # cadence-driven `trigger_kind="heartbeat"` resumes in addition to the
+        # target/invalidation triggers. Omitted-when-disabled semantics on the Rust
+        # side mean a default (heartbeat off) run registers exactly as before, so
+        # this is inert unless OPPORTUNITY_HEARTBEAT_ENABLED is set.
+        try:
+            _opp_cfg = opportunity.resolve_opportunity_config()
+            payload["heartbeat_enabled"] = bool(_opp_cfg.heartbeat_enabled)
+            payload["heartbeat_cadence_secs"] = float(_opp_cfg.heartbeat_cadence_secs)
+            payload["heartbeat_max"] = int(_opp_cfg.heartbeat_max)
+        except Exception as _cfg_err:  # noqa: BLE001 - never block registration on config
+            print(f"[Tool Warning] watch_price_condition: heartbeat config unavailable ({_cfg_err}); registering without heartbeat.")
         # Retry registration up to the configured number of attempts in case the
         # Rust tool server is still starting up.
         max_attempts = max(1, WATCH_REGISTRATION_MAX_ATTEMPTS)
@@ -2198,16 +2216,39 @@ def watch_price_condition(
         candle = resumed
         trigger_kind = "target"
 
-    if trigger_kind == "invalidation":
+    # Classify the resume trigger to one canonical kind and scope a cheap,
+    # trigger-relevant Delta_Recheck instead of a full re-scan (R6.1-6.3).
+    kind = opportunity.classify_resume(trigger_kind)
+    recheck = opportunity.delta_recheck_plan(kind)
+    recheck_str = ", ".join(recheck)
+
+    if kind == opportunity.RESUME_INVALIDATION:
         return (
             "Setup INVALIDATED: price moved to the invalidation level AGAINST the "
             "setup before reaching the watched target. The target condition was NOT "
-            "met — do NOT treat this as the level being reached. Re-analyze the "
-            "current structure or HOLD. Invalidation candle details: "
-            f"{candle}"
+            "met — do NOT treat this as the level being reached. Run a brief "
+            f"post-mortem, then re-check ONLY: {recheck_str}. Do NOT blindly re-arm "
+            "the SAME thesis (an unchanged re-arm is rejected) — change the "
+            "structure / timeframe / tier, or stand aside. Invalidation candle "
+            f"details: {candle}"
         )
 
-    return f"Target condition met (price reached the watched level). Triggered candle: {candle}"
+    if kind == opportunity.RESUME_HEARTBEAT:
+        # A bounded mid-wait pulse: NOT the target being reached. Cheaply re-check
+        # whether the setup is developing or decaying, then re-arm the same watch
+        # to keep waiting, adapt to a different level/tier, or stand aside (R5.3).
+        return (
+            "Heartbeat check (mid-wait pulse): the watched target was NOT reached — "
+            "do NOT treat this as the level being met. Cheaply re-check ONLY: "
+            f"{recheck_str}, then decide: keep waiting (the watch is still armed), "
+            "adapt to a different level/tier, or stand aside. Current candle "
+            f"details: {candle}"
+        )
+
+    return (
+        "Target condition met (price reached the watched level). Confirm the entry "
+        f"is still valid by re-checking ONLY: {recheck_str}. Triggered candle: {candle}"
+    )
 
 def _coerce_management_plan(management_plan, action, entry, stop_loss, atr_14):
     """Build a ``trade_manager.ManagementPlan`` from the optional declare_trade

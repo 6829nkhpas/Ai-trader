@@ -234,8 +234,9 @@ def test_property_23_single_fixed_position_low_cardinality_tm_tag(payload):
     assert tags[tm_index - 1].startswith("fc:")
     # The tag immediately after the tm tag is the session (sess:) tag.
     assert tags[tm_index + 1].startswith("sess:")
-    # The debate dimension is always appended last.
-    assert tags[-1].startswith("db:")
+    # The opportunity-tier dimension is always appended last (after sess:/db:/opt:),
+    # per adaptive-opportunity-engine R9.2.
+    assert tags[-1].startswith("tier:")
 
     # ── Determinism: identical inputs -> identical tag list and setup_key (R11.1) ─
     tags_again = derive_setup_tags(decision)
@@ -244,6 +245,6 @@ def test_property_23_single_fixed_position_low_cardinality_tm_tag(payload):
     # The tm value occupies the same deterministic slot in setup_key, immediately
     # after the fc: component; the db: component is always last.
     key_parts = setup_key_from_tags(tags).split("|")
-    assert key_parts[-1].startswith("db:")
+    assert key_parts[-1].startswith("tier:")
     tm_key_index = key_parts.index(tm_tags[0])
     assert key_parts[tm_key_index - 1].startswith("fc:")

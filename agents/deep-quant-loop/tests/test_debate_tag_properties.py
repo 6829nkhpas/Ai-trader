@@ -182,18 +182,22 @@ def test_property_24_debate_tag_is_fixed_bounded_deterministic(decision):
     expected = _expected_db_value(decision)
     assert tag_value == expected, f"_debate_tag returned {tag_value!r}, expected {expected!r}"
 
-    # ── derive_setup_tags: the db: tag is last, exactly once, in-enum (R9.1). ─
+    # ── derive_setup_tags: exactly one db: tag at its fixed position, in-enum
+    #    (R9.1). The options ``opt:`` and opportunity ``tier:`` dimensions are
+    #    appended after it, so ``db:`` is no longer the final tag. ──────────────
     tags = derive_setup_tags(decision)
     db_tags = [t for t in tags if t.startswith("db:")]
     assert len(db_tags) == 1, f"expected exactly one db: tag, got {db_tags}"
-    assert tags[-1] == db_tags[0], f"db: tag must be the LAST tag, got tags={tags}"
 
-    last_value = tags[-1].split("db:", 1)[1]
-    assert last_value in DB_TAG_VALUES, f"db: tag value {last_value!r} not in DB_TAG_VALUES"
-    assert last_value == expected, f"db: tag value {last_value!r}, expected {expected!r}"
+    db_value = db_tags[0].split("db:", 1)[1]
+    assert db_value in DB_TAG_VALUES, f"db: tag value {db_value!r} not in DB_TAG_VALUES"
+    assert db_value == expected, f"db: tag value {db_value!r}, expected {expected!r}"
 
-    # ── Fixed position: the db: tag follows the sess: tag (R9.1). ─────────────
-    assert tags[-2].startswith("sess:"), f"db: tag must come right after sess:, got tags={tags}"
+    # ── Fixed position: the db: tag immediately follows the sess: tag (R9.1) and
+    #    the final tag is the opportunity ``tier:`` dimension. ──────────────────
+    db_index = tags.index(db_tags[0])
+    assert tags[db_index - 1].startswith("sess:"), f"db: tag must come right after sess:, got tags={tags}"
+    assert tags[-1].startswith("tier:"), f"tier: tag must be the final tag, got tags={tags}"
 
     # ── Determinism (R9.1): identical inputs yield identical tag lists. ───────
     assert derive_setup_tags(decision) == tags, "derive_setup_tags must be deterministic for identical inputs"

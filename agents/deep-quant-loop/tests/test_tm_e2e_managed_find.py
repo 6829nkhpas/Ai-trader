@@ -253,7 +253,7 @@ def test_managed_find_mode_run_threads_plan_through_all_layers(temp_journal, mon
     # are appended after it, so the ``db:`` tag is the final tag.
     tm_index = tags.index(tm_tags[0])
     assert tags[tm_index - 1].startswith("fc:")
-    assert tags[-1].startswith("db:")
+    assert tags[-1].startswith("tier:")  # tier: is the final dimension (opportunity engine R9.2)
     assert tm_tags[0] != "tm:single"
 
     # ── Layer 4: the plan persists and is re-scorable (R6.3, R4.3) ───────────

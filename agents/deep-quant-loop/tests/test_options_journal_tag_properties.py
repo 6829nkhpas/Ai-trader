@@ -285,17 +285,21 @@ def test_property_16_single_fixed_position_low_cardinality_opt_tag(payload):
     assert value in OPT_TAG_VALUES, f"opt: tag value {value!r} not in OPT_TAG_VALUES"
     assert value == expected_value, f"opt: tag value {value!r}, expected {expected_value!r}"
 
-    # ── Fixed position: the opt: tag is the FINAL tag, immediately after the
-    # ``db:`` tag (R8.1). ─────────────────────────────────────────────────────
-    assert tags[-1] == opt_tags[0], f"opt: tag must be the LAST tag, got tags={tags}"
-    assert tags[-2].startswith("db:"), f"opt: tag must come right after db:, got tags={tags}"
+    # ── Fixed position: the opt: tag sits immediately after the ``db:`` tag and
+    # immediately before the final opportunity ``tier:`` tag (R8.1; the tier:
+    # dimension is appended last by adaptive-opportunity-engine R9.2). ──────────
+    assert tags[-2] == opt_tags[0], f"opt: tag must be second-to-last (before tier:), got tags={tags}"
+    assert tags[-3].startswith("db:"), f"opt: tag must come right after db:, got tags={tags}"
+    assert tags[-1].startswith("tier:"), f"tier: tag must be the final tag, got tags={tags}"
 
     # ── Determinism (R8.1): identical inputs -> identical tag list + setup_key. ─
     tags_again = derive_setup_tags(decision)
     assert tags_again == tags, "derive_setup_tags must be deterministic for identical inputs"
     assert setup_key_from_tags(tags_again) == setup_key_from_tags(tags)
 
-    # The opt value occupies the same deterministic final slot in setup_key.
+    # The opt value occupies its deterministic slot in setup_key: after db: and
+    # immediately before the final opportunity tier: component (R9.2).
     key_parts = setup_key_from_tags(tags).split("|")
-    assert key_parts[-1] == opt_tags[0], f"opt: component must be last in setup_key, got {key_parts}"
-    assert key_parts[-2].startswith("db:")
+    assert key_parts[-1].startswith("tier:"), f"tier: component must be last in setup_key, got {key_parts}"
+    assert key_parts[-2] == opt_tags[0], f"opt: component must be second-to-last in setup_key, got {key_parts}"
+    assert key_parts[-3].startswith("db:")

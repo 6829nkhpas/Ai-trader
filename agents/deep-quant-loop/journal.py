@@ -42,6 +42,11 @@ import httpx
 # (it imports only ``regime``), so a top-level import is safe.
 import trade_manager
 
+# Adaptive Opportunity Engine (adaptive-opportunity-engine). The Trade_Journal
+# appends an opportunity-tier fingerprint dimension via ``opportunity.tier_tag`` so
+# per-tier win-rate and expectancy become measurable (R9.2). Pure module.
+import opportunity
+
 RUST_SERVER_URL = "http://localhost:8084"
 
 # ── Configuration ─────────────────────────────────────────────────────────────
@@ -661,6 +666,15 @@ def derive_setup_tags(decision: dict) -> list:
     # empty value, or a value outside the enumeration defaults to ``opt:unknown``
     # (R8.1, R8.2, R8.3).
     tags.append("opt:" + _options_tag(decision))
+
+    # Opportunity-tier dimension — appended at the FINAL fixed position (after the
+    # ``opt:`` tag) so the resulting ``setup_key`` is deterministic for identical
+    # inputs and stays low-cardinality. Collapses the committed Opportunity_Tier
+    # into one fixed ``tier:`` value via ``opportunity.tier_tag``; a decision with
+    # no stamped tier (or an unrecognized one) defaults to ``tier:unknown``
+    # (adaptive-opportunity-engine R9.2). ``opt:`` is *options*; ``tier:`` is the
+    # distinct opportunity dimension.
+    tags.append("tier:" + opportunity.tier_tag(decision))
 
     return tags
 
