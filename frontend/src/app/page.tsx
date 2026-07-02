@@ -17,6 +17,7 @@ import DeepQuantPanel from '../components/quant/DeepQuantPanel';
 import ActivePositions from '../components/quant/ActivePositions';
 import PortfolioDashboard from '../components/quant/PortfolioDashboard';
 import FnoSection from '../components/fno/FnoSection';
+import FnoSidebarPanel from '../components/fno/FnoSidebarPanel';
 import SplitChartContainer from '../components/chart/SplitChartContainer';
 import SplitViewToggle from '../components/chart/SplitViewToggle';
 import { useTradeStore, TradeProfile, hydratePaperPortfolio } from '../store/useTradeStore';
@@ -296,6 +297,8 @@ export default function Home() {
         return <SwingConfluencePanel />;
       case 'INVESTOR':
         return <MacroSentimentPanel />;
+      case 'FNO':
+        return <FnoSidebarPanel />;
       default:
         return null;
     }
