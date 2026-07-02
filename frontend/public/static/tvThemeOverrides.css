@@ -125,3 +125,13 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #444444;
 }
+
+/* ── Ensure chart type & other dropdowns are scrollable ──────────── */
+/* TV popups/menus that list chart types, indicators, etc. */
+.menu-WZ1GFMnl,
+.menuWrap-Kq3ruQo8,
+[class*="menuWrap"],
+[class*="menu-"] {
+  max-height: 80vh !important;
+  overflow-y: auto !important;
+}

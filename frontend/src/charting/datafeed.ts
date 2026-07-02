@@ -53,7 +53,7 @@ const RESOLUTION_TO_KITE_INTERVAL: Record<string, string> = {
 };
 
 /** Convert TV resolution to a UI timeframe string for the Tauri IPC. */
-const RESOLUTION_TO_TIMEFRAME: Record<string, string> = {
+export const RESOLUTION_TO_TIMEFRAME: Record<string, string> = {
   '1':   '1m',  '2':   '2m',  '3':   '3m',  '4':   '4m',
   '5':   '5m',  '10':  '10m', '15':  '15m', '30':  '30m',
   '60':  '1h',  '75':  '75m', '120': '2h',  '125': '125m',
@@ -346,6 +346,10 @@ export function createDatafeed(): IBasicDatafeed {
           has_daily: true,
           has_weekly_and_monthly: true,
           supported_resolutions: SUPPORTED_RESOLUTIONS,
+          intraday_multipliers: ['1', '2', '3', '4', '5', '10', '15', '30', '60', '75', '120', '125', '180', '240'],
+          daily_multipliers: ['1'],
+          weekly_multipliers: ['1'],
+          monthly_multipliers: ['1'],
           volume_precision: 0,
           data_status: 'streaming',
           currency_code: 'INR',
