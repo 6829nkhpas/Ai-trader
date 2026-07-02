@@ -1226,3 +1226,274 @@ def account_heartbeat(state, cfg: OpportunityConfig) -> HeartbeatAccounting:
 
     # Within the ceiling — consume one heartbeat and charge the Session_Budget.
     return HeartbeatAccounting(True, prior_hb + 1, prior_turns + 1)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Deterministic session-context pruning (task 6.1)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# A bounded hunt that resumes many times accumulates an ever-growing message
+# history; left unbounded it bloats context cost and degrades reasoning
+# (Requirement 7). ``prune_messages`` bounds that history deterministically while
+# preserving the context the defensibility record and Q&A grounding depend on
+# (Requirement 7.2): the system instruction, the most-recent usable result of
+# every tool seen so far, and the most-recent ``prune_keep_recent_turns`` turns.
+#
+# This function is PURE and TOTAL: it reads a plain list of message-like objects
+# (duck-typed via ``getattr`` — it deliberately does NOT import LangChain so the
+# module stays dependency-free like the rest of the pure core) and never raises
+# on a malformed / partial / ``None`` list. It returns a SUBSEQUENCE of the input
+# (original order preserved) so message/tool-call pairing is never reordered, and
+# it prunes at the granularity of whole turn-groups (an assistant tool-call
+# message plus its trailing tool results) so a retained tool result is never
+# orphaned from the assistant call that issued it (the invariant strict
+# OpenAI-compatible providers require — see ``flatten_prior_tool_history`` in
+# ``graph.py``). For identical inputs it returns a byte-identical result
+# (Requirement 7.3 determinism).
+
+
+def _msg_type(m) -> Optional[str]:
+    """Duck-typed message role: ``'system'`` | ``'human'`` | ``'ai'`` | ``'tool'`` | None.
+
+    Reads the LangChain ``.type`` attribute without importing LangChain. Anything
+    without a recognizable string type (e.g. a raw ``("user", text)`` tuple from an
+    initial state) reads ``None`` and is treated as an opaque standalone message.
+    Total — never raises.
+    """
+    t = getattr(m, "type", None)
+    return t if isinstance(t, str) else None
+
+
+def _ai_has_tool_calls(m) -> bool:
+    """True when an assistant message carries tool calls (typed or raw kwargs)."""
+    if getattr(m, "tool_calls", None):
+        return True
+    raw = (getattr(m, "additional_kwargs", None) or {})
+    if isinstance(raw, dict):
+        return bool(raw.get("tool_calls"))
+    return False
+
+
+def _msg_tool_name(m) -> Optional[str]:
+    """The tool name a ToolMessage answers for, or ``None``."""
+    name = getattr(m, "name", None)
+    return name if isinstance(name, str) and name.strip() else None
+
+
+def _group_messages(msgs: list) -> list:
+    """Segment messages into ordered turn-groups preserving tool-call pairing.
+
+    Each group is a list of ``(index, message)`` pairs. A ToolMessage attaches to
+    the immediately-preceding group when that group's head is an assistant
+    tool-call message (so the assistant call and its results stay together);
+    otherwise every message forms its own standalone group. Deterministic.
+    """
+    groups: list = []
+    for idx, m in enumerate(msgs):
+        if (
+            _msg_type(m) == "tool"
+            and groups
+            and _msg_type(groups[-1][0][1]) == "ai"
+            and _ai_has_tool_calls(groups[-1][0][1])
+        ):
+            groups[-1].append((idx, m))
+        else:
+            groups.append([(idx, m)])
+    return groups
+
+
+def prune_messages(messages, cfg: OpportunityConfig) -> list:
+    """Deterministically bound the session message history (Requirement 7).
+
+    Returns a subsequence of ``messages`` no longer than ``prune_max_messages``
+    that retains — as budget allows and in original order — the system message,
+    the most-recent usable result of every tool present before pruning, and the
+    most-recent ``prune_keep_recent_turns`` turn-groups. Pruning is at whole
+    turn-group granularity so a retained tool result is never orphaned from its
+    assistant call. Byte-identical on repeated calls with the same inputs
+    (Requirement 7.3).
+
+    PURE and TOTAL: a non-list / ``None`` ``messages`` reads as empty; a malformed
+    / missing ``cfg`` field degrades to the documented default. Never raises. When
+    the history already fits within the ceiling it is returned UNCHANGED.
+    """
+    msgs = list(messages) if isinstance(messages, (list, tuple)) else []
+
+    max_messages = _cfg_int(cfg, "prune_max_messages", DEFAULT_PRUNE_MAX_MESSAGES)
+    if max_messages < _PRUNE_MIN:
+        max_messages = DEFAULT_PRUNE_MAX_MESSAGES
+    keep_recent = _cfg_int(cfg, "prune_keep_recent_turns", DEFAULT_PRUNE_KEEP_RECENT_TURNS)
+    if keep_recent < _PRUNE_MIN:
+        keep_recent = DEFAULT_PRUNE_KEEP_RECENT_TURNS
+
+    # Nothing to do when the history already fits (the common case).
+    if len(msgs) <= max_messages:
+        return msgs
+
+    groups = _group_messages(msgs)
+    n = len(groups)
+
+    def _group_type(gi: int) -> Optional[str]:
+        return _msg_type(groups[gi][0][1])
+
+    def _flat_len(gis) -> int:
+        return sum(len(groups[gi]) for gi in gis)
+
+    # ── Build the keep set: system + latest-per-tool + recent turn-groups ──────
+    keep = set()
+    for gi in range(n):
+        if _group_type(gi) == "system":
+            keep.add(gi)
+
+    latest_tool_group: dict = {}
+    for gi, g in enumerate(groups):
+        for _idx, m in g:
+            if _msg_type(m) == "tool":
+                name = _msg_tool_name(m)
+                if name is not None:
+                    latest_tool_group[name] = gi  # a later group overwrites -> latest
+    keep.update(latest_tool_group.values())
+
+    recent_start = max(0, n - keep_recent)
+    for gi in range(recent_start, n):
+        keep.add(gi)
+
+    selected = sorted(keep)
+
+    # Fast path: the full keep set already fits under the ceiling.
+    if _flat_len(selected) <= max_messages:
+        return [m for gi in selected for (_idx, m) in groups[gi]]
+
+    # ── Over the ceiling: drop oldest OPTIONAL groups first (Requirement 7.1) ──
+    # The system group and the recent-turn groups are mandatory (grounding +
+    # continuity); the latest-per-tool groups are dropped oldest-first to fit.
+    mandatory = {gi for gi in selected if _group_type(gi) == "system"}
+    mandatory.update(gi for gi in range(recent_start, n) if gi in keep)
+
+    i = 0
+    while _flat_len(selected) > max_messages and i < len(selected):
+        gi = selected[i]
+        if gi in mandatory:
+            i += 1
+            continue
+        selected.pop(i)
+
+    # Still over (mandatory recent groups alone exceed the ceiling): drop the
+    # oldest recent groups too, but never the system group.
+    i = 0
+    while _flat_len(selected) > max_messages and i < len(selected):
+        gi = selected[i]
+        if _group_type(gi) == "system":
+            i += 1
+            continue
+        selected.pop(i)
+
+    result = [m for gi in selected for (_idx, m) in groups[gi]]
+
+    # Hard-cap backstop: only reachable when a single indivisible group is itself
+    # larger than the ceiling. Tail-slice to guarantee the bound always holds.
+    if len(result) > max_messages:
+        result = result[-max_messages:]
+
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Interim Best_Current_Read and the tier tag (task 7.1)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Even a hunt that takes no trade should give the trader something actionable
+# (Requirement 8): ``best_current_read`` surfaces the current directional bias,
+# the key reference levels, and why the engine is standing aside — a NON-COMMITTAL
+# assessment drawn ONLY from the real tool evidence, never a committed trade
+# (Requirement 8.3). ``tier_tag`` collapses the committed tier into one
+# low-cardinality value for the Trade_Journal fingerprint and telemetry
+# (Requirement 9.2). Both are PURE and TOTAL — never raise on malformed input.
+
+
+def best_current_read(evidence, tier_eval) -> dict:
+    """A non-committal interim read from current evidence only (Requirement 8).
+
+    Returns ``{"bias", "levels", "why_standing_aside"}`` where ``bias`` is a coarse
+    ``'bullish'`` | ``'bearish'`` | ``'neutral'`` derived from the net of the
+    confluence signal states and the defensible-triple direction, ``levels`` are
+    the finite reference entry/stop/target observed in the evidence (reads, NOT an
+    execution plan), and ``why_standing_aside`` cites the tier evaluation's
+    rationale. The result NEVER carries a committed-trade ``action``,
+    ``execution_plan``, or ``conviction_score`` (Requirement 8.3) — it is an
+    assessment, not a trade.
+
+    PURE and TOTAL: a non-dict / ``None`` ``evidence`` reads neutral/empty; a
+    ``None`` / malformed ``tier_eval`` degrades to a generic rationale. Never
+    raises.
+    """
+    ev = evidence if isinstance(evidence, dict) else {}
+
+    states = _signal_states(ev)
+    net = sum(states.values())
+
+    entry = ev.get("entry")
+    target = ev.get("target")
+    triple_dir = 0
+    if _is_finite_number(entry) and _is_finite_number(target):
+        if float(target) > float(entry):
+            triple_dir = 1
+        elif float(target) < float(entry):
+            triple_dir = -1
+
+    score = net + triple_dir
+    if score > 0:
+        bias = "bullish"
+    elif score < 0:
+        bias = "bearish"
+    else:
+        bias = "neutral"
+
+    levels: dict = {}
+    for key in ("entry", "stop", "target"):
+        val = ev.get(key)
+        if _is_finite_number(val):
+            levels[key] = float(val)
+
+    why = ""
+    rationale = getattr(tier_eval, "rationale", None)
+    tier = getattr(tier_eval, "tier", None)
+    if isinstance(rationale, str) and rationale.strip():
+        why = rationale.strip()
+    elif isinstance(tier, str) and tier.strip():
+        why = f"Current best available tier: {tier.strip()}."
+    if not why:
+        why = "No committed trade; interim read derived from current evidence only."
+
+    return {
+        "bias": bias,
+        "levels": levels,
+        "why_standing_aside": why,
+    }
+
+
+# The at-most-five low-cardinality values a committed decision's tier collapses to
+# for the Trade_Journal fingerprint / telemetry (Requirement 9.2). ``unknown`` is
+# the total fallback for a missing / malformed / unrecognized tier.
+TIER_TAG_VALUES = ("a_plus", "b_continuation", "scalp", "stand_aside", "unknown")
+
+_KNOWN_TIER_TAGS = frozenset({"a_plus", "b_continuation", "scalp", "stand_aside"})
+
+
+def tier_tag(decision) -> str:
+    """Collapse a committed decision's Opportunity_Tier to a low-cardinality tag.
+
+    Reads ``decision["opportunity_tier"]`` and returns one of ``TIER_TAG_VALUES``.
+    A missing / non-dict / non-string / unrecognized tier degrades to ``'unknown'``
+    (Requirement 9.2), so the tag is always one of at most five values and is
+    deterministic for identical inputs.
+
+    PURE and TOTAL — never raises.
+    """
+    d = decision if isinstance(decision, dict) else {}
+    tier = d.get("opportunity_tier")
+    if isinstance(tier, str):
+        token = tier.strip().lower()
+        if token in _KNOWN_TIER_TAGS:
+            return token
+    return "unknown"
