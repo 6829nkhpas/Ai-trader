@@ -62,7 +62,8 @@ export default function Home() {
   const activeStrategyId = useChartUIStore((s) => s.activeStrategyId);
   const setActiveStrategyId = useChartUIStore((s) => s.setActiveStrategyId);
   const splitView = useChartUIStore((s) => s.splitView);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const sidebarOpen = useChartUIStore((s) => s.sidebarOpen);
+  const setSidebarOpen = useChartUIStore((s) => s.setSidebarOpen);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('profile');
 
   // Listen for Escape key to exit fullscreen mode
@@ -332,80 +333,6 @@ export default function Home() {
                     sidebarOpen ? 'flex-1' : 'w-full'
                   }`
             }>
-              <div className="flex h-9 shrink-0 items-center justify-between border-b border-border-default bg-surface rounded-none pl-2">
-                <div className="flex min-w-0 shrink items-center gap-1 overflow-hidden">
-                  {symbolQuote ? (
-                    <>
-                      <div className="shrink-0 text-xs font-semibold text-text-primary tabular-nums">
-                        ₹{symbolQuote.last_price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </div>
-                      <div className={`flex shrink-0 items-center gap-0.5 text-[11px] font-medium tabular-nums ${symbolQuote.change >= 0 ? 'text-bull' : 'text-bear'}`}>
-                        {symbolQuote.change >= 0 ? <ArrowUpRight size={11} /> : <ArrowDownRight size={11} />}
-                        {symbolQuote.change >= 0 ? '+' : ''}{symbolQuote.change.toFixed(2)}%
-                      </div>
-                    </>
-                  ) : (
-                    <div className="truncate text-xs font-semibold text-text-primary">{symbol}</div>
-                  )}
-                </div>
-
-                <div className="flex h-full shrink-0 items-center border-l border-border-default">
-                  {/* ── Chart cluster: mode · strategy · projection (R8.2) ── */}
-                  {/* Chart type, indicators, timeframe, and drawing tools are now
-                      provided natively by the TradingView Advanced Charts widget. */}
-                  <div className="flex h-full items-center" role="group" aria-label="Chart controls">
-                  {/* Chart-mode toggle (Standard / Volume Profile / Footprint) */}
-                  <ChartModeToggle />
-
-                  {/* Strategy selector */}
-                  <StrategySelector
-                    activeStrategyId={activeStrategyId}
-                    onSelect={setActiveStrategyId}
-                    onOpenSettings={() => {}}
-                  />
-
-                  {/* Projection engine toggle (OLS / VWEPR ghost line) */}
-                  <GhostLineToggle />
-                  </div>
-
-                  {/* ── View cluster: single/split · timeframe · fullscreen (R8.2) ── */}
-                  <div className="flex h-full items-center" role="group" aria-label="View controls">
-                  {/* Single / Split chart layout toggle (self-gating: Intraday & F&O only) */}
-                  <SplitViewToggle />
-
-                  {/* Timeframe is now controlled natively by the TV widget's
-                      built-in timeframe selector in its top toolbar. */}
-
-                  {/* Fullscreen toggle */}
-                  <button
-                    type="button"
-                    onClick={toggleFullscreen}
-                    aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-                    className="flex h-full w-9 items-center justify-center border-r border-border-default bg-surface text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
-                  >
-                    {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-                  </button>
-                  </div>
-
-                  {/* ── Analytics cluster: sidebar / Deep Quant (R8.2) ── */}
-                  <div className="flex h-full items-center" role="group" aria-label="Analytics controls">
-                  {/* Sidebar toggle button */}
-                  {!isFullscreen && (
-                    <button
-                      type="button"
-                      onClick={() => setSidebarOpen(!sidebarOpen)}
-                      className={`flex h-full w-9 items-center justify-center border-r border-border-default bg-surface text-text-secondary transition-colors hover:bg-elevated ${sidebarOpen
-                          ? 'text-emerald-600 dark:text-emerald-400'
-                          : ''
-                        }`}
-                      title={sidebarOpen ? `Hide ${sidebarCfg.label}` : `Show ${sidebarCfg.label}`}
-                    >
-                      {sidebarOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
-                    </button>
-                  )}
-                  </div>
-                </div>
-              </div>
 
               {/* Chart area - takes full width.
                   Drawing tools are now provided natively by the TV widget's left sidebar. */}
