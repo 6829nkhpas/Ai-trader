@@ -2,18 +2,23 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { useTradeStore } from '../../store/useTradeStore';
-import { BarChart3, Activity, Footprints, ChevronDown } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
+import { SlChart } from 'react-icons/sl';
 
-export default function ChartModeToggle() {
+export interface ChartModeToggleProps {
+  noText?: boolean;
+}
+
+export default function ChartModeToggle({ noText = false }: ChartModeToggleProps) {
   const chartMode = useTradeStore((s) => s.chartMode);
   const setChartMode = useTradeStore((s) => s.setChartMode);
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const modes = [
-    { mode: 'STANDARD' as const, label: 'Standard', icon: BarChart3 },
-    { mode: 'VOLUME_PROFILE' as const, label: 'Vol Profile', icon: Activity },
-    { mode: 'FOOTPRINT' as const, label: 'Footprint', icon: Footprints },
+    { mode: 'STANDARD' as const, label: 'Standard', icon: SlChart },
+    { mode: 'VOLUME_PROFILE' as const, label: 'Vol Profile', icon: SlChart },
+    { mode: 'FOOTPRINT' as const, label: 'Footprint', icon: SlChart },
   ];
 
   const currentMode = modes.find((m) => m.mode === chartMode) || modes[0];
@@ -31,24 +36,35 @@ export default function ChartModeToggle() {
   }, []);
 
   return (
-    <div className="relative h-full" ref={dropdownRef}>
+    <div className="relative flex items-center justify-center" ref={dropdownRef}>
       <button
         type="button"
         id="chart-mode-dropdown-trigger"
         onClick={() => setIsOpen(!isOpen)}
-        className={`flex h-full items-center gap-1.5 px-2.5 text-[11px] font-semibold transition-all border-r border-border-default ${
-          isOpen
-            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-            : 'bg-surface text-text-secondary hover:bg-elevated hover:text-text-primary'
-        }`}
+        title={noText ? `Chart Mode: ${currentMode.label}` : undefined}
+        className={
+          noText
+            ? `flex h-7 w-7 items-center justify-center rounded-sm transition-all ${
+                isOpen
+                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                  : 'bg-transparent text-text-secondary hover:bg-elevated hover:text-text-primary'
+              }`
+            : `flex h-full items-center gap-1.5 px-2.5 text-[11px] font-semibold transition-all border-r border-border-default ${
+                isOpen
+                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                  : 'bg-surface text-text-secondary hover:bg-elevated hover:text-text-primary'
+              }`
+        }
       >
-        <CurrentIcon size={11} className={isOpen ? 'text-emerald-600 dark:text-emerald-400' : 'text-text-muted'} />
-        <span>{currentMode.label}</span>
-        <ChevronDown size={11} className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+        <CurrentIcon size={noText ? 18 : 11} className={isOpen ? 'text-emerald-600 dark:text-emerald-400' : 'text-text-muted'} />
+        {!noText && <span>{currentMode.label}</span>}
+        {!noText && <ChevronDown size={11} className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />}
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 top-full z-50 mt-px w-40 rounded-none border border-border-default bg-surface shadow-2xl p-1.5 animate-in fade-in slide-in-from-top-2 duration-200">
+        <div className={`absolute right-0 z-50 mt-px w-40 rounded-none border border-border-default bg-surface shadow-2xl p-1.5 animate-in fade-in slide-in-from-top-2 duration-200 ${
+          noText ? 'top-[32px]' : 'top-full'
+        }`}>
           {modes.map(({ mode, label, icon: Icon }) => {
             const isActive = chartMode === mode;
             return (
@@ -66,7 +82,7 @@ export default function ChartModeToggle() {
                     : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
                 }`}
               >
-                <Icon size={12} className={isActive ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'} />
+                <Icon size={16} className={isActive ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'} />
                 <span>{label}</span>
                 {isActive && <span className="ml-auto h-1.5 w-1.5 rounded-none bg-emerald-600 dark:bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]" />}
               </button>

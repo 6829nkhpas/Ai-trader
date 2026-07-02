@@ -11,7 +11,8 @@
 // reads it to route the dataset returned by the Rust dual-engine projection.
 
 import React, { useState } from 'react';
-import { Spline, ChevronDown } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
+import { SlGraph } from 'react-icons/sl';
 import { useOutsideClose } from '../../hooks/useOutsideClose';
 import { useChartUIStore, type GhostLineMode } from '../../store/useChartUIStore';
 
@@ -27,7 +28,11 @@ const MODE_DESCRIPTIONS: Record<GhostLineMode, string> = {
 
 const MODES: GhostLineMode[] = ['linear', 'curved'];
 
-export default function GhostLineToggle() {
+export interface GhostLineToggleProps {
+  noText?: boolean;
+}
+
+export default function GhostLineToggle({ noText = false }: GhostLineToggleProps) {
   const ghostLineMode = useChartUIStore((s) => s.ghostLineMode);
   const setGhostLineMode = useChartUIStore((s) => s.setGhostLineMode);
 
@@ -35,20 +40,30 @@ export default function GhostLineToggle() {
   const ref = useOutsideClose<HTMLDivElement>(() => setOpen(false));
 
   return (
-    <div className="relative h-full" ref={ref}>
+    <div className="relative flex items-center justify-center" ref={ref}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-label="Projection engine"
-        title="Predictive projection engine"
-        className="flex h-full items-center gap-1.5 px-2.5 text-[11px] font-semibold text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary border-r border-border-default bg-surface"
+        title={noText ? `Projection: ${MODE_LABELS[ghostLineMode]}` : "Predictive projection engine"}
+        className={
+          noText
+            ? `flex h-7 w-7 items-center justify-center rounded-sm transition-colors ${
+                open
+                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                  : 'bg-transparent text-text-secondary hover:bg-elevated hover:text-text-primary'
+              }`
+            : "flex h-full items-center gap-1.5 px-2.5 text-[11px] font-semibold text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary border-r border-border-default bg-surface"
+        }
       >
-        <Spline size={13} className="text-text-muted" />
-        <span>{MODE_LABELS[ghostLineMode]}</span>
-        <ChevronDown size={11} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
+        <SlGraph size={noText ? 18 : 13} className="text-text-muted" />
+        {!noText && <span>{MODE_LABELS[ghostLineMode]}</span>}
+        {!noText && <ChevronDown size={11} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />}
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-px w-52 rounded-none border border-border-default bg-surface/95 p-1 shadow-2xl backdrop-blur-xl">
+        <div className={`absolute right-0 z-50 mt-px w-52 rounded-none border border-border-default bg-surface/95 p-1 shadow-2xl backdrop-blur-xl ${
+          noText ? 'top-[32px]' : 'top-full'
+        }`}>
           {MODES.map((m) => (
             <button
               key={m}
