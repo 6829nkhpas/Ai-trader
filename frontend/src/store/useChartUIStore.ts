@@ -192,6 +192,8 @@ interface ChartUIState {
   panes: [ChartPaneState, ChartPaneState];
   /** The pane that search/global controls target (the Active_Pane). */
   activePaneId: PaneId;
+  sidebarOpen: boolean;
+  setSidebarOpen: (open: boolean) => void;
   setActiveCursor: (cursor: CursorMode) => void;
   setActiveDrawingTool: (tool: string | null) => void;
   setMagnetMode: (mode: MagnetMode) => void;
@@ -299,6 +301,8 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
   panes: [defaultPane('A'), defaultPane('B')],
   activePaneId: 'A',
   activeIndicators: {},
+  sidebarOpen: true,
+  setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setActiveCursor: (cursor) => set({ activeCursor: cursor, activeDrawingTool: null }),
   setActiveDrawingTool: (tool) => set({ activeDrawingTool: tool, selectedDrawingId: null }),
   setMagnetMode: (mode) => set({ magnetMode: mode }),
