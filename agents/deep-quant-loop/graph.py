@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Annotated, Sequence, TypedDict, Optional, Literal, List
 from dataclasses import dataclass, field
 from langchain_core.messages import SystemMessage, AIMessage, HumanMessage, BaseMessage, ToolMessage
@@ -131,6 +132,16 @@ from tools import (
 # decision and scores it later, so the agent can audit its realized edge.
 import journal
 
+# Adaptive Opportunity Engine — the pure, deterministic loop-control core
+# (adaptive-opportunity-engine). The graph consults it for the tiered opportunity
+# ladder, the bounded-hunt Watch_Cap / Session_Budget termination predicates, the
+# invalidation post-mortem re-arm gate, the interim Best_Current_Read, deterministic
+# session-context pruning, and the low-cardinality tier tag. The engine adds NO new
+# market-data source and never relaxes the Trade_Validator — it changes decision
+# policy and loop control only (Requirement 10.5). Keeping it a separate pure module
+# leaves it unit/property-testable in isolation.
+import opportunity
+
 # Trade_Manager — the single source of truth for the exit-simulation math
 # (trade-management). The defensibility management entry sources the committed
 # Management_Plan and, where candles are available, cites the simulated
@@ -166,6 +177,14 @@ from debate import (
     # (bull → bear → [next round] → judge) is idempotent (R3.6, R6.1).
     TURNS_PER_ROUND,
 )
+
+# The resolved Adaptive Opportunity Engine configuration, read once from the
+# environment at import time (mirrors the module-load resolution of the LLM config
+# below). Every documented default is applied for any unset/invalid var, so the
+# engine is always safely configured. Reassignable by tests to exercise specific
+# Watch_Cap / Session_Budget / tier bounds. Setting OPPORTUNITY_LOWER_TIERS_ENABLED=false
+# restores the pre-engine A+-only policy (the engine is a strict superset).
+_OPPORTUNITY_CFG = opportunity.resolve_opportunity_config()
 
 # ── State Definition ────────────────────────────────────────────────────────
 
@@ -222,6 +241,38 @@ class AgentState(TypedDict):
     # (R4.1, R4.4). None until the Judge has run.
     debate_consensus: Optional[str]
     debate_conviction: Optional[int]
+    # ── Adaptive Opportunity Engine bookkeeping (adaptive-opportunity-engine) ──
+    # All fields below are ADDITIVE and Optional/defaulted, maintained by
+    # `call_model` / `tool_node` exactly like `reasoning_turns`. They drive the
+    # bounded hunt (Watch_Cap + Session_Budget), the invalidation post-mortem, the
+    # cheap-resume delta re-check, and tier tagging. A run that reads them before
+    # they are set treats them as their zero/None default, so legacy behaviour is
+    # preserved when the engine takes no action.
+    #
+    # The committed tier recorded on the decision (a_plus | b_continuation | scalp
+    # | stand_aside). None until a decision is committed.
+    opportunity_tier: Optional[str]
+    # Watch_Cycles registered this session — each watch registration AND each
+    # invalidation-driven re-arm increments it; converges on Watch_Cap (R3.1, R4.4).
+    watch_cycles: int
+    # Model turns taken this session (Session_Budget turn accounting, R3.2).
+    session_turns: int
+    # Monotonic wall-clock seconds stamped on the first /run turn (R3.2). None until
+    # stamped, so the wall-clock budget cannot fire before the run starts.
+    session_started_at: Optional[float]
+    # Invalidations seen this session; each counts toward the Watch_Cap (R4.4).
+    invalidation_count: int
+    # Set on an invalidation resume, cleared once the post-mortem re-arm gate has
+    # served it — forces a strategic pivot rather than a blind re-arm (R4.1, R4.2).
+    postmortem_pending: bool
+    # Fingerprint of the just-invalidated watch thesis, captured on an invalidation
+    # resume so the re-arm gate can detect an unchanged re-arm (R4.2).
+    prior_thesis: Optional[dict]
+    # Heartbeats consumed this session, bounded by heartbeat_max (R5.2).
+    heartbeat_count: int
+    # The classified kind of the most recent resume (target | invalidation |
+    # heartbeat), used to scope the cheap Delta_Recheck on resume (R6.1).
+    last_resume_kind: Optional[str]
 
 
 # Maximum number of consecutive reasoning-only turns the agent may take before
@@ -1349,6 +1400,21 @@ def _resolve_action_and_levels(decision, mode, manual_trade):
     return action, _parse_levels_from_text(text)
 
 
+def _latest_watch_args(messages) -> dict:
+    """The args of the most recent ``watch_price_condition`` tool call in history.
+
+    Scans backward for the assistant message that armed the most recent watch and
+    returns its call args (``symbol`` / ``timeframe`` / ``price_level`` /
+    ``direction`` / ``invalidation_level``), so the invalidation post-mortem can
+    fingerprint the just-invalidated thesis. Returns ``{}`` when none is found.
+    """
+    for m in reversed(list(messages or [])):
+        for tc in (getattr(m, "tool_calls", None) or []):
+            if tc.get("name") == "watch_price_condition":
+                return tc.get("args") or {}
+    return {}
+
+
 def _latest_atr(results):
     """The most recent finite ``atr_14`` from a consensus report, else None."""
     consensus = results.get("get_consensus_report")
@@ -2324,6 +2390,15 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
     if mode == "VERIFY":
         record["validator_checks"] = _verify_mode_validator_checks(action, levels, atr)
 
+    # Mirror the committed Opportunity_Tier into the defensibility record so the
+    # trade carries its tier alongside the other evidence entries, and so
+    # ``journal.derive_setup_tags`` can read it for the ``tier:`` fingerprint
+    # (adaptive-opportunity-engine R9.1). Set by ``_stamp_opportunity_tier`` before
+    # this record is built; a decision without a stamped tier omits the key.
+    _opp_tier = (decision or {}).get("opportunity_tier")
+    if isinstance(_opp_tier, str) and _opp_tier:
+        record["opportunity_tier"] = _opp_tier
+
     return record
 
 
@@ -2418,14 +2493,122 @@ def _apply_weight_map_to_conviction(decision: dict, symbol=None) -> None:
         print(f"[Attribution] WARN: Weight_Map consultation skipped: {e}")
 
 
+def _max_pattern_confidence(results) -> float:
+    """The highest structural pattern confidence in the latest get_chart_patterns
+    result, in [0.0, 1.0]; 0.0 when no pattern result is present.
+
+    Tolerates both the bare list contract and a ``{"patterns": [...]}`` wrapper.
+    Pure read of tool output; never raises.
+    """
+    patterns = results.get("get_chart_patterns")
+    if isinstance(patterns, dict):
+        patterns = patterns.get("patterns")
+    best = 0.0
+    if isinstance(patterns, list):
+        for p in patterns:
+            if isinstance(p, dict):
+                c = p.get("confidence")
+                if _is_finite_num(c):
+                    best = max(best, float(c))
+    return max(0.0, min(1.0, best))
+
+
+def _macro_signal_for_tier(results, action) -> dict:
+    """The macro (1D trend vs proposed direction) alignment signal for the ladder.
+
+    Reads the 1D bias from the latest get_multi_tf_trend result and compares it to
+    the proposed action: a BUY with a bullish (SELL with a bearish) 1D bias is
+    ``aligned``; the opposite is ``misaligned``; a HOLD / neutral bias / absent
+    trend reads ``neutral``. Shaped like the other evidence signals so
+    ``opportunity.evaluate_tier`` consumes it directly.
+    """
+    bias = _bias_sign(_extract_1d_bias(results.get("get_multi_tf_trend")))
+    if bias is None:
+        return {"available": False, "alignment": "neutral"}
+    act = (action or "").upper()
+    if bias == "Neutral" or act not in ("BUY", "SELL"):
+        return {"available": True, "alignment": "neutral"}
+    if (act == "BUY" and bias == "Bullish") or (act == "SELL" and bias == "Bearish"):
+        return {"available": True, "alignment": "aligned"}
+    return {"available": True, "alignment": "misaligned"}
+
+
+def _evidence_for_tier(state: AgentState, decision: dict):
+    """Assemble the ``opportunity.evaluate_tier`` evidence dict from the same tool
+    results the defensibility record cites (adaptive-opportunity-engine R1).
+
+    Reuses the existing defensibility ``_*_entry`` readers (each already emits the
+    ``available`` + favorability/alignment shape the ladder consumes) plus the
+    committed decision's own validated levels (the defensible triple) and the
+    strongest structural pattern confidence. Returns ``(evidence, action)``. Pure
+    read; the ladder never relaxes the Trade_Validator (the levels here have
+    ALREADY passed it), it only classifies the setup quality.
+    """
+    messages = state.get("messages") or []
+    results = _latest_tool_results(messages)
+    action, levels = _resolve_action_and_levels(
+        decision, state.get("mode"), state.get("manual_trade")
+    )
+    levels = levels or {}
+    evidence = {
+        "pattern_confidence": _max_pattern_confidence(results),
+        "entry": levels.get("entry"),
+        "stop": levels.get("stop_loss"),
+        "target": levels.get("take_profit"),
+        "regime": _regime_entry(results),
+        "session": _session_entry(results),
+        "relative_strength": _relative_strength_entry(results),
+        "forecast": _forecast_entry(results),
+        "options": _options_entry(results),
+        "macro": _macro_signal_for_tier(results, action),
+    }
+    return evidence, action
+
+
+def _stamp_opportunity_tier(state: AgentState, decision: dict) -> None:
+    """Stamp the evidence-derived Opportunity_Tier, Size_Factor, and (for a
+    stand-aside HOLD) the Best_Current_Read onto the committed decision (R1.5, R8.1).
+
+    A committed directional (BUY/SELL) decision is tagged with the tier its evidence
+    supports; because the trade was validated and taken, a directional decision
+    whose structural evidence falls below even the scalp bar is still tagged the
+    lowest tradeable tier (``scalp``) rather than ``stand_aside`` — a taken trade is
+    never labelled a stand-aside. A HOLD is always ``stand_aside`` and carries the
+    non-committal Best_Current_Read. The Size_Factor is recorded metadata only: it
+    never alters the (already-validated) entry/stop/target, so the Trade_Validator
+    is evaluated identically for every tier (R10.2). Best-effort; never raises.
+    """
+    try:
+        evidence, action = _evidence_for_tier(state, decision)
+        tier_eval = opportunity.evaluate_tier(evidence, _OPPORTUNITY_CFG)
+        act = (action or "").upper()
+        if act in ("BUY", "SELL"):
+            tier = tier_eval.tier if tier_eval.tier != "stand_aside" else "scalp"
+        else:
+            tier = "stand_aside"
+        decision["opportunity_tier"] = tier
+        decision["size_factor"] = opportunity.size_factor(tier, _OPPORTUNITY_CFG)
+        if tier == "stand_aside":
+            decision.setdefault(
+                "best_current_read", opportunity.best_current_read(evidence, tier_eval)
+            )
+    except Exception as e:  # noqa: BLE001 - tagging must never break a finalize
+        print(f"[Deep Quant] WARN: opportunity tier stamping failed: {e}")
+
+
 def _finalize_decision(state: AgentState, decision: dict) -> dict:
     """Attach the defensibility record AND persist the decision to the journal.
 
     Single chokepoint for every finalize path (validated declare_trade, the
-    data-gating HOLD, and the forced HOLD) so each committed decision is both
-    defensible (R7) and recorded for the measurement feedback loop (Phase 2).
+    data-gating HOLD, the forced HOLD, and the bounded-hunt force_terminal) so each
+    committed decision is both defensible (R7) and recorded for the measurement
+    feedback loop (Phase 2). The Adaptive Opportunity Engine tier is stamped here
+    too, so every committed decision carries its Opportunity_Tier (R1.5, R9.1).
     Journaling is best-effort and never raises into the run.
     """
+    # Stamp the evidence-derived Opportunity_Tier BEFORE building the defensibility
+    # record so build_defensibility_record can mirror it into the record (R9.1).
+    _stamp_opportunity_tier(state, decision)
     decision["defensibility"] = build_defensibility_record(
         state["messages"],
         decision,
@@ -2484,6 +2667,15 @@ def call_model(state: AgentState):
             # The model sees the devil's-advocate stance when forming its verdict.
             messages = list(messages) + [devils_advocate_msg]
 
+    # ── Deterministic session-context pruning (adaptive-opportunity-engine R7) ─
+    # Bound the context SENT to the LLM this turn so a long, many-resume hunt does
+    # not grow unbounded in cost. `prune_messages` is a no-op until the history
+    # exceeds the configured ceiling, and it always retains the system message, the
+    # latest usable result of every tool, and the most-recent turns — so the
+    # defensibility record and Q&A grounding stay intact (R7.2). It never mutates
+    # the checkpointed state (only what is sent this turn).
+    messages = opportunity.prune_messages(messages, _OPPORTUNITY_CFG)
+
     response = llm_with_tools.invoke(messages)
     
     print(f"[Deep Quant Agent] Model responded. Content length: {len(response.content or '')}")
@@ -2539,6 +2731,19 @@ def call_model(state: AgentState):
         "reasoning_turns": reasoning_turns,
         "market_data_seen": market_data_seen,
     }
+
+    # ── Adaptive Opportunity Engine bookkeeping (adaptive-opportunity-engine) ──
+    # Maintained exactly like `reasoning_turns` above: every model turn charges the
+    # Session_Budget (`session_turns`); a turn that arms a `watch_price_condition`
+    # registers a Watch_Cycle (`watch_cycles`, which converges on the Watch_Cap);
+    # and the first turn of a `/run` stamps the wall-clock start so the
+    # Session_Budget wall-clock bound can fire. These counters are what
+    # `should_continue` consults to close the unbounded watch/re-watch loop.
+    update["session_turns"] = int(state.get("session_turns") or 0) + 1
+    if state.get("session_started_at") is None:
+        update["session_started_at"] = time.time()
+    if any(c.name == "watch_price_condition" for c in ok_calls):
+        update["watch_cycles"] = int(state.get("watch_cycles") or 0) + 1
 
     # Persist the devil's-advocate stance into the verification reasoning, ordered
     # BEFORE the model's verdict response (it is a plain AIMessage with no tool
@@ -2629,6 +2834,46 @@ def tool_node(state: AgentState):
                 retained.append(tc)
         ok_calls = retained
 
+    # ── Invalidation post-mortem re-arm gate (adaptive-opportunity-engine R4) ──
+    # After an invalidation resume set `postmortem_pending` + `prior_thesis` (see
+    # the invalidation-detection bookkeeping below). While a post-mortem is pending,
+    # a proposed `watch_price_condition` re-arm that is the SAME thesis as the
+    # just-invalidated one (`opportunity.is_rearm_unchanged`) is SUPPRESSED — it is
+    # answered with feedback demanding a changed structure/timeframe/tier or a
+    # stand-aside, and is NOT registered — so the agent cannot blindly re-arm the
+    # thesis that just failed (R4.2). A genuinely different re-arm passes through,
+    # and its invalidation level is re-sized to sit at least a volatility floor away
+    # so a noise-level stop cannot immediately re-trip on resume (R4.3). Symmetric
+    # to the `blocked_declares` gate above; inert when no post-mortem is pending.
+    prior_thesis = state.get("prior_thesis")
+    rearm_suppressed: List[dict] = []
+    if state.get("postmortem_pending") and prior_thesis:
+        atr = _latest_atr(_latest_tool_results(state["messages"]))
+        retained = []
+        for tc in ok_calls:
+            if tc.get("name") != "watch_price_condition":
+                retained.append(tc)
+                continue
+            proposed = tc.get("args") or {}
+            if opportunity.is_rearm_unchanged(prior_thesis, proposed, atr, _OPPORTUNITY_CFG):
+                rearm_suppressed.append(tc)
+                continue
+            # A changed thesis is allowed — re-size its invalidation level to the
+            # volatility floor so a noise-level stop does not immediately re-trip.
+            floored = opportunity.volatility_floored_invalidation(
+                proposed.get("direction"),
+                proposed.get("price_level"),
+                proposed.get("invalidation_level"),
+                atr,
+            )
+            if floored is not None:
+                proposed = dict(proposed)
+                proposed["invalidation_level"] = floored
+                tc = dict(tc)
+                tc["args"] = proposed
+            retained.append(tc)
+        ok_calls = retained
+
     out_messages: List[BaseMessage] = []
 
     if ok_calls:
@@ -2647,6 +2892,45 @@ def tool_node(state: AgentState):
         )
 
     update = {"messages": out_messages}
+
+    # ── Answer any suppressed same-thesis re-arm (adaptive-opportunity-engine R4.2)
+    # A re-arm the post-mortem gate suppressed is answered with feedback and NOT
+    # registered, so the model must change its approach or stand aside. No decision
+    # is set, so the bounded loop continues (and the Watch_Cap still bounds it).
+    for tc in rearm_suppressed:
+        note = (
+            "watch_price_condition suppressed: this re-arms the SAME thesis (symbol / "
+            "timeframe / direction / level) that was just invalidated. Do NOT blindly "
+            "re-arm the failed setup — change the structure, timeframe, or tier, or "
+            "stand aside. Re-analyze before proposing a materially different watch."
+        )
+        print("[Deep Quant Tools] Suppressed unchanged watch re-arm (invalidation post-mortem).")
+        out_messages.append(
+            ToolMessage(content=note, tool_call_id=tc["id"], name="watch_price_condition")
+        )
+
+    # ── Invalidation-resume detection & post-mortem arming (R4.1, R4.4) ────────
+    # When a resumed watch returns the "Setup INVALIDATED" marker, the price-only
+    # invalidation tripped. Arm the post-mortem for the NEXT turn (`postmortem_pending`
+    # + `prior_thesis` fingerprint of the just-invalidated watch) so the re-arm gate
+    # above forces a strategic pivot, count the invalidation toward the Watch_Cap
+    # (R4.4), and record the classified resume kind for the cheap Delta_Recheck.
+    for m in out_messages:
+        if (
+            _is_tool_message(m)
+            and getattr(m, "name", None) == "watch_price_condition"
+            and isinstance(getattr(m, "content", None), str)
+            and m.content.startswith("Setup INVALIDATED")
+        ):
+            invalidated_args = _latest_watch_args(state["messages"])
+            update["postmortem_pending"] = True
+            update["prior_thesis"] = opportunity.thesis_fingerprint(invalidated_args)
+            update["invalidation_count"] = int(state.get("invalidation_count") or 0) + 1
+            # Each invalidation counts toward the Watch_Cap (R4.4).
+            update["watch_cycles"] = int(state.get("watch_cycles") or 0) + 1
+            update["last_resume_kind"] = opportunity.RESUME_INVALIDATION
+            print("[Deep Quant Tools] Invalidation resume -> post-mortem armed (Watch_Cycle counted).")
+            break
 
     # ── Resolve gated Research_Phase declare_trade calls (R2.1) ──────────────
     # A `declare_trade` issued while gathering the Shared_Evidence is suppressed:
@@ -2791,6 +3075,21 @@ def should_continue(state: AgentState) -> str:
     # loop continues — never terminated by the reasoning cap while work pends.
     if all_calls:
         if any(tc.get("name") == "watch_price_condition" for tc in ok_calls):
+            # ── Adaptive Opportunity Engine bounded-hunt gate (R3.1-3.3, 3.5) ─
+            # Before arming yet another watch, consult the Watch_Cap and
+            # Session_Budget. When either bound is reached, the unbounded
+            # analyze -> watch -> invalidate -> re-watch loop is CLOSED here: route
+            # to `force_terminal` (which answers the pending watch call and commits
+            # a terminal decision) instead of `suspend`. Otherwise suspend exactly
+            # as before. `termination_reason` covers both the Watch_Cap and the
+            # Session_Budget with the documented precedence.
+            if opportunity.termination_reason(state, _OPPORTUNITY_CFG, time.time()) is not None:
+                print(
+                    "[Deep Quant Routing] Watch pending but bounded hunt exhausted "
+                    f"({opportunity.termination_reason(state, _OPPORTUNITY_CFG, time.time())}). "
+                    "Routing to -> force_terminal"
+                )
+                return "force_terminal"
             print("[Deep Quant Routing] Pending watch_price_condition call. Routing to -> suspend (tools/interrupt)")
             return "suspend"
         print(
@@ -2802,6 +3101,15 @@ def should_continue(state: AgentState) -> str:
     if state.get("decision"):
         print(f"[Deep Quant Routing] Finalized decision present ({state['decision'].get('action')}). Routing to -> end")
         return "end"
+
+    # ── Precedence 2b: Session_Budget exhausted with no pending work (R3.2/3.3) ─
+    # A session can spend its turn / wall-clock budget without a watch pending
+    # (e.g. a long reasoning run that never arms a watch). Terminate it with a
+    # committed decision so the budget is a hard bound regardless of the watch path.
+    # The Watch_Cap is NOT checked here (it only bites when a watch is being armed).
+    if opportunity.session_budget_exhausted(state, _OPPORTUNITY_CFG, time.time()):
+        print("[Deep Quant Routing] Session budget exhausted (no pending work). Routing to -> force_terminal")
+        return "force_terminal"
 
     # ── Precedence 3: bounded reasoning loop ─────────────────────────────────
     reasoning_turns = state.get("reasoning_turns", 0)
@@ -2853,6 +3161,72 @@ def force_hold(state: AgentState):
         )
     )
     return {"decision": decision, "messages": [final_message]}
+
+
+def force_terminal(state: AgentState):
+    """Commit a terminal decision when the bounded hunt is exhausted (R3, R8).
+
+    Reached from ``should_continue`` when the Watch_Cap or Session_Budget is met —
+    the safety net that closes the unbounded analyze -> watch -> invalidate ->
+    re-watch loop the Adaptive Opportunity Engine exists to bound. This node:
+
+      * answers any PENDING ``watch_price_condition`` tool call with a
+        ``ToolMessage`` so the assistant call/response pairing invariant is
+        preserved (an unanswered function call would trip strict providers), and
+      * commits a terminal ``stand_aside`` HOLD via the ``_finalize_decision``
+        chokepoint. The HOLD is the honest, conservative outcome at a forced
+        boundary: it never fabricates a directional trade the model did not
+        actually declare with validated levels (R10.1 / R10.4). The decision cites
+        the ``opportunity.termination_reason`` (``watch-cap-reached`` /
+        ``session-budget-exhausted``) and carries the Opportunity_Tier and the
+        Best_Current_Read (both stamped by ``_finalize_decision``).
+    """
+    reason = opportunity.termination_reason(state, _OPPORTUNITY_CFG, time.time()) or "bounded-hunt-exhausted"
+    print(f"[Deep Quant Routing] Forcing terminal decision (reason: {reason}).")
+
+    out_messages: List[BaseMessage] = []
+
+    # Answer a pending watch_price_condition call so no function call is orphaned.
+    last_message = state["messages"][-1]
+    all_calls = list(getattr(last_message, "tool_calls", None) or [])
+    statuses = (getattr(last_message, "additional_kwargs", None) or {}).get("_extraction_status", {})
+    for tc in all_calls:
+        if tc.get("name") == "watch_price_condition" and statuses.get(tc.get("id"), "ok") == "ok":
+            note = (
+                f"watch_price_condition not registered: the bounded hunt is exhausted "
+                f"({reason}). Committing a terminal stand-aside decision with the current "
+                f"best read rather than arming another watch."
+            )
+            out_messages.append(
+                ToolMessage(content=note, tool_call_id=tc.get("id"), name="watch_price_condition")
+            )
+
+    decision = {
+        "action": "HOLD",
+        "conviction_score": 0,
+        "reason": reason,
+        "setup_validation": (
+            "Bounded hunt exhausted (" + reason + ") without a committed A+/tiered setup. "
+            "Standing aside to preserve capital rather than re-arm another watch."
+        ),
+        "execution_plan": "HOLD — stand aside; bounded hunt reached its Watch_Cap / Session_Budget.",
+        "source": "force_terminal",
+    }
+    # _finalize_decision stamps opportunity_tier (stand_aside), size_factor, and the
+    # Best_Current_Read, then attaches the defensibility record and journals it.
+    decision["defensibility"] = _finalize_decision(state, decision)
+
+    final_message = AIMessage(
+        content=json.dumps(
+            {
+                "conviction_score": decision["conviction_score"],
+                "setup_validation": decision["setup_validation"],
+                "execution_plan": decision["execution_plan"],
+            }
+        )
+    )
+    out_messages.append(final_message)
+    return {"decision": decision, "messages": out_messages}
 
 
 def route_after_tools(state: AgentState) -> str:
@@ -3202,6 +3576,10 @@ workflow = StateGraph(AgentState)
 workflow.add_node("agent", call_model)
 workflow.add_node("tools", tool_node)
 workflow.add_node("force_hold", force_hold)
+# Adaptive Opportunity Engine bounded-hunt terminal (adaptive-opportunity-engine).
+# Reached from `should_continue` when the Watch_Cap / Session_Budget is exhausted;
+# commits a terminal stand-aside decision instead of arming another watch.
+workflow.add_node("force_terminal", force_terminal)
 
 # ── DEBATE debate-role nodes (multi-agent-debate) ────────────────────────────
 # The Research_Phase (the reused `agent`+`tools` loop with declaration
@@ -3913,6 +4291,9 @@ workflow.add_conditional_edges(
         "suspend": "tools",
         "loop_agent": "agent",
         "force_hold": "force_hold",
+        # Adaptive Opportunity Engine bounded-hunt terminal (Watch_Cap /
+        # Session_Budget reached) — commits a terminal stand-aside decision.
+        "force_terminal": "force_terminal",
         # DEBATE research-completion handoff (multi-agent-debate, R2.1). Only
         # reachable while `phase` is a DEBATE phase, so non-DEBATE runs never use
         # it. Mapped to the `bull` placeholder until tasks 7.1/8.1 wire the roles.
@@ -3935,6 +4316,9 @@ workflow.add_conditional_edges(
 
 # A forced HOLD terminates the run.
 workflow.add_edge("force_hold", "__end__")
+
+# A bounded-hunt force_terminal also terminates the run.
+workflow.add_edge("force_terminal", "__end__")
 
 # DEBATE round sequencing (multi-agent-debate, task 8.1). The Bull always hands
 # off to the Bear within a round; after the Bear, `route_debate` either loops
