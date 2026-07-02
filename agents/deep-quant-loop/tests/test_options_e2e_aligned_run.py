@@ -135,5 +135,7 @@ def test_e2e_aligned_find_mode_run():
     assert "opt:bullish-aligned" in tags
     opt_tags = [t for t in tags if t.startswith("opt:")]
     assert opt_tags == ["opt:bullish-aligned"]
-    # Fixed final position (after the db: tag).
-    assert tags[-1] == "opt:bullish-aligned"
+    # opt: sits after db: and immediately before the final opportunity tier: tag
+    # (adaptive-opportunity-engine R9.2).
+    assert tags[-2] == "opt:bullish-aligned"
+    assert tags[-1].startswith("tier:")

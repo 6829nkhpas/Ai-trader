@@ -179,7 +179,7 @@ def test_aligned_find_mode_run_threads_relative_strength_through_all_layers():
     # forecast entry, so the tag immediately after ``rs:`` is ``fc:unknown``.
     rs_index = tags.index("rs:leader-aligned")
     assert tags[rs_index + 1] == "fc:unknown"
-    assert tags[-1].startswith("db:")
+    assert tags[-1].startswith("tier:")  # tier: is the final dimension (opportunity engine R9.2)
 
 
 # ── Req 7.4: prompt-level setup_validation disclosure instruction ────────────

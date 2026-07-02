@@ -241,8 +241,8 @@ def test_property_25_single_fixed_position_low_cardinality_rs_tag(payload):
     # The tag immediately after the rs tag is the single forecast (fc:) tag.
     fc_tags = [t for t in tags if t.startswith("fc:")]
     assert fc_tags and tags[rs_index + 1] == fc_tags[0]
-    # The debate dimension is always appended last.
-    assert tags[-1].startswith("db:")
+    # The opportunity-tier dimension is always appended last (opportunity engine R9.2).
+    assert tags[-1].startswith("tier:")
 
     # ── Determinism: identical inputs -> identical tag list and setup_key (R10.1) ─
     tags_again = derive_setup_tags(decision)
@@ -253,7 +253,7 @@ def test_property_25_single_fixed_position_low_cardinality_rs_tag(payload):
     # db: component is always last.
     key = setup_key_from_tags(tags)
     key_parts = key.split("|")
-    assert key_parts[-1].startswith("db:")
+    assert key_parts[-1].startswith("tier:")
     rs_key_index = key_parts.index(rs_tags[0])
     assert key_parts[rs_key_index - 1].startswith("regime:")
     assert key_parts[rs_key_index + 1] == fc_tags[0]
