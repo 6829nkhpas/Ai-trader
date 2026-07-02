@@ -15,7 +15,8 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import { useTradeStore } from '../../store/useTradeStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
-import { createDatafeed } from '../../charting/datafeed';
+import { createDatafeed, RESOLUTION_TO_TIMEFRAME } from '../../charting/datafeed';
+import { useGhostLine } from '../../hooks/useGhostLine';
 import type {
   IChartingLibraryWidget,
   ChartingLibraryWidgetOptions,
@@ -33,61 +34,61 @@ const TIMEFRAME_TO_RESOLUTION: Record<string, ResolutionString> = {
 };
 
 // ── Theme overrides to match the institutional dark palette ───────────────
-function getThemeOverrides(): Record<string, string | number | boolean> {
-  // Hardcoded from the platform's CSS variables in globals.css
-  // TV v31 uses different override property names than v28.
+function getThemeOverrides(mode: 'dark' | 'light' = 'dark'): Record<string, string | number | boolean> {
+  const isDark = mode === 'dark';
+
+  // Colors sourced from globals.css — :root (dark) and .light
+  const bg       = isDark ? '#000000' : '#ffffff';
+  const grid     = isDark ? '#1a1a1a' : '#f1f4f5';
+  const text     = isDark ? '#9ca3af' : '#4a5568';
+  const scaleBg  = isDark ? '#000000' : '#ffffff';
+  const up       = '#10b981';
+  const down     = '#ef4444';
+  const areaFill1 = isDark ? 'rgba(16, 185, 129, 0.28)' : 'rgba(16, 185, 129, 0.15)';
+  const areaFill2 = isDark ? 'rgba(16, 185, 129, 0.05)' : 'rgba(16, 185, 129, 0.02)';
+
   return {
-    // Chart pane background — matches --chart-bg (#0a0a0a)
     'paneProperties.backgroundType': 'solid',
-    'paneProperties.background': '#0a0a0a',
+    'paneProperties.background': bg,
+    'paneProperties.vertGridProperties.color': grid,
+    'paneProperties.horzGridProperties.color': grid,
+    'scalesProperties.textColor': text,
+    'scalesProperties.lineColor': grid,
+    'scalesProperties.backgroundColor': scaleBg,
 
-    // Grid — matches --border-default (#1a1a1a)
-    'paneProperties.vertGridProperties.color': '#1a1a1a',
-    'paneProperties.horzGridProperties.color': '#1a1a1a',
-
-    // Scale text — matches --text-muted (#9ca3af)
-    'scalesProperties.textColor': '#9ca3af',
-    'scalesProperties.lineColor': '#1a1a1a',
-    'scalesProperties.backgroundColor': '#000000',
-
-    // Candlestick colors — matches --candle-green (#10b981) / --candle-red (#ef4444)
-    'mainSeriesProperties.candleStyle.upColor': '#10b981',
-    'mainSeriesProperties.candleStyle.downColor': '#ef4444',
-    'mainSeriesProperties.candleStyle.wickUpColor': '#10b981',
-    'mainSeriesProperties.candleStyle.wickDownColor': '#ef4444',
-    'mainSeriesProperties.candleStyle.borderUpColor': '#10b981',
-    'mainSeriesProperties.candleStyle.borderDownColor': '#ef4444',
+    'mainSeriesProperties.candleStyle.upColor': up,
+    'mainSeriesProperties.candleStyle.downColor': down,
+    'mainSeriesProperties.candleStyle.wickUpColor': up,
+    'mainSeriesProperties.candleStyle.wickDownColor': down,
+    'mainSeriesProperties.candleStyle.borderUpColor': up,
+    'mainSeriesProperties.candleStyle.borderDownColor': down,
     'mainSeriesProperties.candleStyle.drawWick': true,
     'mainSeriesProperties.candleStyle.drawBorder': true,
 
-    // Hollow candlestick fallback
-    'mainSeriesProperties.hollowCandleStyle.upColor': '#10b981',
-    'mainSeriesProperties.hollowCandleStyle.downColor': '#ef4444',
-    'mainSeriesProperties.hollowCandleStyle.wickUpColor': '#10b981',
-    'mainSeriesProperties.hollowCandleStyle.wickDownColor': '#ef4444',
-    'mainSeriesProperties.hollowCandleStyle.borderUpColor': '#10b981',
-    'mainSeriesProperties.hollowCandleStyle.borderDownColor': '#ef4444',
+    'mainSeriesProperties.hollowCandleStyle.upColor': up,
+    'mainSeriesProperties.hollowCandleStyle.downColor': down,
+    'mainSeriesProperties.hollowCandleStyle.wickUpColor': up,
+    'mainSeriesProperties.hollowCandleStyle.wickDownColor': down,
+    'mainSeriesProperties.hollowCandleStyle.borderUpColor': up,
+    'mainSeriesProperties.hollowCandleStyle.borderDownColor': down,
 
-    // Bar style
-    'mainSeriesProperties.barStyle.upColor': '#10b981',
-    'mainSeriesProperties.barStyle.downColor': '#ef4444',
+    'mainSeriesProperties.barStyle.upColor': up,
+    'mainSeriesProperties.barStyle.downColor': down,
 
-    // Area style
-    'mainSeriesProperties.areaStyle.linecolor': '#10b981',
-    'mainSeriesProperties.areaStyle.color1': 'rgba(16, 185, 129, 0.28)',
-    'mainSeriesProperties.areaStyle.color2': 'rgba(16, 185, 129, 0.05)',
+    'mainSeriesProperties.areaStyle.linecolor': up,
+    'mainSeriesProperties.areaStyle.color1': areaFill1,
+    'mainSeriesProperties.areaStyle.color2': areaFill2,
 
-    // Line style
-    'mainSeriesProperties.lineStyle.color': '#10b981',
+    'mainSeriesProperties.lineStyle.color': up,
 
-    // Baseline style
-    'mainSeriesProperties.baselineStyle.topLineColor': '#10b981',
-    'mainSeriesProperties.baselineStyle.bottomLineColor': '#ef4444',
+    'mainSeriesProperties.baselineStyle.topLineColor': up,
+    'mainSeriesProperties.baselineStyle.bottomLineColor': down,
 
-    // Volume colors
     'volumePaneSize': 'medium',
   };
 }
+
+
 
 // ── Props ─────────────────────────────────────────────────────────────────
 export interface TradingViewWidgetProps {
@@ -113,7 +114,9 @@ export default function TradingViewWidget({
   const activeDecision = useTradeStore((s) => s.activeDecision);
   const liveDecisions = useTradeStore((s) => s.liveDecisions);
   const activeTimeframe = useTradeStore((s) => s.activeTimeframe);
+  const predictiveSignals = useTradeStore((s) => s.predictiveSignals);
   const theme = useChartUIStore((s) => s.theme);
+  const ghostLineMode = useChartUIStore((s) => s.ghostLineMode);
 
   // Derive active symbol
   const activeSymbol = React.useMemo(() => {
@@ -179,22 +182,21 @@ export default function TradingViewWidget({
         symbol: `NSE:${activeSymbol}`,
         interval: resolution,
         timezone: 'Asia/Kolkata',
-        theme: 'dark',
+        theme: theme === 'light' ? 'light' : 'dark',
         locale: 'en',
         // custom_css_url is relative to library_path (charting_library/charting_library/)
         // so we go up two levels to reach public/static/tvThemeOverrides.css
         custom_css_url: '../../tvThemeOverrides.css',
         fullscreen: false,
         autosize: true,
-        overrides: getThemeOverrides(),
+        overrides: getThemeOverrides(theme),
         studies_overrides: {
-          // Volume histogram colors
           'volume.volume.color.0': '#ef4444',
           'volume.volume.color.1': '#10b981',
           'volume.volume.transparency': 50,
         },
         loading_screen: {
-          backgroundColor: '#000000',
+          backgroundColor: theme === 'light' ? '#f9fafb' : '#000000',
           foregroundColor: '#10b981',
         },
         disabled_features: [
@@ -208,6 +210,18 @@ export default function TradingViewWidget({
           'side_toolbar_in_fullscreen_mode',
           'items_favoriting',
           'save_chart_properties_to_local_storage',
+          // Advanced chart types
+          'chart_style_hilo',
+          'chart_style_range',
+          'chart_style_renko',
+          'chart_style_kagi',
+          'chart_style_pnf',
+          'chart_style_line_break',
+          // Volume & Profile chart types
+          'chart_style_vol_footprint',
+          'chart_style_tpo',
+          'chart_style_svp',
+          'chart_style_vol_candle',
         ],
         debug: false,
         auto_save_delay: 5,
@@ -222,6 +236,17 @@ export default function TradingViewWidget({
           console.log(
             `[TradingViewWidget] Chart ready: ${activeSymbol} @ ${resolution}`,
           );
+
+          try {
+            (tvWidget.activeChart() as any).onIntervalChanged().subscribe(null, (interval: string) => {
+              const tf = RESOLUTION_TO_TIMEFRAME[interval];
+              if (tf) {
+                useTradeStore.getState().setActiveTimeframe(tf as any);
+              }
+            });
+          } catch (e) {
+            console.warn('[TradingViewWidget] Failed to subscribe to interval changes:', e);
+          }
         });
       } catch (err) {
         console.error('[TradingViewWidget] Widget creation failed:', err);
@@ -282,13 +307,23 @@ export default function TradingViewWidget({
   // ── Sync theme changes ───────────────────────────────────────────────
   useEffect(() => {
     if (!widgetRef.current) return;
+    const tvTheme = theme === 'light' ? 'light' : 'dark';
     try {
-      widgetRef.current.changeTheme('dark');
-      widgetRef.current.applyOverrides(getThemeOverrides());
+      widgetRef.current.changeTheme(tvTheme);
+      // applyOverrides after a short delay to let changeTheme complete
+      setTimeout(() => {
+        if (!widgetRef.current) return;
+        try {
+          widgetRef.current.applyOverrides(getThemeOverrides(theme));
+        } catch { /* widget not ready */ }
+      }, 150);
     } catch {
       // Widget not ready
     }
   }, [theme]);
+
+  // ── Predictive Ghost Line (VWEPR / OLS) ───────────────────────────────
+  useGhostLine(widgetRef.current, activeSymbol, effectiveTimeframe);
 
   return (
     <div
