@@ -1,13 +1,10 @@
 'use client';
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Maximize2, Minimize2, Clock, LineChart as LineChartIcon } from 'lucide-react';
-import ChartToolsBar from '../components/chart/ChartToolsBar';
+import { PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight, ChevronUp, TrendingUp, TrendingDown, Maximize2, Minimize2 } from 'lucide-react';
 import ChartModeToggle from '../components/chart/ChartHeader';
-import ChartTypeSelector from '../components/chart/ChartTypeSelector';
 import StrategySelector from '../components/chart/StrategySelector';
 import GhostLineToggle from '../components/chart/GhostLineToggle';
-import { CHART_TYPE_PARAM_SPEC } from '../charting/engines';
 import TerminalLayout from '../components/layout/TerminalLayout';
 import LeftPanel from '../components/panels/LeftPanel';
 import OrderExecutionPanel from '../components/panels/OrderExecutionPanel';
@@ -22,12 +19,11 @@ import PortfolioDashboard from '../components/quant/PortfolioDashboard';
 import FnoSection from '../components/fno/FnoSection';
 import SplitChartContainer from '../components/chart/SplitChartContainer';
 import SplitViewToggle from '../components/chart/SplitViewToggle';
-import { useTradeStore, TradeProfile, ChartTimeframe, hydratePaperPortfolio } from '../store/useTradeStore';
+import { useTradeStore, TradeProfile, hydratePaperPortfolio } from '../store/useTradeStore';
 import { useQuantStore } from '../store/useQuantStore';
 import { useChartUIStore } from '../store/useChartUIStore';
 import type { ConsensusReport } from '../store/useQuantStore';
 import type { DataRange } from '../utils/chartTypes';
-import { TIMEFRAME_GROUPS } from '../utils/chartTypes';
 import { useAuthStore } from '../store/useAuthStore';
 import AuthOverlay from '../components/auth/AuthOverlay';
 import BrokerConnectCard from '../components/broker/BrokerConnectCard';
@@ -43,7 +39,7 @@ const SIDEBAR_CONFIG: Record<TradeProfile, { label: string; badge: string; badge
 };
 
 export default function Home() {
-  const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, connectOrderFlowWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, setActiveTimeframe, activeRange, setActiveRange, selectedSymbol, paperPortfolio } = useTradeStore();
+  const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, connectOrderFlowWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, activeRange, setActiveRange, selectedSymbol, paperPortfolio } = useTradeStore();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const isBrokerConnected = useAuthStore((s) => s.isBrokerConnected);
   const setBrokerConnected = useAuthStore((s) => s.setBrokerConnected);
@@ -59,18 +55,11 @@ export default function Home() {
     }, 4500);
   }, []);
 
-  const [indicatorsEnabled, setIndicatorsEnabled] = useState(true);
-  const [aiEnabled, setAiEnabled] = useState(true);
   const isFullscreen = useChartUIStore((s) => s.isFullscreen);
   const setIsFullscreen = useChartUIStore((s) => s.setIsFullscreen);
   const toggleFullscreen = useChartUIStore((s) => s.toggleFullscreen);
-  const chartType = useChartUIStore((s) => s.chartType);
-  const setChartType = useChartUIStore((s) => s.setChartType);
-  const setChartTypeParams = useChartUIStore((s) => s.setChartTypeParams);
   const activeStrategyId = useChartUIStore((s) => s.activeStrategyId);
   const setActiveStrategyId = useChartUIStore((s) => s.setActiveStrategyId);
-  const showIndicatorManager = useChartUIStore((s) => s.showIndicatorManager);
-  const toggleIndicatorManager = useChartUIStore((s) => s.toggleIndicatorManager);
   const splitView = useChartUIStore((s) => s.splitView);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('profile');
@@ -92,8 +81,6 @@ export default function Home() {
   }, [setIsFullscreen]);
 
   const [paperPortfolioOpen, setPaperPortfolioOpen] = useState(false);
-  const [tfDropdownOpen, setTfDropdownOpen] = useState(false);
-  const tfDropdownRef = useRef<HTMLDivElement>(null);
   const consensusData = useQuantStore((s) => s.consensusData);
   const setConsensusData = useQuantStore((s) => s.setConsensusData);
   const clearConsensusData = useQuantStore((s) => s.clearConsensusData);
@@ -246,18 +233,6 @@ export default function Home() {
     };
   }, [fetchSymbolQuote]);
 
-  // Close timeframe dropdown on outside click
-  useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      if (tfDropdownRef.current && !tfDropdownRef.current.contains(e.target as Node)) {
-        setTfDropdownOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
-
-  const quickTimeframes: ChartTimeframe[] = ['1m', '5m', '10m', '15m', '1h', '1D'];
   const rangeOptions: DataRange[] = ['60D', '1Y', '2Y', '3Y', '5Y'];
   const rangeLabels: Record<DataRange, string> = { '60D': '60D', '1Y': '1Y', '2Y': '2Y', '3Y': '3Y', '5Y': '5Y' };
 
@@ -372,36 +347,12 @@ export default function Home() {
                 </div>
 
                 <div className="flex h-full shrink-0 items-center border-l border-border-default">
-                  {/* ── Chart cluster: mode · type · indicators · strategy · projection (R8.2) ── */}
+                  {/* ── Chart cluster: mode · strategy · projection (R8.2) ── */}
+                  {/* Chart type, indicators, timeframe, and drawing tools are now
+                      provided natively by the TradingView Advanced Charts widget. */}
                   <div className="flex h-full items-center" role="group" aria-label="Chart controls">
                   {/* Chart-mode toggle (Standard / Volume Profile / Footprint) */}
                   <ChartModeToggle />
-
-                  {/* Chart-type selector (Candlestick dropdown) */}
-                  <ChartTypeSelector
-                    value={chartType}
-                    onSelect={(next) => {
-                      setChartType(next);
-                      // Reset params for non-parametric types
-                      if (Object.keys(CHART_TYPE_PARAM_SPEC[next]).length === 0) {
-                        setChartTypeParams({});
-                      }
-                    }}
-                  />
-
-                  {/* Indicators toggle */}
-                  <button
-                    type="button"
-                    onClick={toggleIndicatorManager}
-                    aria-label="Indicators"
-                    className={`flex h-full items-center gap-1 px-2.5 text-[11px] font-semibold transition-colors border-r border-border-default bg-surface ${showIndicatorManager
-                        ? 'text-primary bg-primary/10'
-                        : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
-                      }`}
-                  >
-                    <LineChartIcon size={13} />
-                    <span>Indicators</span>
-                  </button>
 
                   {/* Strategy selector */}
                   <StrategySelector
@@ -419,60 +370,8 @@ export default function Home() {
                   {/* Single / Split chart layout toggle (self-gating: Intraday & F&O only) */}
                   <SplitViewToggle />
 
-                  {/* Timeframe dropdown */}
-                  <div className="relative h-full" ref={tfDropdownRef}>
-                    <button
-                      type="button"
-                      onClick={() => setTfDropdownOpen(!tfDropdownOpen)}
-                      className={`flex h-full items-center gap-1 px-2.5 text-[11px] font-semibold transition-all border-r border-border-default ${
-                        tfDropdownOpen
-                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                          : 'bg-surface text-text-secondary hover:bg-elevated hover:text-text-primary'
-                      }`}
-                    >
-                      <Clock size={11} className={tfDropdownOpen ? 'text-emerald-600 dark:text-emerald-400' : 'text-text-muted'} />
-                      <span>{activeTimeframe}</span>
-                      <ChevronDown size={11} className={`transition-transform duration-200 ${tfDropdownOpen ? 'rotate-180' : ''}`} />
-                    </button>
-
-                    {tfDropdownOpen && (
-                      <div className="absolute right-0 top-full z-50 mt-px w-64 rounded-none border border-border-default bg-surface shadow-2xl p-3 scrollbar-none animate-in fade-in slide-in-from-top-2 duration-200">
-                        {TIMEFRAME_GROUPS.map((group) => {
-                          const isDays = group.label === 'Days';
-                          return (
-                            <div key={group.label} className="mb-3 last:mb-0">
-                              <div className="px-1 pb-1 text-[10px] font-bold uppercase tracking-wider text-text-muted/80 mb-1.5 border-b border-border-default/20">
-                                {group.label}
-                              </div>
-                              <div className={`grid ${isDays ? 'grid-cols-3' : 'grid-cols-2'} gap-1`}>
-                                {group.items.map((item) => {
-                                  const isActive = activeTimeframe === item.tf;
-                                  return (
-                                    <button
-                                      key={item.tf}
-                                      type="button"
-                                      onClick={() => {
-                                        setActiveTimeframe(item.tf as ChartTimeframe);
-                                        setTfDropdownOpen(false);
-                                      }}
-                                      className={`flex items-center justify-between rounded-none px-2 py-1.5 text-[11px] transition-all duration-150 border ${
-                                        isActive
-                                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold border-emerald-500/30 shadow-[0_0_8px_rgba(16,185,129,0.08)]'
-                                          : 'bg-card/40 text-text-secondary hover:bg-elevated hover:text-text-primary border-transparent hover:border-border-default'
-                                      }`}
-                                    >
-                                      <span>{item.display}</span>
-                                      {isActive && <span className="h-1.5 w-1.5 rounded-none bg-emerald-600 dark:bg-emerald-400 animate-pulse shadow-[0_0_6px_rgba(52,211,153,0.8)]" />}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
+                  {/* Timeframe is now controlled natively by the TV widget's
+                      built-in timeframe selector in its top toolbar. */}
 
                   {/* Fullscreen toggle */}
                   <button
@@ -505,13 +404,9 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Chart area - takes full width */}
+              {/* Chart area - takes full width.
+                  Drawing tools are now provided natively by the TV widget's left sidebar. */}
               <div className="flex flex-1 min-h-0 w-full overflow-hidden">
-                {/* Fullscreen drawing toolbar (TerminalLayout owns it in
-                    normal mode; the page owns it while fullscreen). */}
-                {isFullscreen && (
-                  <ChartToolsBar className="border-r border-border-default/50 mr-1.5 py-2 bg-surface" />
-                )}
                 <div className="min-h-0 flex-1 bg-surface relative flex flex-col p-0 overflow-hidden">
                   {renderProfileContent()}
                 </div>

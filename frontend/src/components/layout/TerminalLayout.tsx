@@ -17,7 +17,6 @@ import { useAuthStore } from '../../store/useAuthStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
 import QuantRadar from '../quant/QuantRadar';
 import UserProfileModal from '../profile/UserProfileModal';
-import ChartToolsBar from '../chart/ChartToolsBar';
 
 // SSR-disabled dynamic import: Tauri plugins (Stronghold, Path API) are only
 // available in the desktop WebView. Loading them during Next.js server render
@@ -204,11 +203,8 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
           </div>
         </aside>
 
-        {/* Drawing Tools Bar — hidden in fullscreen because ChartSurface
-            mounts its own copy inside the fullscreen overlay. */}
-        {!isFullscreen && (
-          <ChartToolsBar className="border-r border-border-default bg-surface py-2 rounded-none" />
-        )}
+        {/* Drawing tools are now provided natively by the TradingView
+            Advanced Charts widget's left sidebar. */}
 
         {/* Central Area — `min-w-0` lets this flex slot actually shrink back to
             its `flex-1` allocation after fullscreen exit. Without it, the chart
