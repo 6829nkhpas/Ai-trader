@@ -1,225 +1,170 @@
 import { useEffect, useRef } from 'react';
 import { useTradeStore } from '../store/useTradeStore';
 import { useChartUIStore } from '../store/useChartUIStore';
-import { TIMEFRAME_MS, KITE_INTERVAL_MAP, type Timeframe } from '../utils/chartTypes';
+import { computeGhostPoints } from './ghostLineComputation';
 
-const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+// ── Drawing helpers ──────────────────────────────────────────────────────
 
-function parseBincodeCandles(buffer: Uint8Array): any[] {
-  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-  const length = Number(view.getBigUint64(0, true));
-  let offset = 8;
-  const bars = [];
-  for (let i = 0; i < length; i++) {
-    const tsMicro = Number(view.getBigInt64(offset, true));
-    const open = view.getFloat64(offset + 8, true);
-    const high = view.getFloat64(offset + 16, true);
-    const low = view.getFloat64(offset + 24, true);
-    const close = view.getFloat64(offset + 32, true);
-    const volume = Number(view.getBigInt64(offset + 40, true));
-    bars.push({
-      time: Math.floor(tsMicro / 1000000), // convert to seconds
-      open, high, low, close, volume,
-    });
-    offset += 48;
+function removeGhostSegments(chart: any, entityIds: string[]): void {
+  for (const id of entityIds) {
+    try { chart.removeEntity(id); } catch { /* already removed */ }
   }
-  return bars;
-}
-
-async function fetchLookbackCandles(symbol: string, timeframe: string): Promise<any[]> {
-  const kiteInterval = KITE_INTERVAL_MAP[timeframe as Timeframe] ?? 'minute';
-  
-  if (isTauri()) {
-    try {
-      const tauri = await import('@tauri-apps/api/core');
-      const response = await tauri.invoke<number[] | Uint8Array>('get_historical_view', {
-        symbol,
-        timeframe,
-      });
-      const buffer = response instanceof Uint8Array ? response : new Uint8Array(response);
-      const parsed = parseBincodeCandles(buffer);
-      if (parsed.length > 0) return parsed;
-    } catch (err) {
-      console.warn('[GhostLine] Tauri historical view failed:', err);
-    }
-  }
-
-  // Fallback to Kite historical endpoint directly
-  try {
-    const to = new Date();
-    const daysBack = timeframe.endsWith('D') || timeframe.endsWith('W') || timeframe.endsWith('M') ? 365 : 10;
-    const from = new Date(to.getTime() - daysBack * 24 * 60 * 60 * 1000);
-    const fmt = (d: Date) => d.toISOString().slice(0, 10);
-    const url = `/kite/historical?symbol=${encodeURIComponent(symbol)}&interval=${kiteInterval}&from=${fmt(from)}&to=${fmt(to)}`;
-    const res = await fetch(url);
-    if (res.ok) {
-      const data = await res.json();
-      return (data.candles || []).map((c: any) => ({
-        time: c.time,
-        close: c.close,
-        volume: c.volume || 1.0,
-      }));
-    }
-  } catch (err) {
-    console.warn('[GhostLine] Direct Kite fetch failed:', err);
-  }
-  return [];
 }
 
 /**
- * Custom React hook to calculate and render the predictive forward "ghost line"
- * overlay (OLS and VWEPR engines) on the TradingView Advanced Charts instance.
+ * Draw ghost line as connected dashed `trend_line` segments.
+ *
+ * We intentionally do NOT use Catmull-Rom spline interpolation here.
+ * Catmull-Rom interpolates both time AND price between control points.
+ * When control points span an NSE session boundary (e.g. 15:25 → next day
+ * 09:20), the interpolated sub-point timestamps fall in the overnight gap
+ * and TradingView hides them — resulting in flat horizontal dashes at the
+ * same X position instead of diagonal segments.
+ *
+ * The VWEPR Rust engine already outputs curved control points (quadratic
+ * regression). Connecting them with direct line segments creates a smooth
+ * piecewise-linear approximation that matches the target look.
  */
+async function drawGhostSegments(
+  chart: any,
+  points: { time: number; price: number }[],
+): Promise<string[]> {
+  console.log('[GhostLine] Drawing', points.length, 'control points as direct segments');
+
+  const entityIds: string[] = [];
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i];
+    const p1 = points[i + 1];
+
+    // Skip segments where both endpoints are at the same time
+    // (can happen at session boundaries after remap)
+    if (p0.time === p1.time) continue;
+
+    try {
+      const entityId = await chart.createMultipointShape(
+        [
+          { time: p0.time, price: p0.price },
+          { time: p1.time, price: p1.price },
+        ],
+        {
+          shape: 'trend_line',
+          lock: true,
+          disableSelection: true,
+          disableSave: true,
+          disableUndo: true,
+          overrides: {
+            linecolor: '#f59e0b',
+            linewidth: 2,
+            linestyle: 2,          // dashed
+            showLabel: false,
+            extendLeft: false,
+            extendRight: false,
+          },
+        },
+      );
+      if (entityId !== null && entityId !== undefined) {
+        entityIds.push(String(entityId));
+        console.log(`[GhostLine] Segment ${i}: [${p0.time},${p0.price}] → [${p1.time},${p1.price}] id=${entityId}`);
+      }
+    } catch (err) {
+      console.warn(`[GhostLine] Segment ${i} failed:`, err);
+    }
+  }
+
+  // Scroll chart to show the projection
+  if (entityIds.length > 0) {
+    try {
+      const intervalSec = points.length > 1 ? Math.abs(points[1].time - points[0].time) : 600;
+      const fromSec = points[0].time - intervalSec * 30;
+      const toSec   = points[points.length - 1].time + intervalSec * 3;
+      // TV setVisibleRange expects milliseconds
+      chart.setVisibleRange({ from: fromSec * 1000, to: toSec * 1000 });
+      console.log('[GhostLine] setVisibleRange:', { fromSec, toSec });
+    } catch (err) {
+      console.warn('[GhostLine] setVisibleRange failed:', err);
+    }
+  }
+
+  console.log('[GhostLine] Total segments drawn:', entityIds.length);
+  return entityIds;
+}
+
+// ── Main Hook ─────────────────────────────────────────────────────────────
+
 export function useGhostLine(
   widget: any,
   activeSymbol: string,
-  effectiveTimeframe: string
+  effectiveTimeframe: string,
 ) {
   const predictiveSignals = useTradeStore((s) => s.predictiveSignals);
-  const ghostLineMode = useChartUIStore((s) => s.ghostLineMode);
-  const lastEntityIdRef = useRef<any>(null);
+  const ghostLineMode     = useChartUIStore((s) => s.ghostLineMode);
+  const entityIdsRef      = useRef<string[]>([]);
+  const abortRef          = useRef<boolean>(false);
 
   useEffect(() => {
-    if (!widget) return;
-    
-    let active = true;
+    if (!widget) {
+      console.log('[GhostLine] widget is null — skipping');
+      return;
+    }
 
-    const runGhostLine = async () => {
-      const lookback = await fetchLookbackCandles(activeSymbol, effectiveTimeframe);
-      if (!active || lookback.length < 20) return;
+    console.log('[GhostLine] useEffect fired — symbol=', activeSymbol, 'tf=', effectiveTimeframe, 'mode=', ghostLineMode);
+    abortRef.current = false;
 
-      const lastCandle = lookback[lookback.length - 1];
-      const currentPrice = lastCandle.close;
-      const intervalSec = Math.floor((TIMEFRAME_MS[effectiveTimeframe as Timeframe] ?? 60000) / 1000);
+    const run = async () => {
+      const points = await computeGhostPoints(
+        activeSymbol,
+        effectiveTimeframe,
+        ghostLineMode,
+        predictiveSignals,
+      );
 
-      // Guard: current price must be a valid positive number
-      if (!Number.isFinite(currentPrice) || currentPrice <= 0) return;
+      if (abortRef.current) return;
 
-      let points: { time: number; price: number }[] = [];
-
-      // ── Path 1: Backend Predictive Signal ────────────────────────────
-      if (predictiveSignals.length > 0) {
-        const symbolSignals = activeSymbol
-          ? predictiveSignals.filter((s) => s.symbol.toUpperCase() === activeSymbol.toUpperCase())
-          : predictiveSignals;
-        const latest = symbolSignals.length > 0 ? symbolSignals[symbolSignals.length - 1] : null;
-
-        if (latest) {
-          const targetTimeSec = Math.floor(latest.target_timestamp_ms / 1000);
-          const predictedPrice = latest.predicted_close_price;
-          const minValidTime = lastCandle.time - intervalSec * 10;
-
-          const priceDeviation = Math.abs(predictedPrice - currentPrice) / currentPrice;
-          const priceIsValid = Number.isFinite(predictedPrice) && predictedPrice > 0 && priceDeviation < 0.20;
-
-          if (targetTimeSec > minValidTime && priceIsValid) {
-            const GHOST_CANDLES = 6;
-            const endTime = Math.max(targetTimeSec, lastCandle.time + intervalSec * GHOST_CANDLES);
-            const slope = (predictedPrice - currentPrice) / GHOST_CANDLES;
-
-            points = Array.from({ length: GHOST_CANDLES + 1 }, (_, i) => ({
-              time: lastCandle.time + i * intervalSec,
-              price: +(currentPrice + slope * i).toFixed(2),
-            }));
-            points[points.length - 1] = { time: endTime, price: +(predictedPrice).toFixed(2) };
-          }
-        }
+      if (points.length < 2) {
+        console.warn('[GhostLine] Not enough points:', points.length);
+        return;
       }
-
-      // ── Path 2: Dual-Engine via Rust IPC ────────────────────────────
-      if (points.length === 0 && isTauri()) {
-        try {
-          const tauri = await import('@tauri-apps/api/core');
-          const lookbackCandles = lookback.slice(-60).map(c => ({
-            time: c.time,
-            close: c.close,
-            volume: c.volume || 1.0,
-          }));
-
-          const payload = await tauri.invoke<any>('compute_ghost_curve', {
-            candles: lookbackCandles,
-            intervalSec,
-            projectionLength: 6,
-          });
-
-          if (!active) return;
-
-          // Persist acceleration coefficient for AI analysis
-          useChartUIStore.getState().setAccelerationCoefficient(payload.acceleration_coefficient);
-
-          const activePoints = ghostLineMode === 'linear'
-            ? payload.linear_points
-            : payload.curved_points;
-
-          if (activePoints && activePoints.length > 0) {
-            points = activePoints.map((p: any) => ({
-              time: p.time,
-              price: +p.value.toFixed(2),
-            }));
-          }
-        } catch (error) {
-          console.error('👻 [GHOST ENGINE ERROR] Failed to compute projection:', error);
-        }
-      }
-
-      if (!active) return;
 
       widget.onChartReady(() => {
+        if (abortRef.current) return;
+
         try {
           const chart = widget.activeChart();
 
-          // 1. Remove old shape if exists
-          if (lastEntityIdRef.current) {
-            try {
-              chart.removeEntity(lastEntityIdRef.current);
-            } catch (e) {
-              // Might already be removed
-            }
-            lastEntityIdRef.current = null;
+          // Remove previous ghost line
+          if (entityIdsRef.current.length > 0) {
+            removeGhostSegments(chart, entityIdsRef.current);
+            entityIdsRef.current = [];
           }
 
-          if (points.length > 0) {
-            // Draw new polyline shape
-            const shapePoints = points.map(p => ({
-              time: p.time,
-              price: p.price,
-            }));
-            chart.createMultipointShape(shapePoints, {
-              shape: 'polyline',
-              lock: true,
-              disableSelection: true,
-              disableSave: true,
-              disableUndo: true,
-              overrides: {
-                'linetoolpolyline.linecolor': '#f59e0b',
-                'linetoolpolyline.linewidth': 2,
-                'linetoolpolyline.linestyle': 2, // dashed
-                'linetoolpolyline.filled': false,
-                'linetoolpolyline.fillBackground': false,
-              },
-            }).then((entityId: any) => {
-              lastEntityIdRef.current = entityId;
-            });
-          }
+          drawGhostSegments(chart, points)
+            .then((ids) => {
+              if (!abortRef.current) {
+                entityIdsRef.current = ids;
+                console.log('[GhostLine] Ghost line ready with', ids.length, 'segments');
+              } else {
+                removeGhostSegments(chart, ids);
+              }
+            })
+            .catch((err) => console.error('[GhostLine] drawGhostSegments threw:', err));
         } catch (err) {
-          console.error('[GhostLine] failed to draw on TV:', err);
+          console.error('[GhostLine] chart.activeChart() failed:', err);
         }
       });
     };
 
-    runGhostLine();
+    run();
 
     return () => {
-      active = false;
-      if (lastEntityIdRef.current && widget) {
+      abortRef.current = true;
+      if (entityIdsRef.current.length > 0) {
         try {
           const chart = widget.activeChart();
-          chart.removeEntity(lastEntityIdRef.current);
-        } catch (e) {
-          // Might already be removed
-        }
-        lastEntityIdRef.current = null;
+          removeGhostSegments(chart, entityIdsRef.current);
+        } catch { /* widget may be removed */ }
+        entityIdsRef.current = [];
       }
     };
-  }, [widget, predictiveSignals, activeSymbol, effectiveTimeframe, ghostLineMode]);
+  }, [widget, activeSymbol, effectiveTimeframe, ghostLineMode, predictiveSignals]);
 }
