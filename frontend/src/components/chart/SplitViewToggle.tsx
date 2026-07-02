@@ -1,7 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Square, Columns2, ChevronDown } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
+import { IoSquareOutline } from 'react-icons/io5';
+import { BsWindowSplit } from 'react-icons/bs';
 import { useTradeStore } from '../../store/useTradeStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
 import { useOutsideClose } from '../../hooks/useOutsideClose';
@@ -17,7 +19,11 @@ import { useOutsideClose } from '../../hooks/useOutsideClose';
  * workspace profile is INTRADAY or FNO. In Swing / Investor it returns null
  * (hidden).
  */
-export default function SplitViewToggle() {
+export interface SplitViewToggleProps {
+  noText?: boolean;
+}
+
+export default function SplitViewToggle({ noText = false }: SplitViewToggleProps) {
   const activeProfile = useTradeStore((s) => s.activeProfile);
   const splitView = useChartUIStore((s) => s.splitView);
   const setSplitView = useChartUIStore((s) => s.setSplitView);
@@ -29,27 +35,40 @@ export default function SplitViewToggle() {
     return null;
   }
 
-  const CurrentIcon = splitView ? Columns2 : Square;
+  const CurrentIcon = splitView ? BsWindowSplit : IoSquareOutline;
 
   return (
-    <div className="relative h-full" ref={ref} role="group" aria-label="Chart layout">
+    <div className="relative flex items-center justify-center" ref={ref} role="group" aria-label="Chart layout">
       <button
         type="button"
         id="split-view-dropdown-trigger"
         onClick={() => setIsOpen(!isOpen)}
-        className={`flex h-full items-center gap-1 px-2.5 text-[11px] font-semibold transition-all border-r border-border-default ${
-          isOpen
-            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-            : 'bg-surface text-text-secondary hover:bg-elevated hover:text-text-primary'
-        }`}
+        title={noText ? `Layout: ${splitView ? 'Split' : 'Single'}` : undefined}
+        className={
+          noText
+            ? `flex h-7 w-7 items-center justify-center rounded-sm transition-all ${
+                isOpen
+                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                  : 'bg-transparent text-text-secondary hover:bg-elevated hover:text-text-primary'
+              }`
+            : `flex h-full items-center gap-1 px-2.5 text-[11px] font-semibold transition-all border-r border-border-default ${
+                isOpen
+                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                  : 'bg-surface text-text-secondary hover:bg-elevated hover:text-text-primary'
+              }`
+        }
       >
-        <CurrentIcon size={11} className={isOpen ? 'text-emerald-600 dark:text-emerald-400' : 'text-text-muted'} />
-        <span>{splitView ? 'Split' : 'Single'}</span>
-        <ChevronDown size={11} className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+        <CurrentIcon size={noText ? 18 : 11} className={isOpen ? 'text-emerald-600 dark:text-emerald-400' : 'text-text-muted'} />
+        {!noText && <span>{splitView ? 'Split' : 'Single'}</span>}
+        {!noText && <ChevronDown size={11} className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />}
       </button>
 
       {/* Dropdown Options (always rendered in DOM for unit test compatibility, hidden via class when closed) */}
-      <div className={`absolute right-0 top-full z-50 mt-px w-32 rounded-none border border-border-default bg-surface/95 p-1 shadow-2xl backdrop-blur-xl ${isOpen ? 'block' : 'hidden'}`}>
+      <div className={`absolute right-0 z-50 mt-px w-32 rounded-none border border-border-default bg-surface/95 p-1 shadow-2xl backdrop-blur-xl ${
+        isOpen ? 'block' : 'hidden'
+      } ${
+        noText ? 'top-[32px]' : 'top-full'
+      }`}>
         <button
           key="single"
           type="button"
@@ -65,8 +84,8 @@ export default function SplitViewToggle() {
               : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
           }`}
         >
-          <Square
-            size={11}
+          <IoSquareOutline
+            size={16}
             className={!splitView ? 'text-emerald-600 dark:text-emerald-400' : 'text-text-muted'}
           />
           <span>Single</span>
@@ -86,8 +105,8 @@ export default function SplitViewToggle() {
               : 'text-text-secondary hover:bg-elevated hover:text-text-primary'
           }`}
         >
-          <Columns2
-            size={11}
+          <BsWindowSplit
+            size={16}
             className={splitView ? 'text-emerald-600 dark:text-emerald-400' : 'text-text-muted'}
           />
           <span>Split</span>
