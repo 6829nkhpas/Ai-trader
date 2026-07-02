@@ -35,13 +35,16 @@ const NUM_RUNS = 200;
 function assertValidViewState(state: FnoViewState): void {
   expect(state).not.toBeNull();
   expect(typeof state).toBe('object');
-  expect(['ready', 'partial', 'unavailable']).toContain(state.kind);
+  expect(['ready', 'partial', 'unavailable', 'service-error']).toContain(state.kind);
 
   if (state.kind === 'unavailable') {
     // A non-empty human-readable reason is mandatory; lastSnapshotTs is finite-or-null.
     expect(typeof state.reason).toBe('string');
     expect(state.reason.length).toBeGreaterThan(0);
     expect(state.lastSnapshotTs === null || Number.isFinite(state.lastSnapshotTs)).toBe(true);
+  } else if (state.kind === 'service-error') {
+    expect(typeof state.detail).toBe('string');
+    expect(state.detail.length).toBeGreaterThan(0);
   } else {
     // ready | partial: the structurally-required render fields must be present.
     expect(state.oi).toBeDefined();

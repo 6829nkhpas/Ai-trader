@@ -320,7 +320,7 @@ export function SwingConfluencePanel() {
                 <div>
                   <p className="text-[11px] text-text-muted font-medium leading-snug">Awaiting Market Anomalies...</p>
                   <p className="text-[9px] text-text-muted/50 mt-1 leading-snug">
-                    Insights appear when a ≥2% price swing<br />triggers the DeepSeek AI engine
+                    Insights appear when a ≥2% price swing<br />triggers the AI engine
                   </p>
                 </div>
               </div>
