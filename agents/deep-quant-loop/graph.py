@@ -416,8 +416,21 @@ Your `setup_validation` is the defensibility record for the trade and MUST expli
 Always include the multi-timeframe bias, the key S/R levels used, the volatility (ATR) basis for the stop, and the Risk:Reward ratio in your setup_validation.
 </setup_validation_disclosure>
 
+<opportunity_tier_disclosure>
+You are NOT limited to a binary "A+ or wait" policy. Take the BEST AVAILABLE setup at appropriate size, along a tiered opportunity ladder:
+- a_plus         : a pristine, full-confluence setup with a defensible entry/stop/target triple and multiple aligned confluence signals and NO misalignment — full size.
+- b_continuation : a solid trend-continuation setup with a defensible triple and moderate confluence — reduced size.
+- scalp          : a smaller, lower-confluence but still defensible setup — small size.
+- stand_aside    : nothing defensible enough for even a scalp — take no trade, but still state your Best_Current_Read (bias, key levels, and WHY you are standing aside).
+When you commit a directional trade, NAME the tier you believe it is in your setup_validation (e.g. "Tier: b_continuation"). The size is scaled by tier automatically; naming it does not change the Trade_Validator, which applies its hard risk rules (stop >= 1.5x ATR, R:R >= 1:2) IDENTICALLY at every tier — a lower tier is smaller, never looser.
+
+BOUNDED HUNT (enforced structurally — you cannot escape it): the hunt is bounded by a Watch_Cap (max watch cycles per session) and a Session_Budget (turns / wall-clock). Each watch registration AND each invalidation counts toward the Watch_Cap. When a bound is reached the system commits a terminal stand-aside decision on your behalf, so do NOT rely on watching forever — prefer taking the best available tiered setup over re-arming indefinitely.
+
+INVALIDATION POST-MORTEM: if you are resumed with an INVALIDATION notice, the setup was proven wrong. Do NOT blindly re-arm the SAME thesis (same symbol / timeframe / direction / level) — the system will REJECT an unchanged re-arm. State a brief post-mortem (what the invalidation tells you), then either change the structure / timeframe / tier, or stand aside. A genuinely different re-arm is allowed and its invalidation level is widened to a volatility floor so a noise-level stop does not immediately re-trip.
+</opportunity_tier_disclosure>
+
 <communication_rules>
-THINK OUT LOUD. Stream your internal monologue. 
+THINK OUT LOUD. Stream your internal monologue.
 Example: "The 5m chart shows a breakout, but my self-verification shows the 1H trend is bearish and R:R is weak. I am scrapping this. I will analyze the 15m chart to find a safer short entry..."
 </communication_rules>
 
@@ -453,6 +466,7 @@ Your job is to verify this trade using the EXACT same <self_verification_protoco
 2g. Consult `get_options_analytics` for the symbol while verifying. If the user-proposed trade is a directional (BUY/SELL) trade that is `misaligned` with options positioning (for example a BUY into a heavy call OI-wall just overhead, against max-pain pinning, or against a bearish options bias), you MUST include an explicit warning statement in your verification output that the proposed trade fights the prevailing options positioning (state the PCR, the max-pain level, the nearest OI walls, the options_bias_state, and the alignment). If options context is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because options positioning could not be computed.
 3. Do not invent red flags if the trade is genuinely an A+ setup. If it fits the protocol, approve it and defend it.
 4. If it fails the protocol, explain exactly why, and suggest a better entry using `watch_price_condition`.
+5. TIER THE PROPOSED TRADE: state which opportunity tier the user's trade belongs to (a_plus / b_continuation / scalp) or that it does not clear even a scalp (stand aside). The tier scales size only — the Trade_Validator's hard risk rules (stop >= 1.5x ATR, R:R >= 1:2) apply identically at every tier, so a weaker tier is smaller, never looser. If you recommend waiting, remember any watch is bounded by the Watch_Cap / Session_Budget and an unchanged re-arm after an invalidation is rejected — recommend a materially different level or a stand-aside, not a blind re-arm.
 
 CRITICAL: You must execute at least one tool call (e.g., `get_multi_tf_trend`) on your very first turn. Do not output text reasoning without calling a tool in the same turn.
 
@@ -2743,7 +2757,21 @@ def call_model(state: AgentState):
     if state.get("session_started_at") is None:
         update["session_started_at"] = time.time()
     if any(c.name == "watch_price_condition" for c in ok_calls):
-        update["watch_cycles"] = int(state.get("watch_cycles") or 0) + 1
+        # A NEW or CHANGED watch registration is a fresh Watch_Cycle. A pure
+        # continuation re-arm of the SAME thesis (identical symbol / timeframe /
+        # direction / level as the currently-armed watch — e.g. after a heartbeat
+        # decides to keep waiting) is NOT counted as a fresh cycle (R6.1), so a
+        # heartbeat-driven continuation does not burn the Watch_Cap.
+        proposed_watch = next(
+            (c.args for c in ok_calls if c.name == "watch_price_condition"), {}
+        ) or {}
+        prior_watch = _latest_watch_args(messages)
+        is_continuation = bool(prior_watch) and (
+            opportunity.thesis_fingerprint(prior_watch)
+            == opportunity.thesis_fingerprint(proposed_watch)
+        )
+        if not is_continuation:
+            update["watch_cycles"] = int(state.get("watch_cycles") or 0) + 1
 
     # Persist the devil's-advocate stance into the verification reasoning, ordered
     # BEFORE the model's verdict response (it is a plain AIMessage with no tool
@@ -2916,12 +2944,13 @@ def tool_node(state: AgentState):
     # above forces a strategic pivot, count the invalidation toward the Watch_Cap
     # (R4.4), and record the classified resume kind for the cheap Delta_Recheck.
     for m in out_messages:
-        if (
+        if not (
             _is_tool_message(m)
             and getattr(m, "name", None) == "watch_price_condition"
             and isinstance(getattr(m, "content", None), str)
-            and m.content.startswith("Setup INVALIDATED")
         ):
+            continue
+        if m.content.startswith("Setup INVALIDATED"):
             invalidated_args = _latest_watch_args(state["messages"])
             update["postmortem_pending"] = True
             update["prior_thesis"] = opportunity.thesis_fingerprint(invalidated_args)
@@ -2930,6 +2959,17 @@ def tool_node(state: AgentState):
             update["watch_cycles"] = int(state.get("watch_cycles") or 0) + 1
             update["last_resume_kind"] = opportunity.RESUME_INVALIDATION
             print("[Deep Quant Tools] Invalidation resume -> post-mortem armed (Watch_Cycle counted).")
+            break
+        if m.content.startswith("Heartbeat check"):
+            # A bounded mid-wait pulse (R5.2): charge one heartbeat against the
+            # ceiling + the Session_Budget via the pure accountant, and record the
+            # resume kind for the cheap Delta_Recheck. It does NOT count toward the
+            # Watch_Cap (it is not a new watch registration).
+            account = opportunity.account_heartbeat(state, _OPPORTUNITY_CFG)
+            update["heartbeat_count"] = account.heartbeat_count
+            update["session_turns"] = account.session_turns
+            update["last_resume_kind"] = opportunity.RESUME_HEARTBEAT
+            print(f"[Deep Quant Tools] Heartbeat resume (accepted={account.accepted}, count={account.heartbeat_count}).")
             break
 
     # ── Resolve gated Research_Phase declare_trade calls (R2.1) ──────────────

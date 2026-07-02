@@ -346,6 +346,15 @@ class SessionRecord:
     # Ordered funnel path (Requirement 2.4)
     funnel: List[FunnelEvent]            # FunnelEvents in seq order
 
+    # ── Adaptive Opportunity Engine measurement (adaptive-opportunity-engine R9.3)
+    # Additive, defaulted fields persisted to the forward-compatible columns
+    # (``opportunity_tier`` / ``session_budget``) and the generic ``extra`` JSON bag
+    # (which carries the termination reason + heartbeat usage). All None for a run
+    # without the engine — never fabricated (R3.4).
+    opportunity_tier: Optional[str] = None
+    session_budget: Optional[float] = None
+    extra: Optional[Dict[str, Any]] = None
+
 
 @dataclass
 class SessionState:
@@ -401,6 +410,12 @@ class SessionState:
     # Suspend-interval bookkeeping: wall-clock starts of open watch cycles (R3.2).
     watch_starts: List[float] = field(default_factory=list)
     suspended_s: Optional[float] = None
+
+    # ── Adaptive Opportunity Engine measurement (adaptive-opportunity-engine R9.3)
+    # Captured from the committed DECISION payload. All Optional and None by default
+    # so a run without the engine records NULLs (never fabricated, R3.4).
+    opportunity_tier: Optional[str] = None                 # committed tier (a_plus | ... | stand_aside)
+    opportunity_termination_reason: Optional[str] = None   # watch-cap-reached | session-budget-exhausted
 
 
 # ── Observed SSE event vocabulary (read-only) ─────────────────────────────────
@@ -754,6 +769,23 @@ def _int_or_zero(value: Any) -> int:
     return 0
 
 
+def _opportunity_extra(state) -> Optional[Dict[str, Any]]:
+    """Assemble the Adaptive Opportunity Engine ``extra`` bag, or ``None`` (R9.3).
+
+    Carries the bounded-hunt termination reason and heartbeat usage when observed;
+    returns ``None`` when the run recorded neither (so a non-engine run persists a
+    NULL ``extra`` rather than an empty object). Pure and total — never raises.
+    """
+    extra: Dict[str, Any] = {}
+    reason = getattr(state, "opportunity_termination_reason", None)
+    if isinstance(reason, str) and reason:
+        extra["termination_reason"] = reason
+    heartbeats = getattr(state, "heartbeats_used", None)
+    if isinstance(heartbeats, int) and not isinstance(heartbeats, bool) and heartbeats > 0:
+        extra["heartbeats_used"] = heartbeats
+    return extra or None
+
+
 def finalize_session(state: SessionState) -> SessionRecord:
     """Fold an accumulated ``SessionState`` into an immutable ``SessionRecord``.
 
@@ -889,6 +921,13 @@ def finalize_session(state: SessionState) -> SessionRecord:
         suspended_s=suspended_s,
         # Ordered funnel path — a new list preserving seq order (Requirement 2.4)
         funnel=funnel_list,
+        # ── Adaptive Opportunity Engine measurement (R9.3) ────────────────────
+        # Persist the committed tier to the forward-compat ``opportunity_tier``
+        # column, and the bounded-hunt termination reason + heartbeat usage to the
+        # generic ``extra`` JSON bag. All None/absent for a run without the engine.
+        opportunity_tier=getattr(state, "opportunity_tier", None),
+        session_budget=None,
+        extra=_opportunity_extra(state),
     )
 
 
@@ -2472,6 +2511,21 @@ class SessionWriter:
                 state.ended_at = float(buf.last_ts)
             else:
                 state.ended_at = time.time()
+
+            # ── Adaptive Opportunity Engine measurement (R9.3) ────────────────
+            # Best-effort capture of the committed tier + the bounded-hunt
+            # termination reason from the DECISION payload. Wrapped so telemetry
+            # can NEVER break the stream (R10.3); a missing field stays None.
+            try:
+                if isinstance(decision, dict):
+                    tier = decision.get("opportunity_tier")
+                    if isinstance(tier, str) and tier:
+                        state.opportunity_tier = tier
+                    reason = decision.get("reason")
+                    if reason in ("watch-cap-reached", "session-budget-exhausted"):
+                        state.opportunity_termination_reason = reason
+            except Exception as _opp_err:  # noqa: BLE001
+                print(f"[Telemetry] WARN: opportunity capture failed: {_opp_err}")
 
         # Fold into an immutable record (pure) and persist (guarded). A still-open
         # Session is persisted as an OPEN record so aggregation can later classify

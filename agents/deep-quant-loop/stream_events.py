@@ -74,6 +74,10 @@ TOOL_CALL_RESULT = "TOOL_CALL_RESULT"
 TOOL_CALL_END = "TOOL_CALL_END"
 VERIFICATION_STEP = "VERIFICATION_STEP"
 DECISION = "DECISION"
+# The interim, non-committal Best_Current_Read surfaced on a stand_aside / HOLD
+# (and, when heartbeat is enabled, during the wait) — adaptive-opportunity-engine
+# R8.1/R8.2/R8.4. It is an assessment, NEVER a committed trade.
+BEST_CURRENT_READ = "BEST_CURRENT_READ"
 
 # Terminal outcomes of a run (the ``RUN_FINISHED`` status set, R17.2/R17.6).
 RUN_COMPLETED = "completed"
@@ -945,7 +949,7 @@ def build_decision_event(decision: Any) -> Optional[dict]:
     """
     if not isinstance(decision, dict):
         return None
-    return {
+    payload = {
         "action": decision.get("action"),
         "conviction_score": decision.get("conviction_score"),
         "rationale": decision.get("setup_validation") or decision.get("reason"),
@@ -953,6 +957,16 @@ def build_decision_event(decision: Any) -> Optional[dict]:
         # from the stream (in addition to the rationale).
         "execution_plan": decision.get("execution_plan"),
     }
+    # Carry the Adaptive Opportunity Engine tier + size factor when present so the
+    # UI can badge the tier and the telemetry tee can record it (R9.2, R9.3). A
+    # decision from a run without the engine simply omits these (kept as null-free
+    # additions only when actually stamped).
+    tier = decision.get("opportunity_tier")
+    if isinstance(tier, str) and tier:
+        payload["opportunity_tier"] = tier
+    if "size_factor" in decision:
+        payload["size_factor"] = decision.get("size_factor")
+    return payload
 
 
 # ── Run-lifecycle event builders (R17.1, R17.2, R17.5, R17.6) ────────────────
@@ -1028,14 +1042,41 @@ def message_events(msg: Any) -> Iterator[Tuple[str, dict]]:
             yield TOOL_CALL_START, build_tool_call_start_event(tc.get("name"), tc.get("args"))
 
 
+def build_best_current_read_event(read: Any) -> Optional[dict]:
+    """Build a ``BEST_CURRENT_READ`` payload (adaptive-opportunity-engine R8).
+
+    The interim, non-committal assessment surfaced on a stand_aside / HOLD: the
+    current directional ``bias``, the reference ``levels``, and ``why_standing_aside``.
+    Returns ``None`` when ``read`` is not a structured read dict. It is NEVER a
+    committed trade — it carries no action / conviction / execution plan (R8.3), so
+    only the three assessment fields are surfaced regardless of any extra keys.
+    """
+    if not isinstance(read, dict):
+        return None
+    levels = read.get("levels")
+    return {
+        "bias": read.get("bias"),
+        "levels": levels if isinstance(levels, dict) else {},
+        "why_standing_aside": read.get("why_standing_aside"),
+    }
+
+
 def decision_events(decision: Any) -> Iterator[Tuple[str, dict]]:
-    """Yield ``VERIFICATION_STEP`` tuples then the ``DECISION`` tuple (R16.6, R16.7).
+    """Yield ``VERIFICATION_STEP`` tuples, then ``BEST_CURRENT_READ`` on a
+    stand-aside, then the ``DECISION`` tuple (R16.6, R16.7, R8.1/R8.4).
 
     Verification steps precede the decision so the observed order reflects the
-    self-verification protocol running before the trade is finalized.
+    self-verification protocol running before the trade is finalized. A
+    stand_aside / HOLD decision carrying a ``best_current_read`` surfaces it (as an
+    assessment, ordered before the DECISION) so the trader gets an actionable read
+    even when no trade is taken.
     """
     for step in build_verification_steps(decision):
         yield VERIFICATION_STEP, step
+    if isinstance(decision, dict):
+        read_event = build_best_current_read_event(decision.get("best_current_read"))
+        if read_event is not None:
+            yield BEST_CURRENT_READ, read_event
     decision_event = build_decision_event(decision)
     if decision_event is not None:
         yield DECISION, decision_event
