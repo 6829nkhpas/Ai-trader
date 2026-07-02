@@ -80,19 +80,39 @@ const isTauri = () =>
 // ── Instrument Token Cache ────────────────────────────────────────────────
 const tokenCache = new Map<string, number>();
 
-async function resolveInstrumentToken(symbol: string): Promise<number | null> {
-  const cached = tokenCache.get(symbol.toUpperCase());
+async function resolveInstrumentToken(symbol: string, exchange: string = 'NSE'): Promise<number | null> {
+  const cacheKey = `${exchange}:${symbol}`.toUpperCase();
+  const cached = tokenCache.get(cacheKey);
   if (cached) return cached;
   try {
-    const res = await fetch(`/kite/quote?i=NSE:${encodeURIComponent(symbol)}`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    const quotes = data.quotes as { symbol: string; instrument_token: number }[] | undefined;
-    if (!quotes || quotes.length === 0) return null;
-    const match = quotes.find((q) => q.symbol.toUpperCase() === symbol.toUpperCase());
-    const token = match?.instrument_token ?? quotes[0].instrument_token ?? null;
-    if (token) tokenCache.set(symbol.toUpperCase(), token);
-    return token;
+    const res = await fetch(`/kite/quote?i=${exchange}:${encodeURIComponent(symbol)}`);
+    if (res.ok) {
+      const data = await res.json();
+      const quotes = data.quotes as { symbol: string; instrument_token: number }[] | undefined;
+      if (quotes && quotes.length > 0) {
+        const match = quotes.find((q) => q.symbol.toUpperCase() === symbol.toUpperCase());
+        const token = match?.instrument_token ?? quotes[0].instrument_token ?? null;
+        if (token) {
+          tokenCache.set(cacheKey, token);
+          return token;
+        }
+      }
+    }
+
+    const resInst = await fetch(`/kite/instruments?q=${encodeURIComponent(symbol)}&exchange=${encodeURIComponent(exchange)}`);
+    if (resInst.ok) {
+      const data = await resInst.json();
+      const results = data.results as { tradingsymbol: string; instrument_token: number }[] | undefined;
+      if (results && results.length > 0) {
+        const match = results.find((r) => r.tradingsymbol.toUpperCase() === symbol.toUpperCase());
+        const token = match?.instrument_token ?? results[0].instrument_token ?? null;
+        if (token) {
+          tokenCache.set(cacheKey, token);
+          return token;
+        }
+      }
+    }
+    return null;
   } catch {
     return null;
   }
@@ -114,6 +134,7 @@ async function fetchKiteBatch(
   interval: string,
   from: Date,
   to: Date,
+  exchange: string = 'NSE',
 ): Promise<Bar[]> {
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
   const dateParams = `&from=${fmt(from)}&to=${fmt(to)}`;
@@ -141,7 +162,7 @@ async function fetchKiteBatch(
     }
 
     // Attempt 2: instrument_token
-    const token = await resolveInstrumentToken(symbol);
+    const token = await resolveInstrumentToken(symbol, exchange);
     if (!token) return [];
     const tokenUrl = `/kite/historical?instrument_token=${token}&interval=${interval}${dateParams}`;
     const tokenResponse = await fetch(tokenUrl);
@@ -288,7 +309,7 @@ export function createDatafeed(): IBasicDatafeed {
 
     searchSymbols(
       userInput: string,
-      _exchange: string,
+      exchange: string,
       _symbolType: string,
       onResult: SearchSymbolsCallback,
     ): void {
@@ -297,21 +318,24 @@ export function createDatafeed(): IBasicDatafeed {
         return;
       }
 
-      fetch(`/kite/quote?i=NSE:${encodeURIComponent(userInput)}`)
-        .then((res) => (res.ok ? res.json() : { quotes: [] }))
+      const ex = exchange || 'NSE';
+      fetch(`/kite/instruments?q=${encodeURIComponent(userInput)}&exchange=${encodeURIComponent(ex)}`)
+        .then((res) => (res.ok ? res.json() : { results: [] }))
         .then((data) => {
-          const quotes = (data.quotes || []) as {
-            symbol: string;
-            instrument_token: number;
+          const results = (data.results || []) as {
+            tradingsymbol: string;
+            name: string;
+            exchange: string;
+            instrument_type: string;
           }[];
           onResult(
-            quotes.map((q) => ({
-              symbol: q.symbol,
-              full_name: `NSE:${q.symbol}`,
-              description: q.symbol,
-              exchange: 'NSE',
-              ticker: `NSE:${q.symbol}`,
-              type: 'stock',
+            results.map((inst) => ({
+              symbol: inst.tradingsymbol,
+              full_name: `${inst.exchange}:${inst.tradingsymbol}`,
+              description: inst.name,
+              exchange: inst.exchange,
+              ticker: `${inst.exchange}:${inst.tradingsymbol}`,
+              type: inst.instrument_type === 'INDEX' ? 'index' : 'stock',
             })),
           );
         })
@@ -327,18 +351,21 @@ export function createDatafeed(): IBasicDatafeed {
       const cleanSymbol = symbolName.includes(':')
         ? symbolName.split(':')[1]
         : symbolName;
+      const exchange = symbolName.includes(':')
+        ? symbolName.split(':')[0]
+        : 'NSE';
 
       setTimeout(() => {
         const symbolInfo: LibrarySymbolInfo = {
           name: cleanSymbol,
-          full_name: `NSE:${cleanSymbol}`,
-          ticker: `NSE:${cleanSymbol}`,
+          full_name: `${exchange}:${cleanSymbol}`,
+          ticker: `${exchange}:${cleanSymbol}`,
           description: cleanSymbol,
-          type: 'stock',
+          type: exchange === 'INDICES' ? 'index' : 'stock',
           session: '0915-1530',
           timezone: 'Asia/Kolkata',
-          exchange: 'NSE',
-          listed_exchange: 'NSE',
+          exchange: exchange,
+          listed_exchange: exchange,
           format: 'price',
           minmov: 1,
           pricescale: 100, // 2 decimal places (₹XX.XX)
@@ -356,7 +383,7 @@ export function createDatafeed(): IBasicDatafeed {
         };
 
         // Verify symbol exists via quote API
-        fetch(`/kite/quote?i=NSE:${encodeURIComponent(cleanSymbol)}`)
+        fetch(`/kite/quote?i=${exchange}:${encodeURIComponent(cleanSymbol)}`)
           .then((res) => {
             if (!res.ok) {
               // Still resolve — the symbol might work with historical API
@@ -382,6 +409,7 @@ export function createDatafeed(): IBasicDatafeed {
       onError: ErrorCallback,
     ): Promise<void> {
       const symbol = symbolInfo.name;
+      const exchange = symbolInfo.exchange || 'NSE';
       const kiteInterval = RESOLUTION_TO_KITE_INTERVAL[resolution] ?? 'minute';
       const timeframe = RESOLUTION_TO_TIMEFRAME[resolution] ?? '1m';
       const isDailyOrAbove = kiteInterval === 'day';
@@ -413,9 +441,9 @@ export function createDatafeed(): IBasicDatafeed {
             const clampedFrom = daysDiff > KITE_INTRADAY_MAX_DAYS
               ? new Date(to.getTime() - KITE_INTRADAY_MAX_DAYS * 24 * 60 * 60 * 1000)
               : from;
-            bars = await fetchKiteBatch(symbol, kiteInterval, clampedFrom, to);
+            bars = await fetchKiteBatch(symbol, kiteInterval, clampedFrom, to, exchange);
           } else {
-            bars = await fetchKiteBatch(symbol, kiteInterval, from, to);
+            bars = await fetchKiteBatch(symbol, kiteInterval, from, to, exchange);
           }
         }
 
