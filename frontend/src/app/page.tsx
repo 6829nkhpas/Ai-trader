@@ -28,6 +28,7 @@ import type { DataRange } from '../utils/chartTypes';
 import { useAuthStore } from '../store/useAuthStore';
 import AuthOverlay from '../components/auth/AuthOverlay';
 import BrokerConnectCard from '../components/broker/BrokerConnectCard';
+import { useTauriLiveData } from '../hooks/useTauriLiveData';
 
 // ── Sidebar labels per profile ──────────────────────────────────────────
 type SidebarTab = 'profile' | 'deepquant';
@@ -187,17 +188,29 @@ export default function Home() {
     fetchProfile();
   }, [connectWebSocket, fetchProfile]);
 
-  useEffect(() => {
-    connectAlphaWebSocket('ws://127.0.0.1:8081');
-    connectPredictiveWebSocket('ws://127.0.0.1:8082');
-    connectInsightWebSocket('ws://127.0.0.1:8083');
-    connectOrderFlowWebSocket('ws://127.0.0.1:8089');
-  }, [connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, connectOrderFlowWebSocket]);
-
   // Derive symbol early so hooks below can reference it unconditionally.
   // selectedSymbol (watchlist click) takes priority over the AI decision symbol.
   const latestDecision = activeDecision ?? liveDecisions[liveDecisions.length - 1] ?? null;
   const symbol = selectedSymbol || latestDecision?.symbol || 'RELIANCE';
+
+  // ── Tauri IPC live data binding ─────────────────────────────────────
+  // In Tauri mode, the Rust backend (live_bridges.rs) connects to the
+  // OHLC/Predictive/Insight WebSocket servers and emits IPC events.
+  // This hook listens for those events and populates the Zustand store.
+  const isTauriEnv = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+  useTauriLiveData(symbol);
+
+  // ── Browser WebSocket fallback (non-Tauri only) ─────────────────────
+  // In Tauri builds, live_bridges.rs already bridges these WebSocket
+  // servers → IPC events, so we skip the redundant JS WebSocket
+  // connections to avoid duplicate data and unnecessary reconnect noise.
+  useEffect(() => {
+    if (isTauriEnv) return; // Tauri IPC path handles live data
+    connectAlphaWebSocket('ws://127.0.0.1:8081');
+    connectPredictiveWebSocket('ws://127.0.0.1:8082');
+    connectInsightWebSocket('ws://127.0.0.1:8083');
+    connectOrderFlowWebSocket('ws://127.0.0.1:8089');
+  }, [isTauriEnv, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, connectOrderFlowWebSocket]);
 
   // ── Clear stale quant data on symbol switch ───────────────────────────
   // When the user clicks a new symbol, immediately load cached consensus

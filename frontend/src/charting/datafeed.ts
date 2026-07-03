@@ -252,33 +252,65 @@ function startLiveSubscription(
 ): void {
   const symbolUpper = symbol.toUpperCase();
   let lastBarTime = 0;
+  let tickCount = 0;
 
+  const forwardCandle = (candle: { symbol: string; start_timestamp_ms: number; open: number; high: number; low: number; close: number; volume?: number }) => {
+    if (candle.symbol.toUpperCase() !== symbolUpper) return;
+    const barTimeMs = candle.start_timestamp_ms;
+    if (barTimeMs >= lastBarTime) {
+      lastBarTime = barTimeMs;
+      tickCount++;
+      if (tickCount <= 5) {
+        console.log(`[Datafeed] Live tick #${tickCount} for ${symbolUpper}: time=${barTimeMs} O=${candle.open} H=${candle.high} L=${candle.low} C=${candle.close}`);
+      }
+      onTick({
+        time: barTimeMs,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume ?? 0,
+      });
+    }
+  };
+
+  // ── Path 1: Zustand store subscription ────────────────────────────────
+  // Fires whenever ohlcCandles changes (works for both browser WS and Tauri IPC paths).
   const unsub = useTradeStore.subscribe((state) => {
     const candles = state.ohlcCandles;
     const matching = candles.filter(
       (c) => c.symbol.toUpperCase() === symbolUpper,
     );
     if (matching.length === 0) return;
-
-    const latest = matching[matching.length - 1];
-    const barTimeMs = latest.start_timestamp_ms;
-
-    // Only forward if this is a new or updated bar
-    if (barTimeMs >= lastBarTime) {
-      lastBarTime = barTimeMs;
-      onTick({
-        time: barTimeMs,
-        open: latest.open,
-        high: latest.high,
-        low: latest.low,
-        close: latest.close,
-        volume: latest.volume ?? 0,
-      });
-    }
+    forwardCandle(matching[matching.length - 1]);
   });
 
+  // ── Path 2: Direct Tauri IPC listener (lower latency) ─────────────────
+  // Listens for ohlc-tick events directly from the Rust backend, bypassing
+  // the Zustand store roundtrip for faster chart updates.
+  let unlistenTauri: (() => void) | null = null;
+  if (isTauri()) {
+    (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        const unlisten = await listen<{ symbol: string; start_timestamp_ms: number; open: number; high: number; low: number; close: number; volume?: number }>('ohlc-tick', (event) => {
+          forwardCandle(event.payload);
+        });
+        unlistenTauri = unlisten;
+      } catch {
+        // Not in Tauri context — Zustand path will handle it
+      }
+    })();
+  }
+
+  console.log(`[Datafeed] subscribeBars: ${symbolUpper} (resolution=${resolution}, guid=${listenerGuid.slice(0, 8)}…, tauri=${isTauri()})`);
+
   activeSubscriptions.set(listenerGuid, {
-    symbol, resolution, onTick, unsubscribe: unsub,
+    symbol, resolution, onTick,
+    unsubscribe: () => {
+      unsub();
+      unlistenTauri?.();
+    },
   });
 }
 
