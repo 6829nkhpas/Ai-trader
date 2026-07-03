@@ -452,19 +452,30 @@ export function createDatafeed(): IBasicDatafeed {
       try {
         let bars: Bar[] = [];
 
-        // ── Tauri IPC path (fastest) ──────────────────────────────────
+        // ── Tauri IPC path (fastest, authoritative) ───────────────────
         if (isTauri()) {
-          bars = await fetchTauriBars(symbol, timeframe);
-          if (bars.length > 0) {
+          const allTauriBars = await fetchTauriBars(symbol, timeframe);
+          if (allTauriBars.length > 0) {
             // Filter to requested range
             const fromMs = periodParams.from * 1000;
             const toMs = periodParams.to * 1000;
-            bars = bars.filter((b) => b.time >= fromMs && b.time <= toMs);
+            bars = allTauriBars.filter((b) => b.time >= fromMs && b.time <= toMs);
+
+            // If filtered range is empty but we DO have data, the user
+            // is scrolling beyond our data range — signal noData so TV
+            // stops requesting further scroll-back. Do NOT fall through
+            // to the Kite REST fallback (which causes empty-symbol bugs
+            // and weekend-date requests).
+            if (bars.length === 0) {
+              console.log(`[Datafeed] getBars: Tauri has ${allTauriBars.length} bars but none in range ${from.toISOString().slice(0,10)} → ${to.toISOString().slice(0,10)} — signalling noData`);
+              onResult([], { noData: true });
+              return;
+            }
           }
         }
 
-        // ── Kite Historical API (browser / fallback) ──────────────────
-        if (bars.length === 0) {
+        // ── Kite Historical API (browser / non-Tauri fallback) ────────
+        if (bars.length === 0 && !isTauri()) {
           if (!isDailyOrAbove) {
             // Kite limits intraday to ~60 days
             const daysDiff = Math.ceil(
