@@ -1086,14 +1086,26 @@ def node_update_events(node_data: Any) -> Iterator[Tuple[str, dict]]:
     """Expand one LangGraph node update into ordered event tuples.
 
     Messages are surfaced first (reasoning + tool markers, in message order),
-    then any committed/forced ``decision`` surfaces its ``VERIFICATION_STEP`` and
-    ``DECISION`` events (R16.6, R16.7). Non-dict updates yield nothing.
+    then a standalone interim ``best_current_read`` (surfaced on a heartbeat pulse
+    while the agent keeps waiting — Requirement 8.2), then any committed/forced
+    ``decision`` surfaces its ``VERIFICATION_STEP`` and ``DECISION`` events (R16.6,
+    R16.7). Non-dict updates yield nothing.
     """
     if not isinstance(node_data, dict):
         return
     for msg in node_data.get("messages") or []:
         yield from message_events(msg)
     decision = node_data.get("decision")
+    # A standalone Best_Current_Read on an update WITHOUT a committed decision is a
+    # mid-wait heartbeat read (R8.2). When a decision IS present its own
+    # ``best_current_read`` is surfaced by ``decision_events`` below, so we skip the
+    # standalone emit here to avoid a duplicate card.
+    if not decision:
+        read = node_data.get("best_current_read")
+        if read:
+            read_event = build_best_current_read_event(read)
+            if read_event is not None:
+                yield BEST_CURRENT_READ, read_event
     if decision:
         yield from decision_events(decision)
 
