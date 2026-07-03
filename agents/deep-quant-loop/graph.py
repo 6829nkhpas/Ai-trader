@@ -273,6 +273,11 @@ class AgentState(TypedDict):
     # The classified kind of the most recent resume (target | invalidation |
     # heartbeat), used to scope the cheap Delta_Recheck on resume (R6.1).
     last_resume_kind: Optional[str]
+    # The latest interim Best_Current_Read surfaced during the wait. Set on each
+    # heartbeat pulse (Requirement 8.2) so the glass box shows an updated
+    # non-committal read even when the agent keeps waiting rather than committing a
+    # stand-aside. Additive/Optional; never a committed trade.
+    best_current_read: Optional[dict]
 
 
 # Maximum number of consecutive reasoning-only turns the agent may take before
@@ -2969,6 +2974,17 @@ def tool_node(state: AgentState):
             update["heartbeat_count"] = account.heartbeat_count
             update["session_turns"] = account.session_turns
             update["last_resume_kind"] = opportunity.RESUME_HEARTBEAT
+            # Surface an UPDATED, non-committal Best_Current_Read on this pulse so
+            # the glass box shows a fresh read during the wait even when the agent
+            # keeps waiting rather than committing a stand-aside (Requirement 8.2).
+            # Built from the evidence gathered so far (no committed decision, so no
+            # execution levels). Best-effort — a read failure never breaks the loop.
+            try:
+                _hb_evidence, _ = _evidence_for_tier(state, {})
+                _hb_tier = opportunity.evaluate_tier(_hb_evidence, _OPPORTUNITY_CFG)
+                update["best_current_read"] = opportunity.best_current_read(_hb_evidence, _hb_tier)
+            except Exception as _hb_read_err:  # noqa: BLE001 - read must never break the loop
+                print(f"[Deep Quant Tools] WARN: heartbeat best_current_read failed: {_hb_read_err}")
             print(f"[Deep Quant Tools] Heartbeat resume (accepted={account.accepted}, count={account.heartbeat_count}).")
             break
 

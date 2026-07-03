@@ -113,6 +113,31 @@ def test_decision_events_emits_best_current_read_on_stand_aside():
     assert names.index(stream_events.BEST_CURRENT_READ) < names.index(stream_events.DECISION)
 
 
+# Feature: adaptive-opportunity-engine, R8.2: a heartbeat pulse (a node update with a standalone best_current_read and no decision) emits a BEST_CURRENT_READ event.
+def test_node_update_emits_heartbeat_best_current_read():
+    """Validates: Requirements 8.2, 8.4"""
+    heartbeat_update = {
+        "best_current_read": {"bias": "bullish", "levels": {"entry": 100.0},
+                              "why_standing_aside": "waiting for a pullback"},
+    }
+    names = [name for name, _payload in stream_events.node_update_events(heartbeat_update)]
+    assert names == [stream_events.BEST_CURRENT_READ]
+
+    # When a decision IS present, the read is surfaced once via the decision path
+    # (no duplicate standalone card).
+    stand_aside = {
+        "best_current_read": {"bias": "neutral", "levels": {}, "why_standing_aside": "x"},
+        "decision": {
+            "action": "HOLD",
+            "conviction_score": 0,
+            "opportunity_tier": "stand_aside",
+            "best_current_read": {"bias": "neutral", "levels": {}, "why_standing_aside": "x"},
+        },
+    }
+    names2 = [name for name, _payload in stream_events.node_update_events(stand_aside)]
+    assert names2.count(stream_events.BEST_CURRENT_READ) == 1
+
+
 # Feature: adaptive-opportunity-engine, R9.2: the DECISION event carries the committed tier for the UI / telemetry tee.
 def test_decision_event_carries_tier():
     """Validates: Requirements 9.2, 9.3"""

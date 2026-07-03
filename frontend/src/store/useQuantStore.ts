@@ -727,7 +727,11 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
           const resumeStep = {
             id: `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             type: 'message',
-            content: '\n---\n### Condition Triggered — Resuming Analysis\nThe price condition has been met. Continuing with fresh market data...\n---\n',
+            // The run may resume on a target reach, an invalidation, OR a heartbeat
+            // pulse — RUN_STARTED does not carry which. Stay neutral rather than
+            // asserting the target was met; the following events (invalidation
+            // notice / Best_Current_Read / decision) state exactly what happened.
+            content: '\n---\n### Resuming Analysis — Fresh Market Data\nThe watcher woke this run. Re-checking the setup with the latest data...\n---\n',
             timestamp: Date.now()
           };
           set((state) => ({
@@ -769,6 +773,39 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
             reasoningSteps: [...state.reasoningSteps, step]
           }));
         }
+        break;
+      }
+      // Interim Best_Current_Read (Adaptive Opportunity Engine) — a non-committal
+      // read surfaced on a stand-aside HOLD and, when the Heartbeat_Monitor is
+      // enabled, on each mid-wait heartbeat pulse. Rendered inline so a hunt that
+      // takes no trade (or is still waiting) still shows the current bias, the key
+      // levels, and why it is standing aside — instead of the box appearing frozen.
+      case 'BEST_CURRENT_READ': {
+        const bias = (data?.bias as string) || 'neutral';
+        const why = (data?.why_standing_aside as string) || '';
+        const levelsRaw = (data?.levels && typeof data.levels === 'object')
+          ? (data.levels as Record<string, unknown>)
+          : {};
+        const levelStr = Object.entries(levelsRaw)
+          .filter(([, v]) => typeof v === 'number' && Number.isFinite(v as number))
+          .map(([k, v]) => `${k}: ${v}`)
+          .join(' · ');
+        const lines = [
+          `**📍 Best Current Read — bias: ${bias}**`,
+          levelStr ? `Key levels: ${levelStr}` : '',
+          why ? `Read: ${why}` : '',
+        ].filter(Boolean);
+        const step = {
+          id: `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          // Rendered via the 'message' branch (like VERIFICATION_STEP / DECISION);
+          // the bold "📍 Best Current Read" header keeps it visually distinct.
+          type: 'message',
+          content: lines.join('\n'),
+          timestamp: Date.now(),
+        };
+        set((state) => ({
+          reasoningSteps: [...state.reasoningSteps, step],
+        }));
         break;
       }
       // Glass-box verification events — each surfaces one self-check the agent
