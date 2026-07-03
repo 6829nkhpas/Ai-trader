@@ -11,7 +11,9 @@ import {
   User,
   Sun,
   Moon,
+  Search,
 } from 'lucide-react';
+import SymbolSearchModal from './SymbolSearchModal';
 import { useTradeStore, TradeProfile } from '../../store/useTradeStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
@@ -54,6 +56,8 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
   const [leftPanelWidth, setLeftPanelWidth] = useState(224);
   const [isResizing, setIsResizing] = useState(false);
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [initialQuery, setInitialQuery] = useState('');
 
   const startResizing = (mouseDownEvent: React.MouseEvent) => {
     mouseDownEvent.preventDefault();
@@ -112,6 +116,40 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
     document.addEventListener('mouseup', onMouseUp);
   };
 
+  React.useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+
+      // Check if Ctrl+K, Cmd+K, or "/"
+      const isSearchShortcut = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k';
+      const isSlash = e.key === '/';
+
+      if (isSearchShortcut || isSlash) {
+        e.preventDefault();
+        setInitialQuery('');
+        setIsSearchOpen(true);
+        return;
+      }
+
+      // Start typing directly: printable character triggers (a-z, A-Z, 0-9)
+      if (!e.ctrlKey && !e.altKey && !e.metaKey && e.key.length === 1 && /[a-zA-Z0-9]/.test(e.key)) {
+        e.preventDefault();
+        setInitialQuery(e.key);
+        setIsSearchOpen(true);
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
 
   return (
     <div className="flex h-screen flex-col bg-background font-sans text-text-primary">
@@ -214,13 +252,22 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
           {leftPanelOpen && (
             <div className="flex h-8 shrink-0 items-center justify-between border-b border-border-default bg-elevated/10 px-3 select-none">
               <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted">Market Watch</span>
-              <button
-                onClick={() => setLeftPanelOpen(false)}
-                className="rounded p-0.5 text-text-muted hover:bg-elevated hover:text-text-primary transition-colors flex items-center justify-center"
-                title="Collapse left panel"
-              >
-                <span dangerouslySetInnerHTML={{ __html: SVGS.sidebarClose }} className="flex items-center justify-center" />
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setIsSearchOpen(true)}
+                  className="rounded p-0.5 text-text-muted hover:bg-elevated hover:text-text-primary transition-colors flex items-center justify-center"
+                  title="Search NSE symbol..."
+                >
+                  <Search size={16} />
+                </button>
+                <button
+                  onClick={() => setLeftPanelOpen(false)}
+                  className="rounded p-0.5 text-text-muted hover:bg-elevated hover:text-text-primary transition-colors flex items-center justify-center"
+                  title="Collapse left panel"
+                >
+                  <span dangerouslySetInnerHTML={{ __html: SVGS.sidebarClose }} className="flex items-center justify-center" />
+                </button>
+              </div>
             </div>
           )}
 
@@ -275,6 +322,16 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
 
       {/* User Profile Modal Overlay */}
       <UserProfileModal isOpen={profileOpen} onClose={() => setProfileOpen(false)} />
+
+      {/* Symbol Search Modal */}
+      <SymbolSearchModal 
+        isOpen={isSearchOpen} 
+        onClose={() => {
+          setIsSearchOpen(false);
+          setInitialQuery('');
+        }} 
+        initialQuery={initialQuery}
+      />
       {isResizing && (
         <div className="fixed inset-0 z-[9999] cursor-col-resize select-none pointer-events-auto bg-white/0" />
       )}

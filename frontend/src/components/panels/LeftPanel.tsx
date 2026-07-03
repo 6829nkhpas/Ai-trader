@@ -470,7 +470,7 @@ export default function LeftPanel() {
          ══════════════════════════════════════════════════════════════ */}
       <div className="shrink-0 border-b border-border-default">
         {/* Search */}
-        <div className="px-3 pt-2 pb-1.5">
+        <div className="hidden px-3 pt-2 pb-1.5">
           <div className="relative" ref={dropdownRef}>
             <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
             <input
