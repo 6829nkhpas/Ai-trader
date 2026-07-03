@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { PanelRightClose, PanelRightOpen, ArrowUpRight, ArrowDownRight, ChevronUp, TrendingUp, TrendingDown, Maximize2, Minimize2 } from 'lucide-react';
+import { ArrowUpRight, ArrowDownRight, ChevronUp, TrendingUp, TrendingDown, Maximize2, Minimize2 } from 'lucide-react';
+import { SVGS } from '../components/chart/toolbarIcons';
 import ChartModeToggle from '../components/chart/ChartHeader';
 import StrategySelector from '../components/chart/StrategySelector';
 import GhostLineToggle from '../components/chart/GhostLineToggle';
@@ -66,6 +67,64 @@ export default function Home() {
   const sidebarOpen = useChartUIStore((s) => s.sidebarOpen);
   const setSidebarOpen = useChartUIStore((s) => s.setSidebarOpen);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('profile');
+
+  const [rightButtonTop, setRightButtonTop] = useState(8);
+  const [isDraggingRight, setIsDraggingRight] = useState(false);
+
+  const handleRightButtonMouseDown = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startTop = rightButtonTop;
+    let dragged = false;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaY = moveEvent.clientY - startY;
+      if (Math.abs(deltaY) > 4) {
+        dragged = true;
+        setIsDraggingRight(true);
+      }
+      const newTop = Math.max(8, Math.min(window.innerHeight - 80, startTop + deltaY));
+      setRightButtonTop(newTop);
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      setIsDraggingRight(false);
+      if (!dragged) {
+        setSidebarOpen(true);
+      }
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  };
+
+  const [sidebarWidth, setSidebarWidth] = useState(300);
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+
+  const startResizingSidebar = (mouseDownEvent: React.MouseEvent) => {
+    mouseDownEvent.preventDefault();
+    setIsResizingSidebar(true);
+
+    const startWidth = sidebarWidth;
+    const startX = mouseDownEvent.clientX;
+
+    const doDrag = (mouseMoveEvent: MouseEvent) => {
+      const deltaX = mouseMoveEvent.clientX - startX;
+      const newWidth = Math.max(200, Math.min(600, startWidth - deltaX));
+      setSidebarWidth(newWidth);
+    };
+
+    const stopDrag = () => {
+      setIsResizingSidebar(false);
+      document.removeEventListener('mousemove', doDrag);
+      document.removeEventListener('mouseup', stopDrag);
+    };
+
+    document.addEventListener('mousemove', doDrag);
+    document.addEventListener('mouseup', stopDrag);
+  };
 
   // Listen for Escape key to exit fullscreen mode
   useEffect(() => {
@@ -342,10 +401,22 @@ export default function Home() {
             <div className={
               isFullscreen
                 ? "fixed inset-0 z-[150] flex flex-col bg-background p-2"
-                : `flex min-h-0 min-w-0 flex-col rounded-none bg-surface ${
+                : `relative flex min-h-0 min-w-0 flex-col rounded-none bg-surface ${
                     sidebarOpen ? 'flex-1' : 'w-full'
                   }`
             }>
+              {!isFullscreen && !sidebarOpen && (
+                <button
+                  onMouseDown={handleRightButtonMouseDown}
+                  style={{ top: `${rightButtonTop}px` }}
+                  className={`absolute right-0 z-[100] flex h-7 w-6 items-center justify-center rounded-l border border-r-0 border-emerald-500/20 bg-surface/90 text-emerald-500 dark:text-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-300 hover:bg-emerald-500/10 shadow-lg backdrop-blur-sm transition-all duration-200 ${
+                    isDraggingRight ? 'cursor-grabbing' : 'cursor-grab'
+                  }`}
+                  title="Expand right panel (Drag to move)"
+                >
+                  <span dangerouslySetInnerHTML={{ __html: SVGS.sidebarOpen }} className="flex items-center justify-center scale-x-[-1] pointer-events-none" />
+                </button>
+              )}
 
               {/* Chart area - takes full width.
                   Drawing tools are now provided natively by the TV widget's left sidebar. */}
@@ -426,13 +497,33 @@ export default function Home() {
             {/* ── Right: Collapsible Profile Sidebar ─────────── */}
             <div
               className={`
-                flex flex-col min-h-0 overflow-hidden transition-all duration-300 ease-out border-l border-border-default
+                relative flex flex-col min-h-0 overflow-visible border-l border-border-default bg-surface
+                ${isResizingSidebar ? '' : 'transition-all duration-300 ease-out'}
                 ${sidebarOpen
-                  ? 'w-[300px] min-w-[260px] max-w-[340px] opacity-100'
-                  : 'w-0 min-w-0 max-w-0 opacity-0 pointer-events-none'
+                  ? 'opacity-100'
+                  : 'w-0 min-w-0 max-w-0 opacity-0 pointer-events-none border-l-0'
                 }
               `}
+              style={{ width: sidebarOpen ? `${sidebarWidth}px` : '0px' }}
             >
+              {/* Resize Handle */}
+              {sidebarOpen && (
+                <div
+                  onMouseDown={startResizingSidebar}
+                  className={`
+                    absolute top-0 bottom-0 -left-1.5 w-3 cursor-col-resize z-20 hover:bg-emerald-500/10 transition-colors duration-150 rounded-none
+                    flex items-center justify-center group
+                    ${isResizingSidebar ? 'bg-emerald-500/20' : 'bg-transparent'}
+                  `}
+                  title="Drag to resize panel"
+                >
+                  {/* Visual handle bar */}
+                  <div className={`
+                    w-0.5 h-6 bg-border-default rounded-[1px] group-hover:bg-emerald-400 transition-colors
+                    ${isResizingSidebar ? 'bg-emerald-400' : ''}
+                  `} />
+                </div>
+              )}
               {/* Sidebar Header with Tab Switcher */}
               <div className="flex shrink-0 flex-col border-b border-border-default bg-surface rounded-none">
                 <div className="flex items-center justify-between px-3 py-1.5">
@@ -442,10 +533,10 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => setSidebarOpen(false)}
-                    className="rounded-none p-1 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
+                    className="rounded-none p-1 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary flex items-center justify-center"
                     title="Collapse sidebar"
                   >
-                    <PanelRightClose size={14} />
+                    <span dangerouslySetInnerHTML={{ __html: SVGS.sidebarClose }} className="flex items-center justify-center" />
                   </button>
                 </div>
 
@@ -510,6 +601,12 @@ export default function Home() {
           </div>
         ))}
       </div>
+      {isResizingSidebar && (
+        <div className="fixed inset-0 z-[9999] cursor-col-resize select-none pointer-events-auto bg-white/0" />
+      )}
+      {isDraggingRight && (
+        <div className="fixed inset-0 z-[9999] cursor-row-resize select-none pointer-events-auto bg-white/0" />
+      )}
     </div>
   );
 }
