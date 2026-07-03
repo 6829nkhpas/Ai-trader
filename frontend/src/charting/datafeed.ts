@@ -461,21 +461,29 @@ export function createDatafeed(): IBasicDatafeed {
             const toMs = periodParams.to * 1000;
             bars = allTauriBars.filter((b) => b.time >= fromMs && b.time <= toMs);
 
-            // If filtered range is empty but we DO have data, the user
-            // is scrolling beyond our data range — signal noData so TV
-            // stops requesting further scroll-back. Do NOT fall through
-            // to the Kite REST fallback (which causes empty-symbol bugs
-            // and weekend-date requests).
-            if (bars.length === 0) {
-              console.log(`[Datafeed] getBars: Tauri has ${allTauriBars.length} bars but none in range ${from.toISOString().slice(0,10)} → ${to.toISOString().slice(0,10)} — signalling noData`);
+            // If the filtered range is empty but we DO have data, the user
+            // is PAGINATING (scrolling) beyond our data range — signal
+            // noData so TV stops requesting further scroll-back. This guard
+            // only applies to follow-up requests: on the FIRST data request
+            // an empty overlap must NOT short-circuit, otherwise a cold
+            // QuestDB cache (or a symbol whose local range doesn't line up
+            // with TV's initial window) would leave the chart blank. In that
+            // case we fall through to the Kite REST fallback below to seed
+            // the chart, exactly like the legacy useHistoricalData path did.
+            if (bars.length === 0 && !periodParams.firstDataRequest) {
+              console.log(`[Datafeed] getBars: Tauri has ${allTauriBars.length} bars but none in range ${from.toISOString().slice(0,10)} → ${to.toISOString().slice(0,10)} (pagination) — signalling noData`);
               onResult([], { noData: true });
               return;
             }
           }
         }
 
-        // ── Kite Historical API (browser / non-Tauri fallback) ────────
-        if (bars.length === 0 && !isTauri()) {
+        // ── Kite Historical API fallback (browser AND Tauri) ──────────
+        // Runs whenever the Tauri/QuestDB path produced nothing (cold cache,
+        // unresolved instrument token, or a failed proactive intraday fetch).
+        // Restoring this tier for Tauri fixes the "candles won't load" desktop
+        // regression — the legacy chart always had this REST safety net.
+        if (bars.length === 0) {
           if (!isDailyOrAbove) {
             // Kite limits intraday to ~60 days
             const daysDiff = Math.ceil(
