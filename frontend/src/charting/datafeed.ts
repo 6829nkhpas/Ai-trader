@@ -24,7 +24,7 @@ import type {
   PeriodParams,
   DatafeedConfiguration,
 } from './datafeedTypes';
-import { useTradeStore } from '../store/useTradeStore';
+import { useTradeStore, type OhlcCandle } from '../store/useTradeStore';
 
 // ── Resolution Mapping ────────────────────────────────────────────────────
 // Maps TV resolution strings to Kite Historical API interval strings.
@@ -513,6 +513,41 @@ export function createDatafeed(): IBasicDatafeed {
           seen.add(b.time);
           return true;
         });
+
+        // ── Mirror bars into the Zustand historicalCache ──────────────
+        // The Deep Quant / Consensus pipeline gates on
+        // `useTradeStore.historicalCache` (via symbolCandleCount) to know a
+        // symbol has data — the legacy useHistoricalData hook used to
+        // populate it. The TradingView datafeed replaced that hook for the
+        // chart, so without this write the quant agents sit at
+        // "AWAITING DATA" forever. Use the SAME composite key format the
+        // legacy hook used ("SYMBOL::timeframe::kiteInterval") and MERGE with
+        // any existing cached bars so scroll-back pages accumulate rather
+        // than overwrite.
+        try {
+          const cacheKey = `${symbol.toUpperCase()}::${timeframe}::${kiteInterval}`;
+          const store = useTradeStore.getState();
+          const existing = store.historicalCache[cacheKey] ?? [];
+          const mergedByTime = new Map<number, OhlcCandle>();
+          for (const c of existing) mergedByTime.set(c.start_timestamp_ms, c);
+          for (const b of bars) {
+            mergedByTime.set(b.time, {
+              symbol: symbol.toUpperCase(),
+              start_timestamp_ms: b.time, // datafeed bars are in ms
+              open: b.open,
+              high: b.high,
+              low: b.low,
+              close: b.close,
+              volume: b.volume ?? 0,
+            });
+          }
+          const merged = Array.from(mergedByTime.values()).sort(
+            (a, b) => a.start_timestamp_ms - b.start_timestamp_ms,
+          );
+          store.setHistoricalCache(cacheKey, merged);
+        } catch (cacheErr) {
+          console.warn('[Datafeed] historicalCache mirror failed:', cacheErr);
+        }
 
         onResult(bars, { noData: false });
       } catch (err) {
