@@ -25,10 +25,7 @@ import type { FnoChains } from './viewModel';
  * Defensive guarantee: the currently-selected underlying is always selectable,
  * even before `fno_list_chains` resolves (`chains === null`) or if it is
  * momentarily absent from the configured list — it is prepended rather than
- * dropped, so the active selection never dangles. Under the documented store
- * invariant (`fnoUnderlying` defaults to the configured `'NIFTY 50'` and is
- * only ever set from this very list), the active selection is itself a
- * configured underlying, so the offered set is exactly the configured set.
+ * dropped, so the active selection never dangles. Note: `fnoUnderlying` defaults to empty and is derived from the active chart symbol via `getUnderlyingFromSymbol`.
  *
  * Pure, total, deterministic.
  */
