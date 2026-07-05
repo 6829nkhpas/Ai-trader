@@ -22,7 +22,7 @@
 use crate::services::option_chain::ChainConfig;
 
 /// Documented defaults (kept in one place so tests and code agree).
-pub const DEFAULT_UNDERLYINGS: [&str; 2] = ["NIFTY 50", "BANKNIFTY"];
+pub const DEFAULT_UNDERLYINGS: [&str; 2] = ["NIFTY", "BANKNIFTY"];
 pub const DEFAULT_NEAREST_EXPIRIES: usize = 2;
 pub const DEFAULT_STRIKE_BAND_HALF_WIDTH: usize = 10;
 pub const DEFAULT_ATM_RECENTER_THRESHOLD: f64 = 1.0;
