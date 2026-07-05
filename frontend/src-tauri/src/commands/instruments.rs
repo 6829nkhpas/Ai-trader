@@ -273,16 +273,28 @@ pub async fn search_instruments(
     Ok(results)
 }
 
+/// Returns `true` for F&O tradingsymbols like `NIFTY2670724000CE`, `BANKNIFTY26JUL25FUT`.
+/// F&O symbols always contain digits AND end with CE/PE/FUT.
+fn is_fno_symbol(symbol: &str) -> bool {
+    let s = symbol.trim();
+    let has_digit = s.bytes().any(|b| b.is_ascii_digit());
+    has_digit && (s.ends_with("CE") || s.ends_with("PE") || s.ends_with("FUT"))
+}
+
 /// Resolve a tradingsymbol to its instrument_token from the local cache.
-/// Used internally by subscribe_ticker to avoid hitting the aggregator API.
+/// Used internally by subscribe_ticker and get_historical_view.
 ///
-/// Returns None if the symbol is not found in the local instruments table.
+/// F&O symbols → `nfo_instruments` directly.
+/// Equity symbols → `instruments` directly.
+/// No fallback — the symbol type is deterministic.
 pub fn resolve_instrument_token(db_state: &DbState, symbol: &str) -> Option<u32> {
     let conn = db_state.conn.lock().ok()?;
     let upper = symbol.trim().to_uppercase();
 
+    let table = if is_fno_symbol(&upper) { "nfo_instruments" } else { "instruments" };
+
     conn.query_row(
-        "SELECT instrument_token FROM instruments WHERE tradingsymbol = ?1 LIMIT 1;",
+        &format!("SELECT instrument_token FROM {} WHERE tradingsymbol = ?1 LIMIT 1;", table),
         params![upper],
         |row| row.get::<_, i64>(0),
     )

@@ -119,39 +119,33 @@ export function useSymbolSearch({ onClose }: UseSymbolSearchOptions) {
       change: 0,
     });
 
-    const matchedConfig =
-      r.kind === 'FNO' && typeof r.underlying === 'string'
-        ? DEFAULT_FNO_UNDERLYINGS.find((u) => {
-            const ru = r.underlying.toUpperCase();
-            return u.toUpperCase() === ru || INDEX_NFO_ALIASES[u.toUpperCase()] === ru;
-          })
-        : undefined;
-
-    if (r.kind === 'FNO' && matchedConfig) {
-      setActiveProfile('FNO');
-      setFnoUnderlying(matchedConfig);
-      onClose();
-      return;
-    }
-
+    // ── F&O contract selection ──────────────────────────────────────────
+    // Switch to FNO profile, set the underlying, and route the specific
+    // tradingsymbol to the chart pane so the contract's price chart loads.
     if (r.kind === 'FNO' && typeof r.underlying === 'string') {
-      onClose();
-      try {
-        const ok = await invoke<boolean>('fno_request_underlying', {
-          underlying: r.underlying,
-        });
-        if (ok) {
-          setActiveProfile('FNO');
-          setFnoUnderlying(r.underlying);
-          return;
-        }
-      } catch (err) {
-        console.warn('[SymbolSearchModal] fno_request_underlying failed:', err);
-      }
+      setActiveProfile('FNO');
+
+      // Resolve configured name (e.g. 'NIFTY 50') or use raw underlying.
+      const matchedConfig = DEFAULT_FNO_UNDERLYINGS.find((u) => {
+        const ru = r.underlying.toUpperCase();
+        return u.toUpperCase() === ru || INDEX_NFO_ALIASES[u.toUpperCase()] === ru;
+      });
+      setFnoUnderlying(matchedConfig ?? r.underlying);
+
+      // Route the contract tradingsymbol to the chart for price data.
       routeSymbolToChart(symbol);
+      onClose();
+
+      // Register the underlying with the option-chain subscriber (best-effort).
+      if (!matchedConfig) {
+        invoke<boolean>('fno_request_underlying', { underlying: r.underlying }).catch(
+          (err) => console.warn('[SymbolSearch] fno_request_underlying failed:', err),
+        );
+      }
       return;
     }
 
+    // ── Equity selection ────────────────────────────────────────────────
     routeSymbolToChart(symbol);
     onClose();
   }, [addToWatchlist, routeSymbolToChart, setActiveProfile, setFnoUnderlying, onClose]);
