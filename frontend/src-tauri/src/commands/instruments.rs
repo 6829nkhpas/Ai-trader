@@ -117,48 +117,130 @@ pub fn search_in_db(conn: &Connection, query: &str) -> Result<Vec<SearchResult>,
     }
 
     // ── NFO derivatives ──────────────────────────────────────────────────
-    // Match on the contract symbol, the underlying, or the name so a trader can
-    // search "NIFTY", "BANKNIFTY24DEC", etc. Ordered by nearest expiry then
-    // strike for predictable option-chain ordering.
+    // Token-based search: splits "NIFTY 24000 CE" into tokens and matches
+    // each one against tradingsymbol / underlying / strike / instrument_type.
+    // Recognizes option-type aliases (PUT→PE, CALL→CE) and numeric strikes.
     if nfo_exists {
-        let mut stmt = conn
-            .prepare(
-                "SELECT tradingsymbol, underlying, expiry, strike, instrument_type
-                 FROM nfo_instruments
-                 WHERE tradingsymbol LIKE ?1 OR underlying LIKE ?2 OR name LIKE ?2
-                 ORDER BY
-                     CASE WHEN tradingsymbol LIKE ?1 OR underlying LIKE ?1 THEN 0 ELSE 1 END,
-                     expiry ASC,
-                     strike ASC
-                 LIMIT 25;",
-            )
-            .map_err(|e| format!("SQL prepare error (nfo): {}", e))?;
+        let nfo_results = search_nfo_tokenized(conn, &q)?;
+        results.extend(nfo_results);
+    }
 
-        let rows = stmt
-            .query_map(params![like_prefix, like_contains], |row| {
-                let option_type: String = row.get(4)?;
-                let strike_val: f64 = row.get(3)?;
-                // Futures (and any non-positive strike) carry no strike → null.
-                let strike = if option_type.eq_ignore_ascii_case("FUT") || strike_val <= 0.0 {
-                    None
-                } else {
-                    Some(strike_val)
-                };
-                Ok(SearchResult::Fno {
-                    tradingsymbol: row.get(0)?,
-                    underlying: row.get(1)?,
-                    expiry: row.get(2)?,
-                    strike,
-                    option_type,
-                })
-            })
-            .map_err(|e| format!("SQL query error (nfo): {}", e))?;
+    Ok(results)
+}
 
-        for r in rows.filter_map(|r| r.ok()) {
-            results.push(r);
+/// Normalize an option-type alias to its canonical form.
+fn normalize_option_type(token: &str) -> Option<&'static str> {
+    match token {
+        "CE" | "CALL" => Some("CE"),
+        "PE" | "PUT" => Some("PE"),
+        "FUT" | "FUTURE" | "FUTURES" => Some("FUT"),
+        _ => None,
+    }
+}
+
+/// Token-based NFO search. Splits multi-word queries (e.g. "NIFTY 24000 CE")
+/// into individual tokens and classifies each as:
+///   - option type  (CE, PE, PUT, CALL, FUT)
+///   - numeric strike (24000)
+///   - symbol/underlying text (NIFTY, RELIANCE)
+///
+/// Builds a dynamic WHERE clause requiring all tokens to match, producing
+/// results identical to the Zerodha Kite search modal for F&O queries.
+fn search_nfo_tokenized(conn: &Connection, query: &str) -> Result<Vec<SearchResult>, String> {
+    let tokens: Vec<&str> = query.split_whitespace().collect();
+    if tokens.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Classify tokens
+    let mut text_tokens: Vec<String> = Vec::new();
+    let mut option_type_filter: Option<&str> = None;
+    let mut strike_filter: Option<f64> = None;
+
+    for token in &tokens {
+        if let Some(ot) = normalize_option_type(token) {
+            option_type_filter = Some(ot);
+        } else if let Ok(num) = token.parse::<f64>() {
+            strike_filter = Some(num);
+        } else {
+            text_tokens.push(token.to_string());
         }
     }
 
+    // Build dynamic SQL WHERE clause
+    let mut conditions: Vec<String> = Vec::new();
+    let mut bind_values: Vec<String> = Vec::new();
+
+    // Each text token must appear in tradingsymbol, underlying, or name
+    for text in &text_tokens {
+        let like_val = format!("%{}%", text);
+        let idx = bind_values.len() + 1;
+        bind_values.push(like_val);
+        conditions.push(format!(
+            "(tradingsymbol LIKE ?{idx} OR underlying LIKE ?{idx} OR name LIKE ?{idx})"
+        ));
+    }
+
+    // Option type filter (exact match)
+    if let Some(ot) = option_type_filter {
+        let idx = bind_values.len() + 1;
+        bind_values.push(ot.to_string());
+        conditions.push(format!("instrument_type = ?{idx}"));
+    }
+
+    // Strike filter (prefix match — 2400 matches 24000, 24050, etc.)
+    if let Some(strike_num) = strike_filter {
+        let strike_str = format!("{}", strike_num as i64);
+        let idx = bind_values.len() + 1;
+        bind_values.push(format!("{}%", strike_str));
+        conditions.push(format!("CAST(CAST(strike AS INTEGER) AS TEXT) LIKE ?{idx}"));
+    }
+
+    if conditions.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let where_clause = conditions.join(" AND ");
+    let sql = format!(
+        "SELECT tradingsymbol, underlying, expiry, strike, instrument_type \
+         FROM nfo_instruments \
+         WHERE {} \
+         ORDER BY expiry ASC, strike ASC \
+         LIMIT 25;",
+        where_clause
+    );
+
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| format!("SQL prepare error (nfo tokenized): {}", e))?;
+
+    // Bind all values dynamically
+    let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+        bind_values.iter().map(|v| v as &dyn rusqlite::types::ToSql).collect();
+
+    let rows = stmt
+        .query_map(params_ref.as_slice(), |row| {
+            let option_type: String = row.get(4)?;
+            let strike_val: f64 = row.get(3)?;
+            let strike = if option_type.eq_ignore_ascii_case("FUT") || strike_val <= 0.0 {
+                None
+            } else {
+                Some(strike_val)
+            };
+            Ok(SearchResult::Fno {
+                tradingsymbol: row.get(0)?,
+                underlying: row.get(1)?,
+                expiry: row.get(2)?,
+                strike,
+                option_type,
+            })
+        })
+        .map_err(|e| format!("SQL query error (nfo tokenized): {}", e))?;
+
+    let mut results = Vec::new();
+    for r in rows.filter_map(|r| r.ok()) {
+        results.push(r);
+    }
     Ok(results)
 }
 
@@ -366,5 +448,76 @@ mod tests {
         assert!(json.contains("\"kind\":\"FNO\""));
         assert!(json.contains("\"optionType\":\"FUT\""));
         assert!(json.contains("\"strike\":null"));
+    }
+
+    #[test]
+    fn multi_word_nfo_search_underlying_and_strike() {
+        let conn = seed_db();
+        // "NIFTY 24000" → should match both CE + PE with strike 24000
+        let out = search_in_db(&conn, "NIFTY 24000").unwrap();
+        let fno: Vec<_> = out.iter().filter(|r| matches!(r, SearchResult::Fno { .. })).collect();
+        assert_eq!(fno.len(), 2, "expected CE + PE for NIFTY 24000");
+    }
+
+    #[test]
+    fn multi_word_nfo_search_underlying_strike_and_type() {
+        let conn = seed_db();
+        // "NIFTY 24000 CE" → should match exactly 1 CE contract
+        let out = search_in_db(&conn, "NIFTY 24000 CE").unwrap();
+        let fno: Vec<_> = out.iter().filter(|r| matches!(r, SearchResult::Fno { .. })).collect();
+        assert_eq!(fno.len(), 1, "expected exactly one CE contract");
+        match fno[0] {
+            SearchResult::Fno { option_type, strike, .. } => {
+                assert_eq!(option_type, "CE");
+                assert_eq!(*strike, Some(24000.0));
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn multi_word_nfo_search_with_alias_put() {
+        let conn = seed_db();
+        // "NIFTY PUT" → should match the PE contract
+        let out = search_in_db(&conn, "NIFTY PUT").unwrap();
+        let fno: Vec<_> = out.iter().filter(|r| matches!(r, SearchResult::Fno { .. })).collect();
+        assert_eq!(fno.len(), 1, "expected exactly one PE contract for 'PUT'");
+        match fno[0] {
+            SearchResult::Fno { option_type, .. } => {
+                assert_eq!(option_type, "PE");
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn multi_word_nfo_search_with_alias_call() {
+        let conn = seed_db();
+        // "NIFTY CALL" → should match the CE contract
+        let out = search_in_db(&conn, "NIFTY CALL").unwrap();
+        let fno: Vec<_> = out.iter().filter(|r| matches!(r, SearchResult::Fno { .. })).collect();
+        assert_eq!(fno.len(), 1, "expected exactly one CE contract for 'CALL'");
+        match fno[0] {
+            SearchResult::Fno { option_type, .. } => {
+                assert_eq!(option_type, "CE");
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn multi_word_nfo_search_fut_alias() {
+        let conn = seed_db();
+        // "NIFTY FUT" → should match the FUT contract
+        let out = search_in_db(&conn, "NIFTY FUT").unwrap();
+        let fno: Vec<_> = out.iter().filter(|r| matches!(r, SearchResult::Fno { .. })).collect();
+        assert_eq!(fno.len(), 1, "expected exactly one FUT contract");
+        match fno[0] {
+            SearchResult::Fno { option_type, strike, .. } => {
+                assert_eq!(option_type, "FUT");
+                assert_eq!(*strike, None);
+            }
+            _ => unreachable!(),
+        }
     }
 }
