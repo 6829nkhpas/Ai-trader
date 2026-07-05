@@ -1,19 +1,11 @@
 'use client';
 
-import React from 'react';
-import {
-  Zap,
-  Loader2,
-  Shield,
-  AlertTriangle,
-  RotateCcw,
-  ChevronDown,
-} from 'lucide-react';
+import React, { useMemo } from 'react';
+import { Zap, Loader2, Shield, ChevronDown } from 'lucide-react';
 import { useQuantStore } from '../../store/useQuantStore';
 import type { StreamEventPayload } from '../../store/useQuantStore';
 import { useTradeStore } from '../../store/useTradeStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
-import { useMemo } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import AgentTerminal from './AgentTerminal';
 import TradeQaPanel from './TradeQaPanel';
@@ -24,84 +16,10 @@ import { invoke } from '@tauri-apps/api/core';
 import LoadingState from './deep-quant/LoadingState';
 import VerificationForm from './deep-quant/VerificationForm';
 import AiExecutionPlanView from './deep-quant/AiExecutionPlanView';
-
-interface PremiumPaywallProps {
-  onUpgradeClick: () => void;
-}
-
-function PremiumPaywall({ onUpgradeClick }: PremiumPaywallProps) {
-  const [upgrading, setUpgrading] = React.useState(false);
-
-  const handleClick = async () => {
-    setUpgrading(true);
-    try {
-      await onUpgradeClick();
-    } finally {
-      setUpgrading(false);
-    }
-  };
-
-  return (
-    <div className="flex h-full flex-col items-center justify-center p-6 text-center bg-background/30 backdrop-blur-md">
-      <div
-        className="relative max-w-sm w-full p-8 rounded-3xl border border-blue-500/30 bg-surface/75 shadow-2xl flex flex-col items-center overflow-hidden"
-        style={{
-          boxShadow: '0 20px 50px rgba(0, 0, 0, 0.4), inset 0 0 20px rgba(59, 130, 246, 0.05)',
-          background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.95) 100%)',
-        }}
-      >
-        <div className="absolute -top-16 -left-16 w-32 h-32 bg-blue-500/10 rounded-full filter blur-2xl pointer-events-none" />
-        <div className="absolute -bottom-16 -right-16 w-32 h-32 bg-violet-500/10 rounded-full filter blur-2xl pointer-events-none" />
-
-        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500/15 to-violet-500/15 border border-blue-500/20 text-blue-400 mb-6 shadow-lg shadow-blue-500/10">
-          <svg className="h-8 w-8 animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-          </svg>
-        </div>
-
-        <span className="text-[10px] font-black tracking-widest text-blue-400 uppercase mb-2">STRAT AI PRO SUITE</span>
-        <h2 className="text-xl font-extrabold text-white tracking-tight mb-3">Deep Quant Access Required</h2>
-
-        <p className="text-xs text-text-secondary leading-relaxed mb-6">
-          Unlock institutional-grade breakout scanning, real-time news sentiment indexing, and automated conviction score backtesting.
-        </p>
-
-        <div className="w-full flex flex-col gap-2.5 mb-8 text-left text-xs text-text-secondary font-medium">
-          <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-white/5 border border-white/5">
-            <span className="text-blue-400">⚡</span>
-            <span>DeepSeek v4 Autonomous ReAct Agent Loop</span>
-          </div>
-          <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-white/5 border border-white/5">
-            <span className="text-blue-400">📊</span>
-            <span>Mathematical Risk Manager & Trade Evaluator</span>
-          </div>
-          <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-white/5 border border-white/5">
-            <span className="text-blue-400">🛡️</span>
-            <span>Virtual Execution & Paper Broker Sync</span>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          disabled={upgrading}
-          onClick={handleClick}
-          className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-bold uppercase tracking-wider text-white bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 hover:shadow-lg hover:shadow-blue-500/20 active:scale-[0.99] transition-all duration-150 disabled:opacity-50"
-        >
-          {upgrading ? (
-            <>
-              <Loader2 size={14} className="animate-spin text-white" />
-              <span>Initiating Checkout...</span>
-            </>
-          ) : (
-            <span>Upgrade to PRO</span>
-          )}
-        </button>
-
-        <span className="text-[9px] text-text-muted/60 mt-3">Secure checkout powered by PhonePe</span>
-      </div>
-    </div>
-  );
-}
+import PremiumPaywall from './deep-quant/PremiumPaywall';
+import ErrorState from './deep-quant/ErrorState';
+import EmptyState from './deep-quant/EmptyState';
+import { useVerificationForm } from './deep-quant/useVerificationForm';
 
 export default function DeepQuantPanel() {
   const user = useAuthStore((s) => s.user);
@@ -117,9 +35,7 @@ export default function DeepQuantPanel() {
         },
         body: JSON.stringify({ amount: 599, tier: 'PRO' })
       });
-      if (!res.ok) {
-        throw new Error('Failed to initiate checkout session');
-      }
+      if (!res.ok) throw new Error('Failed to initiate checkout session');
       const data = await res.json();
       if (data.redirectUrl) {
         console.log('[Paywall] Redirecting to PhonePe checkout:', data.redirectUrl);
@@ -138,8 +54,6 @@ export default function DeepQuantPanel() {
     clearAiPlan,
     reasoningSteps,
     sessionStatus,
-    multiTfPatterns,
-    isFetchingPatterns,
     currentThreadId,
   } = useQuantStore();
 
@@ -150,18 +64,18 @@ export default function DeepQuantPanel() {
   // the paywall early-return so hook order stays stable.
   React.useEffect(() => {
     let cancelled = false;
-    let unlisten: (() => void) | undefined;
+    let unlistenFn: (() => void) | undefined;
     (async () => {
       try {
-        const unlistenFn = await listen<StreamEventPayload>('deep-quant-stream', (event) => {
+        const dispose = await listen<StreamEventPayload>('deep-quant-stream', (event) => {
           if (!cancelled) {
             useQuantStore.getState().handleStreamEvent(event.payload);
           }
         });
         if (cancelled) {
-          unlistenFn();
+          dispose();
         } else {
-          unlisten = unlistenFn;
+          unlistenFn = dispose;
         }
       } catch (err) {
         console.error('Failed to register deep-quant-stream listener:', err);
@@ -169,13 +83,14 @@ export default function DeepQuantPanel() {
     })();
     return () => {
       cancelled = true;
-      unlisten?.();
+      unlistenFn?.();
     };
   }, []);
 
   if (!user || user.tier === 'FREE') {
     return <PremiumPaywall onUpgradeClick={handleUpgrade} />;
   }
+
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
   const historicalCache = useTradeStore((s) => s.historicalCache);
   const activeTimeframe = useTradeStore((s) => s.activeTimeframe);
@@ -208,92 +123,39 @@ export default function DeepQuantPanel() {
   const [activeMode, setActiveMode] = React.useState<'FIND' | 'VERIFY'>('FIND');
   const [isDropdownOpen, setIsDropdownOpen] = React.useState(false);
 
-  // Verification Form State
-  const [side, setSide] = React.useState<'BUY' | 'SELL'>('BUY');
-  const [entry, setEntry] = React.useState<string>('');
-  const [stopLoss, setStopLoss] = React.useState<string>('');
-  const [takeProfit, setTakeProfit] = React.useState<string>('');
-  const [userAnalysis, setUserAnalysis] = React.useState<string>('');
-
-  const [hasManuallySetEntry, setHasManuallySetEntry] = React.useState(false);
-  const [hasManuallySetSL, setHasManuallySetSL] = React.useState(false);
-  const [hasManuallySetTP, setHasManuallySetTP] = React.useState(false);
-
   const livePrice = useTradeStore((s) => s.ohlcCandles.find(c => c.symbol === symbol)?.close) || 0;
 
-  // Track live price and dynamically pre-fill fields
-  React.useEffect(() => {
-    if (livePrice > 0) {
-      if (!hasManuallySetEntry) {
-        setEntry(livePrice.toFixed(2));
-      }
-    }
-  }, [livePrice, hasManuallySetEntry]);
-
-  // Compute SL/TP based on entry price and side if not manually set
-  React.useEffect(() => {
-    const numericEntry = parseFloat(entry);
-    if (!isNaN(numericEntry) && numericEntry > 0) {
-      if (!hasManuallySetSL) {
-        const computedSL = side === 'BUY' ? numericEntry * 0.98 : numericEntry * 1.02;
-        setStopLoss(computedSL.toFixed(2));
-      }
-      if (!hasManuallySetTP) {
-        const computedTP = side === 'BUY' ? numericEntry * 1.05 : numericEntry * 0.95;
-        setTakeProfit(computedTP.toFixed(2));
-      }
-    }
-  }, [entry, side, hasManuallySetSL, hasManuallySetTP]);
-
-  // Reset manual inputs when active symbol changes
-  React.useEffect(() => {
-    setHasManuallySetEntry(false);
-    setHasManuallySetSL(false);
-    setHasManuallySetTP(false);
-    setUserAnalysis('');
-  }, [symbol]);
-
-  // R:R and % deviations
-  const riskToReward = React.useMemo(() => {
-    const e = parseFloat(entry);
-    const sl = parseFloat(stopLoss);
-    const tp = parseFloat(takeProfit);
-    if (isNaN(e) || isNaN(sl) || isNaN(tp) || e <= 0) return null;
-
-    const risk = Math.abs(e - sl);
-    const reward = Math.abs(tp - e);
-    if (risk <= 0) return null;
-
-    return (reward / risk).toFixed(2);
-  }, [entry, stopLoss, takeProfit]);
-
-  const slPercent = React.useMemo(() => {
-    const e = parseFloat(entry);
-    const sl = parseFloat(stopLoss);
-    if (isNaN(e) || isNaN(sl) || e <= 0) return null;
-    return (((sl - e) / e) * 100).toFixed(2);
-  }, [entry, stopLoss]);
-
-  const tpPercent = React.useMemo(() => {
-    const e = parseFloat(entry);
-    const tp = parseFloat(takeProfit);
-    if (isNaN(e) || isNaN(tp) || e <= 0) return null;
-    return (((tp - e) / e) * 100).toFixed(2);
-  }, [entry, takeProfit]);
+  // Use modular verification form hook
+  const {
+    side,
+    setSide,
+    entry,
+    setEntry,
+    setHasManuallySetEntry,
+    stopLoss,
+    setStopLoss,
+    setHasManuallySetSL,
+    takeProfit,
+    setTakeProfit,
+    setHasManuallySetTP,
+    userAnalysis,
+    setUserAnalysis,
+    riskToReward,
+    slPercent,
+    tpPercent,
+  } = useVerificationForm(symbol, livePrice);
 
   React.useEffect(() => {
     let unlisten: (() => void) | undefined;
-
     const setupListener = async () => {
       unlisten = await listen<string>('agent_status', (event) => {
         console.log(`🧠 [AGENT STATE UPDATE]: ${event.payload}`);
         setAgentStatus(event.payload);
       });
     };
-
     setupListener();
     return () => {
-      if (unlisten) unlisten();
+      unlisten?.();
     };
   }, []);
 
@@ -303,24 +165,6 @@ export default function DeepQuantPanel() {
   }, [aiPlan]);
 
   const handleAIAnalysis = () => {
-    console.log(`🧠 [AI HANDOFF] Requesting analysis for Symbol: ${activeSymbol} | Timeframe: ${activeTimeframe}`);
-    console.log(`🧠 [AI HANDOFF] Current cached candle count: ${symbolCandleCount}`);
-
-    console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Firing AI Request.");
-    console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Symbol:", activeSymbol);
-    console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Timeframe:", activeTimeframe);
-    console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Acceleration Coeff from Store:", useChartUIStore.getState().accelerationCoefficient);
-    console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Candles Length (cached proxy):", symbolCandleCount);
-    console.log("🕵️‍♂️ [AUDIT 1 - UI SEND] Historical Cache Keys:", Object.keys(useTradeStore.getState().historicalCache));
-
-    if (symbolCandleCount < 50) {
-      console.warn(
-        `🧠 [AI HANDOFF WARNING] Insufficient candles for AI analysis. ` +
-        `DeepSeek requires at least 50 periods. Current: ${symbolCandleCount}`
-      );
-    }
-
-    // Reset terminal state from previous run before starting new analysis
     useQuantStore.getState().resetTerminal();
     fetchDeepAnalysis(activeSymbol);
   };
@@ -335,10 +179,6 @@ export default function DeepQuantPanel() {
       return;
     }
 
-    console.log(`🧠 [AI HANDOFF] Requesting VERIFY Mode analysis for Symbol: ${activeSymbol}`);
-    console.log(`🧠 [AI HANDOFF] Proposed Trade: ${side} Entry:${entryNum} SL:${slNum} TP:${tpNum}`);
-
-    // Reset terminal state from previous run before starting verification
     useQuantStore.getState().resetTerminal();
     fetchDeepAnalysis(activeSymbol, 'VERIFY', {
       side,
@@ -355,8 +195,8 @@ export default function DeepQuantPanel() {
     const closePrice = useTradeStore.getState().ohlcCandles.find(c => c.symbol === symbol)?.close || 0;
 
     let entryPrice = closePrice;
-    let stopLoss = 0;
-    let takeProfit = 0;
+    let stopLossPrice = 0;
+    let takeProfitPrice = 0;
     let tradeSide = 'BUY';
 
     const executionPlan = aiPlan.execution_plan || '';
@@ -368,8 +208,8 @@ export default function DeepQuantPanel() {
     const sideMatch = executionPlan.match(/side:\s*(buy|sell)/i) || executionPlan.match(/(buy|sell)/i);
 
     if (entryMatch) entryPrice = parseFloat(entryMatch[1]);
-    if (slMatch) stopLoss = parseFloat(slMatch[1]);
-    if (tpMatch) takeProfit = parseFloat(tpMatch[1]);
+    if (slMatch) stopLossPrice = parseFloat(slMatch[1]);
+    if (tpMatch) takeProfitPrice = parseFloat(tpMatch[1]);
     if (sideMatch) {
       const matchedSide = sideMatch[1].toUpperCase();
       if (matchedSide === 'BUY' || matchedSide === 'SELL') {
@@ -379,11 +219,11 @@ export default function DeepQuantPanel() {
 
     // Dynamic fallbacks
     if (entryPrice <= 0) entryPrice = closePrice;
-    if (stopLoss <= 0) {
-      stopLoss = tradeSide === 'BUY' ? entryPrice * 0.98 : entryPrice * 1.02;
+    if (stopLossPrice <= 0) {
+      stopLossPrice = tradeSide === 'BUY' ? entryPrice * 0.98 : entryPrice * 1.02;
     }
-    if (takeProfit <= 0) {
-      takeProfit = tradeSide === 'BUY' ? entryPrice * 1.05 : entryPrice * 0.95;
+    if (takeProfitPrice <= 0) {
+      takeProfitPrice = tradeSide === 'BUY' ? entryPrice * 1.05 : entryPrice * 0.95;
     }
 
     try {
@@ -392,8 +232,8 @@ export default function DeepQuantPanel() {
         symbol,
         side: tradeSide,
         entryPrice,
-        stopLoss,
-        takeProfit,
+        stopLoss: stopLossPrice,
+        takeProfit: takeProfitPrice,
       });
       useTradeStore.getState().addSystemLog('INFO', `🚀 [Paper Engine] ${resMsg}`);
 
@@ -548,40 +388,19 @@ export default function DeepQuantPanel() {
 
       {/* ── Content Area ──────────────────────────────────── */}
       <div className="flex-grow flex-shrink min-h-0 overflow-y-auto scrollbar-thin">
-
         {reasoningSteps.length > 0 || sessionStatus !== 'idle' ? (
           <div className="h-full p-0 min-h-[380px]">
             <AgentTerminal />
           </div>
         ) : analysisError ? (
-          /* ── Error State ─────────────────────────────────── */
-          <div className="flex flex-col items-center justify-center gap-3 p-4 py-8">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-rose-500/10 border border-rose-500/30">
-              <AlertTriangle size={20} className="text-rose-400" />
-            </div>
-            <div className="text-center">
-              <p className="text-[11px] font-semibold text-rose-400">Analysis Failed</p>
-              <p className="text-[9px] text-text-muted/60 mt-1 max-w-[200px] leading-relaxed">
-                {analysisError}
-              </p>
-            </div>
-            <button
-              onClick={() => {
-                if (activeMode === 'FIND') {
-                  handleAIAnalysis();
-                } else {
-                  handleVerifyAnalysis();
-                }
-              }}
-              disabled={!dataReady}
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-semibold text-text-secondary bg-elevated border border-border-default hover:bg-surface transition-colors ${!dataReady ? 'opacity-50 cursor-not-allowed' : ''}`}
-            >
-              <RotateCcw size={10} />
-              Retry
-            </button>
-          </div>
+          <ErrorState 
+            error={analysisError} 
+            dataReady={dataReady} 
+            activeMode={activeMode} 
+            onRetryFind={handleAIAnalysis} 
+            onRetryVerify={handleVerifyAnalysis} 
+          />
         ) : aiPlan ? (
-          /* ── AI Execution Plan ── */
           <AiExecutionPlanView
             aiPlan={aiPlan}
             deployed={deployed}
@@ -590,22 +409,7 @@ export default function DeepQuantPanel() {
             onClear={clearAiPlan}
           />
         ) : (
-          /* ── Empty State ─────────────────────────────────── */
-          <div className="flex flex-col items-center justify-center gap-4 p-4 py-10">
-            <div className="relative">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-elevated border border-border-default">
-                <Zap size={24} className="text-text-muted/60" />
-              </div>
-            </div>
-            <div className="text-center">
-              <p className="text-[11px] font-semibold text-text-muted">Deep Quant Engine Ready</p>
-              <p className="text-[9px] text-text-muted/50 mt-1 leading-relaxed max-w-[180px]">
-                Press the button above to run<br />
-                the full AI analysis pipeline<br />
-                for <span className="text-text-secondary font-semibold">{symbol}</span>
-              </p>
-            </div>
-          </div>
+          <EmptyState symbol={symbol} />
         )}
 
         {/* ── Trade Q&A Chat (post-analysis follow-up) ── */}
