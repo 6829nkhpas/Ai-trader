@@ -557,17 +557,24 @@ async fn fetch_snapshots_from_questdb(
 }
 
 async fn read_spot_from_live_ticks(pool: &PgPool, underlying: &str) -> Option<f64> {
+    // Try multiple symbol name variants since live_ticks may store the
+    // Kite-style symbol ("NSE:NIFTY 50") while we receive the NFO name ("NIFTY").
+    let mapped = map_spot_quote_symbol(underlying);
+    let candidates = [mapped.as_str(), underlying];
+
     let query = "SELECT last_traded_price \
                  FROM live_ticks \
                  WHERE symbol = $1 \
                  ORDER BY timestamp DESC \
                  LIMIT 1";
 
-    if let Ok(Some(row)) = sqlx::query(query).bind(underlying).fetch_optional(pool).await {
-        use sqlx::Row;
-        if let Ok(price) = row.try_get::<f64, _>("last_traded_price") {
-            if price.is_finite() && price > 0.0 {
-                return Some(price);
+    for sym in &candidates {
+        if let Ok(Some(row)) = sqlx::query(query).bind(*sym).fetch_optional(pool).await {
+            use sqlx::Row;
+            if let Ok(price) = row.try_get::<f64, _>("last_traded_price") {
+                if price.is_finite() && price > 0.0 {
+                    return Some(price);
+                }
             }
         }
     }
@@ -576,13 +583,15 @@ async fn read_spot_from_live_ticks(pool: &PgPool, underlying: &str) -> Option<f6
     let query_intra = "SELECT close \
                        FROM historical_intraday \
                        WHERE symbol = $1 \
-                       ORDER BY timestamp DESC \
+                       ORDER BY ts DESC \
                        LIMIT 1";
-    if let Ok(Some(row)) = sqlx::query(query_intra).bind(underlying).fetch_optional(pool).await {
-        use sqlx::Row;
-        if let Ok(price) = row.try_get::<f64, _>("close") {
-            if price.is_finite() && price > 0.0 {
-                return Some(price);
+    for sym in &candidates {
+        if let Ok(Some(row)) = sqlx::query(query_intra).bind(*sym).fetch_optional(pool).await {
+            use sqlx::Row;
+            if let Ok(price) = row.try_get::<f64, _>("close") {
+                if price.is_finite() && price > 0.0 {
+                    return Some(price);
+                }
             }
         }
     }
@@ -591,13 +600,15 @@ async fn read_spot_from_live_ticks(pool: &PgPool, underlying: &str) -> Option<f6
     let query_candles = "SELECT close \
                          FROM historical_candles \
                          WHERE symbol = $1 \
-                         ORDER BY timestamp DESC \
+                         ORDER BY ts DESC \
                          LIMIT 1";
-    if let Ok(Some(row)) = sqlx::query(query_candles).bind(underlying).fetch_optional(pool).await {
-        use sqlx::Row;
-        if let Ok(price) = row.try_get::<f64, _>("close") {
-            if price.is_finite() && price > 0.0 {
-                return Some(price);
+    for sym in &candidates {
+        if let Ok(Some(row)) = sqlx::query(query_candles).bind(*sym).fetch_optional(pool).await {
+            use sqlx::Row;
+            if let Ok(price) = row.try_get::<f64, _>("close") {
+                if price.is_finite() && price > 0.0 {
+                    return Some(price);
+                }
             }
         }
     }

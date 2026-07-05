@@ -69,7 +69,7 @@ pub async fn read_spot(pool: &PgPool, underlying: &str) -> Option<f64> {
     let query_intra = "SELECT close \
                        FROM historical_intraday \
                        WHERE symbol = $1 \
-                       ORDER BY timestamp DESC \
+                       ORDER BY ts DESC \
                        LIMIT 1";
     if let Ok(Some(row)) = sqlx::query(query_intra).bind(underlying).fetch_optional(pool).await {
         if let Ok(price) = row.try_get::<f64, _>("close") {
@@ -84,7 +84,7 @@ pub async fn read_spot(pool: &PgPool, underlying: &str) -> Option<f64> {
     let query_candles = "SELECT close \
                          FROM historical_candles \
                          WHERE symbol = $1 \
-                         ORDER BY timestamp DESC \
+                         ORDER BY ts DESC \
                          LIMIT 1";
     if let Ok(Some(row)) = sqlx::query(query_candles).bind(underlying).fetch_optional(pool).await {
         if let Ok(price) = row.try_get::<f64, _>("close") {
