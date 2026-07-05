@@ -281,11 +281,13 @@ export default function Home() {
     clearAiPlan();
   }, [symbol, loadConsensusForSymbol, clearAiPlan]);
 
-  // Fetch real-time quote for the active symbol
   const fetchSymbolQuote = useCallback(async (signal?: AbortSignal) => {
     if (!symbol || symbol === '---') return;
     try {
-      const res = await fetch(`/kite/quote?i=NSE:${symbol}`, { signal });
+      const sym = symbol.toUpperCase();
+      const isFno = sym.endsWith('FUT') || ((sym.endsWith('CE') || sym.endsWith('PE')) && /\d/.test(sym));
+      const exchange = isFno ? 'NFO' : 'NSE';
+      const res = await fetch(`/kite/quote?i=${exchange}:${symbol}`, { signal });
       if (!res.ok) return;
       const data = await res.json();
       if (data.quotes && data.quotes.length > 0) {

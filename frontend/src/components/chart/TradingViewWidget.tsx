@@ -106,6 +106,23 @@ export default function TradingViewWidget({
       setWidgetState(tvWidget);
 
       tvWidget.onChartReady(() => {
+        // Listen to symbol changes from the TV search box
+        try {
+          const chartApi = tvWidget.activeChart() as any;
+          chartApi.onSymbolChanged().subscribe(null, () => {
+            const fullSymbol = chartApi.symbol();
+            if (fullSymbol && fullSymbol !== '---') {
+              const cleanSymbol = fullSymbol.includes(':') ? fullSymbol.split(':')[1] : fullSymbol;
+              const currentSymbol = useTradeStore.getState().selectedSymbol;
+              if (currentSymbol !== cleanSymbol) {
+                useTradeStore.getState().setSelectedSymbol(cleanSymbol);
+              }
+            }
+          });
+        } catch (err) {
+          console.warn('[TradingViewWidget] Failed to subscribe to onSymbolChanged:', err);
+        }
+
         const iframe = containerRef.current?.querySelector('iframe');
         const doc = iframe?.contentDocument;
         if (!doc) return;
@@ -193,7 +210,10 @@ export default function TradingViewWidget({
     prevSymbolRef.current = activeSymbol;
     if (widgetRef.current) {
       try {
-        widgetRef.current.setSymbol(`NSE:${activeSymbol}`, resolution);
+        const sym = activeSymbol.toUpperCase();
+        const isFno = sym.endsWith('FUT') || ((sym.endsWith('CE') || sym.endsWith('PE')) && /\d/.test(sym));
+        const exchange = isFno ? 'NFO' : 'NSE';
+        widgetRef.current.setSymbol(`${exchange}:${activeSymbol}`, resolution);
       } catch {}
     }
   }, [activeSymbol, resolution]);

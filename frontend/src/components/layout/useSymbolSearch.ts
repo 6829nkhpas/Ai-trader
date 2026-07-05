@@ -108,12 +108,33 @@ export function useSymbolSearch({ onClose }: UseSymbolSearchOptions) {
   const handleSelectResult = useCallback(async (r: SearchResult) => {
     const symbol = resultSymbol(r);
     const sector = r.kind === 'EQ' ? 'EQ' : r.optionType;
-    const name = r.kind === 'EQ' ? (r.name || r.symbol) : r.underlying;
+
+    let displayName = symbol;
+    if (r.kind === 'EQ') {
+      displayName = (r.name || r.symbol).replace(/"/g, '');
+    } else {
+      let expiryFormatted = r.expiry;
+      if (r.expiry) {
+        try {
+          const date = new Date(r.expiry);
+          if (!isNaN(date.getTime())) {
+            const day = date.getDate();
+            const month = date.toLocaleString('en-US', { month: 'short' });
+            expiryFormatted = `${day} ${month}`;
+          }
+        } catch (e) {}
+      }
+      if (r.optionType === 'FUT') {
+        displayName = `${r.underlying} FUT (${expiryFormatted})`;
+      } else {
+        displayName = `${r.underlying} ${r.strike} ${r.optionType} (${expiryFormatted})`;
+      }
+    }
 
     addToWatchlist({
       symbol,
       token: 0,
-      name: name || symbol,
+      name: displayName,
       sector,
       lastPrice: 0,
       change: 0,
