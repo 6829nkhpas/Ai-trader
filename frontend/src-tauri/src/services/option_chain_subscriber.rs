@@ -57,27 +57,45 @@ pub async fn read_spot(pool: &PgPool, underlying: &str) -> Option<f64> {
                  ORDER BY timestamp DESC \
                  LIMIT 1";
 
-    match sqlx::query(query).bind(underlying).fetch_optional(pool).await {
-        Ok(Some(row)) => match row.try_get::<f64, _>("last_traded_price") {
-            Ok(price) if price.is_finite() && price > 0.0 => Some(price),
-            Ok(_) => None,
-            Err(e) => {
-                warn!(
-                    "[OptionChainSub] spot decode failed for {}: {} — treating as unavailable.",
-                    underlying, e
-                );
-                None
+    if let Ok(Some(row)) = sqlx::query(query).bind(underlying).fetch_optional(pool).await {
+        if let Ok(price) = row.try_get::<f64, _>("last_traded_price") {
+            if price.is_finite() && price > 0.0 {
+                return Some(price);
             }
-        },
-        Ok(None) => None,
-        Err(e) => {
-            warn!(
-                "[OptionChainSub] spot query failed for {}: {} — treating as unavailable.",
-                underlying, e
-            );
-            None
         }
     }
+
+    // Fallback 1: check historical_intraday
+    let query_intra = "SELECT close \
+                       FROM historical_intraday \
+                       WHERE symbol = $1 \
+                       ORDER BY timestamp DESC \
+                       LIMIT 1";
+    if let Ok(Some(row)) = sqlx::query(query_intra).bind(underlying).fetch_optional(pool).await {
+        if let Ok(price) = row.try_get::<f64, _>("close") {
+            if price.is_finite() && price > 0.0 {
+                info!("[OptionChainSub] resolved spot from historical_intraday for {}: {:.2}", underlying, price);
+                return Some(price);
+            }
+        }
+    }
+
+    // Fallback 2: check historical_candles
+    let query_candles = "SELECT close \
+                         FROM historical_candles \
+                         WHERE symbol = $1 \
+                         ORDER BY timestamp DESC \
+                         LIMIT 1";
+    if let Ok(Some(row)) = sqlx::query(query_candles).bind(underlying).fetch_optional(pool).await {
+        if let Ok(price) = row.try_get::<f64, _>("close") {
+            if price.is_finite() && price > 0.0 {
+                info!("[OptionChainSub] resolved spot from historical_candles for {}: {:.2}", underlying, price);
+                return Some(price);
+            }
+        }
+    }
+
+    None
 }
 
 /// Map an `OptionType` to the wire string used in the `option_chain_set` command.
