@@ -2,7 +2,7 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { ChevronUp, ChevronDown, GripVertical, Trash2, ArrowUpRight, ArrowDownRight, Loader2 } from 'lucide-react';
-import { useTradeStore } from '../../../store/useTradeStore';
+import { useTradeStore, hydrateWatchlist } from '../../../store/useTradeStore';
 import { useChartUIStore } from '../../../store/useChartUIStore';
 
 const SECTOR_COLORS: Record<string, string> = {
@@ -96,7 +96,11 @@ export default function WatchlistBlock() {
   useEffect(() => { fetchQuotesRef.current = fetchQuotes; }, [fetchQuotes]);
 
   useEffect(() => {
-    fetchQuotesRef.current();
+    const init = async () => {
+      await hydrateWatchlist();
+      fetchQuotesRef.current();
+    };
+    init();
     const quoteInterval = setInterval(() => fetchQuotesRef.current(), 30_000);
     return () => clearInterval(quoteInterval);
   }, []);
