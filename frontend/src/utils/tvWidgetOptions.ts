@@ -19,11 +19,15 @@ export function getTvWidgetOptions({
   resolution,
   theme,
 }: WidgetOptionsInput): ChartingLibraryWidgetOptions {
+  const sym = activeSymbol.toUpperCase();
+  const isFno = sym.endsWith('FUT') || ((sym.endsWith('CE') || sym.endsWith('PE')) && /\d/.test(sym));
+  const exchange = isFno ? 'NFO' : 'NSE';
+
   return {
     container,
     datafeed,
     library_path: '/static/charting_library/charting_library/',
-    symbol: `NSE:${activeSymbol}`,
+    symbol: `${exchange}:${activeSymbol}`,
     interval: resolution,
     timezone: 'Asia/Kolkata',
     theme: theme === 'light' ? 'light' : 'dark',

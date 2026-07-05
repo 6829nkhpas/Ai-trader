@@ -205,7 +205,10 @@ async function fetchFromQuestDB(symbol: string): Promise<HistoricalCandle[]> {
  */
 async function resolveInstrumentToken(symbol: string): Promise<number | null> {
   try {
-    const res = await fetch(`/kite/quote?i=NSE:${encodeURIComponent(symbol)}`);
+    const sym = symbol.toUpperCase();
+    const isFno = sym.endsWith('FUT') || ((sym.endsWith('CE') || sym.endsWith('PE')) && /\d/.test(sym));
+    const exchange = isFno ? 'NFO' : 'NSE';
+    const res = await fetch(`/kite/quote?i=${exchange}:${encodeURIComponent(symbol)}`);
     if (!res.ok) return null;
     const data = await res.json();
     const quotes = data.quotes as { symbol: string; instrument_token: number }[] | undefined;
