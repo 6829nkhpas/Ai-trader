@@ -23,6 +23,7 @@ import FnoUnavailableState from './FnoUnavailableState';
 import FnoServiceState from './FnoServiceState';
 import HistoricalDataBanner from './HistoricalDataBanner';
 import { useFnoSnapshotCache } from './useFnoSnapshotCache';
+import FnoChartPanel from './FnoChartPanel';
 
 /** Bridge payload delivered by both `get_fno_analytics` and `fno-snapshot`. */
 type FnoSnapshot = FnoPayload | FnoUnavailableMarker;
@@ -180,113 +181,9 @@ export default function FnoSection() {
 
   return (
     <div className="flex h-full w-full min-h-0 flex-col bg-background font-sans">
-      {/* Section toolbar */}
-      <div className="flex items-center justify-between gap-4 border-b border-border-default bg-surface px-3 py-1.5">
-        <div className="flex items-center gap-3">
-          <span className="text-[11px] font-bold uppercase tracking-widest text-text-muted">
-            F&amp;O
-          </span>
-
-          <label className="flex items-center gap-1.5">
-            <span className="text-[10px] uppercase tracking-wider text-text-secondary">
-              Underlying
-            </span>
-            <select
-              aria-label="Underlying"
-              value={fnoUnderlying}
-              onChange={(e) => setFnoUnderlying(e.target.value)}
-              className="rounded-none border border-border-default bg-elevated px-2 py-1 text-[11px] font-semibold text-text-primary focus:border-emerald-500/40 focus:outline-none"
-            >
-              {underlyings.map((u) => (
-                <option key={u} value={u}>
-                  {u}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="flex items-center gap-1.5">
-            <span className="text-[10px] uppercase tracking-wider text-text-secondary">
-              Expiry
-            </span>
-            <select
-              aria-label="Expiry"
-              value={fnoExpiry}
-              onChange={(e) => setFnoExpiry(e.target.value)}
-              className="rounded-none border border-border-default bg-elevated px-2 py-1 text-[11px] font-semibold text-text-primary focus:border-emerald-500/40 focus:outline-none"
-            >
-              {/* '' resolves to the bridge's nearest available expiry. */}
-              <option value="">Nearest</option>
-              {expiries.map((e) => (
-                <option key={e} value={e}>
-                  {e}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        {statusLabel && (
-          <div className="flex items-center gap-2 text-[10px] font-mono text-text-secondary">
-            <span
-              className={`inline-flex items-center gap-1 rounded-none border px-1.5 py-0.5 uppercase tracking-wider ${
-                statusLabel.closed
-                  ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
-                  : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-              }`}
-            >
-              {statusLabel.closed ? 'Closed' : 'Live'}
-            </span>
-            {statusLabel.ts && (
-              <span className="text-text-muted">Snapshot {statusLabel.ts}</span>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Body */}
+      {/* Body — chart takes full screen */}
       <div className="relative min-h-0 flex-1">
-        {loading && viewState === null && !lastGoodViewState.current ? (
-          <div className="flex h-full w-full items-center justify-center gap-2 text-text-secondary">
-            <Loader2 size={16} className="animate-spin" />
-            <span className="text-xs font-semibold uppercase tracking-wider">
-              Loading F&amp;O analytics…
-            </span>
-          </div>
-        ) : viewState?.kind === 'service-error' && !lastGoodViewState.current ? (
-          // Transport Err with no cached data — show service error
-          <FnoServiceState detail={viewState.detail} />
-        ) : effectiveView && (effectiveView.kind === 'ready' || effectiveView.kind === 'partial') ? (
-          <div className="flex h-full w-full flex-col">
-            {isFallback && <HistoricalDataBanner snapshotTs={effectiveView.snapshotTs} />}
-            <div className="min-h-0 flex-1">
-              <Group orientation="horizontal" className="h-full w-full">
-                <Panel defaultSize={68} minSize={40}>
-                  <Group orientation="vertical" className="h-full w-full">
-                    <Panel defaultSize={55} minSize={20}>
-                      <OiProfileChart model={effectiveView.oi} />
-                    </Panel>
-                    <Separator className="h-px cursor-row-resize bg-border-default transition-colors hover:bg-emerald-500/40 data-[separator]:h-1" />
-                    <Panel defaultSize={45} minSize={20}>
-                      <IvSkewChart model={effectiveView.iv} />
-                    </Panel>
-                  </Group>
-                </Panel>
-                <Separator className="w-px cursor-col-resize bg-border-default transition-colors hover:bg-emerald-500/40 data-[separator]:w-1" />
-                <Panel defaultSize={32} minSize={22}>
-                  <OptionsHud hud={effectiveView.hud} />
-                </Panel>
-              </Group>
-            </div>
-          </div>
-        ) : viewState === null || viewState.kind === 'unavailable' ? (
-          <FnoUnavailableState
-            reason={viewState?.reason ?? 'F&O option data is currently unavailable.'}
-            lastSnapshotTs={viewState?.kind === 'unavailable' ? viewState.lastSnapshotTs : null}
-          />
-        ) : viewState?.kind === 'service-error' ? (
-          <FnoServiceState detail={viewState.detail} />
-        ) : null}
+        <FnoChartPanel />
       </div>
     </div>
   );
