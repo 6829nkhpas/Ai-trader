@@ -500,7 +500,7 @@ export default function Home() {
             {/* ── Right: Collapsible Profile Sidebar ─────────── */}
             <div
               className={`
-                relative flex flex-col min-h-0 overflow-visible border-l border-border-default bg-surface
+                relative flex flex-col min-h-0 overflow-hidden border-l border-border-default bg-surface
                 ${isResizingSidebar ? '' : 'transition-all duration-300 ease-out'}
                 ${sidebarOpen
                   ? 'opacity-100'
@@ -568,7 +568,7 @@ export default function Home() {
               </div>
 
               {/* Sidebar Content */}
-              <div className="flex-1 min-h-0 overflow-y-auto bg-surface rounded-none">
+              <div className="flex-1 min-h-0 w-full max-w-full overflow-x-hidden overflow-y-auto scrollbar-none bg-surface rounded-none">
                 {renderSidebarContent()}
               </div>
             </div>
