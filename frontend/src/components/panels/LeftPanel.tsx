@@ -92,6 +92,8 @@ const INDEX_NFO_ALIASES: Record<string, string> = {
 const nfoNameOf = (configured: string): string =>
   INDEX_NFO_ALIASES[configured.trim().toUpperCase()] ?? configured.trim();
 
+let globalDragIndex: number | null = null;
+
 export default function LeftPanel() {
   const [query, setQuery] = useState('');
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
@@ -188,10 +190,18 @@ export default function LeftPanel() {
   // ── Fetch quotes for all watchlist symbols ─────────────────────
   const fetchQuotes = useCallback(async () => {
     try {
-      const allSymbols = useTradeStore.getState().watchlist.map((w) => w.symbol);
-      if (allSymbols.length === 0) { setQuotesLoading(false); return; }
+      const watchlistItems = useTradeStore.getState().watchlist;
+      if (watchlistItems.length === 0) { setQuotesLoading(false); return; }
 
-      const params = allSymbols.map((s) => `i=NSE:${s}`).join('&');
+      const params = watchlistItems
+        .map((item) => {
+          const sym = item.symbol.toUpperCase();
+          const isFno = sym.endsWith('FUT') || ((sym.endsWith('CE') || sym.endsWith('PE')) && /\d/.test(sym));
+          const exchange = isFno ? 'NFO' : 'NSE';
+          return `i=${exchange}:${item.symbol}`;
+        })
+        .join('&');
+
       const res = await fetch(`/kite/quote?${params}`);
       if (!res.ok) return;
       const data = await res.json();
@@ -288,11 +298,33 @@ export default function LeftPanel() {
   const handleSelectResult = useCallback(async (r: SearchResult) => {
     const symbol = resultSymbol(r);
     const sector = r.kind === 'EQ' ? 'EQ' : r.optionType; // CE/PE/FUT colored badge
-    const name = r.kind === 'EQ' ? (r.name || r.symbol) : r.underlying;
+
+    let displayName = symbol;
+    if (r.kind === 'EQ') {
+      displayName = (r.name || r.symbol).replace(/"/g, '');
+    } else {
+      let expiryFormatted = r.expiry;
+      if (r.expiry) {
+        try {
+          const date = new Date(r.expiry);
+          if (!isNaN(date.getTime())) {
+            const day = date.getDate();
+            const month = date.toLocaleString('en-US', { month: 'short' });
+            expiryFormatted = `${day} ${month}`;
+          }
+        } catch (e) {}
+      }
+      if (r.optionType === 'FUT') {
+        displayName = `${r.underlying} FUT (${expiryFormatted})`;
+      } else {
+        displayName = `${r.underlying} ${r.strike} ${r.optionType} (${expiryFormatted})`;
+      }
+    }
+
     addToWatchlist({
       symbol,
       token: 0,
-      name: name || symbol,
+      name: displayName,
       sector,
       lastPrice: 0,
       change: 0,
@@ -320,36 +352,26 @@ export default function LeftPanel() {
       setFnoUnderlyingFilter(null); setFnoExpiryFilter(null); setFnoTypeFilter(null);
     };
 
-    if (r.kind === 'FNO' && matchedConfig) {
-      // A configured index (already ingested): open F&O with the config name so
-      // the backend /options/snapshot query matches the ingested snapshots.
-      // setFnoUnderlying resets fnoExpiry to '' (nearest) in the store.
-      setActiveProfile('FNO');
-      setFnoUnderlying(matchedConfig);
-      closeDropdown();
-      return;
-    }
-
     if (r.kind === 'FNO' && typeof r.underlying === 'string') {
-      // A non-configured F&O underlying (e.g. a stock): ask the backend to start
-      // ingesting its chain. The command validates against the NFO master and
-      // returns false for non-derivative symbols → fall back to chart routing.
-      closeDropdown();
-      try {
-        const ok = await invoke<boolean>('fno_request_underlying', {
-          underlying: r.underlying,
-        });
-        if (ok) {
-          // For stocks the NFO name == the snapshot key, so open F&O directly.
-          setActiveProfile('FNO');
-          setFnoUnderlying(r.underlying);
-          return;
-        }
-      } catch (err) {
-        console.warn('[LeftPanel] fno_request_underlying failed:', err);
-      }
-      // No F&O data for this underlying — behave like an equity selection.
+      setActiveProfile('FNO');
+
+      // Resolve configured name (e.g. 'NIFTY 50') or use raw underlying.
+      const matchedConfig = configuredUnderlyings.find((u) => {
+        const ru = r.underlying.toUpperCase();
+        return u.toUpperCase() === ru || nfoNameOf(u).toUpperCase() === ru;
+      });
+      setFnoUnderlying(matchedConfig ?? r.underlying);
+
+      // Route the contract tradingsymbol to the chart for price data.
       routeSymbolToChart(symbol);
+      closeDropdown();
+
+      // Register the underlying with the option-chain subscriber (best-effort).
+      if (!matchedConfig) {
+        invoke<boolean>('fno_request_underlying', { underlying: r.underlying }).catch(
+          (err) => console.warn('[LeftPanel] fno_request_underlying failed:', err),
+        );
+      }
       return;
     }
 
@@ -619,18 +641,43 @@ export default function LeftPanel() {
                 <div
                   key={item.symbol}
                   draggable
-                  onDragStart={() => setDragIndex(idx)}
-                  onDragOver={(e) => { e.preventDefault(); setDragOverIndex(idx); }}
+                  onDragStart={(e) => {
+                    // Check if user clicked on button or delete button to prevent drag-start
+                    const target = e.target as HTMLElement;
+                    if (target.closest('button') || target.closest('input')) {
+                      e.preventDefault();
+                      return;
+                    }
+                    setDragIndex(idx);
+                    globalDragIndex = idx;
+                    e.dataTransfer.setData('text/plain', idx.toString());
+                    e.dataTransfer.effectAllowed = 'move';
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setDragOverIndex(idx);
+                    e.dataTransfer.dropEffect = 'move';
+                  }}
                   onDragLeave={() => setDragOverIndex(null)}
                   onDrop={(e) => {
                     e.preventDefault();
-                    if (dragIndex !== null && dragIndex !== idx) {
-                      reorderWatchlist(dragIndex, idx);
+                    const fromIndex = globalDragIndex ?? (() => {
+                      const fromIndexStr = e.dataTransfer.getData('text/plain');
+                      return fromIndexStr !== '' ? parseInt(fromIndexStr, 10) : null;
+                    })();
+
+                    if (fromIndex !== null && !isNaN(fromIndex) && fromIndex !== idx) {
+                      reorderWatchlist(fromIndex, idx);
                     }
+                    globalDragIndex = null;
                     setDragIndex(null);
                     setDragOverIndex(null);
                   }}
-                  onDragEnd={() => { setDragIndex(null); setDragOverIndex(null); }}
+                  onDragEnd={() => {
+                    globalDragIndex = null;
+                    setDragIndex(null);
+                    setDragOverIndex(null);
+                  }}
                   className={`group flex w-full items-center gap-1 px-1.5 py-1 text-[11px] text-left transition-all border-l-2 ${
                     isDragging ? 'opacity-40 scale-95' : ''
                   } ${isDragOver ? 'bg-primary/5 border-t-2 border-t-primary/40' : ''} ${
@@ -639,51 +686,68 @@ export default function LeftPanel() {
                       : 'hover:bg-elevated/70 border-transparent hover:border-primary/50'
                   }`}
                 >
-                  <div className="shrink-0 cursor-grab opacity-0 group-hover:opacity-60 transition-opacity active:cursor-grabbing">
+                  <div className="shrink-0 cursor-grab opacity-30 group-hover:opacity-75 transition-opacity active:cursor-grabbing p-1">
                     <GripVertical size={10} className="text-text-muted" />
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => routeSymbolToChart(item.symbol)}
-                    className="flex items-center gap-1.5 min-w-0 flex-1 cursor-pointer"
-                  >
-                    <span className="font-semibold text-text-primary truncate">{item.symbol}</span>
-                    <span className={`rounded px-1 py-px text-[6px] font-semibold uppercase tracking-wider ${sectorColor}`}>
-                      {item.sector}
-                    </span>
-                  </button>
+                  {(() => {
+                    const isFnoItem = item.sector === 'CE' || item.sector === 'PE' || item.sector === 'FUT';
+                    const displayName = (isFnoItem ? (item.name || item.symbol) : item.symbol).replace(/"/g, '');
+                    const subtitle = isFnoItem ? null : (item.name !== item.symbol ? item.name.replace(/"/g, '') : null);
 
-                  <div className="flex items-center gap-1 shrink-0">
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => routeSymbolToChart(item.symbol)}
+                        className="flex flex-col items-start text-left min-w-0 flex-1 cursor-pointer w-full"
+                        draggable={false}
+                      >
+                        <div className="flex items-center gap-1.5 w-full min-w-0">
+                          <span className="font-semibold text-text-primary truncate">{displayName}</span>
+                          <span className={`rounded px-1 py-px text-[6px] font-semibold uppercase tracking-wider ${sectorColor} shrink-0`}>
+                            {item.sector}
+                          </span>
+                        </div>
+                        {subtitle && (
+                          <span className="text-[9px] text-text-muted truncate mt-0.5 w-full">
+                            {subtitle}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })()}
+
+                  <div className="flex flex-col items-end justify-center gap-0.5 shrink-0 min-w-[75px]">
                     {quote ? (
                       <>
-                        <span className="font-semibold text-text-primary tabular-nums text-[10px]">{formatPrice(quote.last_price)}</span>
-                        <span className={`flex items-center gap-px text-[9px] font-medium tabular-nums ${isPositive ? 'text-bull' : 'text-bear'}`}>
+                        <span className="font-bold text-text-primary tabular-nums text-[11px]">{formatPrice(quote.last_price)}</span>
+                        <span className={`flex items-center gap-px text-[9px] font-semibold tabular-nums ${isPositive ? 'text-bull' : 'text-bear'}`}>
                           {isPositive ? <ArrowUpRight size={8} /> : <ArrowDownRight size={8} />}
                           {formatChange(quote.change)}
                         </span>
                       </>
                     ) : item.lastPrice > 0 ? (
                       <>
-                        <span className="font-semibold text-text-primary tabular-nums text-[10px]">{formatPrice(item.lastPrice)}</span>
-                        <span className={`flex items-center gap-px text-[9px] font-medium tabular-nums ${isPositive ? 'text-bull' : 'text-bear'}`}>
+                        <span className="font-bold text-text-primary tabular-nums text-[11px]">{formatPrice(item.lastPrice)}</span>
+                        <span className={`flex items-center gap-px text-[9px] font-semibold tabular-nums ${isPositive ? 'text-bull' : 'text-bear'}`}>
                           {isPositive ? <ArrowUpRight size={8} /> : <ArrowDownRight size={8} />}
                           {formatChange(item.change)}
                         </span>
                       </>
                     ) : (
-                      <span className="text-[9px] text-text-muted/50">—</span>
+                      <span className="text-[10px] text-text-muted/50 font-medium">—</span>
                     )}
-
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); removeFromWatchlist(item.symbol); }}
-                      className="opacity-0 group-hover:opacity-100 ml-0.5 p-0.5 rounded text-text-muted hover:text-rose-400 hover:bg-rose-500/10 transition-all"
-                      aria-label={`Remove ${item.symbol} from watchlist`}
-                    >
-                      <Trash2 size={9} />
-                    </button>
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); removeFromWatchlist(item.symbol); }}
+                    className="opacity-0 group-hover:opacity-100 ml-0.5 p-0.5 rounded text-text-muted hover:text-rose-400 hover:bg-rose-500/10 transition-all"
+                    aria-label={`Remove ${item.symbol} from watchlist`}
+                    draggable={false}
+                  >
+                    <Trash2 size={9} />
+                  </button>
                 </div>
               );
             })
