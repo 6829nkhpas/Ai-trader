@@ -688,6 +688,67 @@ def _options_step(record: dict) -> dict:
     return {"check": "options", "outcome": outcome, "detail": detail}
 
 
+def _event_step(record: dict) -> dict:
+    """Map the defensibility event entry to a single event-risk ``VERIFICATION_STEP`` (R9).
+
+    The defensibility record's ``event`` entry (built by ``graph._event_entry``)
+    is either a usable Event_Assessment — ``{"available": True, "event_risk": ...,
+    "days_until_event": ..., "event_date": ..., "event_recommendation": ...}`` —
+    or an Unavailable_Marker — ``{"available": False, "reason": ...}``. The
+    recorded Event_Risk maps to a stable outcome under the fixed check id
+    ``event-risk``:
+
+      * ``clear``         → ``pass``                       (R9.2)
+      * ``through_event`` → ``fail``                       (R9.3)
+      * ``imminent``      → ``informational``              (R9.4)
+      * unavailable       → ``not-evaluable`` (with an 'unavailable' indication, R9.5)
+
+    When the event context is unavailable — no entry, a non-dict entry,
+    ``available`` is falsy, or the Event_Risk is missing/unrecognized — the step
+    reports ``not-evaluable`` with an explicit unavailable indication and NEVER
+    substitutes a fabricated risk (R9.5). Scheduled-event risk is a filter /
+    defensibility surface only, so the step never blocks or overrides a decision.
+    Pure; never raises.
+    """
+    event = record.get("event")
+
+    if not isinstance(event, dict) or not event.get("available"):
+        reason = event.get("reason") if isinstance(event, dict) else None
+        detail = "Event risk unavailable" + (f": {reason}" if reason else "") + "."
+        return {
+            "check": "event-risk",
+            "outcome": "not-evaluable — event risk unavailable",
+            "detail": detail,
+        }
+
+    event_risk = event.get("event_risk")
+    outcome = {
+        "clear": "pass",
+        "through_event": "fail",
+        "imminent": "informational",
+    }.get(event_risk)
+
+    if outcome is None:
+        # An available entry without a recognized event_risk is treated as
+        # unavailable rather than fabricating an outcome (R9.5).
+        return {
+            "check": "event-risk",
+            "outcome": "not-evaluable — event risk unavailable",
+            "detail": "Event risk missing or unrecognized.",
+        }
+
+    detail = (
+        f"event_risk={event_risk}, "
+        f"days_until_event={event.get('days_until_event')}, "
+        f"event_date={event.get('event_date')}, "
+        f"event_recommendation={event.get('event_recommendation')}."
+    )
+    held = event.get("trade_held_through_event")
+    if held:
+        detail += f" {held}"
+    return {"check": "event-risk", "outcome": outcome, "detail": detail}
+
+
 def _debate_consensus_step(record: dict) -> dict:
     """Map the defensibility debate entry to a single debate-consensus ``VERIFICATION_STEP`` (R8).
 
@@ -865,6 +926,12 @@ def _derive_find_mode_steps(record: dict) -> List[dict]:
     # event by `decision_events` (R7.4).
     steps.append(_options_step(record))
 
+    # ── Scheduled-event risk check (earnings-event-risk-gate, R9) ────────────
+    # Exactly one event-risk step, derived from the defensibility event entry
+    # (unavailable -> not-evaluable). Appended among the sibling context steps so
+    # it is ordered before the DECISION event by `decision_events` (R9.6).
+    steps.append(_event_step(record))
+
     # ── Debate-consensus check (multi-agent-debate, R8) ──────────────────────
     # Exactly one debate-consensus step, derived from the defensibility debate
     # entry (absent for non-DEBATE runs -> not-evaluable). Appended last so it is
@@ -928,6 +995,11 @@ def build_verification_steps(decision: Any) -> List[dict]:
         # (options-agent-integration R7.1 — exactly one options VERIFICATION_STEP).
         if not any(s.get("check") == "options" for s in steps):
             steps.append(_options_step(record))
+        # Surface exactly one event-risk step in VERIFY mode too: append the
+        # derived step only when the validator checks don't already carry one
+        # (earnings-event-risk-gate R9.1 — exactly one event-risk VERIFICATION_STEP).
+        if not any(s.get("check") == "event-risk" for s in steps):
+            steps.append(_event_step(record))
         # Surface exactly one debate-consensus step in VERIFY mode too: append
         # the derived step only when the validator checks don't already carry one
         # (multi-agent-debate R8.1 — exactly one debate-consensus VERIFICATION_STEP).

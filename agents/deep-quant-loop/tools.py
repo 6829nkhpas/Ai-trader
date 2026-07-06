@@ -1,5 +1,6 @@
 import os
 import json
+import csv
 import math
 import time
 from datetime import datetime
@@ -749,6 +750,43 @@ def validate_contract(tool_name, payload):
             iv_skew = payload.get("iv_skew")
             if iv_skew is not None and not isinstance(iv_skew, dict):
                 return _contract_error("options 'iv_skew' is neither an object nor null")
+            return payload
+
+        if tool_name == "get_event_risk":
+            if not isinstance(payload, dict):
+                return _contract_error(
+                    f"get_event_risk expected an object, got {type(payload).__name__}"
+                )
+            # A conforming Event_Assessment carries an `event_risk` drawn from the
+            # fixed EVENT_RISK_STATES enum, an `event_recommendation` drawn from
+            # the fixed EVENT_RECOMMENDATIONS enum, a `days_until_event` present as
+            # a finite number or null (null when no day count is available), and an
+            # `event_date` string identifying the reference Scheduled_Event date.
+            # (An Unavailable_Marker carries `unavailable: true` and was already
+            # passed through above by _has_honest_marker, so anything reaching here
+            # must be a full assessment.)
+            event_risk = payload.get("event_risk")
+            if event_risk not in EVENT_RISK_STATES:
+                return _contract_error(
+                    f"event_risk '{event_risk}' not in "
+                    "{clear, imminent, through_event}"
+                )
+            event_recommendation = payload.get("event_recommendation")
+            if event_recommendation not in EVENT_RECOMMENDATIONS:
+                return _contract_error(
+                    f"event_recommendation '{event_recommendation}' not in "
+                    "{proceed, size_down, shorten_horizon, stand_aside}"
+                )
+            # days_until_event: a finite number or null.
+            if "days_until_event" not in payload:
+                return _contract_error("event missing field 'days_until_event'")
+            if not _is_number_or_null(payload["days_until_event"]):
+                return _contract_error(
+                    "event 'days_until_event' is neither numeric nor null"
+                )
+            # The reference Scheduled_Event date must be present as a string.
+            if not isinstance(payload.get("event_date"), str):
+                return _contract_error("event missing 'event_date' string")
             return payload
 
         # Unknown / non-contract tool (e.g. declare_trade, watch_price_condition):
@@ -2085,24 +2123,330 @@ def _event_unavailable(symbol, holding_horizon, reason: str) -> dict:
     }
 
 
-def _load_event_candidates(symbol, config) -> list:
+# ── Event_Source date-parsing helpers (pure, never raise) ────────────────────
+# These turn operator-provided date representations into epoch-millisecond
+# candidates. A date-only string is anchored at midnight in the configured
+# market timezone so the mapping is deterministic and host-timezone independent
+# (never fabricates a date; never raises).
+
+# Recognised symbol-column names in a list-of-records / CSV Event_Source.
+_EVENT_SYMBOL_KEYS = ("symbol", "ticker", "scrip", "code")
+# Recognised date-bearing field names in a record / API body.
+_EVENT_DATE_KEYS = (
+    "date",
+    "dates",
+    "event_date",
+    "eventDate",
+    "event_dates",
+    "earnings_date",
+    "earningsDate",
+    "earnings_dates",
+    "results_date",
+    "resultsDate",
+)
+
+
+def _parse_event_date_to_ms(value, config) -> Optional[float]:
+    """Parse one operator-provided event-date value to an epoch-ms candidate.
+
+    Accepts an ISO date (``YYYY-MM-DD``, anchored at midnight in the configured
+    market timezone) or an ISO datetime (naive datetimes are interpreted in the
+    market timezone; aware datetimes are honoured). A finite number is treated as
+    an already-computed epoch-ms candidate. Returns ``None`` for anything
+    unparseable. Deterministic; never raises.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value) if math.isfinite(value) else None
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        tz = ZoneInfo(config.timezone)
+    except Exception:
+        return None
+    dt = None
+    try:
+        if len(text) == 10 and text[4] == "-" and text[7] == "-":
+            # Date-only -> anchor at midnight in the market timezone.
+            year, month, day = int(text[0:4]), int(text[5:7]), int(text[8:10])
+            dt = datetime(year, month, day, 0, 0, 0, tzinfo=tz)
+        else:
+            iso = text[:-1] + "+00:00" if text.endswith("Z") else text
+            parsed = datetime.fromisoformat(iso)
+            dt = parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=tz)
+    except (ValueError, TypeError):
+        return None
+    try:
+        return dt.timestamp() * 1000.0
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _coerce_date_values(value) -> list:
+    """Flatten a date-bearing value into a list of raw date representations.
+
+    A single string/number becomes a one-element list; a list/tuple is flattened
+    (one level) keeping its string/number members. Anything else yields an empty
+    list. Never raises.
+    """
+    if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        out = []
+        for item in value:
+            if isinstance(item, (str, int, float)) and not isinstance(item, bool):
+                out.append(item)
+        return out
+    return []
+
+
+def _collect_symbol_dates(data, symbol) -> list:
+    """Collect raw date values for ``symbol`` from a mapping or list-of-records.
+
+    Supports the two documented Event_Source shapes with a case-insensitive
+    symbol match:
+      * a mapping ``{"RELIANCE": "2025-01-15", "TCS": ["2025-02-01", ...]}``
+      * a list of records ``[{"symbol": "RELIANCE", "date": "2025-01-15"}, ...]``
+    Returns raw (unparsed) date representations; never raises.
+    """
+    target = symbol.strip().lower() if isinstance(symbol, str) else ""
+    if not target:
+        return []
+    out = []
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if isinstance(key, str) and key.strip().lower() == target:
+                out.extend(_coerce_date_values(value))
+    elif isinstance(data, list):
+        for record in data:
+            if not isinstance(record, dict):
+                continue
+            sym = None
+            for sk in _EVENT_SYMBOL_KEYS:
+                candidate = record.get(sk)
+                if isinstance(candidate, str):
+                    sym = candidate
+                    break
+            if sym is None or sym.strip().lower() != target:
+                continue
+            for dk in _EVENT_DATE_KEYS:
+                if dk in record:
+                    out.extend(_coerce_date_values(record[dk]))
+    return out
+
+
+def _collect_api_dates(body, symbol) -> list:
+    """Collect raw date values from common symbol-scoped calendar-API shapes.
+
+    Handles a bare list of dates (``["2025-01-15", ...]``), a wrapped mapping
+    (``{"dates": [...]}`` / ``{"event_dates": [...]}``), and an events list
+    (``{"events": [{"date": ...}, ...]}``). Complements ``_collect_symbol_dates``
+    (which handles the symbol-keyed mapping / list-of-records shapes). Never
+    raises.
+    """
+    out = []
+    if isinstance(body, list):
+        for item in body:
+            if isinstance(item, str):
+                out.append(item)
+            elif isinstance(item, dict):
+                for dk in _EVENT_DATE_KEYS:
+                    if dk in item:
+                        out.extend(_coerce_date_values(item[dk]))
+    elif isinstance(body, dict):
+        events_val = body.get("events")
+        if isinstance(events_val, list):
+            for item in events_val:
+                if isinstance(item, str):
+                    out.append(item)
+                elif isinstance(item, dict):
+                    for dk in _EVENT_DATE_KEYS:
+                        if dk in item:
+                            out.extend(_coerce_date_values(item[dk]))
+        for dk in _EVENT_DATE_KEYS:
+            if dk in body:
+                out.extend(_coerce_date_values(body[dk]))
+    return out
+
+
+def _dates_to_ms(raw_values, config) -> list:
+    """Parse a list of raw date representations to epoch-ms candidates, dropping
+    any that cannot be parsed. Never raises."""
+    candidates = []
+    for value in raw_values:
+        ms = _parse_event_date_to_ms(value, config)
+        if ms is not None:
+            candidates.append(ms)
+    return candidates
+
+
+def _read_event_file(symbol, file_path, config):
+    """Read the operator local calendar file for ``symbol``'s event dates.
+
+    Returns ``(candidates, failure_reason)``: on success, the parsed epoch-ms
+    candidate list (possibly empty when the symbol is absent) with a ``None``
+    reason; on a missing / unreadable / malformed file, ``([], reason)``. The
+    file may be JSON or CSV (mapping symbol -> upcoming date(s), case-insensitive
+    match). Never raises (Requirements 1.1, 1.3, 1.4).
+    """
+    try:
+        if not os.path.isfile(file_path):
+            return [], f"calendar file not found: {file_path}"
+        with open(file_path, "r", encoding="utf-8") as handle:
+            raw = handle.read()
+        if not raw.strip():
+            return [], "calendar file is empty"
+
+        lower = file_path.lower()
+        raw_dates = None
+        if lower.endswith(".csv"):
+            raw_dates = _extract_dates_from_csv(raw, symbol)
+        elif lower.endswith(".json"):
+            try:
+                raw_dates = _collect_symbol_dates(json.loads(raw), symbol)
+            except (ValueError, TypeError):
+                return [], "calendar file is malformed (unparseable JSON)"
+        else:
+            # Unknown extension: try JSON first, fall back to CSV.
+            try:
+                raw_dates = _collect_symbol_dates(json.loads(raw), symbol)
+            except (ValueError, TypeError):
+                raw_dates = _extract_dates_from_csv(raw, symbol)
+
+        if raw_dates is None:
+            return [], "calendar file is malformed (unparseable)"
+        return _dates_to_ms(raw_dates, config), None
+    except Exception as exc:  # never raise into the loader (R1.4)
+        return [], f"calendar file read error: {exc.__class__.__name__}"
+
+
+def _extract_dates_from_csv(raw, symbol) -> list:
+    """Extract raw date strings for ``symbol`` from CSV text (case-insensitive).
+
+    Accepts a header row (a ``symbol``/``ticker`` column and one or more columns
+    whose name contains ``date``) or, when no header is present, assumes column 0
+    is the symbol and column 1 the date. Never raises.
+    """
+    target = symbol.strip().lower() if isinstance(symbol, str) else ""
+    if not target:
+        return []
+    rows = [row for row in csv.reader(raw.splitlines()) if row and any(c.strip() for c in row)]
+    if not rows:
+        return []
+
+    header = [c.strip().lower() for c in rows[0]]
+    has_header = any(h in _EVENT_SYMBOL_KEYS for h in header) or any("date" in h for h in header)
+
+    sym_idx = 0
+    date_idxs = [1]
+    data_rows = rows
+    if has_header:
+        data_rows = rows[1:]
+        for i, h in enumerate(header):
+            if h in _EVENT_SYMBOL_KEYS:
+                sym_idx = i
+                break
+        date_idxs = [i for i, h in enumerate(header) if "date" in h] or (
+            [1] if len(header) > 1 else []
+        )
+
+    out = []
+    for row in data_rows:
+        if len(row) <= sym_idx:
+            continue
+        if row[sym_idx].strip().lower() != target:
+            continue
+        for di in date_idxs:
+            if di < len(row):
+                value = row[di].strip()
+                if value:
+                    out.append(value)
+    return out
+
+
+def _read_event_api(symbol, api_url, config):
+    """Read the operator calendar API for ``symbol``'s event dates.
+
+    Returns ``(candidates, failure_reason)``: on a 2xx JSON response, the parsed
+    epoch-ms candidate list (possibly empty) with a ``None`` reason; on a
+    timeout / connection error / non-2xx / unparseable body, ``([], reason)``.
+    Uses the operator-configured endpoint only (never a hardcoded vendor) with
+    ``config.source_timeout_s``. Never raises (Requirements 1.1, 1.4).
+    """
+    try:
+        response = httpx.get(
+            api_url, params={"symbol": symbol}, timeout=config.source_timeout_s
+        )
+        if response.status_code < 200 or response.status_code >= 300:
+            return [], f"calendar API returned HTTP {response.status_code}"
+        try:
+            body = response.json()
+        except Exception:
+            return [], "calendar API returned an unparseable body"
+        raw_dates = _collect_symbol_dates(body, symbol) + _collect_api_dates(body, symbol)
+        return _dates_to_ms(raw_dates, config), None
+    except Exception as exc:  # timeout / connection error / etc. (R1.4)
+        return [], f"calendar API request failed: {exc.__class__.__name__}"
+
+
+def _load_event_candidates(symbol, config) -> dict:
     """Gather candidate Scheduled_Event datetimes (epoch ms) for ``symbol`` from
     the operator-configured Event_Source (AD-1, AD-2; the only I/O in the gate).
 
-    TODO(task 4.2): implement the pluggable source reader — read the operator
-    local calendar file (``config.calendar_file_path``, JSON/CSV, case-insensitive
-    symbol match) and/or the operator calendar API (``config.calendar_api_url``
-    with ``config.source_timeout_s``), parsing each upcoming event date to an
-    epoch-ms candidate; degrade a missing/unreadable/malformed file or a
-    timeout/connection-error/non-2xx/unparseable API body to no candidates; never
-    scrape or hardcode a specific paid vendor; never fabricate a date; never raise
-    (Requirements 1.1, 1.2, 1.3, 1.4, 2.1).
+    The Event_Source is pluggable and operator-configured, following the
+    ``fetch_news_context`` precedent: an operator local calendar file
+    (``config.calendar_file_path``, JSON or CSV mapping symbol -> upcoming
+    date(s), case-insensitive match) and/or an operator calendar API
+    (``config.calendar_api_url``, queried with ``config.source_timeout_s``). Both
+    may be configured, in which case their candidates are combined. It never
+    scrapes or hardcodes a specific paid vendor (Requirement 1.1), never
+    fabricates a date (Requirements 1.3, 5.1), and never raises (Requirements
+    1.4, 5.3).
 
-    For now this is a minimal safe stub returning no candidates, so the tool
-    degrades honestly to an Unavailable_Marker (no upcoming event / no source)
-    rather than fabricating an event date.
+    Returns a structured result so the tool can distinguish the three
+    Unavailable_Marker reasons (Requirements 1.2 vs 1.4 vs 1.3):
+      * ``source_configured`` — ``False`` when NEITHER a file nor an API is set
+        (-> "no event source configured", Requirement 1.2).
+      * ``retrieval_failed`` / ``failure_reason`` — a configured source was
+        missing / unreadable / malformed / unreachable / timed out / returned a
+        non-2xx or unparseable body (-> retrieval-cause marker, Requirement 1.4).
+      * ``candidates`` — the combined epoch-ms candidate list; an empty list from
+        a source that read cleanly means "no upcoming event for the symbol"
+        (Requirement 1.3).
     """
-    return []
+    result = {
+        "candidates": [],
+        "source_configured": False,
+        "retrieval_failed": False,
+        "failure_reason": None,
+    }
+
+    file_path = getattr(config, "calendar_file_path", None)
+    api_url = getattr(config, "calendar_api_url", None)
+
+    if isinstance(file_path, str) and file_path.strip():
+        result["source_configured"] = True
+        cands, reason = _read_event_file(symbol, file_path, config)
+        if reason is not None:
+            result["retrieval_failed"] = True
+            result["failure_reason"] = reason
+        else:
+            result["candidates"].extend(cands)
+
+    if isinstance(api_url, str) and api_url.strip():
+        result["source_configured"] = True
+        cands, reason = _read_event_api(symbol, api_url, config)
+        if reason is not None:
+            result["retrieval_failed"] = True
+            result["failure_reason"] = reason
+        else:
+            result["candidates"].extend(cands)
+
+    return result
 
 
 @tool
@@ -2180,14 +2524,33 @@ def get_event_risk(symbol: str, holding_horizon: str = "") -> dict:
         reference_ms = time.time() * 1000.0
 
         # 5. Gather candidate Scheduled_Event datetimes from the configured
-        #    Event_Source. No source / unreachable / no symbol events all yield
-        #    no candidates here -> Unavailable_Marker below (Requirements 1.2-1.4).
-        candidates = _load_event_candidates(symbol, config)
+        #    Event_Source. The loader returns a structured result so the three
+        #    Unavailable reasons stay distinguishable (Requirements 1.2-1.4).
+        source = _load_event_candidates(symbol, config)
+
+        # 5a. NEITHER a file nor an API is configured -> honest "no event source
+        #     configured" marker (Requirement 1.2).
+        if not source["source_configured"]:
+            print("[Tool Success] <<< get_event_risk: no event source configured")
+            return _event_unavailable(
+                symbol,
+                horizon,
+                "no event source configured",
+            )
 
         # 6. Select the nearest UPCOMING event (pure; excludes past/at-reference).
-        #    None -> no upcoming event known for the symbol (Requirement 1.3).
-        event_ms = events.select_next_event(candidates, reference_ms, config)
+        event_ms = events.select_next_event(source["candidates"], reference_ms, config)
         if event_ms is None:
+            # A configured source that could not be read (missing/unreadable/
+            # malformed file, unreachable/timeout/non-2xx/unparseable API) and
+            # yielded NO candidates -> retrieval-cause marker (Requirement 1.4).
+            if source["retrieval_failed"] and not source["candidates"]:
+                reason = f"event source retrieval failed: {source['failure_reason']}"
+                print(f"[Tool Success] <<< get_event_risk: symbol={symbol}, {reason}")
+                return _event_unavailable(symbol, horizon, reason)
+            # A configured source that read cleanly but has no upcoming event for
+            # the symbol (or only past-dated events) -> no-upcoming-event marker
+            # (Requirement 1.3). Never fabricate a date.
             print(f"[Tool Success] <<< get_event_risk: symbol={symbol}, no upcoming event")
             return _event_unavailable(
                 symbol,
