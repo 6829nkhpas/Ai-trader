@@ -1,6 +1,9 @@
 import os
 import json
 import math
+import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Optional
 import httpx
 
@@ -73,6 +76,14 @@ import trade_manager
 # resolved heartbeat/cap configuration to the Rust watcher on registration and to
 # classify + scope a resume's cheap Delta_Recheck. Pure module; no market-data source.
 import opportunity
+
+# Event_Classifier (earnings-event-risk-gate) — the single source of truth for the
+# scheduled-event (earnings/results) proximity math (AD-1, AD-2). The
+# get_event_risk tool delegates parameter resolution, nearest-future selection,
+# and classification to this pure module; the tool itself performs the only I/O
+# (reads the process clock for the reference "now" and gathers candidate event
+# dates from the operator-configured Event_Source) and re-validates the contract.
+import events
 
 RUST_SERVER_URL = "http://localhost:8084"
 
@@ -197,6 +208,19 @@ SESSION_PHASES = {
     "pre_open", "opening", "morning", "midday", "afternoon", "closing", "post_close",
 }
 TIME_FAVORABILITY = {"favorable", "unfavorable", "neutral"}
+
+# ── Event_Risk_Tool contract (earnings-event-risk-gate) ──────────────────────
+# A get_event_risk Event_Assessment must carry an `event_risk` drawn from the
+# fixed EVENT_RISK_STATES enum, an `event_recommendation` drawn from the fixed
+# EVENT_RECOMMENDATIONS enum, a `days_until_event` present as a finite number or
+# null, and an `event_date` string identifying the reference Scheduled_Event
+# date. The assessment is computed PURELY by the events.py Event_Classifier from
+# the process-clock reference "now", the nearest upcoming event date, and the
+# resolved configuration — the tool performs the only I/O (AD-1). An
+# Unavailable_Marker ({"unavailable": true, ...}) is an honest non-fatal result
+# handled by the existing _has_honest_marker pass-through (Requirements 4.8, 5.1).
+EVENT_RISK_STATES = {"clear", "imminent", "through_event"}
+EVENT_RECOMMENDATIONS = {"proceed", "size_down", "shorten_horizon", "stand_aside"}
 
 # ── Options_Analytics_Tool contract (options-agent-integration) ──────────────
 # A get_options_analytics Options_Bias_Label must carry an `options_bias_state`
@@ -2039,6 +2063,173 @@ def get_session_context(symbol: str, timeframe: str) -> dict:
             symbol if isinstance(symbol, str) else None,
             timeframe if isinstance(timeframe, str) else None,
             f"session processing error: {str(e)}",
+        )
+
+
+def _event_unavailable(symbol, holding_horizon, reason: str) -> dict:
+    """Build a get_event_risk Unavailable_Marker (the event marker shape).
+
+    Mirrors ``_session_unavailable`` / ``_regime_unavailable``: it carries the
+    ``symbol`` / ``holding_horizon`` context, the ``unavailable: true`` flag, and
+    a ``reason`` citing the cause, and it *omits* ``event_risk`` /
+    ``event_recommendation`` entirely — an unavailable event risk is a missing
+    optional input, never a fabricated label (AD-3, Requirements 5.1, 5.3, 5.4).
+    Recognized as an honest, non-fatal marker by ``_has_honest_marker`` so
+    ``validate_contract`` passes it through unchanged (Requirement 4.8).
+    """
+    return {
+        "symbol": symbol,
+        "holding_horizon": holding_horizon,
+        "unavailable": True,
+        "reason": reason,
+    }
+
+
+def _load_event_candidates(symbol, config) -> list:
+    """Gather candidate Scheduled_Event datetimes (epoch ms) for ``symbol`` from
+    the operator-configured Event_Source (AD-1, AD-2; the only I/O in the gate).
+
+    TODO(task 4.2): implement the pluggable source reader — read the operator
+    local calendar file (``config.calendar_file_path``, JSON/CSV, case-insensitive
+    symbol match) and/or the operator calendar API (``config.calendar_api_url``
+    with ``config.source_timeout_s``), parsing each upcoming event date to an
+    epoch-ms candidate; degrade a missing/unreadable/malformed file or a
+    timeout/connection-error/non-2xx/unparseable API body to no candidates; never
+    scrape or hardcode a specific paid vendor; never fabricate a date; never raise
+    (Requirements 1.1, 1.2, 1.3, 1.4, 2.1).
+
+    For now this is a minimal safe stub returning no candidates, so the tool
+    degrades honestly to an Unavailable_Marker (no upcoming event / no source)
+    rather than fabricating an event date.
+    """
+    return []
+
+
+@tool
+def get_event_risk(symbol: str, holding_horizon: str = "") -> dict:
+    """
+    Classify scheduled-event (earnings/results) proximity risk for a symbol
+    given the intended holding horizon.
+
+    Use this BEFORE committing a directional (BUY/SELL) setup to gauge whether
+    the trade would be held THROUGH a scheduled binary event (earnings/results
+    date), which carries uncompensated overnight gap risk. A veteran trader
+    flattens or sizes down before a scheduled event, or takes the trade only if
+    it closes intraday BEFORE the event. This gate is a RISK FILTER ONLY — it
+    never generates a trade, never blocks one, never overrides your decision, and
+    never fabricates an event date; it only ever tightens (size down, shorten
+    horizon, or stand aside). When the event risk is unavailable, proceed with
+    the remaining analysis and note it as unavailable.
+
+    The proximity classification is pure date math (module ``events``) over a
+    reference "now" and the nearest upcoming Scheduled_Event drawn from the
+    operator-configured Event_Source (a calendar file and/or calendar API); with
+    no source configured, an unreachable source, or no upcoming event for the
+    symbol, it returns an honest Unavailable_Marker.
+
+    Args:
+        symbol (str): The trading symbol (e.g. "RELIANCE").
+        holding_horizon (str): The intended maximum holding duration of the
+            setup under consideration — "intraday" (closes same session) or
+            "multi_session" (held overnight or longer). Absent/empty/unrecognized
+            applies the documented default holding horizon.
+
+    Returns:
+        dict: An Event_Assessment with:
+              - days_until_event (a finite non-negative number or null)
+              - event_risk ("clear" | "imminent" | "through_event")
+              - event_recommendation ("proceed" | "size_down" |
+                "shorten_horizon" | "stand_aside")
+              - event_date (the reference Scheduled_Event date used)
+              When the event risk cannot be determined (gate disabled, no source
+              configured, source unreachable/malformed, no upcoming event, or any
+              processing error) it returns an Unavailable_Marker
+              {"unavailable": true, "reason": ...} with NO event_risk /
+              event_recommendation — treat that as a missing, non-blocking input.
+              An empty/whitespace symbol returns a structured error. Never raises.
+    """
+    print(f"\n[Tool Call] >>> get_event_risk: symbol={symbol}, holding_horizon={holding_horizon!r}")
+    try:
+        # 1. Resolve parameters (single source of truth; never raises). Check the
+        #    master enable flag FIRST — a disabled gate returns a gate-disabled
+        #    Unavailable_Marker immediately, performing NO source retrieval
+        #    (Requirements 5.4, 11.5).
+        config = events.resolve_event_config()
+        if not config.enabled:
+            print("[Tool Success] <<< get_event_risk: gate disabled")
+            return _event_unavailable(
+                symbol if isinstance(symbol, str) else None,
+                holding_horizon if isinstance(holding_horizon, str) else None,
+                "event risk gate disabled by configuration",
+            )
+
+        # 2. Validate arguments — empty/whitespace symbol is a structured error
+        #    result (NOT an exception, Requirement 4.3).
+        if not isinstance(symbol, str) or not symbol.strip():
+            print("[Tool Error] <<< get_event_risk: empty/whitespace symbol")
+            return {
+                "error": "get_event_risk requires a non-empty symbol",
+            }
+
+        # 3. Normalize the intended Holding_Horizon (absent/empty/unrecognized ->
+        #    documented default, Requirement 4.4).
+        horizon = events.normalize_holding_horizon(holding_horizon, config)
+
+        # 4. Read the process clock for the reference "now" (epoch ms). This is
+        #    the tool-side I/O; the pure classifier never reads the host clock.
+        reference_ms = time.time() * 1000.0
+
+        # 5. Gather candidate Scheduled_Event datetimes from the configured
+        #    Event_Source. No source / unreachable / no symbol events all yield
+        #    no candidates here -> Unavailable_Marker below (Requirements 1.2-1.4).
+        candidates = _load_event_candidates(symbol, config)
+
+        # 6. Select the nearest UPCOMING event (pure; excludes past/at-reference).
+        #    None -> no upcoming event known for the symbol (Requirement 1.3).
+        event_ms = events.select_next_event(candidates, reference_ms, config)
+        if event_ms is None:
+            print(f"[Tool Success] <<< get_event_risk: symbol={symbol}, no upcoming event")
+            return _event_unavailable(
+                symbol,
+                horizon,
+                "no upcoming scheduled event known for symbol",
+            )
+
+        # 7. Classify via the pure Event_Classifier. It returns either an
+        #    Event_Assessment or an Unavailable_Marker, and never raises. The
+        #    reference event_date is the ISO date of the selected event in the
+        #    configured market timezone.
+        try:
+            event_date = datetime.fromtimestamp(
+                event_ms / 1000.0, tz=ZoneInfo(config.timezone)
+            ).date().isoformat()
+        except Exception:
+            event_date = None
+        result = events.assess_event_risk(
+            reference_ms, event_ms, horizon, config, symbol=symbol, event_date=event_date
+        )
+
+        # 8. Re-validate against the Tool_Result_Contract on receipt (AD-3) and
+        #    return. validate_contract passes an Unavailable_Marker through
+        #    unchanged and never raises.
+        validated = validate_contract("get_event_risk", result)
+        if validated.get("unavailable"):
+            print(f"[Tool Success] <<< get_event_risk: symbol={symbol}, unavailable ({validated.get('reason')})")
+        else:
+            print(
+                f"[Tool Success] <<< get_event_risk: symbol={symbol}, "
+                f"risk={validated.get('event_risk')}, "
+                f"recommendation={validated.get('event_recommendation')}"
+            )
+        return validated
+    except Exception as e:
+        # Defensive catch-all: any processing error degrades to an honest
+        # Unavailable_Marker rather than raising into the agent loop (R5.3).
+        print(f"[Tool Warning] <<< get_event_risk FAIL: {str(e)}")
+        return _event_unavailable(
+            symbol if isinstance(symbol, str) else None,
+            holding_horizon if isinstance(holding_horizon, str) else None,
+            f"event processing error: {str(e)}",
         )
 
 
