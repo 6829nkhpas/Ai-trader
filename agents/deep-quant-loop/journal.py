@@ -549,6 +549,47 @@ def _options_tag(decision: dict) -> str:
         return "unknown"
 
 
+# Fixed, low-cardinality event-risk enumeration for the setup fingerprint (R10.3).
+# The Earnings/Event-Date Risk Gate collapses the recorded Event_Risk into this
+# small set so the event-extended ``setup_key`` stays groupable and individual
+# setups can accumulate enough scored trades to clear LOW_SAMPLE_THRESHOLD.
+# Exactly 4 distinct values (<= 8 per R10.3) including ``unknown``: the three
+# categorical Event_Risk classifications (``clear``/``imminent``/``through_event``)
+# plus ``unknown`` for a decision carrying no event entry, an unavailable entry,
+# or any missing/empty/unrecognized Event_Risk value.
+EVT_TAG_VALUES = {"clear", "imminent", "through_event", "unknown"}
+
+_EVT_RISK_VALUES = {"clear", "imminent", "through_event"}
+
+
+def _event_tag(decision: dict) -> str:
+    """Collapse the decision's scheduled-event risk into one fixed enumeration value.
+
+    Reads the event entry recorded in the defensibility record
+    (``decision['defensibility']['event']`` — written by ``graph._event_entry``)
+    and returns the recorded ``event_risk`` verbatim when it is one of the three
+    categorical Event_Risk classifications (``clear``/``imminent``/``through_event``).
+
+    A missing/non-dict event entry, an explicitly unavailable entry
+    (``available`` is False), an empty value, or an unrecognized Event_Risk
+    collapses to ``unknown`` (R10.2). Returns the bare value (caller prefixes
+    ``evt:``). Never raises.
+    """
+    try:
+        d = decision or {}
+        deff = d.get("defensibility") or {}
+        event = deff.get("event")
+        if not isinstance(event, dict):
+            return "unknown"
+        # An explicitly unavailable event entry carries no fabricated risk.
+        if event.get("available") is False:
+            return "unknown"
+        event_risk = str(event.get("event_risk") or "").strip().lower()
+        return event_risk if event_risk in _EVT_RISK_VALUES else "unknown"
+    except Exception:
+        return "unknown"
+
+
 def derive_setup_tags(decision: dict) -> list:
     """Derive a coarse, groupable setup fingerprint from a committed decision.
 
@@ -675,6 +716,15 @@ def derive_setup_tags(decision: dict) -> list:
     # (adaptive-opportunity-engine R9.2). ``opt:`` is *options*; ``tier:`` is the
     # distinct opportunity dimension.
     tags.append("tier:" + opportunity.tier_tag(decision))
+
+    # Event-date risk dimension — appended at the FINAL fixed position
+    # (immediately after the ``tier:`` tag) so the resulting ``setup_key`` is
+    # deterministic for identical inputs and stays low-cardinality. Collapses the
+    # recorded Event_Risk (Earnings/Event-Date Risk Gate) into one fixed ``evt:``
+    # value; a decision carrying no event entry, an unavailable entry, or any
+    # missing/empty/unrecognized Event_Risk defaults to ``evt:unknown`` (R10.1,
+    # R10.2, R10.3).
+    tags.append("evt:" + _event_tag(decision))
 
     return tags
 
