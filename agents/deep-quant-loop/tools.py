@@ -1592,7 +1592,8 @@ def _options_unavailable(symbol, underlying, chain_context, reason: str) -> dict
 
 @tool
 def get_options_analytics(symbol: str, expiry: str = "",
-                          proposed_direction: str = "") -> dict:
+                          proposed_direction: str = "",
+                          own_chain: bool = False) -> dict:
     """
     Read the options-positioning picture for a symbol — PCR (OI and volume), max
     pain, aggregate OI buildup, OI-wall support/resistance, IV skew, futures basis
@@ -1607,19 +1608,33 @@ def get_options_analytics(symbol: str, expiry: str = "",
     waiting, or HOLD; when it is unavailable, proceed with the remaining analysis
     and note it as unavailable.
 
-    For an index Underlying (NIFTY 50, BANKNIFTY) its OWN chain is analyzed
-    (chain_context="own-chain"); for a non-index symbol the symbol's benchmark
-    index chain is used as broad-market options context
-    (chain_context="broad-market"), clearly labelled as index-level rather than
-    stock-specific. The options analytics math lives entirely in the F2 engine and
-    is consumed verbatim; the bias is a pure threshold vote over those analytics.
+    Chain resolution:
+      * An index Underlying (NIFTY 50, BANKNIFTY) always analyzes its OWN chain
+        (chain_context="own-chain").
+      * A non-index symbol (a stock) defaults to its benchmark index chain as
+        broad-market options context (chain_context="broad-market"), clearly
+        labelled as index-level rather than stock-specific.
+      * When `own_chain=True` (set this in the F&O workspace when you want the
+        STOCK's own options), a non-index symbol analyzes its OWN option chain
+        instead of the benchmark proxy — falling back to the benchmark chain only
+        if the stock has no chain snapshot, so you still get index-level context
+        rather than nothing.
+
+    The options analytics math lives entirely in the F2 engine and is consumed
+    verbatim; the bias is a pure threshold vote over those analytics.
 
     Args:
         symbol (str): The trading symbol (e.g. "RELIANCE", "BANKNIFTY").
-        expiry (str): Optional expiry; when empty the engine's nearest available
-                      expiry for the resolved chain is used.
+        expiry (str): Optional expiry as an ISO date "YYYY-MM-DD" (e.g.
+                      "2026-07-30"); when empty the engine's nearest available
+                      expiry for the resolved chain is used. In the F&O workspace,
+                      pass the exact expiry the user has selected.
         proposed_direction (str): Optional proposed trade direction ("BUY" / "SELL");
                       when empty, no direction is assumed and alignment is neutral.
+        own_chain (bool): When True, analyze a non-index symbol's OWN option chain
+                      (stock-specific) instead of the broad-market benchmark proxy.
+                      Set this in the F&O workspace. Ignored for index underlyings
+                      (which always use their own chain). Defaults to False.
 
     Returns:
         dict: An options result carrying pcr_oi, pcr_volume, max_pain, oi_buildup,
@@ -1632,7 +1647,7 @@ def get_options_analytics(symbol: str, expiry: str = "",
     """
     print(
         f"\n[Tool Call] >>> get_options_analytics: symbol={symbol}, "
-        f"expiry={expiry!r}, direction={proposed_direction!r}"
+        f"expiry={expiry!r}, direction={proposed_direction!r}, own_chain={own_chain}"
     )
     # Resolve the analyzed chain + label up-front so the defensive catch-all can
     # still report the chain context it had resolved (these stay None until
@@ -1647,13 +1662,20 @@ def get_options_analytics(symbol: str, expiry: str = "",
             print("[Tool Error] <<< get_options_analytics: empty/whitespace symbol")
             return {"error": "get_options_analytics requires a non-empty symbol"}
 
-        # 2. Resolve the analyzed chain + label (Requirement 2.3). An index
-        #    Underlying uses its OWN chain (chain_context="own-chain"); a non-index
-        #    symbol resolves to its Benchmark_Index chain via rs.resolve_benchmark
-        #    as broad-market options context (chain_context="broad-market"). The
-        #    result always records chain_context, the resolved underlying, and the
-        #    original symbol.
-        if symbol.strip().upper() in INDEX_UNDERLYINGS:
+        # 2. Resolve the analyzed chain + label (Requirement 2.3).
+        #    - An index Underlying always uses its OWN chain ("own-chain").
+        #    - When own_chain=True (the F&O workspace analyzing a specific stock),
+        #      a non-index symbol uses its OWN option chain ("own-chain"), with a
+        #      fallback to the benchmark chain below if the stock has no snapshot.
+        #    - Otherwise a non-index symbol resolves to its Benchmark_Index chain
+        #      via rs.resolve_benchmark as broad-market options context
+        #      ("broad-market"). The result always records chain_context, the
+        #      resolved underlying, and the original symbol.
+        sym_up = symbol.strip().upper()
+        if sym_up in INDEX_UNDERLYINGS:
+            underlying = symbol.strip()
+            chain_context = "own-chain"
+        elif own_chain:
             underlying = symbol.strip()
             chain_context = "own-chain"
         else:
@@ -1666,6 +1688,35 @@ def get_options_analytics(symbol: str, expiry: str = "",
         #    falsy expiry as the nearest chain.
         expiry_or_none = expiry.strip() if isinstance(expiry, str) else ""
         analytics = options.compute_options_analytics(underlying, expiry_or_none)
+
+        # 3b. Own-chain fallback: if an own-chain analysis of a NON-index stock
+        #     comes back unavailable (the stock's own chain has no snapshot — e.g.
+        #     the stock is not F&O-subscribed), fall back to the broad-market
+        #     benchmark chain so the agent still gets index-level positioning
+        #     context instead of nothing. The result then honestly reports the
+        #     broad-market chain_context and benchmark underlying it fell back to.
+        if (
+            own_chain
+            and sym_up not in INDEX_UNDERLYINGS
+            and isinstance(analytics, dict)
+            and analytics.get("unavailable")
+        ):
+            fallback_underlying = rs.resolve_benchmark(symbol)
+            if (
+                isinstance(fallback_underlying, str)
+                and fallback_underlying.strip()
+                and fallback_underlying.strip().upper() != sym_up
+            ):
+                fb = options.compute_options_analytics(fallback_underlying, expiry_or_none)
+                if isinstance(fb, dict) and not fb.get("unavailable"):
+                    print(
+                        f"[Tool Info] <<< get_options_analytics: own-chain for "
+                        f"{symbol} unavailable; falling back to broad-market "
+                        f"{fallback_underlying}"
+                    )
+                    underlying = fallback_underlying
+                    chain_context = "broad-market"
+                    analytics = fb
 
         # 4. Unavailable gate (Requirements 3.1, 3.2). When the engine returns an
         #    Unavailable_Marker (or a non-dict), pass it through as an options

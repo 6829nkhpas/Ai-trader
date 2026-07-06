@@ -194,6 +194,16 @@ class AgentState(TypedDict):
     symbol: Optional[str]
     manual_trade: Optional[dict]
     timeframe: Optional[str]
+    # Workspace profile the user is in (INTRADAY / SWING / INVESTOR / FNO). Drives
+    # the profile-specific directive prepended in `format_system_prompt` so the
+    # agent adapts which data domain it prioritizes and over what horizon. ADDITIVE
+    # and Optional — a run that omits it defaults to INTRADAY behaviour.
+    profile: Optional[str]
+    # Expiry selected in the F&O workspace, as an ISO "YYYY-MM-DD" string ('' or
+    # None => the options engine's nearest available expiry). Injected into the
+    # FNO profile directive so the agent analyzes the exact expiry the user is
+    # viewing. ADDITIVE and Optional — only consulted on an FNO-profile run.
+    fno_expiry: Optional[str]
     # ── Deterministic loop-control state (Requirement 2) ──────────────────────
     # `decision` is the single authoritative completion signal. It is set ONLY
     # by a validated declare_trade (its structured args) or by the forced-HOLD
@@ -488,6 +498,108 @@ When finalizing, return a JSON object EXACTLY matching this structure:
 </json_format>
 """
 
+# ── Profile-specific directives (workspace-aware data gathering) ─────────────
+# The user runs the agent from one of four workspace profiles. Each profile
+# changes WHICH data domain the agent should treat as primary and over WHAT
+# horizon it should reason — without loosening any hard risk rule. These blocks
+# are prepended to the system prompt so the agent's data gathering matches the
+# section the user is actually in (an F&O run leads with options/futures
+# positioning; an intraday run stays on short-horizon spot microstructure).
+PROFILE_DIRECTIVES = {
+    "INTRADAY": (
+        "\n\n<workspace_profile>\n"
+        "ACTIVE WORKSPACE: INTRADAY (same-day scalps / momentum).\n"
+        "- Horizon: intraday only. Lead with the execution timeframe and the 5m/15m microstructure; "
+        "the 1H/4H/1D trend is CONTEXT, not the trade horizon. Any setup must resolve within the session.\n"
+        "- Prioritize: `get_consensus_report` (VWAP, RSI, order flow), `get_order_flow`, `get_session_context` "
+        "(opening range, midday lull, closing/expiry chop), and `get_support_resistance` intraday levels.\n"
+        "- Volume matters: use `get_volume_profile` (POC/VAH/VAL) and VWAP for institutional fair value.\n"
+        "</workspace_profile>"
+    ),
+    "SWING": (
+        "\n\n<workspace_profile>\n"
+        "ACTIVE WORKSPACE: SWING (multi-day to multi-week positions).\n"
+        "- Horizon: multi-day. Lead with the 1H/4H/1D structure; ignore sub-15m noise for the thesis and "
+        "use lower timeframes ONLY to refine entry timing.\n"
+        "- Prioritize: `get_multi_tf_trend`, daily/4H `get_support_resistance` and `get_chart_patterns`, "
+        "`get_relative_strength` versus the benchmark, and `get_market_regime`.\n"
+        "- De-emphasize: tick-level `get_order_flow` and intraday session micro-timing — they rarely drive a swing.\n"
+        "- Size stops and targets to daily ATR / swing S-R, not intraday pivots.\n"
+        "</workspace_profile>"
+    ),
+    "INVESTOR": (
+        "\n\n<workspace_profile>\n"
+        "ACTIVE WORKSPACE: INVESTOR (positional / macro horizon).\n"
+        "- Horizon: weeks to months. Lead with the 1D/1W trend and the broad regime; intraday microstructure is "
+        "largely irrelevant to the thesis.\n"
+        "- Prioritize: `get_multi_tf_trend` (1D bias), daily `get_support_resistance`, `get_relative_strength`, "
+        "`get_market_regime`, and `get_news_context` for catalysts.\n"
+        "- De-emphasize: `get_order_flow`, `get_session_context`, and intraday volume profile — do NOT anchor a "
+        "positional thesis on same-day microstructure.\n"
+        "</workspace_profile>"
+    ),
+    # FNO is built dynamically (it interpolates the symbol + selected expiry +
+    # own-chain instruction) — see `_build_fno_directive`.
+}
+
+
+def _build_fno_directive(state: AgentState) -> str:
+    """Build the F&O workspace directive, interpolating the symbol and the
+    user-selected expiry so the agent analyzes the STOCK's own option chain for
+    the EXACT expiry the F&O section is viewing. Never raises.
+    """
+    raw_symbol = state.get("symbol")
+    symbol = raw_symbol.strip() if isinstance(raw_symbol, str) and raw_symbol.strip() else "the symbol"
+    raw_expiry = state.get("fno_expiry")
+    expiry = raw_expiry.strip() if isinstance(raw_expiry, str) and raw_expiry.strip() else ""
+
+    # The explicit tool-call instruction: analyze the symbol's OWN chain
+    # (own_chain=true) and, when the user has selected one, the exact expiry.
+    if expiry:
+        call_line = (
+            f"- Call `get_options_analytics` with symbol='{symbol}', own_chain=true, "
+            f"and expiry='{expiry}' (the exact expiry selected in the F&O section). "
+            f"own_chain=true analyzes {symbol}'s OWN option chain rather than a broad-market index proxy.\n"
+        )
+    else:
+        call_line = (
+            f"- Call `get_options_analytics` with symbol='{symbol}' and own_chain=true "
+            f"(leave expiry empty to use the nearest available expiry). own_chain=true "
+            f"analyzes {symbol}'s OWN option chain rather than a broad-market index proxy.\n"
+        )
+
+    return (
+        "\n\n<workspace_profile>\n"
+        "ACTIVE WORKSPACE: F&O (options / futures positioning).\n"
+        "- Options positioning is PRIMARY, not a side check. Call `get_options_analytics` early and let PCR, "
+        "max-pain pinning, OI-walls, IV skew, and the futures basis shape your directional bias and your "
+        "entry/stop/target placement.\n"
+        + call_line +
+        "- The underlying spot INDEX (NIFTY 50 / BANKNIFTY) has NO traded volume — VWAP, volume profile, and "
+        "OBV/CMF will be legitimately unavailable/unusable for an index and MUST NOT be treated as a failure. "
+        "Rely on options/futures positioning and price structure instead of spot volume.\n"
+        "- Still confirm direction with `get_multi_tf_trend`, `get_consensus_report`, `get_support_resistance`, "
+        "and `get_chart_patterns`, but treat an unavailable volume-based signal on an index as expected.\n"
+        "- Respect the OI-wall support/resistance and max-pain when setting targets; never target beyond a heavy "
+        "call OI-wall just overhead or fight max-pain pinning.\n"
+        "</workspace_profile>"
+    )
+
+
+def _resolve_profile_directive(state: AgentState) -> str:
+    """Return the profile-specific directive block for the run's workspace profile.
+
+    Falls back to the INTRADAY directive for a missing / unrecognized profile so
+    the prompt is always well-formed. The FNO block is built dynamically so it can
+    interpolate the symbol + selected expiry. Never raises.
+    """
+    raw = state.get("profile")
+    key = raw.strip().upper() if isinstance(raw, str) and raw.strip() else "INTRADAY"
+    if key == "FNO":
+        return _build_fno_directive(state)
+    return PROFILE_DIRECTIVES.get(key, PROFILE_DIRECTIVES["INTRADAY"])
+
+
 def format_system_prompt(state: AgentState) -> str:
     mode = state.get("mode", "FIND")
     tf = state.get("timeframe") or "10m"
@@ -496,6 +608,10 @@ def format_system_prompt(state: AgentState) -> str:
         f"The user's active chart timeframe is '{tf}'. You MUST conduct your deep quant analysis on the '{tf}' timeframe. "
         f"When calling tools such as `get_consensus_report`, `get_chart_patterns`, and `get_candles`, you MUST use '{tf}' as the timeframe argument."
     )
+    # The profile directive tailors the data-gathering emphasis to the workspace
+    # the user is in (INTRADAY / SWING / INVESTOR / FNO). Appended after the
+    # timeframe requirement for both FIND/DEBATE and VERIFY runs.
+    profile_directive = _resolve_profile_directive(state)
     if mode == "VERIFY":
         trade = state.get("manual_trade") or {}
         base_prompt = RISK_MANAGER_PROMPT.format(
@@ -506,8 +622,8 @@ def format_system_prompt(state: AgentState) -> str:
             take_profit=trade.get("take_profit", 0),
             user_analysis=trade.get("user_analysis", "None")
         )
-        return base_prompt + tf_instruction
-    return DEEP_QUANT_SYSTEM_PROMPT + tf_instruction
+        return base_prompt + tf_instruction + profile_directive
+    return DEEP_QUANT_SYSTEM_PROMPT + tf_instruction + profile_directive
 
 # ── Model & Tools Binding ───────────────────────────────────────────────────
 
