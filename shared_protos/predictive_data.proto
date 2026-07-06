@@ -1,0 +1,11 @@
+syntax = "proto3";
+package ai_trade.predictive_data;
+
+message PredictiveSignal {
+    string symbol = 1;
+    uint64 timestamp_ms = 2;              // When the prediction was made
+    uint64 target_timestamp_ms = 3;       // The future time being predicted
+    double predicted_close_price = 4;     // What the AI thinks the price will be
+    double confidence_score = 5;          // 1-100 scale of confidence
+    string model_version = 6;             // e.g., "alpha-quant-v1"
+}

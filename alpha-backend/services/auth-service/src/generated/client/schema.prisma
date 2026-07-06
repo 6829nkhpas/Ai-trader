@@ -1,0 +1,55 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/client"
+}
+
+model User {
+  id               String            @id @default(uuid())
+  email            String            @unique
+  password         String
+  name             String?
+  walletBalance    Float             @default(100000.00) @map("wallet_balance")
+  tier             String            @default("FREE")
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  brokerConnection BrokerConnection?
+}
+
+model BrokerConnection {
+  id            String   @id @default(uuid())
+  userId        String   @unique @map("user_id")
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken   String   @map("access_token")
+  brokerUserId  String?  @map("broker_user_id")
+  apiKey        String?  @map("api_key")
+  publicToken   String?  @map("public_token")
+  refreshToken  String?  @map("refresh_token")
+  userType      String?  @map("user_type")
+  email         String?  @map("email")
+  userName      String?  @map("user_name")
+  userShortname String?  @map("user_shortname")
+  broker        String   @default("ZERODHA") @map("broker")
+  avatarUrl     String?  @map("avatar_url")
+  loginTime     String?  @map("login_time")
+  exchanges     String[] @default([]) @map("exchanges")
+  products      String[] @default([]) @map("products")
+  orderTypes    String[] @default([]) @map("order_types")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Subscription {
+  id                 String   @id @default(uuid())
+  userId             String   @unique @map("user_id")
+  stripeCustomerId   String?  @map("stripe_customer_id")
+  razorpayCustomerId String?  @map("razorpay_customer_id")
+  status             String   @default("INACTIVE")
+  currentPeriodEnd   DateTime @map("current_period_end")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}

@@ -1,0 +1,25 @@
+PROPRIETARY & CONFIDENTIAL LICENSE
+==================================
+
+Copyright (c) 2026. All rights reserved.
+
+This software, code, algorithms, models, and documentation (collectively, the "Software") are the exclusive proprietary property of the owners.
+
+1. PROHIBITED USES & RESTRICTIONS
+---------------------------------
+No person, entity, or third party is granted any license, right, or permission to:
+* Copy, duplicate, reproduce, or clone the Software or any portion thereof.
+* Distribute, publish, share, sell, rent, lease, sublicense, or otherwise transfer the Software to any third party.
+* Decompile, reverse engineer, disassemble, decrypt, or otherwise attempt to derive the source code or trade secrets of the Software.
+* Modify, adapt, translate, or create derivative works based upon the Software.
+* Compile, build, deploy, or run the Software on any machine or infrastructure without the express, prior written consent of the owners.
+
+2. CONFIDENTIALITY
+------------------
+The Software constitutes valuable institutional trade secrets, proprietary algorithms (including VWEPR regressions), and confidential business information. Access to this Software is strictly restricted to authorized developers who are bound by active, signed Non-Disclosure Agreements (NDA) and Intellectual Property Assignment contracts.
+
+3. REMEDIES FOR VIOLATION
+-------------------------
+Any unauthorized use, exposure, leakage, or distribution of this Software constitutes copyright infringement and theft of proprietary trade secrets. The owners reserve the right to seek all available legal and equitable remedies, including but not limited to injunctive relief, statutory damages, loss of profits, and recovery of legal fees.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

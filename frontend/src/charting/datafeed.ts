@@ -1,0 +1,577 @@
+/**
+ * charting/datafeed.ts — TradingView Advanced Charts JS API Datafeed adapter.
+ *
+ * Bridges the existing Zerodha/Kite data pipeline to the TradingView widget's
+ * IBasicDatafeed interface. Reuses the project's existing data-fetching logic:
+ *   - Historical candles: Kite Historical API via aggregator proxy `/kite/historical`
+ *   - Live ticks: Zustand `useTradeStore.ohlcCandles` or Tauri IPC `ohlc-tick`
+ *   - Symbol search: `/kite/quote` endpoint
+ *
+ * No new backend endpoints are needed — this is a pure frontend adapter.
+ */
+
+import type {
+  IBasicDatafeed,
+  OnReadyCallback,
+  SearchSymbolsCallback,
+  ResolveCallback,
+  ErrorCallback,
+  HistoryCallback,
+  SubscribeBarsCallback,
+  Bar,
+  LibrarySymbolInfo,
+  ResolutionString,
+  PeriodParams,
+  DatafeedConfiguration,
+} from './datafeedTypes';
+import { useTradeStore, type OhlcCandle } from '../store/useTradeStore';
+
+// ── Resolution Mapping ────────────────────────────────────────────────────
+// Maps TV resolution strings to Kite Historical API interval strings.
+
+const RESOLUTION_TO_KITE_INTERVAL: Record<string, string> = {
+  '1':    'minute',
+  '2':    'minute',
+  '3':    '3minute',
+  '4':    'minute',
+  '5':    '5minute',
+  '10':   '10minute',
+  '15':   '15minute',
+  '30':   '30minute',
+  '60':   '60minute',
+  '75':   '15minute',
+  '120':  '60minute',
+  '125':  '15minute',
+  '180':  '60minute',
+  '240':  '60minute',
+  '1D':   'day',
+  'D':    'day',
+  '1W':   'day',
+  'W':    'day',
+  '1M':   'day',
+  'M':    'day',
+};
+
+/** Convert TV resolution to a UI timeframe string for the Tauri IPC. */
+export const RESOLUTION_TO_TIMEFRAME: Record<string, string> = {
+  '1':   '1m',  '2':   '2m',  '3':   '3m',  '4':   '4m',
+  '5':   '5m',  '10':  '10m', '15':  '15m', '30':  '30m',
+  '60':  '1h',  '75':  '75m', '120': '2h',  '125': '125m',
+  '180': '3h',  '240': '4h',
+  '1D':  '1D',  'D':   '1D',
+  '1W':  '1W',  'W':   '1W',
+  '1M':  '1M',  'M':   '1M',
+};
+
+/** All supported resolutions for the symbol info. */
+const SUPPORTED_RESOLUTIONS: ResolutionString[] = [
+  '1', '2', '3', '4', '5', '10', '15', '30',
+  '60', '75', '120', '125', '180', '240',
+  '1D', '1W', '1M',
+];
+
+/** How many days of intraday data Kite serves (hard limit). */
+const KITE_INTRADAY_MAX_DAYS = 60;
+
+// ── Tauri Detection ───────────────────────────────────────────────────────
+const isTauri = () =>
+  typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
+// ── Instrument Token Cache ────────────────────────────────────────────────
+const tokenCache = new Map<string, number>();
+
+async function resolveInstrumentToken(symbol: string, exchange: string = 'NSE'): Promise<number | null> {
+  const cacheKey = `${exchange}:${symbol}`.toUpperCase();
+  const cached = tokenCache.get(cacheKey);
+  if (cached) return cached;
+  try {
+    const res = await fetch(`/kite/quote?i=${exchange}:${encodeURIComponent(symbol)}`);
+    if (res.ok) {
+      const data = await res.json();
+      const quotes = data.quotes as { symbol: string; instrument_token: number }[] | undefined;
+      if (quotes && quotes.length > 0) {
+        const match = quotes.find((q) => q.symbol.toUpperCase() === symbol.toUpperCase());
+        const token = match?.instrument_token ?? quotes[0].instrument_token ?? null;
+        if (token) {
+          tokenCache.set(cacheKey, token);
+          return token;
+        }
+      }
+    }
+
+    const resInst = await fetch(`/kite/instruments?q=${encodeURIComponent(symbol)}&exchange=${encodeURIComponent(exchange)}`);
+    if (resInst.ok) {
+      const data = await resInst.json();
+      const results = data.results as { tradingsymbol: string; instrument_token: number }[] | undefined;
+      if (results && results.length > 0) {
+        const match = results.find((r) => r.tradingsymbol.toUpperCase() === symbol.toUpperCase());
+        const token = match?.instrument_token ?? results[0].instrument_token ?? null;
+        if (token) {
+          tokenCache.set(cacheKey, token);
+          return token;
+        }
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Kite Batch Fetch ──────────────────────────────────────────────────────
+
+interface KiteCandleRaw {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+async function fetchKiteBatch(
+  symbol: string,
+  interval: string,
+  from: Date,
+  to: Date,
+  exchange: string = 'NSE',
+): Promise<Bar[]> {
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  const dateParams = `&from=${fmt(from)}&to=${fmt(to)}`;
+
+  const parseCandles = (data: { candles?: KiteCandleRaw[] }): Bar[] =>
+    (data.candles || [])
+      .map((c) => ({
+        time: c.time * 1000, // TV expects UTC milliseconds
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        volume: c.volume,
+      }))
+      .filter((c) => c.time > 0 && c.open > 0);
+
+  try {
+    // Attempt 1: symbol name
+    const url = `/kite/historical?symbol=${encodeURIComponent(symbol)}&interval=${interval}${dateParams}`;
+    const response = await fetch(url);
+    if (response.ok) {
+      const data = await response.json();
+      const candles = parseCandles(data);
+      if (candles.length > 0) return candles;
+    }
+
+    // Attempt 2: instrument_token
+    const token = await resolveInstrumentToken(symbol, exchange);
+    if (!token) return [];
+    const tokenUrl = `/kite/historical?instrument_token=${token}&interval=${interval}${dateParams}`;
+    const tokenResponse = await fetch(tokenUrl);
+    if (!tokenResponse.ok) return [];
+    const tokenData = await tokenResponse.json();
+    return parseCandles(tokenData);
+  } catch {
+    return [];
+  }
+}
+
+// ── Tauri IPC Historical Fetch ────────────────────────────────────────────
+
+async function fetchTauriBars(
+  symbol: string,
+  timeframe: string,
+): Promise<Bar[]> {
+  if (!isTauri()) return [];
+  try {
+    const tauri = await import('@tauri-apps/api/core');
+
+    // Wait for QuestDB pool
+    let poolReady = false;
+    const start = Date.now();
+    while (Date.now() - start < 8000) {
+      try {
+        poolReady = await tauri.invoke<boolean>('get_pool_status');
+        if (poolReady) break;
+      } catch { /* pool not ready yet */ }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+
+    if (!poolReady) return [];
+
+    const response = await tauri.invoke<number[] | Uint8Array>(
+      'get_historical_view',
+      { symbol, timeframe },
+    );
+    const buffer =
+      response instanceof Uint8Array ? response : new Uint8Array(response);
+
+    return parseBincodeCandles(buffer);
+  } catch (err) {
+    console.warn('[Datafeed] Tauri IPC fetch failed:', err);
+    return [];
+  }
+}
+
+/** Parse bincode-serialized BinaryCandle structs (48 bytes each). */
+function parseBincodeCandles(buffer: Uint8Array): Bar[] {
+  const bars: Bar[] = [];
+  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  const length = Number(view.getBigUint64(0, true));
+  let offset = 8;
+  for (let i = 0; i < length; i++) {
+    const tsMicro = Number(view.getBigInt64(offset, true));
+    const open = view.getFloat64(offset + 8, true);
+    const high = view.getFloat64(offset + 16, true);
+    const low = view.getFloat64(offset + 24, true);
+    const close = view.getFloat64(offset + 32, true);
+    const volume = Number(view.getBigInt64(offset + 40, true));
+    bars.push({
+      time: Math.floor(tsMicro / 1000), // microseconds → milliseconds
+      open, high, low, close, volume,
+    });
+    offset += 48;
+  }
+  return bars;
+}
+
+// ── Live Subscription Manager ─────────────────────────────────────────────
+
+interface LiveSubscription {
+  symbol: string;
+  resolution: string;
+  onTick: SubscribeBarsCallback;
+  unsubscribe: () => void;
+}
+
+const activeSubscriptions = new Map<string, LiveSubscription>();
+
+function startLiveSubscription(
+  symbol: string,
+  resolution: string,
+  onTick: SubscribeBarsCallback,
+  listenerGuid: string,
+): void {
+  const symbolUpper = symbol.toUpperCase();
+  let lastBarTime = 0;
+  let tickCount = 0;
+
+  const forwardCandle = (candle: { symbol: string; start_timestamp_ms: number; open: number; high: number; low: number; close: number; volume?: number }) => {
+    if (candle.symbol.toUpperCase() !== symbolUpper) return;
+    const barTimeMs = candle.start_timestamp_ms;
+    if (barTimeMs >= lastBarTime) {
+      lastBarTime = barTimeMs;
+      tickCount++;
+      if (tickCount <= 5) {
+        console.log(`[Datafeed] Live tick #${tickCount} for ${symbolUpper}: time=${barTimeMs} O=${candle.open} H=${candle.high} L=${candle.low} C=${candle.close}`);
+      }
+      onTick({
+        time: barTimeMs,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume ?? 0,
+      });
+    }
+  };
+
+  // ── Path 1: Zustand store subscription ────────────────────────────────
+  // Fires whenever ohlcCandles changes (works for both browser WS and Tauri IPC paths).
+  const unsub = useTradeStore.subscribe((state) => {
+    const candles = state.ohlcCandles;
+    const matching = candles.filter(
+      (c) => c.symbol.toUpperCase() === symbolUpper,
+    );
+    if (matching.length === 0) return;
+    forwardCandle(matching[matching.length - 1]);
+  });
+
+  // ── Path 2: Direct Tauri IPC listener (lower latency) ─────────────────
+  // Listens for ohlc-tick events directly from the Rust backend, bypassing
+  // the Zustand store roundtrip for faster chart updates.
+  let unlistenTauri: (() => void) | null = null;
+  if (isTauri()) {
+    (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        const unlisten = await listen<{ symbol: string; start_timestamp_ms: number; open: number; high: number; low: number; close: number; volume?: number }>('ohlc-tick', (event) => {
+          forwardCandle(event.payload);
+        });
+        unlistenTauri = unlisten;
+      } catch {
+        // Not in Tauri context — Zustand path will handle it
+      }
+    })();
+  }
+
+  console.log(`[Datafeed] subscribeBars: ${symbolUpper} (resolution=${resolution}, guid=${listenerGuid.slice(0, 8)}…, tauri=${isTauri()})`);
+
+  activeSubscriptions.set(listenerGuid, {
+    symbol, resolution, onTick,
+    unsubscribe: () => {
+      unsub();
+      unlistenTauri?.();
+    },
+  });
+}
+
+// ── Datafeed Implementation ───────────────────────────────────────────────
+
+export function createDatafeed(): IBasicDatafeed {
+  return {
+    onReady(callback: OnReadyCallback): void {
+      // TV requires async callback
+      setTimeout(() => {
+        const config: DatafeedConfiguration = {
+          exchanges: [
+            { value: 'NSE', name: 'NSE', desc: 'National Stock Exchange' },
+            { value: 'BSE', name: 'BSE', desc: 'Bombay Stock Exchange' },
+          ],
+          symbols_types: [
+            { name: 'Stock', value: 'stock' },
+            { name: 'Index', value: 'index' },
+          ],
+          supported_resolutions: SUPPORTED_RESOLUTIONS,
+          supports_marks: false,
+          supports_timescale_marks: false,
+          supports_time: true,
+        };
+        callback(config);
+      }, 0);
+    },
+
+    searchSymbols(
+      userInput: string,
+      exchange: string,
+      _symbolType: string,
+      onResult: SearchSymbolsCallback,
+    ): void {
+      if (!userInput || userInput.length < 1) {
+        onResult([]);
+        return;
+      }
+
+      const ex = exchange || 'NSE';
+      fetch(`/kite/instruments?q=${encodeURIComponent(userInput)}&exchange=${encodeURIComponent(ex)}`)
+        .then((res) => (res.ok ? res.json() : { results: [] }))
+        .then((data) => {
+          const results = (data.results || []) as {
+            tradingsymbol: string;
+            name: string;
+            exchange: string;
+            instrument_type: string;
+          }[];
+          onResult(
+            results.map((inst) => ({
+              symbol: inst.tradingsymbol,
+              full_name: `${inst.exchange}:${inst.tradingsymbol}`,
+              description: inst.name,
+              exchange: inst.exchange,
+              ticker: `${inst.exchange}:${inst.tradingsymbol}`,
+              type: inst.instrument_type === 'INDEX' ? 'index' : 'stock',
+            })),
+          );
+        })
+        .catch(() => onResult([]));
+    },
+
+    resolveSymbol(
+      symbolName: string,
+      onResolve: ResolveCallback,
+      onError: ErrorCallback,
+    ): void {
+      // Strip exchange prefix if present (e.g. "NSE:RELIANCE" → "RELIANCE")
+      const cleanSymbol = symbolName.includes(':')
+        ? symbolName.split(':')[1]
+        : symbolName;
+      const exchange = symbolName.includes(':')
+        ? symbolName.split(':')[0]
+        : 'NSE';
+
+      setTimeout(() => {
+        const symbolInfo: LibrarySymbolInfo = {
+          name: cleanSymbol,
+          full_name: `${exchange}:${cleanSymbol}`,
+          ticker: `${exchange}:${cleanSymbol}`,
+          description: cleanSymbol,
+          type: exchange === 'INDICES' ? 'index' : 'stock',
+          session: '0915-1530',
+          timezone: 'Asia/Kolkata',
+          exchange: exchange,
+          listed_exchange: exchange,
+          format: 'price',
+          minmov: 1,
+          pricescale: 100, // 2 decimal places (₹XX.XX)
+          has_intraday: true,
+          has_daily: true,
+          has_weekly_and_monthly: true,
+          supported_resolutions: SUPPORTED_RESOLUTIONS,
+          intraday_multipliers: ['1', '2', '3', '4', '5', '10', '15', '30', '60', '75', '120', '125', '180', '240'],
+          daily_multipliers: ['1'],
+          weekly_multipliers: ['1'],
+          monthly_multipliers: ['1'],
+          volume_precision: 0,
+          data_status: 'streaming',
+          currency_code: 'INR',
+        };
+
+        // Verify symbol exists via quote API
+        fetch(`/kite/quote?i=${exchange}:${encodeURIComponent(cleanSymbol)}`)
+          .then((res) => {
+            if (!res.ok) {
+              // Still resolve — the symbol might work with historical API
+              onResolve(symbolInfo);
+              return;
+            }
+            return res.json().then(() => {
+              onResolve(symbolInfo);
+            });
+          })
+          .catch(() => {
+            // Resolve anyway to avoid blocking the widget
+            onResolve(symbolInfo);
+          });
+      }, 0);
+    },
+
+    async getBars(
+      symbolInfo: LibrarySymbolInfo,
+      resolution: ResolutionString,
+      periodParams: PeriodParams,
+      onResult: HistoryCallback,
+      onError: ErrorCallback,
+    ): Promise<void> {
+      const symbol = symbolInfo.name;
+      const exchange = symbolInfo.exchange || 'NSE';
+      const kiteInterval = RESOLUTION_TO_KITE_INTERVAL[resolution] ?? 'minute';
+      const timeframe = RESOLUTION_TO_TIMEFRAME[resolution] ?? '1m';
+      const isDailyOrAbove = kiteInterval === 'day';
+
+      const from = new Date(periodParams.from * 1000);
+      const to = new Date(periodParams.to * 1000);
+
+      try {
+        let bars: Bar[] = [];
+
+        // ── Tauri IPC path (fastest, authoritative) ───────────────────
+        if (isTauri()) {
+          const allTauriBars = await fetchTauriBars(symbol, timeframe);
+          if (allTauriBars.length > 0) {
+            // Filter to requested range
+            const fromMs = periodParams.from * 1000;
+            const toMs = periodParams.to * 1000;
+            bars = allTauriBars.filter((b) => b.time >= fromMs && b.time <= toMs);
+
+            // If the filtered range is empty but we DO have data, the user
+            // is PAGINATING (scrolling) beyond our data range — signal
+            // noData so TV stops requesting further scroll-back. This guard
+            // only applies to follow-up requests: on the FIRST data request
+            // an empty overlap must NOT short-circuit, otherwise a cold
+            // QuestDB cache (or a symbol whose local range doesn't line up
+            // with TV's initial window) would leave the chart blank. In that
+            // case we fall through to the Kite REST fallback below to seed
+            // the chart, exactly like the legacy useHistoricalData path did.
+            if (bars.length === 0 && !periodParams.firstDataRequest) {
+              console.log(`[Datafeed] getBars: Tauri has ${allTauriBars.length} bars but none in range ${from.toISOString().slice(0,10)} → ${to.toISOString().slice(0,10)} (pagination) — signalling noData`);
+              onResult([], { noData: true });
+              return;
+            }
+          }
+        }
+
+        // ── Kite Historical API fallback (browser AND Tauri) ──────────
+        // Runs whenever the Tauri/QuestDB path produced nothing (cold cache,
+        // unresolved instrument token, or a failed proactive intraday fetch).
+        // Restoring this tier for Tauri fixes the "candles won't load" desktop
+        // regression — the legacy chart always had this REST safety net.
+        if (bars.length === 0) {
+          if (!isDailyOrAbove) {
+            // Kite limits intraday to ~60 days
+            const daysDiff = Math.ceil(
+              (to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000),
+            );
+            const clampedFrom = daysDiff > KITE_INTRADAY_MAX_DAYS
+              ? new Date(to.getTime() - KITE_INTRADAY_MAX_DAYS * 24 * 60 * 60 * 1000)
+              : from;
+            bars = await fetchKiteBatch(symbol, kiteInterval, clampedFrom, to, exchange);
+          } else {
+            bars = await fetchKiteBatch(symbol, kiteInterval, from, to, exchange);
+          }
+        }
+
+        if (bars.length === 0) {
+          onResult([], { noData: true });
+          return;
+        }
+
+        // Sort ascending by time (TV requirement)
+        bars.sort((a, b) => a.time - b.time);
+
+        // Deduplicate by time
+        const seen = new Set<number>();
+        bars = bars.filter((b) => {
+          if (seen.has(b.time)) return false;
+          seen.add(b.time);
+          return true;
+        });
+
+        // ── Mirror bars into the Zustand historicalCache ──────────────
+        // The Deep Quant / Consensus pipeline gates on
+        // `useTradeStore.historicalCache` (via symbolCandleCount) to know a
+        // symbol has data — the legacy useHistoricalData hook used to
+        // populate it. The TradingView datafeed replaced that hook for the
+        // chart, so without this write the quant agents sit at
+        // "AWAITING DATA" forever. Use the SAME composite key format the
+        // legacy hook used ("SYMBOL::timeframe::kiteInterval") and MERGE with
+        // any existing cached bars so scroll-back pages accumulate rather
+        // than overwrite.
+        try {
+          const cacheKey = `${symbol.toUpperCase()}::${timeframe}::${kiteInterval}`;
+          const store = useTradeStore.getState();
+          const existing = store.historicalCache[cacheKey] ?? [];
+          const mergedByTime = new Map<number, OhlcCandle>();
+          for (const c of existing) mergedByTime.set(c.start_timestamp_ms, c);
+          for (const b of bars) {
+            mergedByTime.set(b.time, {
+              symbol: symbol.toUpperCase(),
+              start_timestamp_ms: b.time, // datafeed bars are in ms
+              open: b.open,
+              high: b.high,
+              low: b.low,
+              close: b.close,
+              volume: b.volume ?? 0,
+            });
+          }
+          const merged = Array.from(mergedByTime.values()).sort(
+            (a, b) => a.start_timestamp_ms - b.start_timestamp_ms,
+          );
+          store.setHistoricalCache(cacheKey, merged);
+        } catch (cacheErr) {
+          console.warn('[Datafeed] historicalCache mirror failed:', cacheErr);
+        }
+
+        onResult(bars, { noData: false });
+      } catch (err) {
+        console.error('[Datafeed] getBars failed:', err);
+        onError(String(err));
+      }
+    },
+
+    subscribeBars(
+      symbolInfo: LibrarySymbolInfo,
+      resolution: ResolutionString,
+      onTick: SubscribeBarsCallback,
+      listenerGuid: string,
+      _onResetCacheNeededCallback: () => void,
+    ): void {
+      startLiveSubscription(symbolInfo.name, resolution, onTick, listenerGuid);
+    },
+
+    unsubscribeBars(listenerGuid: string): void {
+      const sub = activeSubscriptions.get(listenerGuid);
+      if (sub) {
+        sub.unsubscribe();
+        activeSubscriptions.delete(listenerGuid);
+      }
+    },
+  };
+}

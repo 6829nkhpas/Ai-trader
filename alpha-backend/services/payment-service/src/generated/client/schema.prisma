@@ -1,0 +1,20 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/client"
+}
+
+model Subscription {
+  id                 String   @id @default(uuid())
+  userId             String   @unique @map("user_id")
+  stripeCustomerId   String?  @map("stripe_customer_id")
+  razorpayCustomerId String?  @map("razorpay_customer_id")
+  status             String   @default("INACTIVE")
+  currentPeriodEnd   DateTime @map("current_period_end")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}

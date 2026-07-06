@@ -1,0 +1,700 @@
+@import "tailwindcss";
+
+:root {
+  --bg-base: #000000;
+  --bg-main: var(--bg-base);
+  --bg-surface: #000000;
+  --bg-card: #0a0a0a;
+  --bg-elevated: #161616;
+  --bg-muted: #000000;
+  --border-default: #1a1a1a;
+  --border-subtle: #111111;
+  --text-primary: #f5f5f5;
+  --text-secondary: #d1d5db;
+  --text-muted: #9ca3af;
+  --text-muted-soft: #6b7280;
+  --color-primary: #10b981;
+  --color-primary-hover: #059669;
+  --color-bull: #10b981;
+  --color-bear: #ef4444;
+  --color-neutral: #f59e0b;
+  --chart-bg: var(--bg-card);
+  --chart-grid: var(--border-default);
+  --candle-green: #10b981;
+  --candle-red: #ef4444;
+  --status-live: #10b981;
+  --status-warning: #f59e0b;
+  --status-error: #ef4444;
+  --background: var(--bg-main);
+  --foreground: var(--text-primary);
+
+  /* Shadow tokens — calm, professional depth */
+  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.06), 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+  --shadow-md:
+    0 4px 12px 0 rgba(0, 0, 0, 0.07), 0 2px 4px 0 rgba(0, 0, 0, 0.04);
+  --shadow-lg:
+    0 8px 24px 0 rgba(0, 0, 0, 0.08), 0 3px 6px 0 rgba(0, 0, 0, 0.05);
+}
+
+.light {
+  --bg-base: #f9fafb;
+  --bg-main: var(--bg-base);
+  --bg-surface: #ffffff;
+  --bg-card: #f3f4f6;
+  --bg-elevated: #e5e7eb;
+  --bg-muted: #f3f4f6;
+  --border-default: #e5e7eb;
+  --border-subtle: #f3f4f6;
+  --text-primary: #111827;
+  --text-secondary: #374151;
+  --text-muted: #6b7280;
+  --text-muted-soft: #9ca3af;
+  --chart-bg: var(--bg-card);
+  --chart-grid: var(--border-default);
+  --background: var(--bg-main);
+  --foreground: var(--text-primary);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--bg-surface);
+  --color-card: var(--bg-card);
+  --color-elevated: var(--bg-elevated);
+  --color-muted: var(--bg-muted);
+  --color-border-default: var(--border-default);
+  --color-border-subtle: var(--border-subtle);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-text-muted-soft: var(--text-muted-soft);
+  --color-primary: var(--color-primary);
+  --color-primary-hover: var(--color-primary-hover);
+  --color-bull: var(--color-bull);
+  --color-bear: var(--color-bear);
+  --color-neutral: var(--color-neutral);
+  --color-chart-bg: var(--chart-bg);
+  --color-chart-grid: var(--chart-grid);
+  --color-status-live: var(--status-live);
+  --color-status-warning: var(--status-warning);
+  --color-status-error: var(--status-error);
+  --font-sans: var(--font-inter);
+}
+
+html,
+body {
+  overflow: hidden;
+  overscroll-behavior: none;
+  position: fixed;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg-main);
+  color: var(--text-primary);
+  font-family: var(--font-sans), sans-serif;
+}
+
+/* Reusable panel shadow utility */
+.panel-shadow {
+  box-shadow: var(--shadow-md);
+}
+.panel-shadow-sm {
+  box-shadow: var(--shadow-sm);
+}
+.panel-shadow-lg {
+  box-shadow: var(--shadow-lg);
+}
+
+/* ==========================================================================
+   AI TRADER AUTH DESIGN SYSTEM - Light Market Mode
+   ========================================================================= */
+
+/* ── Auth color tokens ───────────────────────────────────────────────────── */
+:root {
+  --auth-bg-base: var(--bg-main);
+  --auth-bg-tint: #111111;
+  --auth-card-bg: rgba(22, 22, 22, 0.92);
+  --auth-card-border: rgba(38, 38, 38, 0.5);
+  --auth-input-bg: #0a0a0a;
+  --auth-input-border: var(--border-default);
+  --auth-input-focus: rgba(16, 185, 129, 0.4);
+  --auth-input-error: rgba(239, 68, 68, 0.35);
+  --auth-text: var(--text-primary);
+  --auth-muted: var(--text-secondary);
+  --auth-label: #d1d5db;
+  --auth-link: var(--color-primary);
+  --auth-accent: var(--color-primary);
+  --auth-accent-soft: rgba(16, 185, 129, 0.12);
+  --auth-accent-strong: rgba(16, 185, 129, 0.3);
+  --orb-a: rgba(16, 185, 129, 0.08);
+  --orb-b: rgba(52, 211, 153, 0.05);
+  --orb-c: rgba(245, 158, 11, 0.05);
+}
+
+/* ── Full-screen shell ───────────────────────────────────────────────────── */
+.auth-shell {
+  position: relative;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(
+      120% 80% at 10% -10%,
+      rgba(16, 185, 129, 0.05) 0%,
+      rgba(10, 10, 10, 0.95) 55%
+    ),
+    radial-gradient(
+      100% 70% at 90% 10%,
+      rgba(245, 158, 11, 0.02) 0%,
+      rgba(10, 10, 10, 0.95) 60%
+    ),
+    linear-gradient(180deg, #0a0a0a 0%, #111111 70%, #000000 100%);
+  overflow: hidden;
+  padding: 2rem 1rem;
+  font-family: var(--font-manrope), var(--font-inter), sans-serif;
+}
+
+/* ── Ambient glow orbs ───────────────────────────────────────────────────── */
+.auth-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  pointer-events: none;
+  opacity: 0.25;
+  animation: auth-orb-drift 20s ease-in-out infinite alternate;
+}
+.auth-orb--1 {
+  width: 520px;
+  height: 520px;
+  background: var(--orb-a);
+  top: -220px;
+  left: -160px;
+  animation-duration: 22s;
+}
+.auth-orb--2 {
+  width: 420px;
+  height: 420px;
+  background: var(--orb-b);
+  bottom: -160px;
+  right: -120px;
+  animation-duration: 18s;
+  animation-delay: -8s;
+}
+.auth-orb--3 {
+  width: 280px;
+  height: 280px;
+  background: var(--orb-c);
+  top: 50%;
+  right: 18%;
+  animation-duration: 26s;
+  animation-delay: -14s;
+  opacity: 0.18;
+}
+
+@keyframes auth-orb-drift {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(30px, -20px) scale(1.04);
+  }
+  66% {
+    transform: translate(-20px, 15px) scale(0.97);
+  }
+  100% {
+    transform: translate(10px, 10px) scale(1.02);
+  }
+}
+
+/* ── Subtle dot-grid overlay ─────────────────────────────────────────────── */
+.auth-grid-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(
+    rgba(15, 23, 42, 0.06) 1px,
+    transparent 1px
+  );
+  background-size: 28px 28px;
+  mask-image: radial-gradient(
+    ellipse 80% 80% at 50% 40%,
+    black 45%,
+    transparent 100%
+  );
+}
+
+/* ── Card wrapper ────────────────────────────────────────────────────────── */
+.auth-card-wrapper {
+  position: relative;
+  z-index: 10;
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+/* ── Logo row ────────────────────────────────────────────────────────────── */
+.auth-logo-row {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+.auth-logo-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 0 12px rgba(5, 150, 105, 0.35));
+}
+.auth-logo-text {
+  font-family: var(--font-space), var(--font-manrope), sans-serif;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  background: linear-gradient(135deg, #059669 0%, #10b981 50%, #0f766e 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Card ───────────────────────────────────────────────────────────────── */
+.auth-card {
+  width: 100%;
+  background: var(--auth-card-bg);
+  border: 1px solid var(--auth-card-border);
+  border-radius: 1.25rem;
+  padding: 2rem;
+  backdrop-filter: blur(14px) saturate(120%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 16px 40px rgba(15, 23, 42, 0.12);
+  transition: box-shadow 0.3s ease;
+}
+.auth-card:focus-within {
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.06),
+    0 20px 44px rgba(5, 150, 105, 0.18);
+}
+
+/* ── Typography ─────────────────────────────────────────────────────────── */
+.auth-heading {
+  font-family: var(--font-space), var(--font-manrope), sans-serif;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--auth-text);
+  letter-spacing: -0.02em;
+}
+.auth-subheading {
+  font-size: 0.875rem;
+  color: var(--auth-muted);
+  line-height: 1.5;
+}
+.auth-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--auth-label);
+  display: block;
+  margin-bottom: 0.375rem;
+}
+.auth-link {
+  color: var(--auth-link);
+  text-decoration: none;
+  transition:
+    color 0.15s ease,
+    opacity 0.15s ease;
+}
+.auth-link:hover {
+  color: var(--color-primary-hover);
+}
+.auth-muted {
+  color: var(--auth-muted);
+}
+
+/* ── Field group ─────────────────────────────────────────────────────────── */
+.auth-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ── Text inputs ─────────────────────────────────────────────────────────── */
+.auth-input {
+  width: 100%;
+  height: 2.75rem;
+  background: var(--auth-input-bg);
+  border: 1px solid var(--auth-input-border);
+  border-radius: 0.75rem;
+  padding: 0 0.875rem;
+  font-size: 0.9375rem;
+  color: var(--auth-text);
+  outline: none;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
+  caret-color: var(--auth-link);
+  color-scheme: dark;
+}
+.auth-input::placeholder {
+  color: var(--text-muted);
+}
+.auth-input:focus {
+  border-color: var(--color-primary);
+  box-shadow:
+    0 0 0 3px rgba(5, 150, 105, 0.15),
+    0 8px 20px rgba(5, 150, 105, 0.08);
+  background: #1e293b;
+  color: var(--auth-text);
+}
+/* ── Browser autofill dark-mode override ─────────────────────────────────── */
+.auth-input:-webkit-autofill,
+.auth-input:-webkit-autofill:hover,
+.auth-input:-webkit-autofill:focus,
+.auth-input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px #0f172a inset !important;
+  -webkit-text-fill-color: var(--text-primary) !important;
+  transition: background-color 5000s ease-in-out 0s;
+  caret-color: var(--auth-link);
+}
+.mfa-digit-input:-webkit-autofill,
+.mfa-digit-input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px #0f172a inset !important;
+  -webkit-text-fill-color: var(--text-primary) !important;
+}
+.auth-input--error {
+  border-color: var(--auth-input-error) !important;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12) !important;
+}
+
+/* ── Eye button ─────────────────────────────────────────────────────────── */
+.auth-eye-btn {
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  padding: 0.25rem;
+  transition: color 0.15s ease;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.auth-eye-btn:hover {
+  color: var(--text-primary);
+}
+
+/* ── Field error ─────────────────────────────────────────────────────────── */
+.auth-field-error {
+  font-size: 0.75rem;
+  color: #dc2626;
+  margin-top: 0.375rem;
+  line-height: 1.4;
+}
+
+/* ── Server error banner ─────────────────────────────────────────────────── */
+.auth-error-banner {
+  background: rgba(220, 38, 38, 0.08);
+  border: 1px solid rgba(220, 38, 38, 0.25);
+  border-radius: 0.75rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.8125rem;
+  color: #b91c1c;
+  line-height: 1.45;
+}
+
+/* ── Primary button ─────────────────────────────────────────────────────── */
+.auth-btn-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+  height: 2.875rem;
+  border-radius: 0.875rem;
+  border: none;
+  cursor: pointer;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(
+    135deg,
+    var(--color-primary) 0%,
+    var(--color-primary-hover) 100%
+  );
+  box-shadow:
+    0 6px 18px rgba(5, 150, 105, 0.25),
+    0 0 0 1px rgba(255, 255, 255, 0.6) inset;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease,
+    filter 0.15s ease;
+  letter-spacing: 0.01em;
+}
+.auth-btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow:
+    0 10px 24px rgba(5, 150, 105, 0.3),
+    0 0 0 1px rgba(255, 255, 255, 0.7) inset;
+  filter: brightness(1.02);
+}
+.auth-btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 4px 12px rgba(5, 150, 105, 0.22);
+}
+.auth-btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ── Google button ──────────────────────────────────────────────────────── */
+.google-auth-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.625rem;
+  width: 100%;
+  height: 2.875rem;
+  border-radius: 0.875rem;
+  background: #1e293b;
+  border: 1px solid var(--border-default);
+  background: #0f172a;
+  color: var(--auth-text);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    transform 0.15s ease;
+}
+.google-auth-btn:hover:not(:disabled) {
+  background: #1e293b;
+  border-color: #475569;
+  transform: translateY(-1px);
+}
+.google-auth-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ── Divider ────────────────────────────────────────────────────────────── */
+.auth-divider {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-subtle);
+}
+.auth-divider-label {
+  padding: 0 0.75rem;
+  font-size: 0.75rem;
+  color: var(--auth-muted);
+  white-space: nowrap;
+}
+
+/* ── "Keep me logged in" toggle ────────────────────────────────────────── */
+.auth-toggle {
+  width: 2.5rem;
+  height: 1.375rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border-default);
+  background: #1e293b;
+  position: relative;
+  cursor: pointer;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+  flex-shrink: 0;
+  padding: 0;
+}
+.auth-toggle--on {
+  background: linear-gradient(
+    135deg,
+    var(--color-primary),
+    var(--color-primary-hover)
+  );
+  border-color: transparent;
+  box-shadow: 0 0 10px rgba(5, 150, 105, 0.35);
+}
+.auth-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: #475569;
+  transition:
+    transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
+    background 0.2s ease;
+}
+.auth-toggle-thumb--on {
+  transform: translateX(1.125rem);
+  background: #fff;
+}
+
+/* ── MFA icon ───────────────────────────────────────────────────────────── */
+.auth-mfa-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 1rem;
+  background: var(--auth-accent-soft);
+  border: 1px solid rgba(5, 150, 105, 0.2);
+  box-shadow: 0 0 32px rgba(5, 150, 105, 0.15);
+}
+.auth-mfa-icon-glyph {
+  color: var(--auth-accent);
+}
+
+/* ── MFA digit inputs ───────────────────────────────────────────────────── */
+.mfa-digit-input {
+  width: 3rem;
+  height: 3.5rem;
+  border-radius: 0.875rem;
+  border: 1px solid var(--auth-input-border);
+  background: var(--auth-input-bg);
+  text-align: center;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--auth-text);
+  outline: none;
+  caret-color: transparent;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    background 0.18s ease,
+    transform 0.15s ease;
+  letter-spacing: 0;
+}
+.mfa-digit-input:focus {
+  border-color: var(--color-primary);
+  box-shadow:
+    0 0 0 3px rgba(5, 150, 105, 0.18),
+    0 0 20px rgba(5, 150, 105, 0.12);
+  background: #1e293b;
+  color: var(--auth-text);
+  transform: scale(1.06);
+}
+.mfa-digit-input--error {
+  border-color: var(--auth-input-error) !important;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12) !important;
+  animation: auth-shake 0.35s ease;
+}
+.mfa-digit-input--filled {
+  background: var(--auth-accent-soft);
+  border-color: var(--auth-accent-strong);
+}
+
+@keyframes auth-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-5px);
+  }
+  40% {
+    transform: translateX(5px);
+  }
+  60% {
+    transform: translateX(-4px);
+  }
+  80% {
+    transform: translateX(4px);
+  }
+}
+
+/* ── Auth footer ────────────────────────────────────────────────────────── */
+.auth-footer {
+  font-size: 0.75rem;
+  color: var(--auth-muted);
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* ── Insight Feed Animations ─────────────────────────────────────────── */
+@keyframes slide-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.97);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-slide-in {
+  animation: slide-in 0.35s ease-out forwards;
+}
+
+/* ── Thin scrollbar for insight feeds ────────────────────────────────── */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--bg-elevated) transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: var(--bg-elevated);
+  border-radius: 9999px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: var(--border-default);
+}
+
+/* ── Security Vault Modal Slide-in ───────────────────────────────────────── */
+@keyframes slideInRight {
+  0% {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ── Hide scrollbar entirely ────────────────────────────────────────── */
+.scrollbar-none,
+.dropdown-menu,
+[class*="Dropdown"],
+[class*="dropdown"],
+.panel-shadow.overflow-y-auto,
+.shadow-lg.overflow-y-auto {
+  scrollbar-width: none !important; /* Firefox */
+  -ms-overflow-style: none !important;  /* IE and Edge */
+}
+.scrollbar-none::-webkit-scrollbar,
+.dropdown-menu::-webkit-scrollbar,
+[class*="Dropdown"]::-webkit-scrollbar,
+[class*="dropdown"]::-webkit-scrollbar,
+.panel-shadow.overflow-y-auto::-webkit-scrollbar,
+.shadow-lg.overflow-y-auto::-webkit-scrollbar {
+  display: none !important; /* Chrome, Safari and Opera */
+}
