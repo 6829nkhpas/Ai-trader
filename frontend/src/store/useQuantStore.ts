@@ -633,10 +633,18 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       console.warn('[QuantStore] Sentiment refresh failed, continuing with analysis...');
     }
 
-    // Read the active timeframe from the trade store for RAG context injection
+    // Read the active timeframe AND the active workspace profile from the trade
+    // store for AI context injection. The profile (INTRADAY / SWING / INVESTOR /
+    // FNO) tells the agent which data domain and analysis horizon the user is in,
+    // so an F&O run prioritizes options/futures positioning and an intraday run
+    // stays on the short-horizon spot microstructure.
     const { useTradeStore } = await import('./useTradeStore');
     const activeTimeframe = useTradeStore.getState().activeTimeframe;
-    console.log(`[QuantStore] → Timeframe for AI context: ${activeTimeframe}`);
+    const activeProfile = useTradeStore.getState().activeProfile;
+    // The F&O section's selected expiry (ISO "YYYY-MM-DD", '' => nearest). Only
+    // meaningful on an FNO-profile run; the agent ignores it otherwise.
+    const fnoExpiry = useTradeStore.getState().fnoExpiry;
+    console.log(`[QuantStore] → AI context: timeframe=${activeTimeframe} profile=${activeProfile} fnoExpiry=${fnoExpiry || '(nearest)'}`);
 
     try {
       console.log(`[QuantStore] → invoking 'run_deep_quant_agent' (Tauri IPC)…`);
@@ -648,6 +656,8 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
           symbol,
           mode: activeMode,
           timeframe: activeTimeframe,
+          profile: activeProfile,
+          fnoExpiry,
           manualTrade: manualTrade ? {
             side: manualTrade.side,
             entry: manualTrade.entry,
