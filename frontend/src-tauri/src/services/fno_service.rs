@@ -193,6 +193,22 @@ fn map_spot_quote_symbol(underlying: &str) -> String {
     }
 }
 
+/// Returns the alternative underlying name for QuestDB backward compatibility.
+/// Old snapshots may have been stored as "NIFTY 50" while new ones use "NIFTY".
+fn underlying_alt_name(underlying: &str) -> String {
+    match underlying.to_uppercase().as_str() {
+        "NIFTY" => "NIFTY 50".to_string(),
+        "NIFTY 50" => "NIFTY".to_string(),
+        "BANKNIFTY" => "NIFTY BANK".to_string(),
+        "NIFTY BANK" => "BANKNIFTY".to_string(),
+        "FINNIFTY" => "NIFTY FIN SERVICE".to_string(),
+        "NIFTY FIN SERVICE" => "FINNIFTY".to_string(),
+        "MIDCPNIFTY" => "NIFTY MIDCAP SELECT".to_string(),
+        "NIFTY MIDCAP SELECT" => "MIDCPNIFTY".to_string(),
+        other => other.to_string(),
+    }
+}
+
 // ── Analytics Computation ──
 
 fn compute_pcr(chain: &[FnoChainRow]) -> Option<f64> {
@@ -286,7 +302,7 @@ pub async fn build_fno_snapshot(
         expiry_opt.trim().to_string()
     };
 
-    let mock_broker = std::env::var("MOCK_BROKER").unwrap_or_default() == "true";
+    // MOCK_BROKER is for profile/auth only — always call Kite API for F&O data
     let (api_key, access_token) = get_kite_credentials();
     
     let mut quote_success = false;
@@ -294,7 +310,7 @@ pub async fn build_fno_snapshot(
     let mut spot = None;
     let now_ms = chrono::Utc::now().timestamp_millis();
 
-    if !mock_broker && !api_key.is_empty() && !access_token.is_empty() {
+    if !api_key.is_empty() && !access_token.is_empty() {
         let instruments = load_instruments_for_expiry(db_state, underlying, &expiry);
         if !instruments.is_empty() {
             let mut instrument_map = HashMap::new();
@@ -537,17 +553,19 @@ async fn fetch_snapshots_from_questdb(
     underlying: &str,
     expiry: &str,
 ) -> Result<Vec<DbSnapshotRow>, String> {
+    let alt = underlying_alt_name(underlying);
     let query = "
         SELECT strike, option_type, last_price, open_interest, cast(snapshot_ts AS LONG) as ts \
         FROM option_chain_snapshots \
-        WHERE underlying = $1 AND expiry = $2 AND snapshot_ts = ( \
-            SELECT max(snapshot_ts) FROM option_chain_snapshots WHERE underlying = $1 AND expiry = $2 \
+        WHERE (underlying = $1 OR underlying = $2) AND expiry = $3 AND snapshot_ts = ( \
+            SELECT max(snapshot_ts) FROM option_chain_snapshots WHERE (underlying = $1 OR underlying = $2) AND expiry = $3 \
         ) \
         ORDER BY strike ASC
     ";
     
     let rows = sqlx::query_as::<_, DbSnapshotRow>(query)
         .bind(underlying)
+        .bind(&alt)
         .bind(expiry)
         .fetch_all(pool)
         .await
@@ -617,14 +635,16 @@ async fn read_spot_from_live_ticks(pool: &PgPool, underlying: &str) -> Option<f6
 }
 
 pub async fn resolve_latest_expiry_from_questdb(pool: &PgPool, underlying: &str) -> Option<String> {
+    let alt = underlying_alt_name(underlying);
     let query = "
         SELECT expiry FROM option_chain_snapshots \
-        WHERE underlying = $1 \
+        WHERE (underlying = $1 OR underlying = $2) \
         ORDER BY snapshot_ts DESC \
         LIMIT 1
     ";
     match sqlx::query_scalar::<_, String>(query)
         .bind(underlying)
+        .bind(&alt)
         .fetch_optional(pool)
         .await
     {
@@ -637,14 +657,16 @@ pub async fn fetch_expiries_from_questdb(
     pool: &PgPool,
     underlying: &str,
 ) -> Result<Vec<String>, String> {
+    let alt = underlying_alt_name(underlying);
     let query = "
         SELECT DISTINCT expiry FROM option_chain_snapshots \
-        WHERE underlying = $1 \
+        WHERE (underlying = $1 OR underlying = $2) \
         ORDER BY expiry ASC
     ";
     
     let rows = sqlx::query_scalar::<_, String>(query)
         .bind(underlying)
+        .bind(&alt)
         .fetch_all(pool)
         .await
         .map_err(|e| format!("Failed to query QuestDB expiries: {}", e))?;
