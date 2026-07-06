@@ -344,7 +344,7 @@ You must follow this exact loop until a perfect setup is found or registered:
    - expiry_context (is_expiry_day / days_until_expiry) — whether the candle's date is the weekly-expiry day and how close the next expiry is,
    - time_favorability (favorable / unfavorable / neutral) — whether the clock favors taking a new trade right now.
    The veteran principle: the NSE session is NOT uniform — the opening drive is violent and mean-reverting, the midday lull is thin and chop-prone, and expiry-afternoon flow is distorted. Use time_favorability as a calibration filter, NOT a trade generator: a `favorable` window does NOT force a trade, and the session context never blocks or overrides your decision. If the session context is unavailable (missing / non-finite timestamp / retrieval failure / unavailable marker), treat it as a missing optional input — note it as unavailable and proceed with the remaining analysis; do NOT fabricate a session label and do NOT abort the decision on that basis.
-2e. OPTIONS POSITIONING: Call `get_options_analytics` with the symbol under analysis (optionally the analyzed expiry and your proposed_direction) to read institutional options positioning — the single biggest source of intraday edge on NSE. For an index underlying its own chain is analyzed; for a non-index symbol the symbol's benchmark index chain is used as broad-market (index-level, NOT stock-specific) options context. The result reports:
+2e. OPTIONS POSITIONING — F&O WORKSPACE ONLY: This step applies ONLY when the active workspace is F&O. In the INTRADAY, SWING, and INVESTOR workspaces the `get_options_analytics` tool is NOT available to you and you MUST NOT attempt to call it — skip this step entirely and analyze ONLY the active symbol's own price, volume, and structure. In the F&O workspace, call `get_options_analytics` with the symbol under analysis (with own_chain=true for a stock so its OWN chain is read, the analyzed expiry, and your proposed_direction) to read institutional options positioning — the single biggest source of intraday edge on NSE. For an index underlying its own chain is analyzed; for a stock with own_chain=true the stock's OWN chain is analyzed (falling back to its benchmark index chain only if the stock has no snapshot). The result reports:
    - pcr_oi / pcr_volume (Put-Call Ratio) — put-heavy (high PCR) marks support-building below, call-heavy (low PCR) marks resistance overhead,
    - max_pain — the strike toward which price tends to be pinned into expiry (a max-pain above spot pulls price up, below spot pulls price down),
    - oi_buildup (aggregate call / put) — where option writers are positioning,
@@ -478,7 +478,7 @@ Your job is to verify this trade using the EXACT same <self_verification_protoco
 2d. Consult `get_forecast` for the symbol and timeframe while verifying. If the user-proposed trade is a directional (BUY/SELL) trade that is `misaligned` with the forecast (Forecast_Alignment is `misaligned`, or the Up_Probability does not support the proposed direction — a BUY needs Up_Probability >= 0.5, a SELL needs Up_Probability <= 0.5), you MUST include an explicit warning statement in your verification output that the proposed trade is misaligned with the volatility-aware forecast (state the Projected_Direction, the Up_Probability, the Expected_Move_ATR, and the Forecast_Alignment). If the forecast is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because the forecast could not be computed.
 2e. Evaluate the proposed trade's MANAGEMENT, or its absence. If the user supplied scale-out targets, a breakeven move, or a trailing rule, critique whether the leg fractions are in range and sum to at most the full position, the targets are ordered on the profit side, the breakeven trigger sits between entry and the first target, and the blended Risk:Reward is sound — and state any management red flags. If the user proposed a single static bracket with no management, recommend a concrete management plan where appropriate: for example scale out a fraction at the first target, move the stop to breakeven after that target, and trail the remainder, so the trade can scratch at breakeven instead of taking a full stop and let a runner extend. Management is a recommendation, not a hard requirement — do NOT reject an otherwise A+ trade solely because it is single-target.
 2f. Consult `get_session_context` for the symbol and timeframe while verifying. If the user-proposed trade is a directional (BUY/SELL) trade being taken in an `unfavorable` time window (for example the violent opening minutes or expiry-afternoon chop), you MUST include an explicit warning statement in your verification output that the proposed trade is being taken in an unfavorable time window (state the session_phase, the expiry_context, and the time_favorability). If the session context is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because the session context could not be computed.
-2g. Consult `get_options_analytics` for the symbol while verifying. If the user-proposed trade is a directional (BUY/SELL) trade that is `misaligned` with options positioning (for example a BUY into a heavy call OI-wall just overhead, against max-pain pinning, or against a bearish options bias), you MUST include an explicit warning statement in your verification output that the proposed trade fights the prevailing options positioning (state the PCR, the max-pain level, the nearest OI walls, the options_bias_state, and the alignment). If options context is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because options positioning could not be computed.
+2g. (F&O WORKSPACE ONLY) Consult `get_options_analytics` for the symbol while verifying. This step applies ONLY when the active workspace is F&O; in the INTRADAY, SWING, and INVESTOR workspaces the tool is NOT available and you MUST skip it. If the user-proposed trade is a directional (BUY/SELL) trade that is `misaligned` with options positioning (for example a BUY into a heavy call OI-wall just overhead, against max-pain pinning, or against a bearish options bias), you MUST include an explicit warning statement in your verification output that the proposed trade fights the prevailing options positioning (state the PCR, the max-pain level, the nearest OI walls, the options_bias_state, and the alignment). If options context is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because options positioning could not be computed.
 3. Do not invent red flags if the trade is genuinely an A+ setup. If it fits the protocol, approve it and defend it.
 4. If it fails the protocol, explain exactly why, and suggest a better entry using `watch_price_condition`.
 5. TIER THE PROPOSED TRADE: state which opportunity tier the user's trade belongs to (a_plus / b_continuation / scalp) or that it does not clear even a scalp (stand aside). The tier scales size only — the Trade_Validator's hard risk rules (stop >= 1.5x ATR, R:R >= 1:2) apply identically at every tier, so a weaker tier is smaller, never looser. If you recommend waiting, remember any watch is bounded by the Watch_Cap / Session_Budget and an unchanged re-arm after an invalidation is rejected — recommend a materially different level or a stand-aside, not a blind re-arm.
@@ -514,6 +514,10 @@ PROFILE_DIRECTIVES = {
         "- Prioritize: `get_consensus_report` (VWAP, RSI, order flow), `get_order_flow`, `get_session_context` "
         "(opening range, midday lull, closing/expiry chop), and `get_support_resistance` intraday levels.\n"
         "- Volume matters: use `get_volume_profile` (POC/VAH/VAL) and VWAP for institutional fair value.\n"
+        "- ACTIVE SYMBOL ONLY: analyze ONLY the selected symbol's own price, volume, and structure. "
+        "`get_options_analytics` is an F&O-workspace-only tool and is NOT available here — do NOT call it. "
+        "A benchmark index (e.g. NIFTY 50) may appear ONLY as the `get_relative_strength` comparison, "
+        "never as the subject of the analysis.\n"
         "</workspace_profile>"
     ),
     "SWING": (
@@ -525,6 +529,9 @@ PROFILE_DIRECTIVES = {
         "`get_relative_strength` versus the benchmark, and `get_market_regime`.\n"
         "- De-emphasize: tick-level `get_order_flow` and intraday session micro-timing — they rarely drive a swing.\n"
         "- Size stops and targets to daily ATR / swing S-R, not intraday pivots.\n"
+        "- ACTIVE SYMBOL ONLY: analyze ONLY the selected symbol's own price, volume, and structure. "
+        "`get_options_analytics` is an F&O-workspace-only tool and is NOT available here — do NOT call it. "
+        "The benchmark index appears ONLY as the `get_relative_strength` comparison, never as the analysis subject.\n"
         "</workspace_profile>"
     ),
     "INVESTOR": (
@@ -536,6 +543,9 @@ PROFILE_DIRECTIVES = {
         "`get_market_regime`, and `get_news_context` for catalysts.\n"
         "- De-emphasize: `get_order_flow`, `get_session_context`, and intraday volume profile — do NOT anchor a "
         "positional thesis on same-day microstructure.\n"
+        "- ACTIVE SYMBOL ONLY: analyze ONLY the selected symbol's own data. `get_options_analytics` is an "
+        "F&O-workspace-only tool and is NOT available here — do NOT call it. The benchmark index appears ONLY as "
+        "the `get_relative_strength` comparison, never as the analysis subject.\n"
         "</workspace_profile>"
     ),
     # FNO is built dynamically (it interpolates the symbol + selected expiry +
@@ -742,6 +752,40 @@ readonly_tools = [
 # role-specific model cannot be constructed (R6.4). Bound to the SAME read-only
 # tool set so the fallback also cannot commit/suspend a trade.
 readonly_llm_with_tools = llm.bind_tools(readonly_tools)
+
+# ── Profile-gated tool binding (workspace-scoped data access) ────────────────
+# F&O / options data is ONLY relevant in the F&O workspace. In every other
+# workspace (INTRADAY / SWING / INVESTOR) the agent must analyze ONLY the active
+# symbol's own price / volume / structure, so the F&O-only tools are NOT bound
+# there. This is the structural half of "F&O data only in F&O mode": if the tool
+# is not bound, the model physically cannot call it, which also removes the
+# broad-market NIFTY 50 chain that `get_options_analytics` would otherwise pull
+# in for a non-index stock (the source of "NIFTY 50 keeps appearing" on an
+# intraday run of a different symbol). The prompt half lives in the profile
+# directives and the order-of-operations, which mark options as F&O-only.
+FNO_ONLY_TOOLS = {"get_options_analytics"}
+
+# The non-F&O Analysis tool set = the full tool list minus the F&O-only tools.
+non_fno_tools = [
+    t for t in tools
+    if getattr(t, "name", None) not in FNO_ONLY_TOOLS
+]
+non_fno_llm_with_tools = llm.bind_tools(non_fno_tools)
+
+
+def _llm_for_profile(state: "AgentState"):
+    """Select the model binding for the run's workspace profile.
+
+    The F&O workspace binds the FULL tool set (including `get_options_analytics`);
+    every other workspace binds the set WITHOUT the F&O-only tools, so the agent
+    can only pull options / F&O data when the operator is actually in the F&O
+    workspace. Falls back to the full binding only for the F&O profile; any
+    unset / unrecognized profile is treated as non-F&O (the safe default that
+    keeps the analysis on the active symbol). Never raises.
+    """
+    raw = state.get("profile") if isinstance(state, dict) else None
+    key = raw.strip().upper() if isinstance(raw, str) and raw.strip() else "INTRADAY"
+    return llm_with_tools if key == "FNO" else non_fno_llm_with_tools
 
 # Cache of read-only-bound role models keyed by (model_name, "readonly") so the
 # repeated Bull/Bear turns across rounds reuse one bound client instead of
@@ -2811,8 +2855,12 @@ def call_model(state: AgentState):
     # the checkpointed state (only what is sent this turn).
     messages = opportunity.prune_messages(messages, _OPPORTUNITY_CFG)
 
-    response = llm_with_tools.invoke(messages)
-    
+    # Profile-gated binding: the F&O workspace can call the F&O-only tools
+    # (options analytics); every other workspace is bound to the active-symbol
+    # tool set WITHOUT them, so options / broad-market data is never pulled on a
+    # non-F&O run and the analysis stays on the operator's selected symbol.
+    response = _llm_for_profile(state).invoke(messages)
+
     print(f"[Deep Quant Agent] Model responded. Content length: {len(response.content or '')}")
 
     # Single structured extraction pass: native structured calls are primary;

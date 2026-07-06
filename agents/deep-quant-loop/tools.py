@@ -870,6 +870,85 @@ def get_chart_patterns(symbol: str, timeframe: str, limit: int = 200) -> dict:
         print(f"[Tool Error] <<< get_chart_patterns FAIL: {str(e)}")
         return {"error": f"Failed to detect chart patterns: {str(e)}"}
 
+# Relative width below which the seven pivot levels are treated as "collapsed"
+# onto a single point: when (max_level - min_level) / |pivot| is under this, the
+# levels span less than ~0.02% of price and cannot define a usable entry / stop /
+# target geometry. This is the degenerate-input signature produced when the pivot
+# period has too few (or too flat) candles — e.g. a sparsely-backfilled spot
+# index intraday series — which the Rust SR_Engine also flags via
+# ``ordering_exception``.
+_SR_COLLAPSE_REL_WIDTH = 2e-4
+
+
+def _sr_is_finite_number(v) -> bool:
+    """True for a finite real number; ``bool`` is excluded (repo convention)."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _sr_is_degenerate(res: dict) -> tuple[bool, str]:
+    """Detect an unusable support/resistance result (returns (degenerate, reason)).
+
+    A result is degenerate when either the Rust SR_Engine flagged an
+    ``ordering_exception`` (the canonical S3<=S2<=S1<=pivot<=R1<=R2<=R3 ordering
+    could not hold), or all seven levels are finite but collapsed into a
+    negligible band around the pivot (the near-zero-range signature of a
+    sparse/flat candle window). In both cases the levels cannot be used for clean
+    entry / stop / target placement, so the tool degrades to an honest
+    Unavailable_Marker rather than handing back collapsed numbers. Never raises.
+    """
+    if not isinstance(res, dict):
+        return False, ""
+    if res.get("ordering_exception"):
+        return True, (
+            "support/resistance ordering_exception: the computed levels could not "
+            "satisfy the canonical S3<=S2<=S1<=pivot<=R1<=R2<=R3 ordering "
+            "(degenerate/near-flat candle range) and are not usable for entry, "
+            "stop, or target placement"
+        )
+    levels = []
+    for field in _SR_REQUIRED_FIELDS:
+        v = res.get(field)
+        if not _sr_is_finite_number(v):
+            # A missing/non-finite required level is a different failure mode that
+            # the contract validator already surfaces; do not mislabel it collapsed.
+            return False, ""
+        levels.append(float(v))
+    lo, hi = min(levels), max(levels)
+    pivot = res.get("pivot")
+    denom = abs(float(pivot)) if (_sr_is_finite_number(pivot) and pivot != 0) else max(abs(hi), abs(lo), 1.0)
+    if (hi - lo) / denom < _SR_COLLAPSE_REL_WIDTH:
+        return True, (
+            "support/resistance levels collapsed onto a single point "
+            f"(all seven levels span less than {_SR_COLLAPSE_REL_WIDTH:.2%} of price "
+            "around the pivot), the degenerate signature of too few / too flat "
+            "candles — not usable for entry, stop, or target placement"
+        )
+    return False, ""
+
+
+def _sr_unavailable(symbol, timeframe, reason: str, raw: dict) -> dict:
+    """Build a get_support_resistance Unavailable_Marker.
+
+    Recognized as an honest, non-fatal marker by ``_has_honest_marker`` so
+    ``validate_contract`` passes it through unchanged. The unusable raw levels are
+    preserved under ``raw_levels`` for glass-box diagnostics but MUST NOT be used
+    as tradeable levels — the ``unavailable`` flag is the operative signal.
+    """
+    marker = {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "unavailable": True,
+        "reason": reason,
+    }
+    if isinstance(raw, dict):
+        marker["raw_levels"] = {
+            k: raw.get(k)
+            for k in (*_SR_REQUIRED_FIELDS, "ordering_exception", "recent_high", "recent_low")
+            if k in raw
+        }
+    return marker
+
+
 @tool
 def get_support_resistance(symbol: str, timeframe: str = "1d") -> dict:
     """
@@ -890,8 +969,15 @@ def get_support_resistance(symbol: str, timeframe: str = "1d") -> dict:
     Returns:
         dict: Authoritative support/resistance levels with keys: pivot, s1, s2, s3, r1, r2, r3,
               recent_high, recent_low. Intraday timeframes also include opening_range_high,
-              opening_range_low, and daily_pivot. An ordering_exception field is set when the
-              computed levels cannot satisfy the canonical S3≤S2≤S1≤pivot≤R1≤R2≤R3 ordering.
+              opening_range_low, and daily_pivot. When the computed levels are unusable —
+              either the Rust engine flags an ordering_exception (the canonical
+              S3≤S2≤S1≤pivot≤R1≤R2≤R3 ordering could not hold) or the levels collapse onto a
+              single point around the pivot (the degenerate signature of too few / too flat
+              candles, common on a sparsely-backfilled spot index intraday series) — the tool
+              instead returns an Unavailable_Marker {"unavailable": true, "reason": ...} with
+              the unusable levels preserved under "raw_levels" for diagnostics only. Treat an
+              unavailable result as a missing, non-blocking input; do NOT place a trade against
+              the raw_levels.
     """
     print(f"\n[Tool Call] >>> get_support_resistance: symbol={symbol}, timeframe={timeframe}")
     try:
@@ -904,6 +990,18 @@ def get_support_resistance(symbol: str, timeframe: str = "1d") -> dict:
             print(f"[Tool Error] Server returned {response.status_code}: {response.text}")
         response.raise_for_status()
         res = response.json()
+        # Degrade an unusable result to an honest Unavailable_Marker rather than
+        # handing back collapsed levels the agent cannot place a trade against.
+        # This covers a Rust-flagged ordering_exception AND the near-zero-range
+        # collapse produced by a sparse/flat candle window (common on a spot index
+        # intraday series that has not been backfilled). The agent then treats S/R
+        # as a clean missing input — exactly like regime / relative strength — and
+        # proceeds on the remaining evidence instead of reasoning against garbage.
+        if isinstance(res, dict) and not _has_honest_marker(res):
+            degenerate, reason = _sr_is_degenerate(res)
+            if degenerate:
+                print(f"[Tool Success] <<< get_support_resistance: symbol={symbol}, timeframe={timeframe}, unavailable ({reason})")
+                return _sr_unavailable(symbol, timeframe, reason, res)
         print(f"[Tool Success] <<< get_support_resistance: symbol={symbol}, timeframe={timeframe}, pivot={res.get('pivot')}, S1={res.get('s1')}, R1={res.get('r1')}")
         return validate_contract("get_support_resistance", res)
     except Exception as e:
