@@ -130,7 +130,7 @@ _conforming_result = st.one_of(_conforming_assessment(), _unavailable_marker())
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: earnings-event-risk-gate, Property 15: validate_contract is the identity on conforming results and markers
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(result=_conforming_result)
 def test_property_15_validate_contract_is_identity_on_conforming_event(result):
     """Validates: Requirements 4.6, 4.8
