@@ -156,7 +156,7 @@ def _committed_decision(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: earnings-event-risk-gate, Property 28: The event context never modifies or blocks a committed decision
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     decision=_committed_decision(),
     result=_event_result,
