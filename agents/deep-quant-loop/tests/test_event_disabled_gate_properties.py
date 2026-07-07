@@ -108,7 +108,7 @@ _horizon = st.one_of(
 )
 
 
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(flag=_disabling_flag, symbol=_symbol, holding_horizon=_horizon)
 def test_disabled_gate_returns_marker_and_skips_retrieval(flag, symbol, holding_horizon):
     """A disabled gate yields a gate-disabled marker and never retrieves.

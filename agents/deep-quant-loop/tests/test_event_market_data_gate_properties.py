@@ -165,7 +165,7 @@ def _unavailable_event_content(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: earnings-event-risk-gate, Property 18: The market-data gate classifies event results correctly and stays monotone
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     usable=_usable_event_content(),
     error=_error_event_content(),

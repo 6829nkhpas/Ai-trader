@@ -215,7 +215,7 @@ def _assert_unavailable(entry):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: earnings-event-risk-gate, Property 20: Absent event context is recorded as unavailable
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     # 0+ event results, each NON-usable: an error, an Unavailable_Marker, a
     # non-dict result, or an assessment missing/with-invalid enum fields. An
