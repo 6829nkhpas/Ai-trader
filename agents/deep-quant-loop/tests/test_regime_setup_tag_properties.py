@@ -213,8 +213,10 @@ def test_property_23_single_fixed_position_low_cardinality_regime_tag(payload):
     # derive_setup_tags always appends an rs: tag immediately after regime.
     assert rs_tags
     assert tags[regime_index + 1] == rs_tags[0]
-    # The opportunity-tier dimension is always appended last (opportunity engine R9.2).
-    assert tags[-1].startswith("tier:")
+    # The event-date risk dimension is always appended last (earnings-event-risk-gate
+    # R10.1); the opportunity-tier dimension is now second-to-last.
+    assert tags[-1].startswith("evt:")
+    assert tags[-2].startswith("tier:")
 
     # ── Determinism: identical inputs -> identical tag list and setup_key (R9.1) ─
     tags_again = derive_setup_tags(decision)
@@ -225,5 +227,6 @@ def test_property_23_single_fixed_position_low_cardinality_regime_tag(payload):
     # component (which immediately follows it).
     key = setup_key_from_tags(tags)
     key_parts = key.split("|")
-    assert key_parts[-1].startswith("tier:")
+    assert key_parts[-1].startswith("evt:")
+    assert key_parts[-2].startswith("tier:")
     assert key_parts.index(regime_tags[0]) < key_parts.index(rs_tags[0])

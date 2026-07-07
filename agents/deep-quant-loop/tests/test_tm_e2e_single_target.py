@@ -223,7 +223,8 @@ def test_single_target_management_entry_informational_step_and_tag():
     # the session and multi-agent-debate dimensions follow, so ``db:`` is last.
     tm_index = tags.index("tm:single")
     assert tags[tm_index - 1].startswith("fc:")
-    assert tags[-1].startswith("tier:"), "tier: is the fixed final dimension (opportunity engine R9.2)"
+    assert tags[-1].startswith("evt:"), "evt: is the fixed final dimension (earnings-event-risk-gate R10.1)"
+    assert tags[-2].startswith("tier:"), "tier: is now second-to-last (opportunity engine R9.2)"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
