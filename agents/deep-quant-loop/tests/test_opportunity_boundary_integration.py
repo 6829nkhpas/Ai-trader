@@ -36,19 +36,16 @@ def test_tier_tag_is_last_and_low_cardinality():
     for tier in ("a_plus", "b_continuation", "scalp", "stand_aside", "garbage", None):
         decision = {"action": "BUY", "opportunity_tier": tier}
         tags = journal.derive_setup_tags(decision)
-        # The tier dimension sits at the second-to-last fixed position, after the
-        # options ``opt:`` tag and immediately before the event ``evt:`` tag
-        # (earnings-event-risk-gate appends ``evt:`` last, R10.1).
-        assert tags[-2].startswith("tier:"), tags
-        assert tags[-1].startswith("evt:"), tags
+        # The tier dimension is the FINAL tag, after the options ``opt:`` tag.
+        assert tags[-1].startswith("tier:"), tags
         opt_idx = max(i for i, t in enumerate(tags) if t.startswith("opt:"))
-        tier_idx = len(tags) - 2
+        tier_idx = len(tags) - 1
         assert tier_idx > opt_idx  # tier: comes after opt:
         # Low cardinality: the value is one of at most five.
-        assert tags[-2] in ["tier:" + v for v in opportunity.TIER_TAG_VALUES]
+        assert tags[-1] in ["tier:" + v for v in opportunity.TIER_TAG_VALUES]
 
-    # A missing tier collapses to tier:unknown deterministically (now second-to-last).
-    assert journal.derive_setup_tags({"action": "HOLD"})[-2] == "tier:unknown"
+    # A missing tier collapses to tier:unknown deterministically.
+    assert journal.derive_setup_tags({"action": "HOLD"})[-1] == "tier:unknown"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
