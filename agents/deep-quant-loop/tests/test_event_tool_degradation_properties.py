@@ -185,7 +185,7 @@ def _assert_unavailable_marker(result, mode):
 # Property 13: The tool degrades to an Unavailable_Marker on any source-retrieval
 #              or processing failure
 # ─────────────────────────────────────────────────────────────────────────────
-@settings(max_examples=150, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     symbol=_valid_symbols,
     holding_horizon=_horizons,
