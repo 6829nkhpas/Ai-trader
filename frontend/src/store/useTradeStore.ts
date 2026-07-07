@@ -376,7 +376,7 @@ export const useTradeStore = create<TradeStore>((set) => {
     finalTradePlan: null,
     chartMode: 'STANDARD',
     orderFlowData: [],
-    fnoUnderlying: 'NIFTY 50',
+    fnoUnderlying: '',
     fnoExpiry: '',
     clearAgentChatLog: () => set({ agentChatLog: [], finalTradePlan: null }),
 
