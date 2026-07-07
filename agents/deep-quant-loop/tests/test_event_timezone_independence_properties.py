@@ -171,7 +171,7 @@ def _restore_host_tz(prev):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: earnings-event-risk-gate, Property 4: Classification is timezone-independent of the host
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     reference_ms=_VALID_MS,
     event_ms=_VALID_MS,

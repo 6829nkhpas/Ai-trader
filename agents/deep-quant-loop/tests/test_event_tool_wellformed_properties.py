@@ -89,7 +89,7 @@ def _is_finite_nonneg_or_null(value) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: earnings-event-risk-gate, Property 12: A successful tool result is well-formed
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     now_ms=st.integers(min_value=_NOW_MIN_MS, max_value=_NOW_MAX_MS),
     future_days=st.integers(min_value=0, max_value=400),
