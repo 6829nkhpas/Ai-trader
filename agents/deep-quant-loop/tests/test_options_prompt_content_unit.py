@@ -57,7 +57,11 @@ def test_find_prompt_mentions_get_options_analytics():
     """
     prompt = graph.DEEP_QUANT_SYSTEM_PROMPT
     assert "get_options_analytics" in prompt
-    assert "2e. OPTIONS POSITIONING:" in prompt
+    # Options is an explicit step 2e in the order of operations. The heading now
+    # carries an F&O-workspace-only qualifier ("2e. OPTIONS POSITIONING — F&O
+    # WORKSPACE ONLY:"), so match the step prefix rather than an exact trailing
+    # colon to stay robust to that intentional qualifier.
+    assert "2e. OPTIONS POSITIONING" in prompt
 
 
 # ── Requirement 5.2: alignment-check-before-directional self-verification ─────

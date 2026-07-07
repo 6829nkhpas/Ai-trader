@@ -266,25 +266,28 @@ def test_property_28_single_fixed_position_low_cardinality_fc_tag(payload):
     assert value == expected_value
 
     # ── Fixed position: fc tag sits immediately after the ``rs:`` tag and
-    #    immediately before the ``tm:`` tag. Later dimensions (tm/sess) and the
-    #    multi-agent-debate ``db:`` tag are appended after it, so the ``db:`` tag
-    #    is now the FINAL tag (R11.1). ──────────────────────────────────────
+    #    immediately before the ``tm:`` tag. Later dimensions (tm/sess/db/opt/
+    #    tier) and the event ``evt:`` tag are appended after it, so the ``evt:``
+    #    tag is now the FINAL tag (R11.1). ──────────────────────────────────
     fc_index = tags.index(fc_tags[0])
     # The tag immediately before the fc tag is the relative-strength tag.
     assert tags[fc_index - 1].startswith("rs:")
     # The tag immediately after the fc tag is the management-style (tm:) tag.
     assert tags[fc_index + 1].startswith("tm:")
-    # The opportunity-tier dimension is always appended last (after sess:/db:/opt:),
-    # per adaptive-opportunity-engine R9.2.
-    assert tags[-1].startswith("tier:")
+    # The event-date risk dimension is always appended last (after tier:), per
+    # earnings-event-risk-gate R10.1; the opportunity-tier dimension is now
+    # second-to-last.
+    assert tags[-1].startswith("evt:")
+    assert tags[-2].startswith("tier:")
 
     # ── Determinism: identical inputs -> identical tag list and setup_key (R11.1) ─
     tags_again = derive_setup_tags(decision)
     assert tags_again == tags
     assert setup_key_from_tags(tags_again) == setup_key_from_tags(tags)
     # The fc value occupies the same deterministic slot in setup_key, immediately
-    # after the rs: component; the db: component is always last.
+    # after the rs: component; the evt: component is always last (tier: second-to-last).
     key_parts = setup_key_from_tags(tags).split("|")
-    assert key_parts[-1].startswith("tier:")
+    assert key_parts[-1].startswith("evt:")
+    assert key_parts[-2].startswith("tier:")
     fc_key_index = key_parts.index(fc_tags[0])
     assert key_parts[fc_key_index - 1].startswith("rs:")

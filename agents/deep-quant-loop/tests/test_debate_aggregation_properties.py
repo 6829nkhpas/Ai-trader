@@ -161,11 +161,13 @@ def test_property_25_setup_key_groups_by_debate_dimension(consensus_a, consensus
     key_a = journal.setup_key_from_tags(tags_a)
     key_b = journal.setup_key_from_tags(tags_b)
 
-    # Exactly one db: dimension at its fixed position; the options ``opt:`` and
-    # opportunity ``tier:`` dimensions are appended after it (tier: is now final).
+    # Exactly one db: dimension at its fixed position; the options ``opt:``,
+    # opportunity ``tier:`` and event ``evt:`` dimensions are appended after it
+    # (evt: is now final, tier: is second-to-last).
     db_tags_a = [t for t in tags_a if t.startswith("db:")]
     assert len(db_tags_a) == 1, f"expected exactly one db: tag, got {db_tags_a}"
-    assert tags_a[-1].startswith("tier:"), "tier: tag must be at the fixed final position"
+    assert tags_a[-1].startswith("evt:"), "evt: tag must be at the fixed final position"
+    assert tags_a[-2].startswith("tier:"), "tier: tag must be the second-to-last tag"
 
     # Determinism: re-deriving the same decision yields an identical key.
     assert journal.setup_key_from_tags(journal.derive_setup_tags(decision_a)) == key_a

@@ -218,13 +218,17 @@ def test_property_22_session_tag_low_cardinality_fixed_position(decision):
         f"sess tag not immediately after tm: tag in {tags}"
     )
     # The session tag is immediately followed by the debate ``db:`` tag; the
-    # options ``opt:`` and opportunity ``tier:`` dimensions follow, so ``tier:`` is
-    # the final tag (adaptive-opportunity-engine R9.2).
+    # options ``opt:``, opportunity ``tier:`` and event ``evt:`` dimensions
+    # follow, so ``evt:`` is the final tag (earnings-event-risk-gate R10.1) and
+    # ``tier:`` is second-to-last (adaptive-opportunity-engine R9.2).
     assert tags[sess_index + 1].startswith("db:"), (
         f"sess tag not immediately before db: tag in {tags}"
     )
-    assert tags[-1].startswith("tier:"), (
-        f"opportunity tier tag not at final position in {tags}"
+    assert tags[-1].startswith("evt:"), (
+        f"event risk tag not at final position in {tags}"
+    )
+    assert tags[-2].startswith("tier:"), (
+        f"opportunity tier tag not at second-to-last position in {tags}"
     )
 
     # ── Collapsing rules hold against the independent reference (R10.2/R10.3). ─

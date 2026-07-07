@@ -135,7 +135,9 @@ def test_e2e_aligned_find_mode_run():
     assert "opt:bullish-aligned" in tags
     opt_tags = [t for t in tags if t.startswith("opt:")]
     assert opt_tags == ["opt:bullish-aligned"]
-    # opt: sits after db: and immediately before the final opportunity tier: tag
-    # (adaptive-opportunity-engine R9.2).
-    assert tags[-2] == "opt:bullish-aligned"
-    assert tags[-1].startswith("tier:")
+    # opt: sits after db:, before the opportunity tier: tag (adaptive-opportunity-engine
+    # R9.2), which is in turn followed by the final event evt: tag
+    # (earnings-event-risk-gate R10.1).
+    assert tags[-3] == "opt:bullish-aligned"
+    assert tags[-2].startswith("tier:")
+    assert tags[-1].startswith("evt:")

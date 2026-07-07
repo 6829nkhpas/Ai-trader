@@ -1027,6 +1027,7 @@ FULL_ORDER_OF_OPERATIONS_TOOLS = (
     "get_relative_strength",  # 2c. RELATIVE STRENGTH & INDEX CONTEXT
     "get_session_context",    # 2d. SESSION & EXPIRY CONTEXT
     "get_options_analytics",  # 2e. OPTIONS POSITIONING
+    "get_event_risk",         # 2f. EVENT-DATE RISK GATE — scheduled-event proximity
     "get_support_resistance", # 3.  KEY LEVELS
     "get_volume_profile",     # 3b. AUCTION STRUCTURE
     "get_chart_patterns",     # 4.  STRUCTURAL PATTERNS
@@ -1113,6 +1114,7 @@ _DELTA_RECHECK_PLANS = {
     RESUME_TARGET: (
         "get_candles",
         "get_consensus_report",
+        "get_event_risk",
         "get_support_resistance",
         "get_chart_patterns",
         "get_forecast",

@@ -260,8 +260,14 @@ def test_call_model_prepends_devils_advocate_before_verdict():
 
     original_get_role_llm = graph.get_role_llm
     original_llm_with_tools = graph.llm_with_tools
+    # call_model selects the verdict binding via `_llm_for_profile(state)`, which
+    # returns `non_fno_llm_with_tools` for any non-F&O (here profile-less ->
+    # INTRADAY) state. Stub BOTH bindings so the profile selector cannot reach a
+    # real model regardless of which handle it picks (no network I/O).
+    original_non_fno_llm_with_tools = graph.non_fno_llm_with_tools
     graph.get_role_llm = lambda role: bear_stub
     graph.llm_with_tools = verdict_stub
+    graph.non_fno_llm_with_tools = verdict_stub
     try:
         state = _build_verify_state()
         update = call_model(state)
@@ -288,3 +294,4 @@ def test_call_model_prepends_devils_advocate_before_verdict():
     finally:
         graph.get_role_llm = original_get_role_llm
         graph.llm_with_tools = original_llm_with_tools
+        graph.non_fno_llm_with_tools = original_non_fno_llm_with_tools
