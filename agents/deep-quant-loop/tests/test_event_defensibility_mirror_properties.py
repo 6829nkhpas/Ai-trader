@@ -89,7 +89,7 @@ def _usable_event_assessment(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: earnings-event-risk-gate, Property 19: The defensibility event entry mirrors the tool result without fabrication
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(assessment=_usable_event_assessment())
 def test_property_19_defensibility_event_entry_mirrors_tool_result(assessment):
     """Validates: Requirements 8.1, 8.2

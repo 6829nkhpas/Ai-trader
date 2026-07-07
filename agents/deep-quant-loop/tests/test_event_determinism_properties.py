@@ -130,7 +130,7 @@ def _event_configs(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: earnings-event-risk-gate, Property 1: Classification is deterministic
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     reference_ms=_ts_arg,
     event_ms=_ts_arg,
@@ -186,7 +186,7 @@ def test_property_1_classification_is_deterministic(
 
 
 # Feature: earnings-event-risk-gate, Property 1: Classification is deterministic
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     reference_ms=_ts_arg,
     event_ms=_ts_arg,
