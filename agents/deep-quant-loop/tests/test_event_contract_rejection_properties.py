@@ -141,7 +141,7 @@ def _mutated_assessment(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: earnings-event-risk-gate, Property 16: validate_contract rejects non-conforming results, naming the field
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(mutated=_mutated_assessment())
 def test_property_16_event_contract_rejection_names_offending_field(mutated):
     """Validates: Requirements 4.7

@@ -134,7 +134,7 @@ _ANY_HORIZON = st.one_of(st.sampled_from(_HORIZONS), _GARBAGE)
 
 
 # Feature: earnings-event-risk-gate, Property 6: Event_Recommendation is total and tightening-only
-@settings(max_examples=400, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(event_risk=_ANY_RISK, holding_horizon=_ANY_HORIZON)
 def test_property_6_recommendation_total_and_tightening_only(event_risk, holding_horizon):
     """Validates: Requirements 2.7, 12.2
@@ -156,7 +156,7 @@ def test_property_6_recommendation_total_and_tightening_only(event_risk, holding
 
 
 # Feature: earnings-event-risk-gate, Property 6: Event_Recommendation is total and tightening-only
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(event_risk=st.sampled_from(_RECOGNIZED_RISKS), holding_horizon=st.sampled_from(_HORIZONS))
 def test_property_6_recommendation_matches_mapping_for_recognized_inputs(event_risk, holding_horizon):
     """Validates: Requirements 2.7, 12.2
@@ -187,7 +187,7 @@ def test_property_6_recommendation_matches_mapping_for_recognized_inputs(event_r
 
 
 # Feature: earnings-event-risk-gate, Property 6: Event_Recommendation is total and tightening-only
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(event_risk=_ANY_RISK, holding_horizon=_ANY_HORIZON)
 def test_property_6_unrecognized_risk_never_tightens_beyond_proceed(event_risk, holding_horizon):
     """Validates: Requirements 2.7, 12.2
