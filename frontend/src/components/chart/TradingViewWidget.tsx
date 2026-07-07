@@ -22,7 +22,6 @@ function syncButtonStates(doc: Document) {
   const chartMode = useTradeStore.getState().chartMode;
   const ghostLineMode = useChartUIStore.getState().ghostLineMode;
   const splitView = useChartUIStore.getState().splitView;
-  const sidebarOpen = useChartUIStore.getState().sidebarOpen;
 
   const chartModeBtn = doc.getElementById('tv-btn-chart-mode');
   if (chartModeBtn) {
@@ -52,16 +51,6 @@ function syncButtonStates(doc: Document) {
       splitViewBtn.classList.add('active');
     } else {
       splitViewBtn.classList.remove('active');
-    }
-  }
-
-  const sidebarBtn = doc.getElementById('tv-btn-sidebar');
-  if (sidebarBtn) {
-    sidebarBtn.innerHTML = sidebarOpen ? SVGS.sidebarClose : SVGS.sidebarOpen;
-    if (sidebarOpen) {
-      sidebarBtn.classList.add('active');
-    } else {
-      sidebarBtn.classList.remove('active');
     }
   }
 }
@@ -117,6 +106,23 @@ export default function TradingViewWidget({
       setWidgetState(tvWidget);
 
       tvWidget.onChartReady(() => {
+        // Listen to symbol changes from the TV search box
+        try {
+          const chartApi = tvWidget.activeChart() as any;
+          chartApi.onSymbolChanged().subscribe(null, () => {
+            const fullSymbol = chartApi.symbol();
+            if (fullSymbol && fullSymbol !== '---') {
+              const cleanSymbol = fullSymbol.includes(':') ? fullSymbol.split(':')[1] : fullSymbol;
+              const currentSymbol = useTradeStore.getState().selectedSymbol;
+              if (currentSymbol !== cleanSymbol) {
+                useTradeStore.getState().setSelectedSymbol(cleanSymbol);
+              }
+            }
+          });
+        } catch (err) {
+          console.warn('[TradingViewWidget] Failed to subscribe to onSymbolChanged:', err);
+        }
+
         const iframe = containerRef.current?.querySelector('iframe');
         const doc = iframe?.contentDocument;
         if (!doc) return;
@@ -173,56 +179,7 @@ export default function TradingViewWidget({
             splitViewBtn = btn;
           }
 
-          const sidebarBtn = (tvWidget as any).createButton();
-          sidebarBtn.id = 'tv-btn-sidebar';
-          sidebarBtn.className = 'tv-custom-toolbar-btn';
-          sidebarBtn.title = 'Right Panel Toggle';
-          sidebarBtn.addEventListener('click', () => {
-            const cur = useChartUIStore.getState().sidebarOpen;
-            useChartUIStore.getState().setSidebarOpen(!cur);
-            syncButtonStates(doc);
-          });
 
-          // Relocate sidebarBtn directly to the right side of screenshot/camera button
-          try {
-            const findCameraBtn = (d: Document) => {
-              const btn = d.querySelector('[data-name="screenshot"]') || 
-                          d.querySelector('[data-name="take-a-snapshot"]') || 
-                          d.querySelector('[class*="screenshot"]') ||
-                          d.querySelector('[class*="camera"]');
-              if (btn) return btn as HTMLElement;
-              const all = d.querySelectorAll('button, div[role="button"]');
-              for (const b of all) {
-                const title = b.getAttribute('title') || '';
-                if (title.toLowerCase().includes('snapshot') || title.toLowerCase().includes('screenshot') || title.toLowerCase().includes('camera')) {
-                  return b as HTMLElement;
-                }
-              }
-              return null;
-            };
-
-            const relocate = () => {
-              const cameraBtn = findCameraBtn(doc);
-              if (cameraBtn && cameraBtn.parentNode) {
-                cameraBtn.parentNode.insertBefore(sidebarBtn, cameraBtn.nextSibling);
-              } else {
-                let retries = 0;
-                const interval = setInterval(() => {
-                  retries++;
-                  const btn = findCameraBtn(doc);
-                  if (btn && btn.parentNode) {
-                    btn.parentNode.insertBefore(sidebarBtn, btn.nextSibling);
-                    clearInterval(interval);
-                  } else if (retries >= 30) {
-                    clearInterval(interval);
-                  }
-                }, 100);
-              }
-            };
-            relocate();
-          } catch (err) {
-            console.warn('[TradingViewWidget] Failed to relocate sidebar button next to camera icon:', err);
-          }
 
           setButtonsCreated(true);
           syncButtonStates(doc);
@@ -253,7 +210,10 @@ export default function TradingViewWidget({
     prevSymbolRef.current = activeSymbol;
     if (widgetRef.current) {
       try {
-        widgetRef.current.setSymbol(`NSE:${activeSymbol}`, resolution);
+        const sym = activeSymbol.toUpperCase();
+        const isFno = sym.endsWith('FUT') || ((sym.endsWith('CE') || sym.endsWith('PE')) && /\d/.test(sym));
+        const exchange = isFno ? 'NFO' : 'NSE';
+        widgetRef.current.setSymbol(`${exchange}:${activeSymbol}`, resolution);
       } catch {}
     }
   }, [activeSymbol, resolution]);
