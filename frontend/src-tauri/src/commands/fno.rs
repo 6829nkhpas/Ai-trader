@@ -33,59 +33,7 @@ use crate::services::fno_config::resolve_fno_config;
 /// Resolve the base URL of the F&O analytics service (the deep-quant FastAPI
 /// app). Reads `FNO_SERVICE_URL`, falling back to `http://localhost:8086`.
 /// Any trailing slash is trimmed so the path can be appended cleanly.
-fn fno_service_url() -> String {
-    std::env::var("FNO_SERVICE_URL")
-        .ok()
-        .map(|s| s.trim().trim_end_matches('/').to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "http://localhost:8086".to_string())
-}
 
-/// The single transport seam shared by `get_fno_analytics` and the poll loop's
-/// `fetch_fno_snapshot`: issue a read-only GET to `{base_url}/options/snapshot`
-/// and return the parsed JSON **verbatim** (the combined chain / analytics /
-/// bias payload OR the F2 `Unavailable_Marker`). It recomputes and reshapes
-/// nothing (R6.1, R6.3, R9.1); a transport failure, a non-2xx status, or
-/// unparseable JSON all become an `Err(String)` the caller surfaces as an
-/// honest error/empty state (R6.5).
-///
-/// Taking `base_url` as a parameter (rather than reading the env var inline)
-/// is what makes the transport path integration-testable against a local mock
-/// HTTP server without mutating the process environment or racing parallel
-/// tests.
-async fn fetch_snapshot_from(
-    base_url: &str,
-    underlying: &str,
-    expiry: &str,
-) -> Result<serde_json::Value, String> {
-    let url = format!("{}/options/snapshot", base_url.trim_end_matches('/'));
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| format!("failed to build F&O HTTP client: {}", e))?;
-
-    let resp = client
-        .get(&url)
-        .query(&[("underlying", underlying), ("expiry", expiry)])
-        .send()
-        .await
-        .map_err(|e| format!("F&O service unreachable at {}: {}", url, e))?;
-
-    let status = resp.status();
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!(
-            "F&O service returned HTTP {} for {} / {}: {}",
-            status, underlying, expiry, body
-        ));
-    }
-
-    // Return the JSON verbatim — no recompute, no reshaping (R6.3, R9.1).
-    resp.json::<serde_json::Value>()
-        .await
-        .map_err(|e| format!("failed to parse F&O snapshot JSON from {}: {}", url, e))
-}
 
 /// The set of configured index chains the F&O section may show.
 ///
@@ -110,10 +58,12 @@ pub struct FnoChains {
 #[tauri::command]
 pub async fn get_fno_analytics(
     _app: AppHandle,
+    db_state: tauri::State<'_, crate::db::DbState>,
+    pool: tauri::State<'_, sqlx::PgPool>,
     underlying: String,
     expiry: String,
 ) -> Result<serde_json::Value, String> {
-    fetch_snapshot_from(&fno_service_url(), &underlying, &expiry).await
+    crate::services::fno_service::build_fno_snapshot(&db_state, &pool, &underlying, &expiry).await
 }
 
 /// Tauri command: list the configured index underlyings and their expiries.
@@ -144,11 +94,25 @@ pub async fn fno_list_chains(app: AppHandle) -> Result<FnoChains, String> {
 
     let mut expiries_by_underlying: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let db_state = app.try_state::<crate::db::DbState>();
+    let pool = app.try_state::<sqlx::PgPool>();
+
     for u in &underlyings {
-        let expiries = match &db_state {
+        let mut expiries = match &db_state {
             Some(state) => load_expiries(state, u),
             None => Vec::new(),
         };
+
+        if let Some(p) = &pool {
+            if let Ok(db_expiries) = crate::services::fno_service::fetch_expiries_from_questdb(p, u).await {
+                for de in db_expiries {
+                    if !expiries.contains(&de) {
+                        expiries.push(de);
+                    }
+                }
+            }
+        }
+
+        expiries.sort();
         expiries_by_underlying.insert(u.clone(), expiries);
     }
 
@@ -180,14 +144,15 @@ pub async fn fno_request_underlying(app: AppHandle, underlying: String) -> Resul
     let nfo_name =
         crate::services::option_chain_subscriber::resolve_nfo_underlying_name(&u);
 
-    // Bounded: only underlyings that actually have NFO contracts may be ingested.
+    // Bounded: only underlyings that actually have NFO contracts or QuestDB snapshots may be ingested.
+    let pool = app.try_state::<sqlx::PgPool>();
     let has_chain = match app.try_state::<crate::db::DbState>() {
-        Some(state) => nfo_underlying_exists(&state, &nfo_name),
+        Some(state) => nfo_underlying_exists(&state, pool.as_deref(), &nfo_name).await,
         None => false,
     };
     if !has_chain {
         info!(
-            "[fno] request for '{}' rejected — no NFO contracts under '{}'.",
+            "[fno] request for '{}' rejected — no NFO contracts or snapshots under '{}'.",
             u, nfo_name
         );
         return Ok(false);
@@ -219,20 +184,36 @@ pub async fn fno_request_underlying(app: AppHandle, underlying: String) -> Resul
     }
 }
 
-/// Whether `nfo_instruments` has any CE/PE contract for `underlying`. Total:
-/// a poisoned lock or query error yields `false` rather than a panic.
-fn nfo_underlying_exists(db_state: &crate::db::DbState, underlying: &str) -> bool {
-    let conn = match db_state.conn.lock() {
-        Ok(c) => c,
-        Err(_) => return false,
+/// Whether `nfo_instruments` or QuestDB `option_chain_snapshots` has any CE/PE contract for `underlying`.
+async fn nfo_underlying_exists(
+    db_state: &crate::db::DbState,
+    pool: Option<&sqlx::PgPool>,
+    underlying: &str,
+) -> bool {
+    let sqlite_exists = {
+        let conn = match db_state.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        conn.query_row(
+            "SELECT 1 FROM nfo_instruments \
+             WHERE underlying = ?1 AND instrument_type IN ('CE', 'PE') LIMIT 1",
+            [underlying],
+            |_| Ok(()),
+        )
+        .is_ok()
     };
-    conn.query_row(
-        "SELECT 1 FROM nfo_instruments \
-         WHERE underlying = ?1 AND instrument_type IN ('CE', 'PE') LIMIT 1",
-        [underlying],
-        |_| Ok(()),
-    )
-    .is_ok()
+
+    if sqlite_exists {
+        return true;
+    }
+
+    if let Some(p) = pool {
+        let query = "SELECT 1 FROM option_chain_snapshots WHERE underlying = $1 LIMIT 1";
+        sqlx::query(query).bind(underlying).fetch_optional(p).await.is_ok()
+    } else {
+        false
+    }
 }
 
 /// Read the distinct option expiries available for one underlying from the
@@ -333,8 +314,10 @@ fn snapshot_cadence_secs() -> u64 {
 /// service. Transport-only twin of `get_fno_analytics`, used by the poll loop;
 /// returns the parsed JSON verbatim or an `Err(String)` the loop logs and
 /// retries (it never recomputes an analytic — R6.3, R9.1).
-async fn fetch_fno_snapshot(underlying: &str, expiry: &str) -> Result<serde_json::Value, String> {
-    fetch_snapshot_from(&fno_service_url(), underlying, expiry).await
+async fn fetch_fno_snapshot(app: &AppHandle, underlying: &str, expiry: &str) -> Result<serde_json::Value, String> {
+    let db_state = app.state::<crate::db::DbState>();
+    let pool = app.state::<sqlx::PgPool>();
+    crate::services::fno_service::build_fno_snapshot(&db_state, &pool, underlying, expiry).await
 }
 
 /// Extract the `snapshot_ts` (epoch ms) from a snapshot payload, if present.
@@ -392,7 +375,7 @@ async fn run_fno_poll_loop(app: AppHandle, underlying: String, expiry: String) {
     );
 
     loop {
-        match fetch_fno_snapshot(&underlying, &expiry).await {
+        match fetch_fno_snapshot(&app, &underlying, &expiry).await {
             Ok(payload) => {
                 if let Some(ts) = next_emit_ts(&payload, last_emitted_ts) {
                     // snapshot_ts advanced → emit exactly once for this new snapshot.
@@ -600,7 +583,7 @@ mod bridge_transport_tests {
     // `app.emit(...)`) that Tauri owns.
 
     use super::{
-        fetch_snapshot_from, next_emit_ts, replace_subscription, subscription_slot,
+        next_emit_ts, replace_subscription, subscription_slot,
         take_subscription, FnoSubscription,
     };
     use serde_json::{json, Value};
@@ -652,69 +635,7 @@ mod bridge_transport_tests {
         })
     }
 
-    // ── Seam 1: verbatim HTTP passthrough against a mock server ──────────────
 
-    #[tokio::test]
-    async fn get_fno_analytics_returns_combined_payload_verbatim() {
-        let expected = combined_payload();
-        let mut server = mockito::Server::new_async().await;
-        let _m = server
-            .mock("GET", "/options/snapshot")
-            .match_query(mockito::Matcher::Any)
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(serde_json::to_string(&expected).unwrap())
-            .create_async()
-            .await;
-
-        let got = fetch_snapshot_from(&server.url(), "NIFTY 50", "2024-12-26")
-            .await
-            .expect("transport should succeed");
-
-        // Byte-for-structure equality: the bridge recomputes/reshapes nothing,
-        // and preserves null leaves (futures_basis, iv, pe_oi) as null (R6.1, R9.1).
-        assert_eq!(got, expected);
-    }
-
-    #[tokio::test]
-    async fn get_fno_analytics_passes_unavailable_marker_through_verbatim() {
-        let marker = unavailable_marker();
-        let mut server = mockito::Server::new_async().await;
-        let _m = server
-            .mock("GET", "/options/snapshot")
-            .match_query(mockito::Matcher::Any)
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(serde_json::to_string(&marker).unwrap())
-            .create_async()
-            .await;
-
-        let got = fetch_snapshot_from(&server.url(), "NIFTY 50", "2024-12-26")
-            .await
-            .expect("a marker is a successful 200 response, not an error");
-
-        assert_eq!(got, marker);
-        assert_eq!(got.get("unavailable"), Some(&Value::Bool(true)));
-        assert_eq!(got.get("last_snapshot_ts").and_then(Value::as_i64), Some(1734507600000));
-    }
-
-    #[tokio::test]
-    async fn transport_http_error_surfaces_as_err() {
-        let mut server = mockito::Server::new_async().await;
-        let _m = server
-            .mock("GET", "/options/snapshot")
-            .match_query(mockito::Matcher::Any)
-            .with_status(500)
-            .with_body("internal boom")
-            .create_async()
-            .await;
-
-        let err = fetch_snapshot_from(&server.url(), "NIFTY 50", "")
-            .await
-            .expect_err("a non-2xx status must become Err, not a fabricated payload");
-
-        assert!(err.contains("HTTP 500"), "error should report the status: {err}");
-    }
 
     // ── Seam 2: the poll loop emits once per new snapshot_ts ─────────────────
 
