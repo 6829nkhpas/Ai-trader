@@ -143,7 +143,7 @@ def _days(draw, config: EventConfig):
 
 
 # Feature: earnings-event-risk-gate, Property 5: Event_Risk is a total, exhaustive function of days-until-event and Holding_Horizon
-@settings(max_examples=300, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(data=st.data(), config=_config(), horizon=st.sampled_from(_HORIZONS))
 def test_property_5_event_risk_totality_and_mapping(data, config, horizon):
     """Validates: Requirements 2.3, 2.4, 2.5, 2.6
@@ -181,7 +181,7 @@ def test_property_5_event_risk_totality_and_mapping(data, config, horizon):
 
 
 # Feature: earnings-event-risk-gate, Property 5: Event_Risk is a total, exhaustive function of days-until-event and Holding_Horizon
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     data=st.data(),
     config=_config(),

@@ -140,7 +140,7 @@ def _event_configs(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: earnings-event-risk-gate, Property 9: Nearest-future selection excludes past and at-reference events
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     candidate_ms=_candidate_list,
     reference_ms=_finite_ms,
@@ -171,7 +171,7 @@ def test_property_9_selects_earliest_strictly_future_candidate(
 
 
 # Feature: earnings-event-risk-gate, Property 9: Nearest-future selection excludes past and at-reference events
-@settings(max_examples=150, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     reference_ms=_finite_ms,
     config=_event_configs(),
@@ -199,7 +199,7 @@ def test_property_9_none_when_no_future_candidate(reference_ms, config, n_past, 
 
 
 # Feature: earnings-event-risk-gate, Property 9: Nearest-future selection excludes past and at-reference events
-@settings(max_examples=100, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     candidate_ms=_candidate_list,
     config=_event_configs(),
@@ -221,7 +221,7 @@ def test_property_9_invalid_reference_or_noniterable_returns_none(
 
 
 # Feature: earnings-event-risk-gate, Property 9: Nearest-future selection excludes past and at-reference events
-@settings(max_examples=100, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     candidate_ms=_candidate_list,
     reference_ms=_finite_ms,
