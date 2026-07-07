@@ -81,11 +81,13 @@ export default function OrderExecutionPanel() {
     return null;
   }, [activeDecision, liveDecisions, symbol]);
 
-  // ── Fetch live quote for the selected symbol ───────────────────────
   const fetchQuote = useCallback(async () => {
     if (!symbol) return;
     try {
-      const res = await fetch(`/kite/quote?i=NSE:${symbol}`);
+      const sym = symbol.toUpperCase();
+      const isFno = sym.endsWith('FUT') || ((sym.endsWith('CE') || sym.endsWith('PE')) && /\d/.test(sym));
+      const exchange = isFno ? 'NFO' : 'NSE';
+      const res = await fetch(`/kite/quote?i=${exchange}:${symbol}`);
       if (!res.ok) return;
       const data = await res.json();
       if (data.quotes && data.quotes.length > 0) {
