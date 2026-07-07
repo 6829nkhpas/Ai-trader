@@ -286,14 +286,11 @@ def test_property_16_single_fixed_position_low_cardinality_opt_tag(payload):
     assert value == expected_value, f"opt: tag value {value!r}, expected {expected_value!r}"
 
     # ── Fixed position: the opt: tag sits immediately after the ``db:`` tag and
-    # immediately before the opportunity ``tier:`` tag, which is in turn followed
-    # by the final event ``evt:`` tag (R8.1; tier: appended by
-    # adaptive-opportunity-engine R9.2, evt: appended last by
-    # earnings-event-risk-gate R10.1). ─────────────────────────────────────────
-    assert tags[-3] == opt_tags[0], f"opt: tag must be third-to-last (before tier:/evt:), got tags={tags}"
-    assert tags[-4].startswith("db:"), f"opt: tag must come right after db:, got tags={tags}"
-    assert tags[-2].startswith("tier:"), f"tier: tag must be second-to-last, got tags={tags}"
-    assert tags[-1].startswith("evt:"), f"evt: tag must be the final tag, got tags={tags}"
+    # immediately before the final opportunity ``tier:`` tag (R8.1; the tier:
+    # dimension is appended last by adaptive-opportunity-engine R9.2). ──────────
+    assert tags[-2] == opt_tags[0], f"opt: tag must be second-to-last (before tier:), got tags={tags}"
+    assert tags[-3].startswith("db:"), f"opt: tag must come right after db:, got tags={tags}"
+    assert tags[-1].startswith("tier:"), f"tier: tag must be the final tag, got tags={tags}"
 
     # ── Determinism (R8.1): identical inputs -> identical tag list + setup_key. ─
     tags_again = derive_setup_tags(decision)
@@ -301,10 +298,8 @@ def test_property_16_single_fixed_position_low_cardinality_opt_tag(payload):
     assert setup_key_from_tags(tags_again) == setup_key_from_tags(tags)
 
     # The opt value occupies its deterministic slot in setup_key: after db: and
-    # before the opportunity tier: component, which is in turn followed by the
-    # final event evt: component (R9.2; evt: appended last per R10.1).
+    # immediately before the final opportunity tier: component (R9.2).
     key_parts = setup_key_from_tags(tags).split("|")
-    assert key_parts[-1].startswith("evt:"), f"evt: component must be last in setup_key, got {key_parts}"
-    assert key_parts[-2].startswith("tier:"), f"tier: component must be second-to-last in setup_key, got {key_parts}"
-    assert key_parts[-3] == opt_tags[0], f"opt: component must be third-to-last in setup_key, got {key_parts}"
-    assert key_parts[-4].startswith("db:")
+    assert key_parts[-1].startswith("tier:"), f"tier: component must be last in setup_key, got {key_parts}"
+    assert key_parts[-2] == opt_tags[0], f"opt: component must be second-to-last in setup_key, got {key_parts}"
+    assert key_parts[-3].startswith("db:")

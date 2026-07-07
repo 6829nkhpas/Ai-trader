@@ -106,13 +106,8 @@ def _quoted_ticks(prices, vols, trend, mode):
     ticks = []
     for p, v in zip(prices, vols):
         if mode == "at_mid":
-            # Zero-width usable quote AT the trade so ``mid == last_price``
-            # EXACTLY. A symmetric +/-1.0 spread does NOT yield an exact mid for
-            # non-representable prices (e.g. ((1001.7)+(1003.7))/2 != 1002.7 in
-            # IEEE-754), which would land the trade a hair off the mid and let
-            # the Lee-Ready refinement correctly sign it — spuriously failing the
-            # at-mid fallback assertion. ``(p + p) / 2 == p`` holds for every p.
-            bid, ask = p, p
+            # Symmetric quote around the trade: mid == last_price => at-mid.
+            bid, ask = p - 1.0, p + 1.0
         elif trend == "down":
             # Pure tick rule would sign these downticks -1; place the trade ABOVE
             # the mid (mid = p - 2 < p) so quote location signs them +1 (buying).
