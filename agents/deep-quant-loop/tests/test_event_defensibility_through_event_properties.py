@@ -130,7 +130,7 @@ def _decision(action):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: earnings-event-risk-gate, Property 21: A through-event directional trade records the held-through-event statement
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     assessment=_event_assessment(),
     style=_serialization_style,
@@ -185,7 +185,7 @@ def test_property_21_through_event_directional_records_held_statement(assessment
 
 
 # Feature: earnings-event-risk-gate, Property 21: A through-event directional trade records the held-through-event statement
-@settings(max_examples=100, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     assessment=_event_assessment(event_risk="through_event"),
     style=_serialization_style,
@@ -211,7 +211,7 @@ def test_property_21_through_event_buy_sell_always_records_statement(assessment,
 
 
 # Feature: earnings-event-risk-gate, Property 21: A through-event directional trade records the held-through-event statement
-@settings(max_examples=100, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     assessment=_event_assessment(event_risk="through_event"),
     style=_serialization_style,

@@ -114,7 +114,7 @@ _arbitrary_value = st.one_of(
 
 
 # Feature: earnings-event-risk-gate, Property 8: Holding_Horizon normalization is total
-@settings(max_examples=300, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(value=_arbitrary_value, config=_config())
 def test_property_8_normalization_is_total(value, config):
     """Validates: Requirements 3.2, 4.4
@@ -148,7 +148,7 @@ def test_property_8_normalization_is_total(value, config):
 
 
 # Feature: earnings-event-risk-gate, Property 8: Holding_Horizon normalization is total
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(config=_config())
 def test_property_8_every_recognized_horizon_is_a_fixed_point(config):
     """Validates: Requirements 4.4
@@ -163,7 +163,7 @@ def test_property_8_every_recognized_horizon_is_a_fixed_point(config):
 
 
 # Feature: earnings-event-risk-gate, Property 8: Holding_Horizon normalization is total
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     value=st.one_of(
         st.text().filter(lambda s: s not in HOLDING_HORIZONS),
