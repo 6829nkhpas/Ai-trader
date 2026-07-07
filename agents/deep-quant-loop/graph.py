@@ -91,7 +91,6 @@ from tools import (
     get_forecast,
     get_session_context,
     get_options_analytics,
-    get_event_risk,
     watch_price_condition,
     declare_trade,
     # Reused to build the committed Management_Plan for the defensibility record
@@ -127,11 +126,6 @@ from tools import (
     # Alignment reuses the shared ALIGNMENT_VALUES imported above).
     OPTIONS_BIAS_STATES,
     OPTIONS_CHAIN_CONTEXTS,
-    # Event_Risk_State / Event_Recommendation enum sets — reused to recognise a
-    # usable get_event_risk Event_Assessment (vs an Unavailable_Marker) when
-    # building the defensibility record / event entry (earnings-event-risk-gate).
-    EVENT_RISK_STATES,
-    EVENT_RECOMMENDATIONS,
 )
 
 # Trade_Journal — measurement & feedback loop (Phase 2). Records every committed
@@ -200,6 +194,16 @@ class AgentState(TypedDict):
     symbol: Optional[str]
     manual_trade: Optional[dict]
     timeframe: Optional[str]
+    # Workspace profile the user is in (INTRADAY / SWING / INVESTOR / FNO). Drives
+    # the profile-specific directive prepended in `format_system_prompt` so the
+    # agent adapts which data domain it prioritizes and over what horizon. ADDITIVE
+    # and Optional — a run that omits it defaults to INTRADAY behaviour.
+    profile: Optional[str]
+    # Expiry selected in the F&O workspace, as an ISO "YYYY-MM-DD" string ('' or
+    # None => the options engine's nearest available expiry). Injected into the
+    # FNO profile directive so the agent analyzes the exact expiry the user is
+    # viewing. ADDITIVE and Optional — only consulted on an FNO-profile run.
+    fno_expiry: Optional[str]
     # ── Deterministic loop-control state (Requirement 2) ──────────────────────
     # `decision` is the single authoritative completion signal. It is set ONLY
     # by a validated declare_trade (its structured args) or by the forced-HOLD
@@ -340,7 +344,7 @@ You must follow this exact loop until a perfect setup is found or registered:
    - expiry_context (is_expiry_day / days_until_expiry) — whether the candle's date is the weekly-expiry day and how close the next expiry is,
    - time_favorability (favorable / unfavorable / neutral) — whether the clock favors taking a new trade right now.
    The veteran principle: the NSE session is NOT uniform — the opening drive is violent and mean-reverting, the midday lull is thin and chop-prone, and expiry-afternoon flow is distorted. Use time_favorability as a calibration filter, NOT a trade generator: a `favorable` window does NOT force a trade, and the session context never blocks or overrides your decision. If the session context is unavailable (missing / non-finite timestamp / retrieval failure / unavailable marker), treat it as a missing optional input — note it as unavailable and proceed with the remaining analysis; do NOT fabricate a session label and do NOT abort the decision on that basis.
-2e. OPTIONS POSITIONING: Call `get_options_analytics` with the symbol under analysis (optionally the analyzed expiry and your proposed_direction) to read institutional options positioning — the single biggest source of intraday edge on NSE. For an index underlying its own chain is analyzed; for a non-index symbol the symbol's benchmark index chain is used as broad-market (index-level, NOT stock-specific) options context. The result reports:
+2e. OPTIONS POSITIONING — F&O WORKSPACE ONLY: This step applies ONLY when the active workspace is F&O. In the INTRADAY, SWING, and INVESTOR workspaces the `get_options_analytics` tool is NOT available to you and you MUST NOT attempt to call it — skip this step entirely and analyze ONLY the active symbol's own price, volume, and structure. In the F&O workspace, call `get_options_analytics` with the symbol under analysis (with own_chain=true for a stock so its OWN chain is read, the analyzed expiry, and your proposed_direction) to read institutional options positioning — the single biggest source of intraday edge on NSE. For an index underlying its own chain is analyzed; for a stock with own_chain=true the stock's OWN chain is analyzed (falling back to its benchmark index chain only if the stock has no snapshot). The result reports:
    - pcr_oi / pcr_volume (Put-Call Ratio) — put-heavy (high PCR) marks support-building below, call-heavy (low PCR) marks resistance overhead,
    - max_pain — the strike toward which price tends to be pinned into expiry (a max-pain above spot pulls price up, below spot pulls price down),
    - oi_buildup (aggregate call / put) — where option writers are positioning,
@@ -350,12 +354,6 @@ You must follow this exact loop until a perfect setup is found or registered:
    - alignment (aligned / misaligned / neutral) — whether a proposed trade direction agrees with the options bias,
    - chain_context (own-chain / broad-market) — which chain was analyzed.
    The veteran principle: do NOT trade into a heavy call OI-wall just overhead, against max-pain pinning, or against a PCR extreme. Use options positioning as a calibration filter, NOT a trade generator: it never forces, blocks, or overrides your decision. If options context is unavailable (outside market hours / no snapshot / unsubscribed underlying / unavailable marker), treat it as a missing optional input — note it as unavailable and proceed with the remaining analysis; do NOT fabricate an options bias and do NOT abort the decision on that basis.
-2f. EVENT-DATE RISK GATE: Call `get_event_risk` with the symbol under analysis, passing the intended Holding_Horizon of the setup being considered (`intraday` for a same-session trade, `multi_session` for a swing/positional trade held overnight or longer). The result reports:
-   - days_until_event — the number of calendar days until the nearest upcoming scheduled binary event (primarily an earnings/results date),
-   - event_date — the reference date of that scheduled event,
-   - event_risk (clear / imminent / through_event) — whether a committed trade at this Holding_Horizon would be held through a scheduled event (overnight gap risk),
-   - event_recommendation (proceed / size_down / shorten_horizon / stand_aside) — the tightening-only guidance derived from the event risk.
-   The veteran principle: a scheduled earnings/results date is a BINARY event — the stock can gap 8-12% overnight on the print, and no amount of clean price structure protects a position held through it. Flatten or size down before a scheduled event, or take the trade only if it closes intraday BEFORE the event. Use event risk as a calibration filter, NOT a trade generator: it never forces a trade, and it only ever tightens (down-sizes, shortens the horizon, or prefers stand-aside) — it never loosens any criterion and never blocks or overrides your decision. If the event risk is unavailable (no event source configured / no upcoming event known for the symbol / source unreachable / unavailable marker), treat it as a missing optional input — note it as unavailable and proceed with the remaining analysis; do NOT fabricate an event date and do NOT abort the decision on that basis.
 3. KEY LEVELS: Call `get_support_resistance` with the timeframe you're analyzing (e.g., '15m' for intraday).
    For intraday timeframes it returns BOTH micro S/R levels (from that timeframe's candles) AND daily macro levels.
    It also includes the Opening Range (first 3 candles) high/low — a key intraday reference.
@@ -410,7 +408,6 @@ Ask yourself:
 - WHAT DOES THE FORECAST SAY? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `Forecast_Alignment` and the `Up_Probability` from `get_forecast`. If the Forecast_Alignment is `misaligned` OR the Up_Probability does not support your direction (a BUY needs Up_Probability >= 0.5; a SELL needs Up_Probability <= 0.5), you MUST take exactly one of these actions: lower your conviction_score, wait for a better setup (e.g. via `watch_price_condition`), or HOLD. If the forecast is unavailable, note it as unavailable and proceed — do NOT block the trade solely because the forecast could not be computed.
 - DOES THE CLOCK FAVOR THIS TRADE? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `time_favorability` from `get_session_context`. If the time_favorability is `unfavorable` (for example the violent opening minutes or expiry-afternoon chop), you MUST take exactly one of these actions: lower your conviction_score, wait for a better window (e.g. via `watch_price_condition`), or HOLD. If the session context is unavailable, note it as unavailable and proceed — do NOT block the trade solely because the session context could not be computed.
 - AM I FIGHTING OPTIONS POSITIONING? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `alignment` from `get_options_analytics`, and respect the OI-wall support/resistance and the max-pain pinning when placing your entry, stop, and target (do NOT set a target beyond a heavy call OI-wall just overhead, and do NOT place an entry that fights max-pain pinning). If the alignment is `misaligned` (for example a BUY into a strong call OI-wall just overhead, or a trade against a bearish options bias), you MUST take exactly one of these actions: lower your conviction_score, wait for a better setup (e.g. via `watch_price_condition`), or HOLD. If options context is unavailable, note it as unavailable and proceed — do NOT block the trade solely because options positioning could not be computed.
-- WOULD THIS TRADE BE HELD THROUGH A SCHEDULED EVENT? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `event_risk` from `get_event_risk`. If the event_risk is `through_event`, you MUST take EXACTLY ONE of these tightening actions: shorten the holding horizon so the trade closes BEFORE the event, reduce your position size, or stand aside (HOLD) — and you must NOT loosen any criterion on the basis of the event context. If the event_risk is `imminent`, you MUST reduce your conviction_score or size and state the event proximity (the days-until-event). If the event risk is unavailable, note it as unavailable and proceed — do NOT block the trade solely because the event risk could not be computed.
 - IS MY MANAGEMENT PLAN SOUND? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), confirm the Management_Plan you will attach to `declare_trade`: (a) every scale-out leg fraction lies in (0.0, 1.0] and the leg fractions sum to <= 1.0; (b) the scale-out targets are ordered on the profit side (strictly beyond entry, non-decreasing for a BUY and non-increasing for a SELL); (c) the breakeven trigger sits strictly between the entry and the first scale-out target on the profit side; and (d) the blended (fraction-weighted) Risk:Reward still meets the configured minimum. If any of these fail, revise the plan before committing rather than declaring an inconsistent plan.
 If the answer to ANY of the first 3 checks is YES, you must scrap the trade. You must either analyze a different timeframe to find a better entry, or call `watch_price_condition` to wait for a safer pullback. 
 ONLY call `declare_trade` if you are 100% confident you could defend this trade against rigorous critique.
@@ -430,7 +427,6 @@ Your `setup_validation` is the defensibility record for the trade and MUST expli
 - FORECAST: State the Projected_Direction, the Up_Probability, the Expected_Move_ATR, and the Forecast_Alignment taken from the `get_forecast` result (e.g., "Forecast: Projected_Direction up / Up_Probability 0.63 / Expected_Move_ATR +0.41 / aligned"). If the Forecast_Alignment was misaligned or the Up_Probability did not support the direction, state how you responded (lowered conviction / waited / HOLD). If the forecast was unavailable, state that it was unavailable and that you proceeded without it.
 - SESSION CONTEXT: State the Session_Phase, the Expiry_Context (is_expiry_day and days_until_expiry), and the Time_Favorability taken from the `get_session_context` result (e.g., "Session: morning phase / not expiry day / favorable" or "Session: afternoon / expiry day / unfavorable"). If the time_favorability was unfavorable, state how you responded (lowered conviction / waited / HOLD). If the session context was unavailable, state that it was unavailable and that you proceeded without it.
 - OPTIONS POSITIONING: State the PCR, the max-pain level, the aggregate OI bias, the nearest OI walls (support/resistance), and the Alignment taken from the `get_options_analytics` result (e.g., "Options: PCR(OI) 1.42 / max-pain 21500 above spot / put long-buildup / support wall 21400, resistance wall 21800 / bullish / aligned"). If the alignment was misaligned, state how you responded (lowered conviction / waited / HOLD). If options context was unavailable, state that it was unavailable and that you proceeded without it.
-- EVENT RISK: State the Event_Risk, the days-until-event, and the Event_Recommendation taken from the `get_event_risk` result (e.g., "Event risk: through_event / 1 day until earnings / shorten_horizon" or "Event risk: clear / 14 days until event / proceed"). If the event_risk was `through_event` or `imminent`, state how you responded (shortened horizon / sized down / stood aside / stated proximity). If the event risk was unavailable, state that it was unavailable and that you proceeded without it.
 - MANAGEMENT PLAN: When you attach a Management_Plan, state the scale-out targets and their size fractions, the breakeven trigger, and the trailing-stop rule in your setup_validation (e.g., "Scale 50% at 1R, move stop to breakeven after the first target, trail the remainder by 1.5x ATR"). If the trade is a single-target trade with no active management, state that it is single-target.
 Always include the multi-timeframe bias, the key S/R levels used, the volatility (ATR) basis for the stop, and the Risk:Reward ratio in your setup_validation.
 </setup_validation_disclosure>
@@ -482,8 +478,7 @@ Your job is to verify this trade using the EXACT same <self_verification_protoco
 2d. Consult `get_forecast` for the symbol and timeframe while verifying. If the user-proposed trade is a directional (BUY/SELL) trade that is `misaligned` with the forecast (Forecast_Alignment is `misaligned`, or the Up_Probability does not support the proposed direction — a BUY needs Up_Probability >= 0.5, a SELL needs Up_Probability <= 0.5), you MUST include an explicit warning statement in your verification output that the proposed trade is misaligned with the volatility-aware forecast (state the Projected_Direction, the Up_Probability, the Expected_Move_ATR, and the Forecast_Alignment). If the forecast is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because the forecast could not be computed.
 2e. Evaluate the proposed trade's MANAGEMENT, or its absence. If the user supplied scale-out targets, a breakeven move, or a trailing rule, critique whether the leg fractions are in range and sum to at most the full position, the targets are ordered on the profit side, the breakeven trigger sits between entry and the first target, and the blended Risk:Reward is sound — and state any management red flags. If the user proposed a single static bracket with no management, recommend a concrete management plan where appropriate: for example scale out a fraction at the first target, move the stop to breakeven after that target, and trail the remainder, so the trade can scratch at breakeven instead of taking a full stop and let a runner extend. Management is a recommendation, not a hard requirement — do NOT reject an otherwise A+ trade solely because it is single-target.
 2f. Consult `get_session_context` for the symbol and timeframe while verifying. If the user-proposed trade is a directional (BUY/SELL) trade being taken in an `unfavorable` time window (for example the violent opening minutes or expiry-afternoon chop), you MUST include an explicit warning statement in your verification output that the proposed trade is being taken in an unfavorable time window (state the session_phase, the expiry_context, and the time_favorability). If the session context is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because the session context could not be computed.
-2g. Consult `get_options_analytics` for the symbol while verifying. If the user-proposed trade is a directional (BUY/SELL) trade that is `misaligned` with options positioning (for example a BUY into a heavy call OI-wall just overhead, against max-pain pinning, or against a bearish options bias), you MUST include an explicit warning statement in your verification output that the proposed trade fights the prevailing options positioning (state the PCR, the max-pain level, the nearest OI walls, the options_bias_state, and the alignment). If options context is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because options positioning could not be computed.
-2h. Consult `get_event_risk` for the symbol while verifying, passing the intended Holding_Horizon of the proposed trade. If the proposed trade is a directional (BUY/SELL) trade carrying a `through_event` risk (it would be held through a scheduled binary event such as an earnings/results date), you MUST include an explicit WARNING statement in your verification output that the proposed trade would be held through a scheduled event and is exposed to overnight gap risk (state the days-until-event, the event_date, and the event_recommendation). If the event risk is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because the event risk could not be computed.
+2g. (F&O WORKSPACE ONLY) Consult `get_options_analytics` for the symbol while verifying. This step applies ONLY when the active workspace is F&O; in the INTRADAY, SWING, and INVESTOR workspaces the tool is NOT available and you MUST skip it. If the user-proposed trade is a directional (BUY/SELL) trade that is `misaligned` with options positioning (for example a BUY into a heavy call OI-wall just overhead, against max-pain pinning, or against a bearish options bias), you MUST include an explicit warning statement in your verification output that the proposed trade fights the prevailing options positioning (state the PCR, the max-pain level, the nearest OI walls, the options_bias_state, and the alignment). If options context is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because options positioning could not be computed.
 3. Do not invent red flags if the trade is genuinely an A+ setup. If it fits the protocol, approve it and defend it.
 4. If it fails the protocol, explain exactly why, and suggest a better entry using `watch_price_condition`.
 5. TIER THE PROPOSED TRADE: state which opportunity tier the user's trade belongs to (a_plus / b_continuation / scalp) or that it does not clear even a scalp (stand aside). The tier scales size only — the Trade_Validator's hard risk rules (stop >= 1.5x ATR, R:R >= 1:2) apply identically at every tier, so a weaker tier is smaller, never looser. If you recommend waiting, remember any watch is bounded by the Watch_Cap / Session_Budget and an unchanged re-arm after an invalidation is rejected — recommend a materially different level or a stand-aside, not a blind re-arm.
@@ -503,6 +498,118 @@ When finalizing, return a JSON object EXACTLY matching this structure:
 </json_format>
 """
 
+# ── Profile-specific directives (workspace-aware data gathering) ─────────────
+# The user runs the agent from one of four workspace profiles. Each profile
+# changes WHICH data domain the agent should treat as primary and over WHAT
+# horizon it should reason — without loosening any hard risk rule. These blocks
+# are prepended to the system prompt so the agent's data gathering matches the
+# section the user is actually in (an F&O run leads with options/futures
+# positioning; an intraday run stays on short-horizon spot microstructure).
+PROFILE_DIRECTIVES = {
+    "INTRADAY": (
+        "\n\n<workspace_profile>\n"
+        "ACTIVE WORKSPACE: INTRADAY (same-day scalps / momentum).\n"
+        "- Horizon: intraday only. Lead with the execution timeframe and the 5m/15m microstructure; "
+        "the 1H/4H/1D trend is CONTEXT, not the trade horizon. Any setup must resolve within the session.\n"
+        "- Prioritize: `get_consensus_report` (VWAP, RSI, order flow), `get_order_flow`, `get_session_context` "
+        "(opening range, midday lull, closing/expiry chop), and `get_support_resistance` intraday levels.\n"
+        "- Volume matters: use `get_volume_profile` (POC/VAH/VAL) and VWAP for institutional fair value.\n"
+        "- ACTIVE SYMBOL ONLY: analyze ONLY the selected symbol's own price, volume, and structure. "
+        "`get_options_analytics` is an F&O-workspace-only tool and is NOT available here — do NOT call it. "
+        "A benchmark index (e.g. NIFTY 50) may appear ONLY as the `get_relative_strength` comparison, "
+        "never as the subject of the analysis.\n"
+        "</workspace_profile>"
+    ),
+    "SWING": (
+        "\n\n<workspace_profile>\n"
+        "ACTIVE WORKSPACE: SWING (multi-day to multi-week positions).\n"
+        "- Horizon: multi-day. Lead with the 1H/4H/1D structure; ignore sub-15m noise for the thesis and "
+        "use lower timeframes ONLY to refine entry timing.\n"
+        "- Prioritize: `get_multi_tf_trend`, daily/4H `get_support_resistance` and `get_chart_patterns`, "
+        "`get_relative_strength` versus the benchmark, and `get_market_regime`.\n"
+        "- De-emphasize: tick-level `get_order_flow` and intraday session micro-timing — they rarely drive a swing.\n"
+        "- Size stops and targets to daily ATR / swing S-R, not intraday pivots.\n"
+        "- ACTIVE SYMBOL ONLY: analyze ONLY the selected symbol's own price, volume, and structure. "
+        "`get_options_analytics` is an F&O-workspace-only tool and is NOT available here — do NOT call it. "
+        "The benchmark index appears ONLY as the `get_relative_strength` comparison, never as the analysis subject.\n"
+        "</workspace_profile>"
+    ),
+    "INVESTOR": (
+        "\n\n<workspace_profile>\n"
+        "ACTIVE WORKSPACE: INVESTOR (positional / macro horizon).\n"
+        "- Horizon: weeks to months. Lead with the 1D/1W trend and the broad regime; intraday microstructure is "
+        "largely irrelevant to the thesis.\n"
+        "- Prioritize: `get_multi_tf_trend` (1D bias), daily `get_support_resistance`, `get_relative_strength`, "
+        "`get_market_regime`, and `get_news_context` for catalysts.\n"
+        "- De-emphasize: `get_order_flow`, `get_session_context`, and intraday volume profile — do NOT anchor a "
+        "positional thesis on same-day microstructure.\n"
+        "- ACTIVE SYMBOL ONLY: analyze ONLY the selected symbol's own data. `get_options_analytics` is an "
+        "F&O-workspace-only tool and is NOT available here — do NOT call it. The benchmark index appears ONLY as "
+        "the `get_relative_strength` comparison, never as the analysis subject.\n"
+        "</workspace_profile>"
+    ),
+    # FNO is built dynamically (it interpolates the symbol + selected expiry +
+    # own-chain instruction) — see `_build_fno_directive`.
+}
+
+
+def _build_fno_directive(state: AgentState) -> str:
+    """Build the F&O workspace directive, interpolating the symbol and the
+    user-selected expiry so the agent analyzes the STOCK's own option chain for
+    the EXACT expiry the F&O section is viewing. Never raises.
+    """
+    raw_symbol = state.get("symbol")
+    symbol = raw_symbol.strip() if isinstance(raw_symbol, str) and raw_symbol.strip() else "the symbol"
+    raw_expiry = state.get("fno_expiry")
+    expiry = raw_expiry.strip() if isinstance(raw_expiry, str) and raw_expiry.strip() else ""
+
+    # The explicit tool-call instruction: analyze the symbol's OWN chain
+    # (own_chain=true) and, when the user has selected one, the exact expiry.
+    if expiry:
+        call_line = (
+            f"- Call `get_options_analytics` with symbol='{symbol}', own_chain=true, "
+            f"and expiry='{expiry}' (the exact expiry selected in the F&O section). "
+            f"own_chain=true analyzes {symbol}'s OWN option chain rather than a broad-market index proxy.\n"
+        )
+    else:
+        call_line = (
+            f"- Call `get_options_analytics` with symbol='{symbol}' and own_chain=true "
+            f"(leave expiry empty to use the nearest available expiry). own_chain=true "
+            f"analyzes {symbol}'s OWN option chain rather than a broad-market index proxy.\n"
+        )
+
+    return (
+        "\n\n<workspace_profile>\n"
+        "ACTIVE WORKSPACE: F&O (options / futures positioning).\n"
+        "- Options positioning is PRIMARY, not a side check. Call `get_options_analytics` early and let PCR, "
+        "max-pain pinning, OI-walls, IV skew, and the futures basis shape your directional bias and your "
+        "entry/stop/target placement.\n"
+        + call_line +
+        "- The underlying spot INDEX (NIFTY 50 / BANKNIFTY) has NO traded volume — VWAP, volume profile, and "
+        "OBV/CMF will be legitimately unavailable/unusable for an index and MUST NOT be treated as a failure. "
+        "Rely on options/futures positioning and price structure instead of spot volume.\n"
+        "- Still confirm direction with `get_multi_tf_trend`, `get_consensus_report`, `get_support_resistance`, "
+        "and `get_chart_patterns`, but treat an unavailable volume-based signal on an index as expected.\n"
+        "- Respect the OI-wall support/resistance and max-pain when setting targets; never target beyond a heavy "
+        "call OI-wall just overhead or fight max-pain pinning.\n"
+        "</workspace_profile>"
+    )
+
+
+def _resolve_profile_directive(state: AgentState) -> str:
+    """Return the profile-specific directive block for the run's workspace profile.
+
+    Falls back to the INTRADAY directive for a missing / unrecognized profile so
+    the prompt is always well-formed. The FNO block is built dynamically so it can
+    interpolate the symbol + selected expiry. Never raises.
+    """
+    raw = state.get("profile")
+    key = raw.strip().upper() if isinstance(raw, str) and raw.strip() else "INTRADAY"
+    if key == "FNO":
+        return _build_fno_directive(state)
+    return PROFILE_DIRECTIVES.get(key, PROFILE_DIRECTIVES["INTRADAY"])
+
+
 def format_system_prompt(state: AgentState) -> str:
     mode = state.get("mode", "FIND")
     tf = state.get("timeframe") or "10m"
@@ -511,6 +618,10 @@ def format_system_prompt(state: AgentState) -> str:
         f"The user's active chart timeframe is '{tf}'. You MUST conduct your deep quant analysis on the '{tf}' timeframe. "
         f"When calling tools such as `get_consensus_report`, `get_chart_patterns`, and `get_candles`, you MUST use '{tf}' as the timeframe argument."
     )
+    # The profile directive tailors the data-gathering emphasis to the workspace
+    # the user is in (INTRADAY / SWING / INVESTOR / FNO). Appended after the
+    # timeframe requirement for both FIND/DEBATE and VERIFY runs.
+    profile_directive = _resolve_profile_directive(state)
     if mode == "VERIFY":
         trade = state.get("manual_trade") or {}
         base_prompt = RISK_MANAGER_PROMPT.format(
@@ -521,8 +632,8 @@ def format_system_prompt(state: AgentState) -> str:
             take_profit=trade.get("take_profit", 0),
             user_analysis=trade.get("user_analysis", "None")
         )
-        return base_prompt + tf_instruction
-    return DEEP_QUANT_SYSTEM_PROMPT + tf_instruction
+        return base_prompt + tf_instruction + profile_directive
+    return DEEP_QUANT_SYSTEM_PROMPT + tf_instruction + profile_directive
 
 # ── Model & Tools Binding ───────────────────────────────────────────────────
 
@@ -617,7 +728,6 @@ tools = [
     get_forecast,
     get_session_context,
     get_options_analytics,
-    get_event_risk,
     watch_price_condition,
     declare_trade
 ]
@@ -642,6 +752,40 @@ readonly_tools = [
 # role-specific model cannot be constructed (R6.4). Bound to the SAME read-only
 # tool set so the fallback also cannot commit/suspend a trade.
 readonly_llm_with_tools = llm.bind_tools(readonly_tools)
+
+# ── Profile-gated tool binding (workspace-scoped data access) ────────────────
+# F&O / options data is ONLY relevant in the F&O workspace. In every other
+# workspace (INTRADAY / SWING / INVESTOR) the agent must analyze ONLY the active
+# symbol's own price / volume / structure, so the F&O-only tools are NOT bound
+# there. This is the structural half of "F&O data only in F&O mode": if the tool
+# is not bound, the model physically cannot call it, which also removes the
+# broad-market NIFTY 50 chain that `get_options_analytics` would otherwise pull
+# in for a non-index stock (the source of "NIFTY 50 keeps appearing" on an
+# intraday run of a different symbol). The prompt half lives in the profile
+# directives and the order-of-operations, which mark options as F&O-only.
+FNO_ONLY_TOOLS = {"get_options_analytics"}
+
+# The non-F&O Analysis tool set = the full tool list minus the F&O-only tools.
+non_fno_tools = [
+    t for t in tools
+    if getattr(t, "name", None) not in FNO_ONLY_TOOLS
+]
+non_fno_llm_with_tools = llm.bind_tools(non_fno_tools)
+
+
+def _llm_for_profile(state: "AgentState"):
+    """Select the model binding for the run's workspace profile.
+
+    The F&O workspace binds the FULL tool set (including `get_options_analytics`);
+    every other workspace binds the set WITHOUT the F&O-only tools, so the agent
+    can only pull options / F&O data when the operator is actually in the F&O
+    workspace. Falls back to the full binding only for the F&O profile; any
+    unset / unrecognized profile is treated as non-F&O (the safe default that
+    keeps the analysis on the active symbol). Never raises.
+    """
+    raw = state.get("profile") if isinstance(state, dict) else None
+    key = raw.strip().upper() if isinstance(raw, str) and raw.strip() else "INTRADAY"
+    return llm_with_tools if key == "FNO" else non_fno_llm_with_tools
 
 # Cache of read-only-bound role models keyed by (model_name, "readonly") so the
 # repeated Bull/Bear turns across rounds reuse one bound client instead of
@@ -796,7 +940,6 @@ REGISTERED_TOOL_NAMES = {
     "get_forecast",
     "get_session_context",
     "get_options_analytics",
-    "get_event_risk",
     "watch_price_condition",
     "declare_trade",
 }
@@ -819,7 +962,6 @@ MARKET_DATA_TOOL_NAMES = {
     "get_forecast",
     "get_session_context",
     "get_options_analytics",
-    "get_event_risk",
 }
 
 # DeepSeek/HuggingFace custom-token markup boundaries.
@@ -1774,70 +1916,6 @@ def _session_entry(results) -> dict:
     return entry
 
 
-def _event_entry(results) -> dict:
-    """Build the defensibility event entry from the most recent get_event_risk
-    result already present in message history (R6.1-R6.5, R8.1-R8.4).
-
-    ``results`` is the ``_latest_tool_results`` map, so
-    ``results['get_event_risk']`` is the most-recent successfully-parsed,
-    non-error Event_Assessment (a usable Event_Risk_State + Event_Recommendation
-    or an Unavailable_Marker). This function:
-
-      * copies the Event_Risk_State (``event_risk``), the ``days_until_event``,
-        the reference ``event_date``, and the ``event_recommendation`` VERBATIM
-        from that result — it never infers or substitutes a value not present in
-        the tool output (R6.2, R8.2);
-      * records the entry as unavailable, with NO fabricated event_risk /
-        event_recommendation / event_date, when no usable Event_Assessment is
-        present — none in history, or only an error / Unavailable_Marker result
-        (R6.3, R8.3, R12.4).
-
-    It is a pure read of tool output and never touches the committed decision's
-    action or execution levels (R6.4, R12.3-R12.5); event awareness is a
-    filter / defensibility surface, not a gate.
-    """
-    evt = results.get("get_event_risk")
-
-    # No event result at all, a non-dict result, or an explicit
-    # Unavailable_Marker → unavailable. We carry the marker's own reason when
-    # present, but NEVER populate event_risk/event_recommendation/event_date/
-    # days_until_event with substitute values (AD-3, R8.3).
-    if not isinstance(evt, dict):
-        return {"available": False, "reason": "no get_event_risk result present in message history"}
-    if evt.get("unavailable") is True:
-        return {"available": False, "reason": evt.get("reason") or "event risk unavailable"}
-
-    event_risk = evt.get("event_risk")
-    event_recommendation = evt.get("event_recommendation")
-
-    # A usable Event_Assessment must carry an event_risk and an
-    # event_recommendation drawn from their fixed enums, plus an event_date
-    # string identifying the reference Scheduled_Event; anything missing means we
-    # have no usable assessment, and we must not fabricate one (R8.3, R12.4).
-    if (
-        event_risk not in EVENT_RISK_STATES
-        or event_recommendation not in EVENT_RECOMMENDATIONS
-        or not isinstance(evt.get("event_date"), str)
-    ):
-        return {"available": False, "reason": "no usable get_event_risk assessment present in message history"}
-
-    # Copy the four assessment fields verbatim (days_until_event is already a
-    # finite number or null per the tool contract); never infer a value not
-    # reported (R6.2, R8.2).
-    entry = {
-        "available": True,
-        "event_risk": event_risk,
-        "days_until_event": evt.get("days_until_event"),
-        "event_date": evt.get("event_date"),
-        "event_recommendation": event_recommendation,
-    }
-    # Carry symbol/holding_horizon context verbatim when present.
-    for k in ("symbol", "holding_horizon"):
-        if k in evt:
-            entry[k] = evt[k]
-    return entry
-
-
 def _options_entry(results) -> dict:
     """Build the defensibility options entry from the most recent
     get_options_analytics result already present in message history (R6.1-R6.3).
@@ -2402,27 +2480,6 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
             f"alignment=misaligned, chain_context={options.get('chain_context')})."
         )
 
-    # ── Event entry (R6.1-R6.5, R8.1-R8.4, R12.3-R12.5) ──────────────────────
-    # Mirror the most-recent get_event_risk Event_Assessment verbatim (or record
-    # it as unavailable). Scheduled-event risk is a filter / defensibility surface
-    # only: it NEVER modifies, overrides, or blocks the committed decision's
-    # action or execution levels (entry, stop-loss, take-profit) (R12.3-R12.5) —
-    # we merely add an explicit statement that the committed directional (BUY/SELL)
-    # trade is held THROUGH a scheduled event when event_risk == "through_event"
-    # (R6.5, R8.4).
-    event = _event_entry(results)
-    if (
-        event.get("available")
-        and event.get("event_risk") == "through_event"
-        and action in ("BUY", "SELL")
-    ):
-        event["trade_held_through_event"] = (
-            f"EVENT RISK: the committed {action} trade is held THROUGH a scheduled "
-            f"event (event_risk=through_event, event_date={event.get('event_date')}, "
-            f"days_until_event={event.get('days_until_event')}, "
-            f"event_recommendation={event.get('event_recommendation')})."
-        )
-
     # ── Management entry (R9.1-R9.3) ─────────────────────────────────────────
     # For a committed directional (BUY/SELL) trade with usable levels, cite the
     # committed Management_Plan — the declared multi-leg plan, or the degenerate
@@ -2454,7 +2511,6 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
         "forecast": forecast,
         "session": session,
         "options": options,
-        "event": event,
         "summary": (
             f"Multi-TF 1D bias: {bias_1d_raw or 'n/a'}. "
             f"RR: {risk_reward if risk_reward is not None else 'n/a'}. "
@@ -2468,8 +2524,6 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
             f"{session.get('time_favorability') if session.get('available') else 'unavailable'}. "
             f"Options: "
             f"{options.get('alignment') if options.get('available') else 'unavailable'}. "
-            f"Event: "
-            f"{event.get('event_risk') if event.get('available') else 'unavailable'}. "
             f"{macro_conflict} {predictive_conflict}"
             + (f" {regime['trade_opposes_regime']}" if regime.get("trade_opposes_regime") else "")
             + (
@@ -2490,11 +2544,6 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
             + (
                 f" {options['trade_opposes_options']}"
                 if options.get("trade_opposes_options")
-                else ""
-            )
-            + (
-                f" {event['trade_held_through_event']}"
-                if event.get("trade_held_through_event")
                 else ""
             )
         ),
@@ -2806,8 +2855,12 @@ def call_model(state: AgentState):
     # the checkpointed state (only what is sent this turn).
     messages = opportunity.prune_messages(messages, _OPPORTUNITY_CFG)
 
-    response = llm_with_tools.invoke(messages)
-    
+    # Profile-gated binding: the F&O workspace can call the F&O-only tools
+    # (options analytics); every other workspace is bound to the active-symbol
+    # tool set WITHOUT them, so options / broad-market data is never pulled on a
+    # non-F&O run and the analysis stays on the operator's selected symbol.
+    response = _llm_for_profile(state).invoke(messages)
+
     print(f"[Deep Quant Agent] Model responded. Content length: {len(response.content or '')}")
 
     # Single structured extraction pass: native structured calls are primary;
