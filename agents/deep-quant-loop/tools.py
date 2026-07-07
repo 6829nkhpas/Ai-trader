@@ -1,10 +1,6 @@
 import os
 import json
-import csv
 import math
-import time
-from datetime import datetime
-from zoneinfo import ZoneInfo
 from typing import Optional
 import httpx
 
@@ -77,14 +73,6 @@ import trade_manager
 # resolved heartbeat/cap configuration to the Rust watcher on registration and to
 # classify + scope a resume's cheap Delta_Recheck. Pure module; no market-data source.
 import opportunity
-
-# Event_Classifier (earnings-event-risk-gate) — the single source of truth for the
-# scheduled-event (earnings/results) proximity math (AD-1, AD-2). The
-# get_event_risk tool delegates parameter resolution, nearest-future selection,
-# and classification to this pure module; the tool itself performs the only I/O
-# (reads the process clock for the reference "now" and gathers candidate event
-# dates from the operator-configured Event_Source) and re-validates the contract.
-import events
 
 RUST_SERVER_URL = "http://localhost:8084"
 
@@ -209,19 +197,6 @@ SESSION_PHASES = {
     "pre_open", "opening", "morning", "midday", "afternoon", "closing", "post_close",
 }
 TIME_FAVORABILITY = {"favorable", "unfavorable", "neutral"}
-
-# ── Event_Risk_Tool contract (earnings-event-risk-gate) ──────────────────────
-# A get_event_risk Event_Assessment must carry an `event_risk` drawn from the
-# fixed EVENT_RISK_STATES enum, an `event_recommendation` drawn from the fixed
-# EVENT_RECOMMENDATIONS enum, a `days_until_event` present as a finite number or
-# null, and an `event_date` string identifying the reference Scheduled_Event
-# date. The assessment is computed PURELY by the events.py Event_Classifier from
-# the process-clock reference "now", the nearest upcoming event date, and the
-# resolved configuration — the tool performs the only I/O (AD-1). An
-# Unavailable_Marker ({"unavailable": true, ...}) is an honest non-fatal result
-# handled by the existing _has_honest_marker pass-through (Requirements 4.8, 5.1).
-EVENT_RISK_STATES = {"clear", "imminent", "through_event"}
-EVENT_RECOMMENDATIONS = {"proceed", "size_down", "shorten_horizon", "stand_aside"}
 
 # ── Options_Analytics_Tool contract (options-agent-integration) ──────────────
 # A get_options_analytics Options_Bias_Label must carry an `options_bias_state`
@@ -752,43 +727,6 @@ def validate_contract(tool_name, payload):
                 return _contract_error("options 'iv_skew' is neither an object nor null")
             return payload
 
-        if tool_name == "get_event_risk":
-            if not isinstance(payload, dict):
-                return _contract_error(
-                    f"get_event_risk expected an object, got {type(payload).__name__}"
-                )
-            # A conforming Event_Assessment carries an `event_risk` drawn from the
-            # fixed EVENT_RISK_STATES enum, an `event_recommendation` drawn from
-            # the fixed EVENT_RECOMMENDATIONS enum, a `days_until_event` present as
-            # a finite number or null (null when no day count is available), and an
-            # `event_date` string identifying the reference Scheduled_Event date.
-            # (An Unavailable_Marker carries `unavailable: true` and was already
-            # passed through above by _has_honest_marker, so anything reaching here
-            # must be a full assessment.)
-            event_risk = payload.get("event_risk")
-            if event_risk not in EVENT_RISK_STATES:
-                return _contract_error(
-                    f"event_risk '{event_risk}' not in "
-                    "{clear, imminent, through_event}"
-                )
-            event_recommendation = payload.get("event_recommendation")
-            if event_recommendation not in EVENT_RECOMMENDATIONS:
-                return _contract_error(
-                    f"event_recommendation '{event_recommendation}' not in "
-                    "{proceed, size_down, shorten_horizon, stand_aside}"
-                )
-            # days_until_event: a finite number or null.
-            if "days_until_event" not in payload:
-                return _contract_error("event missing field 'days_until_event'")
-            if not _is_number_or_null(payload["days_until_event"]):
-                return _contract_error(
-                    "event 'days_until_event' is neither numeric nor null"
-                )
-            # The reference Scheduled_Event date must be present as a string.
-            if not isinstance(payload.get("event_date"), str):
-                return _contract_error("event missing 'event_date' string")
-            return payload
-
         # Unknown / non-contract tool (e.g. declare_trade, watch_price_condition):
         # nothing to validate — pass through unchanged.
         return payload
@@ -932,6 +870,85 @@ def get_chart_patterns(symbol: str, timeframe: str, limit: int = 200) -> dict:
         print(f"[Tool Error] <<< get_chart_patterns FAIL: {str(e)}")
         return {"error": f"Failed to detect chart patterns: {str(e)}"}
 
+# Relative width below which the seven pivot levels are treated as "collapsed"
+# onto a single point: when (max_level - min_level) / |pivot| is under this, the
+# levels span less than ~0.02% of price and cannot define a usable entry / stop /
+# target geometry. This is the degenerate-input signature produced when the pivot
+# period has too few (or too flat) candles — e.g. a sparsely-backfilled spot
+# index intraday series — which the Rust SR_Engine also flags via
+# ``ordering_exception``.
+_SR_COLLAPSE_REL_WIDTH = 2e-4
+
+
+def _sr_is_finite_number(v) -> bool:
+    """True for a finite real number; ``bool`` is excluded (repo convention)."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _sr_is_degenerate(res: dict) -> tuple[bool, str]:
+    """Detect an unusable support/resistance result (returns (degenerate, reason)).
+
+    A result is degenerate when either the Rust SR_Engine flagged an
+    ``ordering_exception`` (the canonical S3<=S2<=S1<=pivot<=R1<=R2<=R3 ordering
+    could not hold), or all seven levels are finite but collapsed into a
+    negligible band around the pivot (the near-zero-range signature of a
+    sparse/flat candle window). In both cases the levels cannot be used for clean
+    entry / stop / target placement, so the tool degrades to an honest
+    Unavailable_Marker rather than handing back collapsed numbers. Never raises.
+    """
+    if not isinstance(res, dict):
+        return False, ""
+    if res.get("ordering_exception"):
+        return True, (
+            "support/resistance ordering_exception: the computed levels could not "
+            "satisfy the canonical S3<=S2<=S1<=pivot<=R1<=R2<=R3 ordering "
+            "(degenerate/near-flat candle range) and are not usable for entry, "
+            "stop, or target placement"
+        )
+    levels = []
+    for field in _SR_REQUIRED_FIELDS:
+        v = res.get(field)
+        if not _sr_is_finite_number(v):
+            # A missing/non-finite required level is a different failure mode that
+            # the contract validator already surfaces; do not mislabel it collapsed.
+            return False, ""
+        levels.append(float(v))
+    lo, hi = min(levels), max(levels)
+    pivot = res.get("pivot")
+    denom = abs(float(pivot)) if (_sr_is_finite_number(pivot) and pivot != 0) else max(abs(hi), abs(lo), 1.0)
+    if (hi - lo) / denom < _SR_COLLAPSE_REL_WIDTH:
+        return True, (
+            "support/resistance levels collapsed onto a single point "
+            f"(all seven levels span less than {_SR_COLLAPSE_REL_WIDTH:.2%} of price "
+            "around the pivot), the degenerate signature of too few / too flat "
+            "candles — not usable for entry, stop, or target placement"
+        )
+    return False, ""
+
+
+def _sr_unavailable(symbol, timeframe, reason: str, raw: dict) -> dict:
+    """Build a get_support_resistance Unavailable_Marker.
+
+    Recognized as an honest, non-fatal marker by ``_has_honest_marker`` so
+    ``validate_contract`` passes it through unchanged. The unusable raw levels are
+    preserved under ``raw_levels`` for glass-box diagnostics but MUST NOT be used
+    as tradeable levels — the ``unavailable`` flag is the operative signal.
+    """
+    marker = {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "unavailable": True,
+        "reason": reason,
+    }
+    if isinstance(raw, dict):
+        marker["raw_levels"] = {
+            k: raw.get(k)
+            for k in (*_SR_REQUIRED_FIELDS, "ordering_exception", "recent_high", "recent_low")
+            if k in raw
+        }
+    return marker
+
+
 @tool
 def get_support_resistance(symbol: str, timeframe: str = "1d") -> dict:
     """
@@ -952,8 +969,15 @@ def get_support_resistance(symbol: str, timeframe: str = "1d") -> dict:
     Returns:
         dict: Authoritative support/resistance levels with keys: pivot, s1, s2, s3, r1, r2, r3,
               recent_high, recent_low. Intraday timeframes also include opening_range_high,
-              opening_range_low, and daily_pivot. An ordering_exception field is set when the
-              computed levels cannot satisfy the canonical S3≤S2≤S1≤pivot≤R1≤R2≤R3 ordering.
+              opening_range_low, and daily_pivot. When the computed levels are unusable —
+              either the Rust engine flags an ordering_exception (the canonical
+              S3≤S2≤S1≤pivot≤R1≤R2≤R3 ordering could not hold) or the levels collapse onto a
+              single point around the pivot (the degenerate signature of too few / too flat
+              candles, common on a sparsely-backfilled spot index intraday series) — the tool
+              instead returns an Unavailable_Marker {"unavailable": true, "reason": ...} with
+              the unusable levels preserved under "raw_levels" for diagnostics only. Treat an
+              unavailable result as a missing, non-blocking input; do NOT place a trade against
+              the raw_levels.
     """
     print(f"\n[Tool Call] >>> get_support_resistance: symbol={symbol}, timeframe={timeframe}")
     try:
@@ -966,6 +990,18 @@ def get_support_resistance(symbol: str, timeframe: str = "1d") -> dict:
             print(f"[Tool Error] Server returned {response.status_code}: {response.text}")
         response.raise_for_status()
         res = response.json()
+        # Degrade an unusable result to an honest Unavailable_Marker rather than
+        # handing back collapsed levels the agent cannot place a trade against.
+        # This covers a Rust-flagged ordering_exception AND the near-zero-range
+        # collapse produced by a sparse/flat candle window (common on a spot index
+        # intraday series that has not been backfilled). The agent then treats S/R
+        # as a clean missing input — exactly like regime / relative strength — and
+        # proceeds on the remaining evidence instead of reasoning against garbage.
+        if isinstance(res, dict) and not _has_honest_marker(res):
+            degenerate, reason = _sr_is_degenerate(res)
+            if degenerate:
+                print(f"[Tool Success] <<< get_support_resistance: symbol={symbol}, timeframe={timeframe}, unavailable ({reason})")
+                return _sr_unavailable(symbol, timeframe, reason, res)
         print(f"[Tool Success] <<< get_support_resistance: symbol={symbol}, timeframe={timeframe}, pivot={res.get('pivot')}, S1={res.get('s1')}, R1={res.get('r1')}")
         return validate_contract("get_support_resistance", res)
     except Exception as e:
@@ -1654,7 +1690,8 @@ def _options_unavailable(symbol, underlying, chain_context, reason: str) -> dict
 
 @tool
 def get_options_analytics(symbol: str, expiry: str = "",
-                          proposed_direction: str = "") -> dict:
+                          proposed_direction: str = "",
+                          own_chain: bool = False) -> dict:
     """
     Read the options-positioning picture for a symbol — PCR (OI and volume), max
     pain, aggregate OI buildup, OI-wall support/resistance, IV skew, futures basis
@@ -1669,19 +1706,33 @@ def get_options_analytics(symbol: str, expiry: str = "",
     waiting, or HOLD; when it is unavailable, proceed with the remaining analysis
     and note it as unavailable.
 
-    For an index Underlying (NIFTY 50, BANKNIFTY) its OWN chain is analyzed
-    (chain_context="own-chain"); for a non-index symbol the symbol's benchmark
-    index chain is used as broad-market options context
-    (chain_context="broad-market"), clearly labelled as index-level rather than
-    stock-specific. The options analytics math lives entirely in the F2 engine and
-    is consumed verbatim; the bias is a pure threshold vote over those analytics.
+    Chain resolution:
+      * An index Underlying (NIFTY 50, BANKNIFTY) always analyzes its OWN chain
+        (chain_context="own-chain").
+      * A non-index symbol (a stock) defaults to its benchmark index chain as
+        broad-market options context (chain_context="broad-market"), clearly
+        labelled as index-level rather than stock-specific.
+      * When `own_chain=True` (set this in the F&O workspace when you want the
+        STOCK's own options), a non-index symbol analyzes its OWN option chain
+        instead of the benchmark proxy — falling back to the benchmark chain only
+        if the stock has no chain snapshot, so you still get index-level context
+        rather than nothing.
+
+    The options analytics math lives entirely in the F2 engine and is consumed
+    verbatim; the bias is a pure threshold vote over those analytics.
 
     Args:
         symbol (str): The trading symbol (e.g. "RELIANCE", "BANKNIFTY").
-        expiry (str): Optional expiry; when empty the engine's nearest available
-                      expiry for the resolved chain is used.
+        expiry (str): Optional expiry as an ISO date "YYYY-MM-DD" (e.g.
+                      "2026-07-30"); when empty the engine's nearest available
+                      expiry for the resolved chain is used. In the F&O workspace,
+                      pass the exact expiry the user has selected.
         proposed_direction (str): Optional proposed trade direction ("BUY" / "SELL");
                       when empty, no direction is assumed and alignment is neutral.
+        own_chain (bool): When True, analyze a non-index symbol's OWN option chain
+                      (stock-specific) instead of the broad-market benchmark proxy.
+                      Set this in the F&O workspace. Ignored for index underlyings
+                      (which always use their own chain). Defaults to False.
 
     Returns:
         dict: An options result carrying pcr_oi, pcr_volume, max_pain, oi_buildup,
@@ -1694,7 +1745,7 @@ def get_options_analytics(symbol: str, expiry: str = "",
     """
     print(
         f"\n[Tool Call] >>> get_options_analytics: symbol={symbol}, "
-        f"expiry={expiry!r}, direction={proposed_direction!r}"
+        f"expiry={expiry!r}, direction={proposed_direction!r}, own_chain={own_chain}"
     )
     # Resolve the analyzed chain + label up-front so the defensive catch-all can
     # still report the chain context it had resolved (these stay None until
@@ -1709,13 +1760,20 @@ def get_options_analytics(symbol: str, expiry: str = "",
             print("[Tool Error] <<< get_options_analytics: empty/whitespace symbol")
             return {"error": "get_options_analytics requires a non-empty symbol"}
 
-        # 2. Resolve the analyzed chain + label (Requirement 2.3). An index
-        #    Underlying uses its OWN chain (chain_context="own-chain"); a non-index
-        #    symbol resolves to its Benchmark_Index chain via rs.resolve_benchmark
-        #    as broad-market options context (chain_context="broad-market"). The
-        #    result always records chain_context, the resolved underlying, and the
-        #    original symbol.
-        if symbol.strip().upper() in INDEX_UNDERLYINGS:
+        # 2. Resolve the analyzed chain + label (Requirement 2.3).
+        #    - An index Underlying always uses its OWN chain ("own-chain").
+        #    - When own_chain=True (the F&O workspace analyzing a specific stock),
+        #      a non-index symbol uses its OWN option chain ("own-chain"), with a
+        #      fallback to the benchmark chain below if the stock has no snapshot.
+        #    - Otherwise a non-index symbol resolves to its Benchmark_Index chain
+        #      via rs.resolve_benchmark as broad-market options context
+        #      ("broad-market"). The result always records chain_context, the
+        #      resolved underlying, and the original symbol.
+        sym_up = symbol.strip().upper()
+        if sym_up in INDEX_UNDERLYINGS:
+            underlying = symbol.strip()
+            chain_context = "own-chain"
+        elif own_chain:
             underlying = symbol.strip()
             chain_context = "own-chain"
         else:
@@ -1728,6 +1786,35 @@ def get_options_analytics(symbol: str, expiry: str = "",
         #    falsy expiry as the nearest chain.
         expiry_or_none = expiry.strip() if isinstance(expiry, str) else ""
         analytics = options.compute_options_analytics(underlying, expiry_or_none)
+
+        # 3b. Own-chain fallback: if an own-chain analysis of a NON-index stock
+        #     comes back unavailable (the stock's own chain has no snapshot — e.g.
+        #     the stock is not F&O-subscribed), fall back to the broad-market
+        #     benchmark chain so the agent still gets index-level positioning
+        #     context instead of nothing. The result then honestly reports the
+        #     broad-market chain_context and benchmark underlying it fell back to.
+        if (
+            own_chain
+            and sym_up not in INDEX_UNDERLYINGS
+            and isinstance(analytics, dict)
+            and analytics.get("unavailable")
+        ):
+            fallback_underlying = rs.resolve_benchmark(symbol)
+            if (
+                isinstance(fallback_underlying, str)
+                and fallback_underlying.strip()
+                and fallback_underlying.strip().upper() != sym_up
+            ):
+                fb = options.compute_options_analytics(fallback_underlying, expiry_or_none)
+                if isinstance(fb, dict) and not fb.get("unavailable"):
+                    print(
+                        f"[Tool Info] <<< get_options_analytics: own-chain for "
+                        f"{symbol} unavailable; falling back to broad-market "
+                        f"{fallback_underlying}"
+                    )
+                    underlying = fallback_underlying
+                    chain_context = "broad-market"
+                    analytics = fb
 
         # 4. Unavailable gate (Requirements 3.1, 3.2). When the engine returns an
         #    Unavailable_Marker (or a non-dict), pass it through as an options
@@ -2101,498 +2188,6 @@ def get_session_context(symbol: str, timeframe: str) -> dict:
             symbol if isinstance(symbol, str) else None,
             timeframe if isinstance(timeframe, str) else None,
             f"session processing error: {str(e)}",
-        )
-
-
-def _event_unavailable(symbol, holding_horizon, reason: str) -> dict:
-    """Build a get_event_risk Unavailable_Marker (the event marker shape).
-
-    Mirrors ``_session_unavailable`` / ``_regime_unavailable``: it carries the
-    ``symbol`` / ``holding_horizon`` context, the ``unavailable: true`` flag, and
-    a ``reason`` citing the cause, and it *omits* ``event_risk`` /
-    ``event_recommendation`` entirely — an unavailable event risk is a missing
-    optional input, never a fabricated label (AD-3, Requirements 5.1, 5.3, 5.4).
-    Recognized as an honest, non-fatal marker by ``_has_honest_marker`` so
-    ``validate_contract`` passes it through unchanged (Requirement 4.8).
-    """
-    return {
-        "symbol": symbol,
-        "holding_horizon": holding_horizon,
-        "unavailable": True,
-        "reason": reason,
-    }
-
-
-# ── Event_Source date-parsing helpers (pure, never raise) ────────────────────
-# These turn operator-provided date representations into epoch-millisecond
-# candidates. A date-only string is anchored at midnight in the configured
-# market timezone so the mapping is deterministic and host-timezone independent
-# (never fabricates a date; never raises).
-
-# Recognised symbol-column names in a list-of-records / CSV Event_Source.
-_EVENT_SYMBOL_KEYS = ("symbol", "ticker", "scrip", "code")
-# Recognised date-bearing field names in a record / API body.
-_EVENT_DATE_KEYS = (
-    "date",
-    "dates",
-    "event_date",
-    "eventDate",
-    "event_dates",
-    "earnings_date",
-    "earningsDate",
-    "earnings_dates",
-    "results_date",
-    "resultsDate",
-)
-
-
-def _parse_event_date_to_ms(value, config) -> Optional[float]:
-    """Parse one operator-provided event-date value to an epoch-ms candidate.
-
-    Accepts an ISO date (``YYYY-MM-DD``, anchored at midnight in the configured
-    market timezone) or an ISO datetime (naive datetimes are interpreted in the
-    market timezone; aware datetimes are honoured). A finite number is treated as
-    an already-computed epoch-ms candidate. Returns ``None`` for anything
-    unparseable. Deterministic; never raises.
-    """
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value) if math.isfinite(value) else None
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    if not text:
-        return None
-    try:
-        tz = ZoneInfo(config.timezone)
-    except Exception:
-        return None
-    dt = None
-    try:
-        if len(text) == 10 and text[4] == "-" and text[7] == "-":
-            # Date-only -> anchor at midnight in the market timezone.
-            year, month, day = int(text[0:4]), int(text[5:7]), int(text[8:10])
-            dt = datetime(year, month, day, 0, 0, 0, tzinfo=tz)
-        else:
-            iso = text[:-1] + "+00:00" if text.endswith("Z") else text
-            parsed = datetime.fromisoformat(iso)
-            dt = parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=tz)
-    except (ValueError, TypeError):
-        return None
-    try:
-        return dt.timestamp() * 1000.0
-    except (OverflowError, OSError, ValueError):
-        return None
-
-
-def _coerce_date_values(value) -> list:
-    """Flatten a date-bearing value into a list of raw date representations.
-
-    A single string/number becomes a one-element list; a list/tuple is flattened
-    (one level) keeping its string/number members. Anything else yields an empty
-    list. Never raises.
-    """
-    if isinstance(value, (str, int, float)) and not isinstance(value, bool):
-        return [value]
-    if isinstance(value, (list, tuple)):
-        out = []
-        for item in value:
-            if isinstance(item, (str, int, float)) and not isinstance(item, bool):
-                out.append(item)
-        return out
-    return []
-
-
-def _collect_symbol_dates(data, symbol) -> list:
-    """Collect raw date values for ``symbol`` from a mapping or list-of-records.
-
-    Supports the two documented Event_Source shapes with a case-insensitive
-    symbol match:
-      * a mapping ``{"RELIANCE": "2025-01-15", "TCS": ["2025-02-01", ...]}``
-      * a list of records ``[{"symbol": "RELIANCE", "date": "2025-01-15"}, ...]``
-    Returns raw (unparsed) date representations; never raises.
-    """
-    target = symbol.strip().lower() if isinstance(symbol, str) else ""
-    if not target:
-        return []
-    out = []
-    if isinstance(data, dict):
-        for key, value in data.items():
-            if isinstance(key, str) and key.strip().lower() == target:
-                out.extend(_coerce_date_values(value))
-    elif isinstance(data, list):
-        for record in data:
-            if not isinstance(record, dict):
-                continue
-            sym = None
-            for sk in _EVENT_SYMBOL_KEYS:
-                candidate = record.get(sk)
-                if isinstance(candidate, str):
-                    sym = candidate
-                    break
-            if sym is None or sym.strip().lower() != target:
-                continue
-            for dk in _EVENT_DATE_KEYS:
-                if dk in record:
-                    out.extend(_coerce_date_values(record[dk]))
-    return out
-
-
-def _collect_api_dates(body, symbol) -> list:
-    """Collect raw date values from common symbol-scoped calendar-API shapes.
-
-    Handles a bare list of dates (``["2025-01-15", ...]``), a wrapped mapping
-    (``{"dates": [...]}`` / ``{"event_dates": [...]}``), and an events list
-    (``{"events": [{"date": ...}, ...]}``). Complements ``_collect_symbol_dates``
-    (which handles the symbol-keyed mapping / list-of-records shapes). Never
-    raises.
-    """
-    out = []
-    if isinstance(body, list):
-        for item in body:
-            if isinstance(item, str):
-                out.append(item)
-            elif isinstance(item, dict):
-                for dk in _EVENT_DATE_KEYS:
-                    if dk in item:
-                        out.extend(_coerce_date_values(item[dk]))
-    elif isinstance(body, dict):
-        events_val = body.get("events")
-        if isinstance(events_val, list):
-            for item in events_val:
-                if isinstance(item, str):
-                    out.append(item)
-                elif isinstance(item, dict):
-                    for dk in _EVENT_DATE_KEYS:
-                        if dk in item:
-                            out.extend(_coerce_date_values(item[dk]))
-        for dk in _EVENT_DATE_KEYS:
-            if dk in body:
-                out.extend(_coerce_date_values(body[dk]))
-    return out
-
-
-def _dates_to_ms(raw_values, config) -> list:
-    """Parse a list of raw date representations to epoch-ms candidates, dropping
-    any that cannot be parsed. Never raises."""
-    candidates = []
-    for value in raw_values:
-        ms = _parse_event_date_to_ms(value, config)
-        if ms is not None:
-            candidates.append(ms)
-    return candidates
-
-
-def _read_event_file(symbol, file_path, config):
-    """Read the operator local calendar file for ``symbol``'s event dates.
-
-    Returns ``(candidates, failure_reason)``: on success, the parsed epoch-ms
-    candidate list (possibly empty when the symbol is absent) with a ``None``
-    reason; on a missing / unreadable / malformed file, ``([], reason)``. The
-    file may be JSON or CSV (mapping symbol -> upcoming date(s), case-insensitive
-    match). Never raises (Requirements 1.1, 1.3, 1.4).
-    """
-    try:
-        if not os.path.isfile(file_path):
-            return [], f"calendar file not found: {file_path}"
-        with open(file_path, "r", encoding="utf-8") as handle:
-            raw = handle.read()
-        if not raw.strip():
-            return [], "calendar file is empty"
-
-        lower = file_path.lower()
-        raw_dates = None
-        if lower.endswith(".csv"):
-            raw_dates = _extract_dates_from_csv(raw, symbol)
-        elif lower.endswith(".json"):
-            try:
-                raw_dates = _collect_symbol_dates(json.loads(raw), symbol)
-            except (ValueError, TypeError):
-                return [], "calendar file is malformed (unparseable JSON)"
-        else:
-            # Unknown extension: try JSON first, fall back to CSV.
-            try:
-                raw_dates = _collect_symbol_dates(json.loads(raw), symbol)
-            except (ValueError, TypeError):
-                raw_dates = _extract_dates_from_csv(raw, symbol)
-
-        if raw_dates is None:
-            return [], "calendar file is malformed (unparseable)"
-        return _dates_to_ms(raw_dates, config), None
-    except Exception as exc:  # never raise into the loader (R1.4)
-        return [], f"calendar file read error: {exc.__class__.__name__}"
-
-
-def _extract_dates_from_csv(raw, symbol) -> list:
-    """Extract raw date strings for ``symbol`` from CSV text (case-insensitive).
-
-    Accepts a header row (a ``symbol``/``ticker`` column and one or more columns
-    whose name contains ``date``) or, when no header is present, assumes column 0
-    is the symbol and column 1 the date. Never raises.
-    """
-    target = symbol.strip().lower() if isinstance(symbol, str) else ""
-    if not target:
-        return []
-    rows = [row for row in csv.reader(raw.splitlines()) if row and any(c.strip() for c in row)]
-    if not rows:
-        return []
-
-    header = [c.strip().lower() for c in rows[0]]
-    has_header = any(h in _EVENT_SYMBOL_KEYS for h in header) or any("date" in h for h in header)
-
-    sym_idx = 0
-    date_idxs = [1]
-    data_rows = rows
-    if has_header:
-        data_rows = rows[1:]
-        for i, h in enumerate(header):
-            if h in _EVENT_SYMBOL_KEYS:
-                sym_idx = i
-                break
-        date_idxs = [i for i, h in enumerate(header) if "date" in h] or (
-            [1] if len(header) > 1 else []
-        )
-
-    out = []
-    for row in data_rows:
-        if len(row) <= sym_idx:
-            continue
-        if row[sym_idx].strip().lower() != target:
-            continue
-        for di in date_idxs:
-            if di < len(row):
-                value = row[di].strip()
-                if value:
-                    out.append(value)
-    return out
-
-
-def _read_event_api(symbol, api_url, config):
-    """Read the operator calendar API for ``symbol``'s event dates.
-
-    Returns ``(candidates, failure_reason)``: on a 2xx JSON response, the parsed
-    epoch-ms candidate list (possibly empty) with a ``None`` reason; on a
-    timeout / connection error / non-2xx / unparseable body, ``([], reason)``.
-    Uses the operator-configured endpoint only (never a hardcoded vendor) with
-    ``config.source_timeout_s``. Never raises (Requirements 1.1, 1.4).
-    """
-    try:
-        response = httpx.get(
-            api_url, params={"symbol": symbol}, timeout=config.source_timeout_s
-        )
-        if response.status_code < 200 or response.status_code >= 300:
-            return [], f"calendar API returned HTTP {response.status_code}"
-        try:
-            body = response.json()
-        except Exception:
-            return [], "calendar API returned an unparseable body"
-        raw_dates = _collect_symbol_dates(body, symbol) + _collect_api_dates(body, symbol)
-        return _dates_to_ms(raw_dates, config), None
-    except Exception as exc:  # timeout / connection error / etc. (R1.4)
-        return [], f"calendar API request failed: {exc.__class__.__name__}"
-
-
-def _load_event_candidates(symbol, config) -> dict:
-    """Gather candidate Scheduled_Event datetimes (epoch ms) for ``symbol`` from
-    the operator-configured Event_Source (AD-1, AD-2; the only I/O in the gate).
-
-    The Event_Source is pluggable and operator-configured, following the
-    ``fetch_news_context`` precedent: an operator local calendar file
-    (``config.calendar_file_path``, JSON or CSV mapping symbol -> upcoming
-    date(s), case-insensitive match) and/or an operator calendar API
-    (``config.calendar_api_url``, queried with ``config.source_timeout_s``). Both
-    may be configured, in which case their candidates are combined. It never
-    scrapes or hardcodes a specific paid vendor (Requirement 1.1), never
-    fabricates a date (Requirements 1.3, 5.1), and never raises (Requirements
-    1.4, 5.3).
-
-    Returns a structured result so the tool can distinguish the three
-    Unavailable_Marker reasons (Requirements 1.2 vs 1.4 vs 1.3):
-      * ``source_configured`` — ``False`` when NEITHER a file nor an API is set
-        (-> "no event source configured", Requirement 1.2).
-      * ``retrieval_failed`` / ``failure_reason`` — a configured source was
-        missing / unreadable / malformed / unreachable / timed out / returned a
-        non-2xx or unparseable body (-> retrieval-cause marker, Requirement 1.4).
-      * ``candidates`` — the combined epoch-ms candidate list; an empty list from
-        a source that read cleanly means "no upcoming event for the symbol"
-        (Requirement 1.3).
-    """
-    result = {
-        "candidates": [],
-        "source_configured": False,
-        "retrieval_failed": False,
-        "failure_reason": None,
-    }
-
-    file_path = getattr(config, "calendar_file_path", None)
-    api_url = getattr(config, "calendar_api_url", None)
-
-    if isinstance(file_path, str) and file_path.strip():
-        result["source_configured"] = True
-        cands, reason = _read_event_file(symbol, file_path, config)
-        if reason is not None:
-            result["retrieval_failed"] = True
-            result["failure_reason"] = reason
-        else:
-            result["candidates"].extend(cands)
-
-    if isinstance(api_url, str) and api_url.strip():
-        result["source_configured"] = True
-        cands, reason = _read_event_api(symbol, api_url, config)
-        if reason is not None:
-            result["retrieval_failed"] = True
-            result["failure_reason"] = reason
-        else:
-            result["candidates"].extend(cands)
-
-    return result
-
-
-@tool
-def get_event_risk(symbol: str, holding_horizon: str = "") -> dict:
-    """
-    Classify scheduled-event (earnings/results) proximity risk for a symbol
-    given the intended holding horizon.
-
-    Use this BEFORE committing a directional (BUY/SELL) setup to gauge whether
-    the trade would be held THROUGH a scheduled binary event (earnings/results
-    date), which carries uncompensated overnight gap risk. A veteran trader
-    flattens or sizes down before a scheduled event, or takes the trade only if
-    it closes intraday BEFORE the event. This gate is a RISK FILTER ONLY — it
-    never generates a trade, never blocks one, never overrides your decision, and
-    never fabricates an event date; it only ever tightens (size down, shorten
-    horizon, or stand aside). When the event risk is unavailable, proceed with
-    the remaining analysis and note it as unavailable.
-
-    The proximity classification is pure date math (module ``events``) over a
-    reference "now" and the nearest upcoming Scheduled_Event drawn from the
-    operator-configured Event_Source (a calendar file and/or calendar API); with
-    no source configured, an unreachable source, or no upcoming event for the
-    symbol, it returns an honest Unavailable_Marker.
-
-    Args:
-        symbol (str): The trading symbol (e.g. "RELIANCE").
-        holding_horizon (str): The intended maximum holding duration of the
-            setup under consideration — "intraday" (closes same session) or
-            "multi_session" (held overnight or longer). Absent/empty/unrecognized
-            applies the documented default holding horizon.
-
-    Returns:
-        dict: An Event_Assessment with:
-              - days_until_event (a finite non-negative number or null)
-              - event_risk ("clear" | "imminent" | "through_event")
-              - event_recommendation ("proceed" | "size_down" |
-                "shorten_horizon" | "stand_aside")
-              - event_date (the reference Scheduled_Event date used)
-              When the event risk cannot be determined (gate disabled, no source
-              configured, source unreachable/malformed, no upcoming event, or any
-              processing error) it returns an Unavailable_Marker
-              {"unavailable": true, "reason": ...} with NO event_risk /
-              event_recommendation — treat that as a missing, non-blocking input.
-              An empty/whitespace symbol returns a structured error. Never raises.
-    """
-    print(f"\n[Tool Call] >>> get_event_risk: symbol={symbol}, holding_horizon={holding_horizon!r}")
-    try:
-        # 1. Resolve parameters (single source of truth; never raises). Check the
-        #    master enable flag FIRST — a disabled gate returns a gate-disabled
-        #    Unavailable_Marker immediately, performing NO source retrieval
-        #    (Requirements 5.4, 11.5).
-        config = events.resolve_event_config()
-        if not config.enabled:
-            print("[Tool Success] <<< get_event_risk: gate disabled")
-            return _event_unavailable(
-                symbol if isinstance(symbol, str) else None,
-                holding_horizon if isinstance(holding_horizon, str) else None,
-                "event risk gate disabled by configuration",
-            )
-
-        # 2. Validate arguments — empty/whitespace symbol is a structured error
-        #    result (NOT an exception, Requirement 4.3).
-        if not isinstance(symbol, str) or not symbol.strip():
-            print("[Tool Error] <<< get_event_risk: empty/whitespace symbol")
-            return {
-                "error": "get_event_risk requires a non-empty symbol",
-            }
-
-        # 3. Normalize the intended Holding_Horizon (absent/empty/unrecognized ->
-        #    documented default, Requirement 4.4).
-        horizon = events.normalize_holding_horizon(holding_horizon, config)
-
-        # 4. Read the process clock for the reference "now" (epoch ms). This is
-        #    the tool-side I/O; the pure classifier never reads the host clock.
-        reference_ms = time.time() * 1000.0
-
-        # 5. Gather candidate Scheduled_Event datetimes from the configured
-        #    Event_Source. The loader returns a structured result so the three
-        #    Unavailable reasons stay distinguishable (Requirements 1.2-1.4).
-        source = _load_event_candidates(symbol, config)
-
-        # 5a. NEITHER a file nor an API is configured -> honest "no event source
-        #     configured" marker (Requirement 1.2).
-        if not source["source_configured"]:
-            print("[Tool Success] <<< get_event_risk: no event source configured")
-            return _event_unavailable(
-                symbol,
-                horizon,
-                "no event source configured",
-            )
-
-        # 6. Select the nearest UPCOMING event (pure; excludes past/at-reference).
-        event_ms = events.select_next_event(source["candidates"], reference_ms, config)
-        if event_ms is None:
-            # A configured source that could not be read (missing/unreadable/
-            # malformed file, unreachable/timeout/non-2xx/unparseable API) and
-            # yielded NO candidates -> retrieval-cause marker (Requirement 1.4).
-            if source["retrieval_failed"] and not source["candidates"]:
-                reason = f"event source retrieval failed: {source['failure_reason']}"
-                print(f"[Tool Success] <<< get_event_risk: symbol={symbol}, {reason}")
-                return _event_unavailable(symbol, horizon, reason)
-            # A configured source that read cleanly but has no upcoming event for
-            # the symbol (or only past-dated events) -> no-upcoming-event marker
-            # (Requirement 1.3). Never fabricate a date.
-            print(f"[Tool Success] <<< get_event_risk: symbol={symbol}, no upcoming event")
-            return _event_unavailable(
-                symbol,
-                horizon,
-                "no upcoming scheduled event known for symbol",
-            )
-
-        # 7. Classify via the pure Event_Classifier. It returns either an
-        #    Event_Assessment or an Unavailable_Marker, and never raises. The
-        #    reference event_date is the ISO date of the selected event in the
-        #    configured market timezone.
-        try:
-            event_date = datetime.fromtimestamp(
-                event_ms / 1000.0, tz=ZoneInfo(config.timezone)
-            ).date().isoformat()
-        except Exception:
-            event_date = None
-        result = events.assess_event_risk(
-            reference_ms, event_ms, horizon, config, symbol=symbol, event_date=event_date
-        )
-
-        # 8. Re-validate against the Tool_Result_Contract on receipt (AD-3) and
-        #    return. validate_contract passes an Unavailable_Marker through
-        #    unchanged and never raises.
-        validated = validate_contract("get_event_risk", result)
-        if validated.get("unavailable"):
-            print(f"[Tool Success] <<< get_event_risk: symbol={symbol}, unavailable ({validated.get('reason')})")
-        else:
-            print(
-                f"[Tool Success] <<< get_event_risk: symbol={symbol}, "
-                f"risk={validated.get('event_risk')}, "
-                f"recommendation={validated.get('event_recommendation')}"
-            )
-        return validated
-    except Exception as e:
-        # Defensive catch-all: any processing error degrades to an honest
-        # Unavailable_Marker rather than raising into the agent loop (R5.3).
-        print(f"[Tool Warning] <<< get_event_risk FAIL: {str(e)}")
-        return _event_unavailable(
-            symbol if isinstance(symbol, str) else None,
-            holding_horizon if isinstance(holding_horizon, str) else None,
-            f"event processing error: {str(e)}",
         )
 
 
