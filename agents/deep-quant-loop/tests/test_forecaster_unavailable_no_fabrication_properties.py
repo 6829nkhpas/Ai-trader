@@ -104,16 +104,10 @@ def _clean_candle(draw):
 
 @st.composite
 def _dirty_candle(draw):
-    """A candle dict carrying one non-finite/non-numeric OHLC field so the parser
-    excludes it (it never contributes to the valid count, R4.2).
-
-    Only the OHLC fields are corrupted: the forecaster's candle-sufficiency gate
-    (``regime._valid_ohlc_rows``) validates open/high/low/close and does NOT
-    require a finite ``volume`` (forecasting reasons over closes and ranges), so
-    corrupting ``volume`` alone would leave the candle VALID and the scenario
-    would not actually be under-supplied."""
+    """A candle dict carrying one non-finite/non-numeric OHLCV field so the parser
+    excludes it (it never contributes to the valid count, R4.2)."""
     candle = draw(_clean_candle())
-    field = draw(st.sampled_from(["open", "high", "low", "close"]))
+    field = draw(st.sampled_from(["open", "high", "low", "close", "volume"]))
     candle[field] = draw(_bad_field)
     return candle
 
