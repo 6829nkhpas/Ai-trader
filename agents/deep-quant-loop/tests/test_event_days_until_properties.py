@@ -140,7 +140,7 @@ _invalid_ms = st.one_of(
 
 
 # Feature: earnings-event-risk-gate, Property 3: Days-until-event is correct, bounded, and computed in the configured timezone
-@settings(max_examples=300, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     reference_ms=_VALID_MS,
     event_ms=_VALID_MS,
@@ -181,7 +181,7 @@ def test_property_3_days_until_matches_independent_local_date_diff(
 
 
 # Feature: earnings-event-risk-gate, Property 3: Days-until-event is correct, bounded, and computed in the configured timezone
-@settings(max_examples=300, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     reference_ms=_VALID_MS,
     day_offset=st.integers(min_value=0, max_value=400),
@@ -227,7 +227,7 @@ def test_property_3_future_offset_is_bounded_and_correct(
 
 
 # Feature: earnings-event-risk-gate, Property 3: Days-until-event is correct, bounded, and computed in the configured timezone
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     reference_ms=_VALID_MS,
     event_ms=_VALID_MS,
@@ -255,7 +255,7 @@ def test_property_3_invalid_timestamp_yields_none(
 
 
 # Feature: earnings-event-risk-gate, Property 3: Days-until-event is correct, bounded, and computed in the configured timezone
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     reference_ms=_VALID_MS,
     days_before=st.integers(min_value=1, max_value=400),

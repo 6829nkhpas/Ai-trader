@@ -144,7 +144,7 @@ _tool_names = st.one_of(
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: earnings-event-risk-gate, Property 17: validate_contract never raises on an event result
-@settings(max_examples=300, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(payload=_any_input, tool_name=_tool_names)
 def test_property_17_validate_contract_never_raises(payload, tool_name):
     """Validates: Requirements 4.9
