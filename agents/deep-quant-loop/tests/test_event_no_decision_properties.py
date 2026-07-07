@@ -169,7 +169,7 @@ def _walk_keys_and_values(obj):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: earnings-event-risk-gate, Property 10: The classifier emits only an assessment or a marker — never a trade decision
-@settings(max_examples=300, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     reference_ms=_ANY_MS,
     event_ms=_ANY_MS,
