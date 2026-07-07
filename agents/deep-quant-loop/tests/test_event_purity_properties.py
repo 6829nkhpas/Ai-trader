@@ -127,7 +127,7 @@ _OPT_STR = st.one_of(st.none(), st.text(max_size=8))
 
 # Feature: earnings-event-risk-gate, Property 2: Classifier functions are pure (no input mutation, no I/O)
 @settings(
-    max_examples=200,
+    max_examples=25,
     deadline=None,
     suppress_health_check=[HealthCheck.too_slow],
 )

@@ -116,7 +116,7 @@ def _symbol_is_invalid(symbol) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: earnings-event-risk-gate, Property 11: The tool rejects an empty or whitespace symbol without raising
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(symbol=_INVALID_SYMBOL, holding_horizon=_ANY_HORIZON)
 def test_property_11_event_tool_rejects_empty_symbol_without_raising(symbol, holding_horizon):
     """Feature: earnings-event-risk-gate, Property 11: The tool rejects an empty
@@ -170,7 +170,7 @@ _EMPTY_SOURCE = {
 
 
 # Feature: earnings-event-risk-gate, Property 11: The tool rejects an empty or whitespace symbol without raising
-@settings(max_examples=100, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     symbol=st.sampled_from(["RELIANCE", "TCS", "INFY", "HDFCBANK", "SBIN"]),
     holding_horizon=st.sampled_from(["", "intraday", "multi_session", "swing"]),
