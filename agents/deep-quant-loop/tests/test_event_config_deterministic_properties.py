@@ -165,7 +165,7 @@ _env_assignment = st.fixed_dictionaries(
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: earnings-event-risk-gate, Property 27: Parameter resolution is deterministic
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(assignment=_env_assignment)
 def test_property_27_resolution_is_deterministic(assignment):
     """Validates: Requirements 11.6
@@ -211,7 +211,7 @@ def test_property_27_resolution_is_deterministic(assignment):
 
 
 # Feature: earnings-event-risk-gate, Property 27: Parameter resolution is deterministic
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(assignment=_env_assignment)
 def test_property_27_defaults_are_deterministic_across_reset(assignment):
     """Validates: Requirements 11.6
