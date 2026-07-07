@@ -1027,7 +1027,6 @@ FULL_ORDER_OF_OPERATIONS_TOOLS = (
     "get_relative_strength",  # 2c. RELATIVE STRENGTH & INDEX CONTEXT
     "get_session_context",    # 2d. SESSION & EXPIRY CONTEXT
     "get_options_analytics",  # 2e. OPTIONS POSITIONING
-    "get_event_risk",         # 2f. EVENT-DATE RISK GATE — scheduled-event proximity
     "get_support_resistance", # 3.  KEY LEVELS
     "get_volume_profile",     # 3b. AUCTION STRUCTURE
     "get_chart_patterns",     # 4.  STRUCTURAL PATTERNS
@@ -1101,8 +1100,8 @@ def classify_resume(trigger_kind) -> str:
 #
 #   target       — the watched level was reached: CONFIRM the entry is still valid
 #                  before committing. Re-check fresh price action, momentum/
-#                  indicators, the scheduled-event proximity, the key levels, the
-#                  structural pattern, and the predictive cross-check (6 tools).
+#                  indicators, the key levels, the structural pattern, and the
+#                  predictive cross-check (5 tools).
 #   invalidation — the price-only invalidation tripped: DIAGNOSE why the thesis
 #                  failed. Re-check what actually happened at the level, whether
 #                  momentum flipped, whether the regime changed, and whether the
@@ -1114,7 +1113,6 @@ _DELTA_RECHECK_PLANS = {
     RESUME_TARGET: (
         "get_candles",
         "get_consensus_report",
-        "get_event_risk",
         "get_support_resistance",
         "get_chart_patterns",
         "get_forecast",

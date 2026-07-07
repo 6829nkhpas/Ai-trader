@@ -83,6 +83,14 @@ class RunRequest(BaseModel):
     symbol: Optional[str] = "N/A"
     manual_trade: Optional[dict] = None
     timeframe: Optional[str] = None
+    # Workspace profile selected in the terminal (INTRADAY / SWING / INVESTOR /
+    # FNO). Threaded into the graph state so the agent adapts its data gathering
+    # and analysis horizon to the section the user is in. Defaults to INTRADAY.
+    profile: Optional[str] = "INTRADAY"
+    # Expiry selected in the F&O workspace, as an ISO "YYYY-MM-DD" string. Threaded
+    # into the graph state so an FNO-profile run analyzes the exact expiry the user
+    # is viewing (empty/None => the options engine's nearest available expiry).
+    fno_expiry: Optional[str] = None
 
 class ResumeRequest(BaseModel):
     thread_id: str
@@ -161,7 +169,9 @@ async def run_agent(payload: RunRequest):
         "mode": payload.mode,
         "symbol": payload.symbol,
         "manual_trade": payload.manual_trade,
-        "timeframe": payload.timeframe
+        "timeframe": payload.timeframe,
+        "profile": payload.profile,
+        "fno_expiry": payload.fno_expiry,
     }
     gen = event_generator(payload.thread_id, graph_input=initial_state)
     # Best-effort telemetry tee (passthrough; falls back to bare gen on any failure).
