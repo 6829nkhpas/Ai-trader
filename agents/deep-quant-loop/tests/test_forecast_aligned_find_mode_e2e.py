@@ -191,11 +191,12 @@ def test_aligned_find_mode_run_threads_forecast_through_all_layers():
     tags = journal.derive_setup_tags(decision)
     assert "fc:aligned-strong" in tags
     # Exactly one forecast tag, at its fixed position; later dimensions (tm/sess/
-    # db/opt) and the opportunity-engine ``tier:`` tag follow, so ``tier:`` is the
-    # final tag (adaptive-opportunity-engine R9.2).
+    # db/opt/tier) and the event-risk ``evt:`` tag follow, so ``evt:`` is the
+    # final tag (earnings-event-risk-gate R10.1) and ``tier:`` is second-to-last.
     fc_tags = [t for t in tags if t.startswith("fc:")]
     assert fc_tags == ["fc:aligned-strong"]
-    assert tags[-1].startswith("tier:")
+    assert tags[-1].startswith("evt:")
+    assert tags[-2].startswith("tier:")
 
     # ── Layer 4: the forecast Up_Probability is persisted (R11.4) ────────────
     _orig_db_path = journal.JOURNAL_DB_PATH
