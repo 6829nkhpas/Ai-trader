@@ -1727,10 +1727,20 @@ pub async fn run_deep_quant_agent(
     symbol: String,
     mode: Option<String>,
     timeframe: Option<String>,
+    profile: Option<String>,
+    fno_expiry: Option<String>,
     manual_trade: Option<ManualTradeInfo>,
 ) -> Result<(), String> {
     let mode_str = mode.unwrap_or_else(|| "FIND".to_string());
-    info!("[deep_quant_agent] Starting LangGraph ReAct loop proxy for {} in mode={}", symbol, mode_str);
+    // Workspace profile (INTRADAY / SWING / INVESTOR / FNO) selected in the
+    // terminal. Threaded to the Python agent so it adapts its data gathering and
+    // analysis horizon to the section the user is actually in. Defaults to
+    // INTRADAY when the frontend does not supply one.
+    let profile_str = profile.unwrap_or_else(|| "INTRADAY".to_string());
+    info!(
+        "[deep_quant_agent] Starting LangGraph ReAct loop proxy for {} in mode={} profile={}",
+        symbol, mode_str, profile_str
+    );
     
     // Generate a unique thread ID
     let thread_id = format!("thread_{}_{}", symbol, chrono::Utc::now().timestamp_millis());
@@ -1763,6 +1773,8 @@ pub async fn run_deep_quant_agent(
         "mode": mode_str,
         "symbol": symbol,
         "timeframe": timeframe,
+        "profile": profile_str,
+        "fno_expiry": fno_expiry,
         "manual_trade": manual_trade
     });
     

@@ -219,7 +219,8 @@ impl KiteApiState {
         }
     }
 
-    /// Resolve an NSE symbol to its instrument_token.
+    /// Resolve a tradingsymbol to its instrument_token.
+    /// Detects F&O symbols (digits + CE/PE/FUT suffix) and queries NFO directly.
     /// Uses a fast in-process cache before falling back to get_instruments.
     pub async fn resolve_token(&self, symbol: &str) -> Option<u64> {
         let sym = symbol.trim().to_uppercase();
@@ -232,16 +233,17 @@ impl KiteApiState {
             }
         }
 
-        // Slow path: scan instrument list
-        let instruments = self.get_instruments("NSE").await.ok()?;
-        let found = instruments.iter().find(|i| i.tradingsymbol.to_uppercase() == sym);
-        if let Some(inst) = found {
-            let token = inst.instrument_token;
-            token_cache().write().await.insert(sym, token);
-            Some(token)
-        } else {
-            None
-        }
+        // Detect exchange: F&O symbols contain digits + end with CE/PE/FUT
+        let is_nfo = sym.bytes().any(|b| b.is_ascii_digit())
+            && (sym.ends_with("CE") || sym.ends_with("PE") || sym.ends_with("FUT"));
+        let exchange = if is_nfo { "NFO" } else { "NSE" };
+
+        // Direct lookup — no wasteful fallback to the wrong exchange
+        let instruments = self.get_instruments(exchange).await.ok()?;
+        let inst = instruments.iter().find(|i| i.tradingsymbol.to_uppercase() == sym)?;
+        let token = inst.instrument_token;
+        token_cache().write().await.insert(sym, token);
+        Some(token)
     }
 
     /// Fetch instruments from Kite and cache them. Returns cached data if fresh.
