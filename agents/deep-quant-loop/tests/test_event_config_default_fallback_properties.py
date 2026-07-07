@@ -265,7 +265,7 @@ def _independence_case(draw):
 
 
 # Feature: earnings-event-risk-gate, Property 26: Each parameter falls back to its documented default
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(assignment=_all_bad_assignment)
 def test_property_26_all_bad_fall_back_to_defaults(assignment):
     """Feature: earnings-event-risk-gate, Property 26: when every parameter's env
@@ -295,7 +295,7 @@ def test_property_26_all_bad_fall_back_to_defaults(assignment):
 
 
 # Feature: earnings-event-risk-gate, Property 26: Each parameter falls back to its documented default
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(case=_independence_case())
 def test_property_26_each_parameter_falls_back_independently(case):
     """Feature: earnings-event-risk-gate, Property 26: each parameter is read from

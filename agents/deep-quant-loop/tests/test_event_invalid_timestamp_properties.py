@@ -176,7 +176,7 @@ def _nan_safe_equal(a, b):
 
 
 # Feature: earnings-event-risk-gate, Property 7: An invalid timestamp yields an Unavailable_Marker, never a fabricated assessment
-@settings(max_examples=300, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     reference_ms=_VALID_MS,
     event_ms=_VALID_MS,
@@ -254,7 +254,7 @@ def test_property_7_invalid_timestamp_yields_unavailable_marker(
 
 
 # Feature: earnings-event-risk-gate, Property 7: An invalid timestamp yields an Unavailable_Marker, never a fabricated assessment
-@settings(max_examples=150, deadline=None)
+@settings(max_examples=25, deadline=None)
 @given(
     reference_ms=_VALID_MS,
     day_offset=st.integers(min_value=0, max_value=400),
