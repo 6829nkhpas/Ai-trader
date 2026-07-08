@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { MessageCircle, Send, Loader2, User, Cpu, Wrench } from 'lucide-react';
-import { useQuantStore } from '../../store/useQuantStore';
+import { Send, Loader2, User, Cpu, Wrench, Eye } from 'lucide-react';
+import { useQuantStore, MODEL_PROVIDERS } from '../../store/useQuantStore';
 
 // Inline bold (**text**) parser — mirrors AgentTerminal's helper so Q&A
 // answers render with the same emphasis treatment as the agent console.
@@ -48,17 +48,32 @@ const AnswerText = ({ content }: { content: string }) => {
   );
 };
 
+// Unified Q&A composer, rendered as a continuous footer of the agent working
+// section (no separate "panel" chrome). The input stays DISABLED until the
+// agent reaches the AI-watcher state (or the run completes); once it is
+// watching, the user can chat while the AI keeps watching for the price
+// trigger. Includes a model-provider selector so the user can pick which LLM
+// answers.
 export default function TradeQaPanel() {
   const qaMessages = useQuantStore((s) => s.qaMessages);
   const qaStatus = useQuantStore((s) => s.qaStatus);
   const currentThreadId = useQuantStore((s) => s.currentThreadId);
+  const sessionStatus = useQuantStore((s) => s.sessionStatus);
   const askQuestion = useQuantStore((s) => s.askQuestion);
+  const selectedModel = useQuantStore((s) => s.selectedModel);
+  const setSelectedModel = useQuantStore((s) => s.setSelectedModel);
 
   const [draft, setDraft] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
 
   const isStreaming = qaStatus === 'streaming';
-  const canSend = !isStreaming && !!currentThreadId && draft.trim().length > 0;
+  // The input unlocks ONLY at the AI-watcher state or once the run is complete —
+  // and only when a thread id has been captured so the backend can ground the
+  // answer in this session's analysis.
+  const isWatching = sessionStatus === 'watching';
+  const isComplete = sessionStatus === 'complete';
+  const canInteract = (isWatching || isComplete) && !!currentThreadId;
+  const canSend = canInteract && !isStreaming && draft.trim().length > 0;
 
   // Auto-scroll to the latest turn as the answer streams in.
   useEffect(() => {
@@ -80,33 +95,23 @@ export default function TradeQaPanel() {
     }
   };
 
-  return (
-    <div className="flex flex-col font-sans bg-surface border border-border-default rounded-none overflow-hidden relative">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 bg-elevated border-b border-border-default select-none">
-        <div className="flex items-center gap-2">
-          <MessageCircle size={14} className="text-text-primary" />
-          <span className="text-[10px] text-text-primary font-bold uppercase tracking-wider">
-            Trade Q&amp;A
-          </span>
-        </div>
-        <span className="text-[8px] font-mono text-text-muted uppercase tracking-wider">
-          Follow-up • same context
-        </span>
-      </div>
+  const placeholder = isStreaming
+    ? 'Answering…'
+    : isWatching
+      ? 'Ask while the AI watches for your price trigger…'
+      : isComplete
+        ? 'Ask a follow-up about this analysis…'
+        : sessionStatus === 'running'
+          ? 'Agent is analyzing — chat unlocks once it starts watching…'
+          : 'Run an analysis first…';
 
-      {/* Message list */}
-      <div className="max-h-[320px] min-h-[80px] overflow-y-auto p-3 space-y-3 scrollbar-thin scrollbar-track-slate-950/20 scrollbar-thumb-slate-800">
-        {qaMessages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-2 py-6 text-center select-none">
-            <MessageCircle size={18} className="text-text-muted/50" />
-            <p className="text-[10px] text-text-muted/70 max-w-[200px] leading-relaxed">
-              Ask a follow-up about this analysis — e.g. &ldquo;Why this stop-loss?&rdquo;
-              or &ldquo;What invalidates the setup?&rdquo;
-            </p>
-          </div>
-        ) : (
-          qaMessages.map((msg) =>
+  return (
+    <div className="flex flex-col font-sans bg-surface">
+      {/* Message list — only rendered once there is a conversation, so the
+          composer sits flush under the agent log when the chat is empty. */}
+      {qaMessages.length > 0 && (
+        <div className="max-h-[300px] overflow-y-auto px-3 py-3 space-y-3 border-t border-border-default/60 scrollbar-thin scrollbar-track-slate-950/20 scrollbar-thumb-slate-800">
+          {qaMessages.map((msg) =>
             msg.role === 'user' ? (
               <div key={msg.id} className="flex justify-end animate-fade-in font-sans">
                 <div className="max-w-[85%] bg-elevated text-text-primary border border-border-default rounded-none px-3 py-2 text-[11px] leading-relaxed shadow-sm">
@@ -135,7 +140,6 @@ export default function TradeQaPanel() {
                     Quant AI
                   </div>
 
-                  {/* Tool-activity indicators (lightweight) */}
                   {msg.activity && msg.activity.length > 0 && (
                     <div className="mb-1.5 flex flex-col gap-0.5">
                       {msg.activity.map((line, i) => (
@@ -161,40 +165,71 @@ export default function TradeQaPanel() {
                 </div>
               </div>
             )
-          )
-        )}
-        <div ref={endRef} />
-      </div>
+          )}
+          <div ref={endRef} />
+        </div>
+      )}
 
-      {/* Composer */}
-      <div className="shrink-0 border-t border-border-default bg-elevated/70 p-2.5">
-        <div className="relative flex items-center w-full">
+      {/* Composer — taller input, model selector, and a live status line. Merged
+          into the agent section by a single top divider (no separate panel). */}
+      <div className="shrink-0 border-t border-border-default bg-elevated/70 p-2.5 space-y-2">
+        {/* Row 1: model provider selector + watcher status */}
+        <div className="flex items-center justify-between gap-2">
+          <label className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-text-muted select-none">
+            <Cpu size={11} className="text-text-secondary" />
+            Model
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              className="ml-1 rounded-none bg-surface border border-border-default px-2 py-1 text-[10px] font-sans font-semibold text-text-primary focus:outline-none focus:border-text-primary/40 cursor-pointer"
+              title="Select the LLM provider / model"
+            >
+              {MODEL_PROVIDERS.map((group) => (
+                <optgroup key={group.provider} label={group.provider}>
+                  {group.models.map((m) => (
+                    <option key={`${group.provider}:${m.id}`} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+
+          {isWatching && (
+            <span className="flex items-center gap-1 text-[8.5px] font-mono font-bold uppercase tracking-wide text-amber-500">
+              <Eye size={10} className="animate-pulse" />
+              Watching — chat live
+            </span>
+          )}
+        </div>
+
+        {/* Row 2: taller textarea + send button */}
+        <div className="relative flex items-end w-full">
           <textarea
-            rows={1}
+            rows={3}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={isStreaming || !currentThreadId}
-            placeholder={
-              currentThreadId ? 'Ask a follow-up question…' : 'Run an analysis first…'
-            }
-            className="w-full resize-none rounded-full bg-surface border border-border-default pl-4 pr-10 py-2 text-[11px] font-sans text-text-primary placeholder:text-text-muted/65 focus:outline-none focus:border-text-primary/40 focus:ring-1 focus:ring-text-primary/20 disabled:opacity-50 disabled:cursor-not-allowed scrollbar-thin"
+            disabled={!canInteract || isStreaming}
+            placeholder={placeholder}
+            className="w-full resize-none rounded-lg bg-surface border border-border-default pl-3 pr-11 py-2.5 min-h-[76px] text-[11px] font-sans leading-relaxed text-text-primary placeholder:text-text-muted/65 focus:outline-none focus:border-text-primary/40 focus:ring-1 focus:ring-text-primary/20 disabled:opacity-50 disabled:cursor-not-allowed scrollbar-thin"
           />
           <button
             type="button"
             onClick={handleSend}
             disabled={!canSend}
             title="Send question"
-            className={`absolute right-1 h-7 w-7 rounded-full flex items-center justify-center transition-all duration-300 border ${
+            className={`absolute right-2 bottom-2 h-8 w-8 rounded-full flex items-center justify-center transition-all duration-300 border ${
               canSend
                 ? 'bg-text-primary text-surface border-text-primary hover:bg-text-secondary hover:border-text-secondary active:scale-[0.95]'
                 : 'bg-elevated/40 text-text-muted/30 border-transparent opacity-50 cursor-not-allowed'
             }`}
           >
             {isStreaming ? (
-              <Loader2 size={12} className="animate-spin" />
+              <Loader2 size={13} className="animate-spin" />
             ) : (
-              <Send size={12} />
+              <Send size={13} />
             )}
           </button>
         </div>

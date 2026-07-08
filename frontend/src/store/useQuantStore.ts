@@ -109,6 +109,40 @@ export interface QaChatMessage {
   error?: boolean;
 }
 
+// ── Model provider selection ────────────────────────────────────────────
+// The Q&A / analysis composer lets the user pick which LLM to run. The `id` is
+// the model string sent to the backend (empty string = the deployment default,
+// i.e. the server's LLM_MODEL). Whether a given id resolves depends on the
+// deployment's LLM gateway (a unified OpenAI-compatible gateway such as
+// OpenRouter can serve Claude/GPT/DeepSeek via one endpoint); adjust the ids
+// here to match your gateway's catalog.
+export interface ModelOption { id: string; label: string; }
+export interface ModelProviderGroup { provider: string; models: ModelOption[]; }
+
+export const MODEL_PROVIDERS: ModelProviderGroup[] = [
+  { provider: 'Default', models: [{ id: '', label: 'Deployment Default' }] },
+  { provider: 'OpenAI · GPT', models: [
+    { id: 'gpt-5.5', label: 'GPT-5.5' },
+    { id: 'gpt-4o', label: 'GPT-4o' },
+    { id: 'gpt-4o-mini', label: 'GPT-4o mini' },
+    { id: 'o3-mini', label: 'o3-mini' },
+  ]},
+  { provider: 'Anthropic · Claude', models: [
+    { id: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
+    { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+    { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+    { id: 'claude-3-5-sonnet', label: 'Claude 3.5 Sonnet' },
+  ]},
+  { provider: 'DeepSeek', models: [
+    { id: 'deepseek-chat', label: 'DeepSeek Chat' },
+    { id: 'deepseek-reasoner', label: 'DeepSeek Reasoner' },
+  ]},
+  { provider: 'Google · Gemini', models: [
+    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+    { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+  ]},
+];
+
 // ── Decoupled Sentiment Payload (independent of Kafka/WS ticks) ─────────
 
 export interface SentimentPayload {
@@ -179,6 +213,31 @@ interface QuantStore {
   _pendingToolCalls: number;
   /** Guard: true once RUN_FINISHED has been processed for this session */
   _runFinishedProcessed: boolean;
+
+  // ── Per-symbol session persistence ────────────────────────────────────
+  /** One persisted analysis session per symbol. The top-level fields above are
+   *  a live mirror of `activeViewKey`'s session. */
+  sessionsByKey: Record<string, QuantSession>;
+  /** The session key (symbol::profile) currently displayed in the terminal —
+   *  its session mirrors to the flat top-level fields. */
+  activeViewKey: string | null;
+  /** The session key (symbol::profile) whose analysis run is currently
+   *  streaming — stream events are routed to THIS session, not the viewed one,
+   *  so a background run keeps accumulating while the user looks elsewhere. */
+  _streamingKey: string | null;
+  /** Maps a run's thread id to its session key, so EVERY event of that run (and
+   *  a later /resume, which reuses the thread id) routes back to the right
+   *  session even when multiple symbols/profiles run concurrently. */
+  _threadToKey: Record<string, string>;
+  /** Load the (symbol, profile) session into the active view (snapshotting the
+   *  outgoing one first). Call on every active-symbol OR active-profile change. */
+  activateSymbolSession: (symbol: string, profile: string) => void;
+
+  // ── Model provider selection ──────────────────────────────────────────
+  /** The model id sent to the backend for analysis and Q&A ('' = deployment
+   *  default). Persisted across the session so the choice sticks. */
+  selectedModel: string;
+  setSelectedModel: (modelId: string) => void;
 
   // ── Trade Q&A (post-analysis follow-up chat) ──────────────────────────
   /** Thread id of the most recent analysis run — reused for Q&A turns so the
@@ -411,6 +470,252 @@ function extractFinalTrade(text: string): AiExecutionPlan | null {
 
 // ── Store ───────────────────────────────────────────────────────────────
 
+// ── Per-symbol analysis session ─────────────────────────────────────────
+// The Deep Quant terminal state used to be a single slot, so switching the
+// active chart symbol (or starting a new run) wiped the reasoning transcript,
+// tool calls, decision, and Q&A of the symbol you were on. We now keep one
+// QuantSession PER SYMBOL in `sessionsByKey`, route streaming events to the
+// symbol whose run they belong to (`_streamingKey`, resolved from the run's
+// thread id), and mirror the currently-VIEWED symbol's session (`activeViewKey`)
+// into the flat top-level fields the UI already reads. Switching away and back
+// therefore restores the full analysis for each symbol, and a background run for
+// symbol A keeps accumulating into A's session even while you view symbol B.
+export interface ReasoningStep {
+  id: string;
+  type: string;
+  content: string;
+  timestamp: number;
+  toolName?: string;
+  args?: Record<string, unknown>;
+}
+
+export interface QuantSession {
+  sessionStatus: 'idle' | 'running' | 'watching' | 'complete' | 'error';
+  reasoningSteps: ReasoningStep[];
+  finalTrade: AiExecutionPlan | null;
+  aiPlan: AiExecutionPlan | null;
+  analysisError: string | null;
+  isAnalyzing: boolean;
+  _pendingToolCalls: number;
+  _runFinishedProcessed: boolean;
+  currentThreadId: string | null;
+  qaMessages: QaChatMessage[];
+  qaStatus: 'idle' | 'streaming';
+  _qaRunFinishedProcessed: boolean;
+  /** 'FIND' or 'VERIFY' — the mode the run was launched in. */
+  mode: 'FIND' | 'VERIFY';
+  updatedAt: number;
+}
+
+function blankSession(): QuantSession {
+  return {
+    sessionStatus: 'idle',
+    reasoningSteps: [],
+    finalTrade: null,
+    aiPlan: null,
+    analysisError: null,
+    isAnalyzing: false,
+    _pendingToolCalls: 0,
+    _runFinishedProcessed: false,
+    currentThreadId: null,
+    qaMessages: [],
+    qaStatus: 'idle',
+    _qaRunFinishedProcessed: false,
+    mode: 'FIND',
+    updatedAt: Date.now(),
+  };
+}
+
+// Project a session into the flat top-level fields the UI components read.
+function projectSession(s: QuantSession) {
+  return {
+    sessionStatus: s.sessionStatus,
+    reasoningSteps: s.reasoningSteps,
+    finalTrade: s.finalTrade,
+    aiPlan: s.aiPlan,
+    analysisError: s.analysisError,
+    isAnalyzing: s.isAnalyzing,
+    _pendingToolCalls: s._pendingToolCalls,
+    _runFinishedProcessed: s._runFinishedProcessed,
+    currentThreadId: s.currentThreadId,
+    qaMessages: s.qaMessages,
+    qaStatus: s.qaStatus,
+    _qaRunFinishedProcessed: s._qaRunFinishedProcessed,
+  };
+}
+
+function _newStepId(): string {
+  return `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
+// A session is keyed by BOTH the symbol AND the workspace profile, because the
+// same symbol analyzed in INTRADAY vs SWING vs INVESTOR vs F&O is a distinct
+// analysis. So `TMPV::INTRADAY` and `TMPV::FNO` persist independently, and
+// switching either the symbol or the mode restores the matching session.
+function _sessionKey(symbol: string | null | undefined, profile: string | null | undefined): string {
+  const sym = (symbol || '').toUpperCase();
+  const prof = (profile || 'INTRADAY').toUpperCase();
+  return `${sym}::${prof}`;
+}
+
+// Pure reducer: apply one SSE stream event to a session and return the new
+// session. This is the per-symbol equivalent of the old inline switch — it reads
+// and writes ONLY the passed session, so an event can be routed to the correct
+// symbol's session regardless of which symbol is currently on screen.
+function applyStreamEvent(session: QuantSession, payload: StreamEventPayload): QuantSession {
+  const event = payload.event;
+  const data = payload.data;
+
+  switch (event) {
+    case 'RUN_STARTED': {
+      const startedThreadId = data?.thread_id;
+      const base: QuantSession = startedThreadId
+        ? { ...session, currentThreadId: startedThreadId }
+        : { ...session };
+      if (session.sessionStatus === 'watching') {
+        const resumeStep: ReasoningStep = {
+          id: _newStepId(),
+          type: 'message',
+          content: '\n---\n### Resuming Analysis — Fresh Market Data\nThe watcher woke this run. Re-checking the setup with the latest data...\n---\n',
+          timestamp: Date.now(),
+        };
+        return {
+          ...base,
+          sessionStatus: 'running',
+          isAnalyzing: true,
+          analysisError: null,
+          _pendingToolCalls: 0,
+          _runFinishedProcessed: false,
+          reasoningSteps: [...session.reasoningSteps, resumeStep],
+          updatedAt: Date.now(),
+        };
+      }
+      return {
+        ...base,
+        sessionStatus: 'running',
+        reasoningSteps: [],
+        finalTrade: null,
+        aiPlan: null,
+        isAnalyzing: true,
+        analysisError: null,
+        _pendingToolCalls: 0,
+        _runFinishedProcessed: false,
+        updatedAt: Date.now(),
+      };
+    }
+    case 'REASONING':
+    case 'TEXT_MESSAGE': {
+      const content = data?.content || '';
+      if (!content) return session;
+      return {
+        ...session,
+        reasoningSteps: [...session.reasoningSteps, { id: _newStepId(), type: 'message', content, timestamp: Date.now() }],
+        updatedAt: Date.now(),
+      };
+    }
+    case 'BEST_CURRENT_READ': {
+      const bias = (data?.bias as string) || 'neutral';
+      const why = (data?.why_standing_aside as string) || '';
+      const levelsRaw = (data?.levels && typeof data.levels === 'object') ? (data.levels as Record<string, unknown>) : {};
+      const levelStr = Object.entries(levelsRaw)
+        .filter(([, v]) => typeof v === 'number' && Number.isFinite(v as number))
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(' · ');
+      const lines = [
+        `**📍 Best Current Read — bias: ${bias}**`,
+        levelStr ? `Key levels: ${levelStr}` : '',
+        why ? `Read: ${why}` : '',
+      ].filter(Boolean);
+      return {
+        ...session,
+        reasoningSteps: [...session.reasoningSteps, { id: _newStepId(), type: 'message', content: lines.join('\n'), timestamp: Date.now() }],
+        updatedAt: Date.now(),
+      };
+    }
+    case 'VERIFICATION_STEP': {
+      const check = (data?.check as string) || (data?.tool as string) || 'check';
+      const outcome = (data?.outcome as string) || (data?.status as string) || '';
+      const detail = (data?.content as string) || (data?.detail as string) || '';
+      const body = [outcome, detail].filter(Boolean).join(' — ');
+      return {
+        ...session,
+        reasoningSteps: [...session.reasoningSteps, { id: _newStepId(), type: 'message', content: `**Verification — ${check}${body ? `: ${body}` : ''}**`, timestamp: Date.now() }],
+        updatedAt: Date.now(),
+      };
+    }
+    case 'DECISION': {
+      const action = (data?.action as string) || (data?.decision as string) || '';
+      const convictionRaw = data?.conviction_score ?? data?.conviction;
+      const conviction = typeof convictionRaw === 'number' && Number.isFinite(convictionRaw) ? convictionRaw : undefined;
+      const rationale = (data?.rationale as string) || (data?.setup_validation as string) || (data?.thesis as string) || '';
+      const executionPlan = (data?.execution_plan as string) || '';
+      const summaryLines = [
+        `**Decision${action ? `: ${action}` : ''}**`,
+        conviction !== undefined ? `Conviction: ${conviction}/100` : '',
+        rationale ? `Rationale: ${rationale}` : '',
+        executionPlan ? `Plan: ${executionPlan}` : '',
+      ].filter(Boolean);
+      const decisionPlan: AiExecutionPlan | null = (conviction !== undefined || rationale || executionPlan)
+        ? { conviction_score: conviction ?? 75, setup_validation: rationale, execution_plan: executionPlan }
+        : null;
+      return {
+        ...session,
+        reasoningSteps: [...session.reasoningSteps, { id: _newStepId(), type: 'message', content: summaryLines.join('\n'), timestamp: Date.now() }],
+        finalTrade: session.finalTrade ?? decisionPlan,
+        aiPlan: session.aiPlan ?? decisionPlan,
+        updatedAt: Date.now(),
+      };
+    }
+    case 'TOOL_CALL_START': {
+      const toolName = data?.tool || '';
+      if (!toolName) return session;
+      const isWatching = toolName === 'watch_price_condition';
+      return {
+        ...session,
+        reasoningSteps: [...session.reasoningSteps, { id: _newStepId(), type: 'tool_start', toolName, args: data?.args, content: `> Executing tool: ${toolName}...`, timestamp: Date.now() }],
+        sessionStatus: isWatching ? 'watching' : session.sessionStatus,
+        _pendingToolCalls: session._pendingToolCalls + 1,
+        updatedAt: Date.now(),
+      };
+    }
+    case 'TOOL_CALL_END': {
+      const toolName = data?.tool || '';
+      if (!toolName) return session;
+      return {
+        ...session,
+        reasoningSteps: [...session.reasoningSteps, { id: _newStepId(), type: 'tool_end', toolName, content: `✔ Tool ${toolName} completed successfully.`, timestamp: Date.now() }],
+        _pendingToolCalls: Math.max(0, session._pendingToolCalls - 1),
+        updatedAt: Date.now(),
+      };
+    }
+    case 'RUN_FINISHED': {
+      if (session._runFinishedProcessed) return session;
+      let s = session;
+      if (s._pendingToolCalls > 0) s = { ...s, _pendingToolCalls: 0 };
+      const accumulatedText = s.reasoningSteps.filter((step) => step.type === 'message').map((step) => step.content).join('');
+      const tradePlan = extractFinalTrade(accumulatedText);
+      if (data?.status === 'paused') {
+        return { ...s, sessionStatus: 'watching', isAnalyzing: false, _runFinishedProcessed: true, updatedAt: Date.now() };
+      }
+      return {
+        ...s,
+        sessionStatus: s.sessionStatus === 'error' ? 'error' : 'complete',
+        finalTrade: tradePlan ?? s.finalTrade,
+        aiPlan: tradePlan ?? s.aiPlan,
+        isAnalyzing: false,
+        _runFinishedProcessed: true,
+        updatedAt: Date.now(),
+      };
+    }
+    case 'ERROR': {
+      const errorMsg = data?.error || 'Unknown streaming error';
+      return { ...session, sessionStatus: 'error', isAnalyzing: false, analysisError: errorMsg, _runFinishedProcessed: true, updatedAt: Date.now() };
+    }
+    default:
+      return session;
+  }
+}
+
 export const useQuantStore = create<QuantStore>((set, get) => ({
   consensusData: null,
   consensusCache: {},
@@ -424,6 +729,16 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
   finalTrade: null,
   _pendingToolCalls: 0,
   _runFinishedProcessed: false,
+
+  // ── Per-symbol session persistence ───────────────────────────────
+  sessionsByKey: {},
+  activeViewKey: null,
+  _streamingKey: null,
+  _threadToKey: {},
+
+  // ── Model provider selection ─────────────────────────────────────
+  selectedModel: '',
+  setSelectedModel: (modelId: string) => set({ selectedModel: modelId }),
 
   // ── Trade Q&A State ──────────────────────────────────────────────
   currentThreadId: null,
@@ -601,49 +916,55 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
   ) => {
     const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     const activeMode = mode || 'FIND';
-    console.log(`[QuantStore] ▶ Deep analysis START symbol=${symbol} mode=${activeMode} ts=${new Date().toISOString()}`);
-    
-    // Clear terminal state and set running status
-    set({
-      sessionStatus: 'running',
-      reasoningSteps: [],
-      finalTrade: null,
-      aiPlan: null,
-      isAnalyzing: true,
-      analysisError: null,
-      _pendingToolCalls: 0,
-      _runFinishedProcessed: false,
-      multiTfPatterns: null,
-      isFetchingPatterns: true,
-      // A fresh analysis invalidates any prior Q&A transcript / thread id —
-      // the new run will re-capture currentThreadId from its RUN_STARTED.
-      currentThreadId: null,
-      qaMessages: [],
-      qaStatus: 'idle',
-      _qaRunFinishedProcessed: false,
-    });
 
-    // Trigger multi-timeframe chart patterns fetch in parallel
-    get().fetchMultiTfPatterns(symbol);
-
-    // Force-refresh sentiment with latest news before LLM analysis
-    try {
-      await get().refreshSentimentForSymbol(symbol);
-    } catch {
-      console.warn('[QuantStore] Sentiment refresh failed, continuing with analysis...');
-    }
-
-    // Read the active timeframe AND the active workspace profile from the trade
-    // store for AI context injection. The profile (INTRADAY / SWING / INVESTOR /
-    // FNO) tells the agent which data domain and analysis horizon the user is in,
-    // so an F&O run prioritizes options/futures positioning and an intraday run
-    // stays on the short-horizon spot microstructure.
+    // Read the active timeframe AND workspace profile up front so we can key the
+    // session by BOTH symbol and profile (INTRADAY / SWING / INVESTOR / FNO).
+    // The same symbol in two profiles is a distinct analysis, so each persists
+    // independently. The profile also tells the agent which data domain to lead
+    // with; the F&O expiry is only meaningful on an FNO run.
     const { useTradeStore } = await import('./useTradeStore');
     const activeTimeframe = useTradeStore.getState().activeTimeframe;
     const activeProfile = useTradeStore.getState().activeProfile;
-    // The F&O section's selected expiry (ISO "YYYY-MM-DD", '' => nearest). Only
-    // meaningful on an FNO-profile run; the agent ignores it otherwise.
     const fnoExpiry = useTradeStore.getState().fnoExpiry;
+    const runKey = _sessionKey(symbol, activeProfile);
+    console.log(`[QuantStore] ▶ Deep analysis START key=${runKey} mode=${activeMode} tf=${activeTimeframe} ts=${new Date().toISOString()}`);
+
+    // Initialize a FRESH running session under this (symbol, profile) key. It
+    // becomes both the streaming target (so its events route here) and the
+    // active view. Every other session — other symbols AND other profiles of
+    // this symbol — is left untouched, so no in-flight run is ever wiped. The
+    // flat top-level fields mirror this new session.
+    const freshSession: QuantSession = {
+      ...blankSession(),
+      sessionStatus: 'running',
+      isAnalyzing: true,
+      mode: activeMode === 'VERIFY' ? 'VERIFY' : 'FIND',
+      updatedAt: Date.now(),
+    };
+    set((state) => ({
+      _streamingKey: runKey,
+      activeViewKey: runKey,
+      sessionsByKey: { ...state.sessionsByKey, [runKey]: freshSession },
+      ...projectSession(freshSession),
+      // multi-TF patterns are cached per-symbol separately; clear the view while
+      // the parallel fetch below refreshes them.
+      multiTfPatterns: null,
+      isFetchingPatterns: true,
+    }));
+
+    // Trigger multi-timeframe chart patterns fetch in parallel (non-blocking).
+    get().fetchMultiTfPatterns(symbol);
+
+    // Refresh the frontend sentiment panel in parallel — do NOT await it. The
+    // agent fetches its own news via get_news_context, so blocking the run start
+    // on the frontend sentiment refresh only delayed the first SSE events from
+    // appearing after the user hit "Find Quant Trade". Fire-and-forget instead so
+    // the agent is invoked immediately and the glass-box transcript streams in
+    // with minimal latency.
+    get().refreshSentimentForSymbol(symbol).catch(() => {
+      console.warn('[QuantStore] Sentiment refresh failed, continuing with analysis...');
+    });
+
     console.log(`[QuantStore] → AI context: timeframe=${activeTimeframe} profile=${activeProfile} fnoExpiry=${fnoExpiry || '(nearest)'}`);
 
     try {
@@ -658,6 +979,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
           timeframe: activeTimeframe,
           profile: activeProfile,
           fnoExpiry,
+          model: get().selectedModel || null,
           manualTrade: manualTrade ? {
             side: manualTrade.side,
             entry: manualTrade.entry,
@@ -674,27 +996,45 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
         `ipc_ms=${Math.round(tDone - tInvoke)} total_ms=${Math.round(tDone - t0)}`
       );
 
-      // Bug 2 fix: Safety timeout — if isAnalyzing is still true after 120s,
-      // the SSE stream silently failed. Auto-reset to prevent infinite spinner.
+      // Bug 2 fix: Safety timeout — if THIS run's session is still 'running'
+      // after 120s, the SSE stream silently failed. Auto-reset ONLY this run's
+      // session (by key), never whichever session happens to be on screen, so
+      // switching symbols/modes cannot trip another session's timeout and a
+      // healthy background run is never touched.
       setTimeout(() => {
         const state = get();
-        if (state.isAnalyzing && state.sessionStatus === 'running') {
-          console.warn('[QuantStore] ⚠ Safety timeout: isAnalyzing stuck for 120s. Auto-resetting.');
-          set({
+        const sess = state.sessionsByKey[runKey];
+        if (sess && sess.isAnalyzing && sess.sessionStatus === 'running') {
+          console.warn(`[QuantStore] ⚠ Safety timeout: session ${runKey} stuck for 120s. Auto-resetting.`);
+          const timedOut: QuantSession = {
+            ...sess,
             isAnalyzing: false,
             sessionStatus: 'error',
             analysisError: 'Analysis timed out after 120 seconds. The Python agent server may be unreachable or the LLM request stalled. Please retry.',
-          });
+            updatedAt: Date.now(),
+          };
+          set((s) => ({
+            sessionsByKey: { ...s.sessionsByKey, [runKey]: timedOut },
+            ...(s.activeViewKey === runKey ? projectSession(timedOut) : {}),
+          }));
         }
       }, 120_000);
     } catch (err) {
       const tDone = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       const message = err instanceof Error ? err.message : String(err);
       console.error(
-        `[QuantStore] ✘ Deep analysis FAIL symbol=${symbol} ` +
+        `[QuantStore] ✘ Deep analysis FAIL key=${runKey} ` +
         `total_ms=${Math.round(tDone - t0)} message=${message}`
       );
-      set({ isAnalyzing: false, sessionStatus: 'error', analysisError: message });
+      // Error ONLY this run's session (by key), mirroring to the view if active.
+      set((s) => {
+        const sess = s.sessionsByKey[runKey] ?? blankSession();
+        const errored: QuantSession = { ...sess, isAnalyzing: false, sessionStatus: 'error', analysisError: message, updatedAt: Date.now() };
+        return {
+          sessionsByKey: { ...s.sessionsByKey, [runKey]: errored },
+          ...(s.activeViewKey === runKey ? projectSession(errored) : {}),
+        };
+      });
     }
   },
 
@@ -710,6 +1050,45 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     isFetchingPatterns: false,
   }),
 
+  activateSymbolSession: (symbol: string, profile: string) => {
+    const st = get();
+    const key = _sessionKey(symbol, profile);
+    if (st.activeViewKey === key) return;
+    const next: Record<string, QuantSession> = { ...st.sessionsByKey };
+    // Snapshot the outgoing session's live top-level state so any Q&A or late
+    // updates made while it was on screen are preserved.
+    if (st.activeViewKey) {
+      const prev = next[st.activeViewKey] ?? blankSession();
+      next[st.activeViewKey] = {
+        ...prev,
+        sessionStatus: st.sessionStatus,
+        reasoningSteps: st.reasoningSteps,
+        finalTrade: st.finalTrade,
+        aiPlan: st.aiPlan,
+        analysisError: st.analysisError,
+        isAnalyzing: st.isAnalyzing,
+        _pendingToolCalls: st._pendingToolCalls,
+        _runFinishedProcessed: st._runFinishedProcessed,
+        currentThreadId: st.currentThreadId,
+        qaMessages: st.qaMessages,
+        qaStatus: st.qaStatus,
+        _qaRunFinishedProcessed: st._qaRunFinishedProcessed,
+        updatedAt: Date.now(),
+      };
+    }
+    const target = next[key] ?? blankSession();
+    // Restore the symbol's cached multi-TF patterns from the module cache
+    // (keyed by symbol; profile-independent) so the patterns panel matches.
+    const cachedPatterns = multiTfCache.get(symbol.toUpperCase())?.data ?? null;
+    set({
+      sessionsByKey: next,
+      activeViewKey: key,
+      ...projectSession(target),
+      multiTfPatterns: cachedPatterns,
+      isFetchingPatterns: false,
+    });
+  },
+
   handleStreamEvent: (payload: StreamEventPayload) => {
     if (!payload || !payload.event) return;
 
@@ -718,296 +1097,59 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
 
     console.log(`[QuantStore] 📥 Stream event: ${event}`, data);
 
-    switch (event) {
-      case 'RUN_STARTED': {
-        // Capture the analysis thread_id so post-analysis Q&A turns can reuse
-        // it (the Python service grounds Q&A in this thread's persisted
-        // Session_Analysis_Context).
-        const startedThreadId = data?.thread_id;
-        if (startedThreadId) {
-          set({ currentThreadId: startedThreadId });
-        }
-
-        // If we're resuming from a 'watching' state, DON'T clear the existing
-        // reasoning steps — the user needs the full analysis context from the
-        // original run. Only reset the guard flag so the resumed RUN_FINISHED
-        // will be processed.
-        const currentStatus = get().sessionStatus;
-        if (currentStatus === 'watching') {
-          const resumeStep = {
-            id: `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            type: 'message',
-            // The run may resume on a target reach, an invalidation, OR a heartbeat
-            // pulse — RUN_STARTED does not carry which. Stay neutral rather than
-            // asserting the target was met; the following events (invalidation
-            // notice / Best_Current_Read / decision) state exactly what happened.
-            content: '\n---\n### Resuming Analysis — Fresh Market Data\nThe watcher woke this run. Re-checking the setup with the latest data...\n---\n',
-            timestamp: Date.now()
-          };
-          set((state) => ({
-            sessionStatus: 'running',
-            isAnalyzing: true,
-            analysisError: null,
-            _pendingToolCalls: 0,
-            _runFinishedProcessed: false,
-            reasoningSteps: [...state.reasoningSteps, resumeStep],
-          }));
-        } else {
-          set({
-            sessionStatus: 'running',
-            reasoningSteps: [],
-            finalTrade: null,
-            aiPlan: null,
-            isAnalyzing: true,
-            analysisError: null,
-            _pendingToolCalls: 0,
-            _runFinishedProcessed: false,
-          });
-        }
-        break;
-      }
-      // The hardened backend emits the agent's chain-of-thought as REASONING
-      // events (TEXT_MESSAGE retained for backward compatibility). Both render
-      // as a `message` step so the glass-box transcript is never blank.
-      case 'REASONING':
-      case 'TEXT_MESSAGE': {
-        const content = data?.content || '';
-        if (content) {
-          const step = {
-            id: `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            type: 'message',
-            content,
-            timestamp: Date.now()
-          };
-          set((state) => ({
-            reasoningSteps: [...state.reasoningSteps, step]
-          }));
-        }
-        break;
-      }
-      // Interim Best_Current_Read (Adaptive Opportunity Engine) — a non-committal
-      // read surfaced on a stand-aside HOLD and, when the Heartbeat_Monitor is
-      // enabled, on each mid-wait heartbeat pulse. Rendered inline so a hunt that
-      // takes no trade (or is still waiting) still shows the current bias, the key
-      // levels, and why it is standing aside — instead of the box appearing frozen.
-      case 'BEST_CURRENT_READ': {
-        const bias = (data?.bias as string) || 'neutral';
-        const why = (data?.why_standing_aside as string) || '';
-        const levelsRaw = (data?.levels && typeof data.levels === 'object')
-          ? (data.levels as Record<string, unknown>)
-          : {};
-        const levelStr = Object.entries(levelsRaw)
-          .filter(([, v]) => typeof v === 'number' && Number.isFinite(v as number))
-          .map(([k, v]) => `${k}: ${v}`)
-          .join(' · ');
-        const lines = [
-          `**📍 Best Current Read — bias: ${bias}**`,
-          levelStr ? `Key levels: ${levelStr}` : '',
-          why ? `Read: ${why}` : '',
-        ].filter(Boolean);
-        const step = {
-          id: `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          // Rendered via the 'message' branch (like VERIFICATION_STEP / DECISION);
-          // the bold "📍 Best Current Read" header keeps it visually distinct.
-          type: 'message',
-          content: lines.join('\n'),
-          timestamp: Date.now(),
-        };
-        set((state) => ({
-          reasoningSteps: [...state.reasoningSteps, step],
-        }));
-        break;
-      }
-      // Glass-box verification events — each surfaces one self-check the agent
-      // ran (e.g. risk/reward validation, data-sufficiency gate) and its
-      // outcome. Rendered inline so the user can audit the decision trail.
-      case 'VERIFICATION_STEP': {
-        const check = (data?.check as string) || (data?.tool as string) || 'check';
-        const outcome = (data?.outcome as string) || (data?.status as string) || '';
-        const detail = (data?.content as string) || (data?.detail as string) || '';
-        const body = [outcome, detail].filter(Boolean).join(' — ');
-        const step = {
-          id: `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          type: 'message',
-          content: `**Verification — ${check}${body ? `: ${body}` : ''}**`,
-          timestamp: Date.now()
-        };
-        set((state) => ({
-          reasoningSteps: [...state.reasoningSteps, step]
-        }));
-        break;
-      }
-      // The terminal DECISION event carries the structured verdict. We render a
-      // human-readable summary into the transcript AND seed finalTrade/aiPlan
-      // from it as a fallback, so the plan panel populates even if the model
-      // never emitted a parseable JSON block in its free-text reasoning.
-      case 'DECISION': {
-        const action = (data?.action as string) || (data?.decision as string) || '';
-        const convictionRaw = data?.conviction_score ?? data?.conviction;
-        const conviction = typeof convictionRaw === 'number' && Number.isFinite(convictionRaw)
-          ? convictionRaw
-          : undefined;
-        const rationale = (data?.rationale as string)
-          || (data?.setup_validation as string)
-          || (data?.thesis as string)
-          || '';
-        const executionPlan = (data?.execution_plan as string) || '';
-
-        const summaryLines = [
-          `**Decision${action ? `: ${action}` : ''}**`,
-          conviction !== undefined ? `Conviction: ${conviction}/100` : '',
-          rationale ? `Rationale: ${rationale}` : '',
-          executionPlan ? `Plan: ${executionPlan}` : '',
-        ].filter(Boolean);
-
-        const step = {
-          id: `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          type: 'message',
-          content: summaryLines.join('\n'),
-          timestamp: Date.now()
-        };
-
-        // Build a fallback plan from the structured decision payload.
-        const decisionPlan: AiExecutionPlan | null =
-          (conviction !== undefined || rationale || executionPlan)
-            ? {
-                conviction_score: conviction ?? 75,
-                setup_validation: rationale,
-                execution_plan: executionPlan,
-              }
-            : null;
-
-        set((state) => ({
-          reasoningSteps: [...state.reasoningSteps, step],
-          // Only seed when not already populated — never clobber a richer
-          // plan already parsed from the model's JSON output.
-          finalTrade: state.finalTrade ?? decisionPlan,
-          aiPlan: state.aiPlan ?? decisionPlan,
-        }));
-        break;
-      }
-      case 'TOOL_CALL_START': {
-        const toolName = data?.tool || '';
-        if (toolName) {
-          const step = {
-            id: `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            type: 'tool_start',
-            toolName,
-            args: data?.args,
-            content: `> Executing tool: ${toolName}...`,
-            timestamp: Date.now()
-          };
-          const isWatching = toolName === 'watch_price_condition';
-          set((state) => ({
-            reasoningSteps: [...state.reasoningSteps, step],
-            sessionStatus: isWatching ? 'watching' : state.sessionStatus,
-            _pendingToolCalls: state._pendingToolCalls + 1,
-          }));
-        }
-        break;
-      }
-      case 'TOOL_CALL_END': {
-        const toolName = data?.tool || '';
-        if (toolName) {
-          const step = {
-            id: `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            type: 'tool_end',
-            toolName,
-            content: `✔ Tool ${toolName} completed successfully.`,
-            timestamp: Date.now()
-          };
-          set((state) => ({
-            reasoningSteps: [...state.reasoningSteps, step],
-            _pendingToolCalls: Math.max(0, state._pendingToolCalls - 1),
-          }));
-        }
-        break;
-      }
-      case 'RUN_FINISHED': {
-        // Guard: ignore duplicate RUN_FINISHED events
-        if (get()._runFinishedProcessed) {
-          console.log('[QuantStore] ⚠ Duplicate RUN_FINISHED ignored.');
-          break;
-        }
-
-        // Bug 3 fix: If there are pending tool calls but the server says
-        // the run is finished, those tool calls are done — the TOOL_CALL_END
-        // events were lost or never emitted. Force-reset and process normally.
-        if (get()._pendingToolCalls > 0) {
-          console.warn(`[QuantStore] ⚠ RUN_FINISHED received with ${get()._pendingToolCalls} pending tool(s) — force-resetting (server confirmed completion).`);
-          set({ _pendingToolCalls: 0 });
-        }
-
-        // Concatenate all text messages to parse final plan
-        const accumulatedText = get().reasoningSteps
-          .filter(s => s.type === 'message')
-          .map(s => s.content)
-          .join('');
-
-        // Only accept a structured plan that the model actually emitted.
-        // We do NOT synthesize a plan (no fabricated conviction score) when the
-        // model failed to return one — the terminal relies exclusively on real
-        // model output. If nothing parseable was produced, finalTrade stays null
-        // and the reasoning transcript is what the user sees.
-        const tradePlan = extractFinalTrade(accumulatedText);
-
-        // Handle paused (watching) status from Python agent
-        const runStatus = data?.status;
-        if (runStatus === 'paused') {
-          set({
-            sessionStatus: 'watching',
-            isAnalyzing: false,
-            _runFinishedProcessed: true,
-          });
-          break;
-        }
-
-        set((state) => ({
-          // Never downgrade an error to 'complete' — if an ERROR already
-          // finalized this run, keep it (defense in depth alongside the
-          // _runFinishedProcessed guard set in the ERROR case).
-          sessionStatus: state.sessionStatus === 'error' ? 'error' : 'complete',
-          // Prefer a freshly-parsed JSON plan, but fall back to whatever was
-          // already set (e.g. seeded by a DECISION event) so the plan panel is
-          // never blanked out at the end of a run.
-          finalTrade: tradePlan ?? state.finalTrade,
-          aiPlan: tradePlan ?? state.aiPlan, // Synchronize with existing UI
-          isAnalyzing: false,
-          _runFinishedProcessed: true,
-        }));
-        break;
-      }
-      case 'ERROR': {
-        const errorMsg = data?.error || 'Unknown streaming error';
-        // Mark the run finalized so a trailing *synthetic* RUN_FINISHED emitted
-        // by the Rust bridge (which fires whenever the Python stream ends without
-        // its own RUN_FINISHED — including the error path) is treated as a
-        // duplicate and ignored, preserving the error state instead of flipping
-        // it to 'complete'.
-        set({
-          sessionStatus: 'error',
-          isAnalyzing: false,
-          analysisError: errorMsg,
-          _runFinishedProcessed: true,
-        });
-        break;
-      }
-      default:
-        break;
+    // ── Route this event to the SESSION KEY its run belongs to ─────────────
+    // Every event now carries the run's thread_id (backend stamps them all), so
+    // we resolve the session key from the thread→key map first. That makes
+    // concurrent runs across different symbols/profiles fully independent — each
+    // run's events land in its own (symbol::profile) session regardless of what
+    // is on screen. Fallbacks: the current streaming key, then the viewed key.
+    // Events are only mirrored to the flat top-level fields when the run is the
+    // one currently displayed, so a background run keeps filling its session
+    // while the user looks at (or analyzes) something else.
+    const st = get();
+    const threadId = data?.thread_id;
+    let runKey: string | null = null;
+    if (threadId && st._threadToKey[threadId]) {
+      runKey = st._threadToKey[threadId];
+    } else if (event === 'RUN_STARTED') {
+      // First event of a run: bind its thread to the current streaming/viewed key.
+      runKey = st._streamingKey || st.activeViewKey;
+    } else {
+      runKey = st._streamingKey || st.activeViewKey;
     }
+    if (!runKey) return;
+
+    const current = st.sessionsByKey[runKey] ?? blankSession();
+    const nextSession = applyStreamEvent(current, payload);
+    const threadMapUpdate = (threadId && !st._threadToKey[threadId])
+      ? { [threadId]: runKey }
+      : {};
+
+    set((state) => ({
+      _streamingKey: runKey,
+      sessionsByKey: { ...state.sessionsByKey, [runKey as string]: nextSession },
+      _threadToKey: { ...state._threadToKey, ...threadMapUpdate },
+      // Mirror to the flat top-level fields only when the run's session is the
+      // one currently on screen.
+      ...(runKey === state.activeViewKey ? projectSession(nextSession) : {}),
+    }));
+    return;
+
   },
 
-  resetTerminal: () => set({
-    sessionStatus: 'idle',
-    reasoningSteps: [],
-    finalTrade: null,
-    aiPlan: null,
-    analysisError: null,
-    _pendingToolCalls: 0,
-    _runFinishedProcessed: false,
-    multiTfPatterns: null,
-    isFetchingPatterns: false,
-  }),
+  resetTerminal: () => {
+    // Reset ONLY the active view symbol's session (and its top-level mirror);
+    // other symbols' persisted sessions are preserved.
+    const st = get();
+    const fresh = blankSession();
+    const sym = st.activeViewKey;
+    set((state) => ({
+      ...(sym ? { sessionsByKey: { ...state.sessionsByKey, [sym]: fresh } } : {}),
+      ...projectSession(fresh),
+      multiTfPatterns: null,
+      isFetchingPatterns: false,
+    }));
+  },
 
   clearQa: () => set({
     qaMessages: [],
@@ -1144,7 +1286,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       });
 
       // Invoke the proxy command (camelCase args → snake_case Rust params).
-      await tauriInvoke<void>('ask_trade_question', { threadId, question: trimmed });
+      await tauriInvoke<void>('ask_trade_question', { threadId, question: trimmed, model: get().selectedModel || null });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[QuantStore] ✘ askQuestion FAIL: ${message}`);
@@ -1166,11 +1308,20 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     const sym = symbol.toUpperCase();
     const now = Date.now();
 
+    // Only push patterns into the on-screen fields when the fetched symbol is
+    // the one currently being viewed — so a background run's pattern fetch for
+    // symbol A can never overwrite the patterns you see while viewing symbol B.
+    // The cache is always populated regardless, so returning to A shows them.
+    const isActiveSymbol = () => {
+      const key = get().activeViewKey;
+      return !!key && key.split('::')[0] === sym;
+    };
+
     // Serve a fresh cache hit instantly — no DB fan-out, no re-detection.
     const cached = multiTfCache.get(sym);
     if (cached && now - cached.fetchedAt < MULTI_TF_TTL_MS) {
       console.log(`[QuantStore] ✔ MultiTF CACHE HIT symbol=${sym} age=${Math.round((now - cached.fetchedAt) / 1000)}s`);
-      set({ multiTfPatterns: cached.data, isFetchingPatterns: false });
+      if (isActiveSymbol()) set({ multiTfPatterns: cached.data, isFetchingPatterns: false });
       return;
     }
 
@@ -1183,15 +1334,17 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     console.log(`[QuantStore] ▶ fetchMultiTfPatterns starting for symbol=${sym}`);
     multiTfInFlight.add(sym);
     // Keep any stale cached patterns visible instead of flashing empty while we refetch.
-    set((state) => ({ isFetchingPatterns: true, multiTfPatterns: cached?.data ?? state.multiTfPatterns ?? null }));
+    if (isActiveSymbol()) {
+      set((state) => ({ isFetchingPatterns: true, multiTfPatterns: cached?.data ?? state.multiTfPatterns ?? null }));
+    }
     try {
       const data = await tauriInvoke<MultiTfChartPatterns[]>('get_multi_timeframe_chart_patterns', { symbol });
       multiTfCache.set(sym, { data, fetchedAt: Date.now() });
       console.log(`[QuantStore] ✔ fetchMultiTfPatterns completed symbol=${sym} (${data.length} timeframes)`);
-      set({ multiTfPatterns: data, isFetchingPatterns: false });
+      if (isActiveSymbol()) set({ multiTfPatterns: data, isFetchingPatterns: false });
     } catch (err) {
       console.error(`[QuantStore] ✘ fetchMultiTfPatterns failed for ${sym}:`, err);
-      set({ isFetchingPatterns: false, multiTfPatterns: multiTfCache.get(sym)?.data ?? [] });
+      if (isActiveSymbol()) set({ isFetchingPatterns: false, multiTfPatterns: multiTfCache.get(sym)?.data ?? [] });
     } finally {
       multiTfInFlight.delete(sym);
     }
