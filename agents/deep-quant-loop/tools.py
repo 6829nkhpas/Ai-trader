@@ -2051,7 +2051,23 @@ def get_forecast(symbol: str, timeframe: str, proposed_direction: str = "") -> d
         #    AND the minimum-candle gate, plus a margin so excluding any
         #    non-finite candles still leaves enough to forecast.
         required = max(config.min_candles, config.largest_lookback)
-        limit = required + RS_FETCH_MARGIN
+        # The forecaster conditions its drift/volatility blend on the market
+        # regime (regime.classify_regime over these SAME candles). The regime
+        # classifier needs a larger window (its min-candle gate + percentile
+        # window) than the forecaster's own estimates, so fetch enough for BOTH.
+        # Otherwise the internal regime reads 'unavailable' — recorded as
+        # regime_trend_state="unavailable" inside the forecast — even when the
+        # standalone get_market_regime (which fetches the regime-sized window)
+        # succeeds on the same symbol/timeframe.
+        try:
+            _regime_cfg = regime.resolve_regime_config()
+            _regime_required = (
+                max(_regime_cfg.min_candles, _regime_cfg.largest_lookback)
+                + _regime_cfg.vol_pctl_window
+            )
+        except Exception:
+            _regime_required = 0
+        limit = max(required, _regime_required) + RS_FETCH_MARGIN
         candles, candle_reason = _fetch_candles_for_rs(symbol, timeframe, limit)
         if candles is None:
             # Candle retrieval failed/timed out -> Unavailable_Marker citing the

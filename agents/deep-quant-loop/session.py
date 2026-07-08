@@ -33,10 +33,46 @@ from __future__ import annotations
 import math
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from datetime import time as dtime
 from typing import Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+# ── Fixed-offset fallbacks for when the tzdata database is unavailable ─────────
+# On some runtimes (notably Windows without the ``tzdata`` pip package) the IANA
+# zoneinfo database is absent, so ``ZoneInfo("Asia/Kolkata")`` raises even for a
+# perfectly valid timestamp — which used to surface as a misleading "invalid
+# timestamp" Unavailable_Marker. To make session classification robust
+# regardless of whether tzdata is installed, we fall back to a fixed UTC offset
+# for the common market timezones. NSE's Asia/Kolkata is a permanent +5:30 with
+# no daylight-saving transitions, so the fixed offset is EXACT (not an
+# approximation). Unknown zones without tzdata fall back to UTC as a last resort.
+_FIXED_TZ_OFFSETS = {
+    "Asia/Kolkata": timedelta(hours=5, minutes=30),
+    "Asia/Calcutta": timedelta(hours=5, minutes=30),
+    "UTC": timedelta(0),
+    "Etc/UTC": timedelta(0),
+}
+
+
+def _resolve_tzinfo(timezone_name: str):
+    """Resolve a ``tzinfo`` for the configured timezone.
+
+    Prefers the precise IANA zone via ``ZoneInfo``; when the tzdata database is
+    unavailable (ZoneInfo raises), falls back to a fixed-offset ``timezone`` for
+    a known market zone, or UTC as a last resort. This guarantees a usable
+    ``tzinfo`` for a valid timestamp even without tzdata, so a valid candle
+    timestamp is never misreported as invalid. Never raises.
+    """
+    try:
+        return ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        offset = _FIXED_TZ_OFFSETS.get(timezone_name)
+        if offset is not None:
+            return timezone(offset)
+        # Unknown zone and no tzdata: UTC keeps classification working (session
+        # boundaries may be shifted for a non-IST zone, but it never crashes).
+        return timezone.utc
 
 # ── Documented default parameters ─────────────────────────────────────────────
 # Applied whenever a parameter env var is unset / empty / unparseable / out of
@@ -281,11 +317,11 @@ def to_local_datetime(timestamp_ms, config: SessionConfig) -> Optional[datetime]
     """
     if not _is_finite_number(timestamp_ms):
         return None
-    try:
-        tz = ZoneInfo(config.timezone)
-    except (ZoneInfoNotFoundError, ValueError, OSError):
-        # A resolved config should always carry a loadable timezone, but guard
-        # defensively so this helper never raises (Requirement 3.1).
+    # Resolve a tzinfo that works with OR without the tzdata database (fixed
+    # offset fallback), so a valid timestamp is never misreported as invalid
+    # just because tzdata is missing from the runtime.
+    tz = _resolve_tzinfo(config.timezone)
+    if tz is None:  # pragma: no cover - _resolve_tzinfo always returns a tzinfo
         return None
     try:
         return datetime.fromtimestamp(timestamp_ms / 1000.0, tz=tz)
