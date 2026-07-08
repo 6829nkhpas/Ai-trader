@@ -1729,6 +1729,7 @@ pub async fn run_deep_quant_agent(
     timeframe: Option<String>,
     profile: Option<String>,
     fno_expiry: Option<String>,
+    model: Option<String>,
     manual_trade: Option<ManualTradeInfo>,
 ) -> Result<(), String> {
     let mode_str = mode.unwrap_or_else(|| "FIND".to_string());
@@ -1775,6 +1776,7 @@ pub async fn run_deep_quant_agent(
         "timeframe": timeframe,
         "profile": profile_str,
         "fno_expiry": fno_expiry,
+        "model": model,
         "manual_trade": manual_trade
     });
     
@@ -1900,14 +1902,17 @@ pub async fn ask_trade_question(
     app: tauri::AppHandle,
     thread_id: String,
     question: String,
+    model: Option<String>,
 ) -> Result<(), String> {
-    info!("[ask_trade_question] Starting Trade_QA_Mode proxy for thread={}", thread_id);
+    info!("[ask_trade_question] Starting Trade_QA_Mode proxy for thread={} model={:?}", thread_id, model);
 
     // Prepare the payload for Python FastAPI — reuse the SAME thread_id so the
-    // Q&A run grounds its answer in the persisted Session_Analysis_Context.
+    // Q&A run grounds its answer in the persisted Session_Analysis_Context. The
+    // optional model overrides the deployment default LLM for this Q&A turn.
     let payload = serde_json::json!({
         "thread_id": thread_id,
-        "question": question
+        "question": question,
+        "model": model
     });
 
     // Spawn the streaming reqwest client in the background, returning Ok(())

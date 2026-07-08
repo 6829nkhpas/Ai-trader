@@ -91,6 +91,10 @@ class RunRequest(BaseModel):
     # into the graph state so an FNO-profile run analyzes the exact expiry the user
     # is viewing (empty/None => the options engine's nearest available expiry).
     fno_expiry: Optional[str] = None
+    # Optional LLM model override chosen in the composer ('' / None => the
+    # deployment default LLM_MODEL). Threaded into the graph state so the run's
+    # model binding uses it (resolved against the same provider gateway).
+    model: Optional[str] = None
 
 class ResumeRequest(BaseModel):
     thread_id: str
@@ -103,6 +107,8 @@ class QARequest(BaseModel):
     # MemorySaver checkpointer (R18.1, R18.5) without re-running analysis.
     thread_id: str
     question: str
+    # Optional LLM model override for this Q&A turn ('' / None => default).
+    model: Optional[str] = None
 
 # ── SSE Generator ────────────────────────────────────────────────────────────
 
@@ -140,6 +146,14 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None)
                 # DECISION for the update, keeping TOOL_CALL_START ahead of its
                 # RESULT/END (R17.3) and surfacing events in step order (R17.4).
                 for name, payload in node_update_events(node_data):
+                    # Stamp EVERY event with the run's thread_id so a multi-run
+                    # frontend can route each event to the correct session even
+                    # when several symbols/profiles are analyzed concurrently
+                    # (only RUN_STARTED/RUN_FINISHED carried it before). Additive
+                    # and backward-compatible: consumers that ignore thread_id are
+                    # unaffected.
+                    if isinstance(payload, dict) and "thread_id" not in payload:
+                        payload = {**payload, "thread_id": thread_id}
                     yield format_sse(name, payload)
 
         # R17.2/R17.6: a completed or paused run ends with a single terminal
@@ -172,6 +186,7 @@ async def run_agent(payload: RunRequest):
         "timeframe": payload.timeframe,
         "profile": payload.profile,
         "fno_expiry": payload.fno_expiry,
+        "model": payload.model,
     }
     gen = event_generator(payload.thread_id, graph_input=initial_state)
     # Best-effort telemetry tee (passthrough; falls back to bare gen on any failure).
@@ -241,6 +256,7 @@ async def qa_agent(payload: QARequest):
     qa_input = {
         "messages": [("user", payload.question)],
         "mode": "QA",
+        "model": payload.model,
     }
     return StreamingResponse(
         event_generator(payload.thread_id, graph_input=qa_input),

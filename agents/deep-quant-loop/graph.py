@@ -210,6 +210,12 @@ class AgentState(TypedDict):
     # FNO profile directive so the agent analyzes the exact expiry the user is
     # viewing. ADDITIVE and Optional — only consulted on an FNO-profile run.
     fno_expiry: Optional[str]
+    # Optional LLM model override chosen in the UI composer ('' / None => the
+    # deployment default model). When set, the run's model binding uses it via
+    # `_build_profile_llm_for_model`, resolved against the same provider gateway
+    # as the default llm. ADDITIVE and Optional — a run that omits it uses the
+    # default binding, so legacy behaviour is unchanged.
+    model: Optional[str]
     # ── Deterministic loop-control state (Requirement 2) ──────────────────────
     # `decision` is the single authoritative completion signal. It is set ONLY
     # by a validated declare_trade (its structured args) or by the forced-HOLD
@@ -789,19 +795,65 @@ non_fno_tools = [
 non_fno_llm_with_tools = llm.bind_tools(non_fno_tools)
 
 
+# Cache of (model, profile-scope) -> tool-bound LLM for a user-selected model
+# override. Reuses the SAME api_key / base_url as the system ``llm`` (so a chosen
+# model string resolves when the deployment's LLM gateway serves it), and binds
+# the profile-appropriate tool set (full for F&O, options-excluded otherwise).
+_MODEL_PROFILE_LLM_CACHE: dict = {}
+
+
+def _build_profile_llm_for_model(model: str, is_fno: bool):
+    """Build (and cache) a tool-bound ChatOpenAI for a user-selected ``model``,
+    binding the F&O or non-F&O tool set to match the workspace. Degrades to the
+    default binding and NEVER raises if the client cannot be constructed.
+    """
+    scope = "fno" if is_fno else "nonfno"
+    key = (model, scope)
+    cached = _MODEL_PROFILE_LLM_CACHE.get(key)
+    if cached is not None:
+        return cached
+    tool_set = tools if is_fno else non_fno_tools
+    try:
+        role_llm = ChatOpenAI(
+            model=model,
+            openai_api_key=api_key,
+            openai_api_base=base_url,
+            temperature=0.2,
+            extra_body=_effort_extra_body(),
+            max_retries=int(_env_nonempty("LLM_MAX_RETRIES", default="4")),
+            timeout=float(_env_nonempty("LLM_TIMEOUT_SECS", default="90")),
+        )
+        bound = role_llm.bind_tools(tool_set)
+    except Exception as e:
+        print(
+            f"[Deep Quant] Could not build selected model {model!r}: {e}. "
+            f"Falling back to the default binding."
+        )
+        bound = llm_with_tools if is_fno else non_fno_llm_with_tools
+    _MODEL_PROFILE_LLM_CACHE[key] = bound
+    return bound
+
+
 def _llm_for_profile(state: "AgentState"):
-    """Select the model binding for the run's workspace profile.
+    """Select the model binding for the run's workspace profile (and optional
+    user-selected model override).
 
     The F&O workspace binds the FULL tool set (including `get_options_analytics`);
     every other workspace binds the set WITHOUT the F&O-only tools, so the agent
     can only pull options / F&O data when the operator is actually in the F&O
-    workspace. Falls back to the full binding only for the F&O profile; any
-    unset / unrecognized profile is treated as non-F&O (the safe default that
-    keeps the analysis on the active symbol). Never raises.
+    workspace. When the run carries a non-empty ``model`` override, a per-model
+    binding for the same profile scope is used; otherwise the default module
+    bindings are returned. Any unset / unrecognized profile is treated as
+    non-F&O (the safe default that keeps the analysis on the active symbol).
+    Never raises.
     """
     raw = state.get("profile") if isinstance(state, dict) else None
     key = raw.strip().upper() if isinstance(raw, str) and raw.strip() else "INTRADAY"
-    return llm_with_tools if key == "FNO" else non_fno_llm_with_tools
+    is_fno = key == "FNO"
+    model = state.get("model") if isinstance(state, dict) else None
+    if isinstance(model, str) and model.strip():
+        return _build_profile_llm_for_model(model.strip(), is_fno)
+    return llm_with_tools if is_fno else non_fno_llm_with_tools
 
 # Cache of read-only-bound role models keyed by (model_name, "readonly") so the
 # repeated Bull/Bear turns across rounds reuse one bound client instead of
@@ -3662,6 +3714,59 @@ def build_qa_context(state: AgentState) -> dict:
     )
 
     levels = record.get("levels")
+
+    # ── Fall back to the GATHERED tool data when the defensibility record is
+    #    absent or thin (R18.1). The defensibility record is only populated by a
+    #    committed declare_trade; when the run ended in a HOLD / stand-aside / no
+    #    trade (or every context tool was unavailable), that record is empty even
+    #    though the analysis tools DID return usable data into `messages`. Q&A
+    #    must still be able to answer about the S/R levels, patterns, multi-TF
+    #    trend, regime, relative strength, forecast, volume profile, options,
+    #    order flow, session, and news that were actually gathered. So each named
+    #    field prefers the recorded value and falls back to the latest tool
+    #    result, and the full gathered analysis is surfaced under
+    #    `gathered_analysis` as the ground truth the answer may cite.
+    def _first_present(*vals):
+        for v in vals:
+            if v not in (None, {}, []):
+                return v
+        return None
+
+    multi = results.get("get_multi_tf_trend")
+    multi = multi if isinstance(multi, dict) else {}
+
+    trend_1d = _first_present(record.get("trend_1d"), multi.get("trend_1d"))
+    multi_tf_bias = record.get("multi_tf_bias")
+    if not multi_tf_bias and multi:
+        multi_tf_bias = {
+            k: multi.get(k) for k in ("trend_1h", "trend_4h", "trend_1d") if k in multi
+        } or None
+
+    support_resistance = _first_present(
+        record.get("support_resistance"), results.get("get_support_resistance")
+    )
+
+    patterns = record.get("patterns")
+    if not patterns:
+        # Gather every high-confidence pattern seen across timeframes this run.
+        patterns = _collect_high_confidence_patterns(messages)
+
+    news_sentiment = record.get("news_sentiment")
+    if news_sentiment is None:
+        news = results.get("get_news_context")
+        if isinstance(news, dict):
+            news_sentiment = news.get("sentiment_summary") or news.get("label")
+
+    # The full latest-per-tool analysis payloads, so Q&A grounds in the real
+    # gathered data regardless of whether a trade was declared. `get_candles` is
+    # excluded from the embedded blob (raw OHLCV is bulky and re-fetchable); its
+    # presence is still reflected in `available_tool_results`.
+    gathered_analysis = {
+        name: payload
+        for name, payload in results.items()
+        if name != "get_candles"
+    }
+
     return {
         "has_declared_trade": has_declared_trade,
         "action": action,
@@ -3672,18 +3777,27 @@ def build_qa_context(state: AgentState) -> dict:
         "levels": levels if isinstance(levels, dict) else None,
         "risk_reward": record.get("risk_reward"),
         "volatility_basis": record.get("volatility_basis"),
-        "atr_14": record.get("atr_14"),
-        "trend_1d": record.get("trend_1d"),
-        "multi_tf_bias": record.get("multi_tf_bias"),
-        "support_resistance": record.get("support_resistance"),
-        "patterns": record.get("patterns") or [],
+        "atr_14": _first_present(
+            record.get("atr_14"),
+            (results.get("get_consensus_report") or {}).get("indicators", {}).get("atr_14")
+            if isinstance(results.get("get_consensus_report"), dict) else None,
+        ),
+        "trend_1d": trend_1d,
+        "multi_tf_bias": multi_tf_bias,
+        "support_resistance": support_resistance,
+        "patterns": patterns or [],
         "predictive_conflict": record.get("predictive_conflict"),
         "macro_trend_conflict": record.get("macro_trend_conflict"),
-        "news_sentiment": record.get("news_sentiment"),
+        "news_sentiment": news_sentiment,
         "defensibility_summary": record.get("summary"),
         # Which tools have already returned usable data this thread — the model
         # may re-call any of these (read-only) to fill a gap (R18.4).
         "available_tool_results": sorted(results.keys()),
+        # The actual latest data each Analysis_Tool returned this session (consensus
+        # indicators, regime, relative strength, forecast, volume profile, options,
+        # order flow, session, S/R, patterns, multi-TF trend). This is ground truth
+        # the Q&A answer may cite even when no trade was declared.
+        "gathered_analysis": gathered_analysis,
     }
 
 
@@ -3714,8 +3828,15 @@ def build_qa_system_prompt(context: dict) -> str:
     else:
         trade_clause = (
             "NO Declared_Trade exists for this session yet (the analysis ended in a "
-            "HOLD or no trade was committed). Answer using the available analysis "
-            "context, and explicitly state that no trade has been declared yet."
+            "HOLD, a stand-aside, or no trade was committed). This does NOT mean the "
+            "analysis is empty: the `gathered_analysis` block above holds the actual "
+            "data the tools returned this session (consensus indicators, market "
+            "regime, relative strength, forecast, volume profile, support/resistance, "
+            "chart patterns, multi-timeframe trend, order flow, session context, and "
+            "news). Answer the user's question from `gathered_analysis` and the other "
+            "recorded fields, cite the concrete values, and state that no trade has "
+            "been declared yet. Only say a specific datum is 'not recorded' if it is "
+            "genuinely absent from BOTH the recorded fields AND `gathered_analysis`."
         )
 
     return (
@@ -3726,9 +3847,13 @@ def build_qa_system_prompt(context: dict) -> str:
         "RECORDED SESSION ANALYSIS CONTEXT (the only ground truth you may cite):\n"
         f"{context_json}\n\n"
         "RULES:\n"
-        "1. Answer ONLY from the recorded context above. Ground every factual "
-        "claim (levels, RR, ATR, trend bias, patterns, sentiment) in that "
-        "context.\n"
+        "1. Answer ONLY from the recorded context above, which includes both the "
+        "committed-trade fields AND the `gathered_analysis` block (the real data "
+        "every Analysis_Tool returned this session). Ground every factual claim "
+        "(levels, RR, ATR, trend bias, patterns, sentiment, regime, relative "
+        "strength, forecast, volume profile, order flow, session, options) in that "
+        "context. Do NOT report a value as missing if it is present in "
+        "`gathered_analysis`.\n"
         f"2. {trade_clause}\n"
         "3. If the user asks something that is NOT in the context, you may call "
         "ONE relevant read-only market-data tool (get_consensus_report, "
@@ -3773,7 +3898,16 @@ def qa_node(state: AgentState):
     convo = flatten_prior_tool_history(convo)
     llm_messages = [SystemMessage(content=system_prompt)] + list(convo)
 
-    response = llm_with_tools.invoke(llm_messages)
+    # Honor a user-selected model override for the Q&A turn (full tool binding so
+    # read-only Analysis_Tools remain available; declare_trade / watch are
+    # refused downstream by qa_tool_node). Falls back to the default binding.
+    _qa_model = state.get("model")
+    _qa_llm = (
+        _build_profile_llm_for_model(_qa_model.strip(), is_fno=True)
+        if isinstance(_qa_model, str) and _qa_model.strip()
+        else llm_with_tools
+    )
+    response = _qa_llm.invoke(llm_messages)
 
     extraction = extract_tool_calls(response)
 
