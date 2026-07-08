@@ -7,6 +7,7 @@ import { useQuantStore } from '../../store/useQuantStore';
 
 import WatchingIndicator from './deep-quant/WatchingIndicator';
 import MarkdownRenderer, { parseInlineMarkdown } from './deep-quant/MarkdownRenderer';
+import QaMessages from './deep-quant/QaMessages';
 
 export default function AgentTerminal() {
   const reasoningSteps = useQuantStore((s) => s.reasoningSteps);
@@ -16,7 +17,12 @@ export default function AgentTerminal() {
   const analysisError = useQuantStore((s) => s.analysisError);
 
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
-  
+
+  // Track the inline Q&A conversation so the console auto-scrolls as questions
+  // are asked and answers stream in (the turns render inside this same log).
+  const qaMessages = useQuantStore((s) => s.qaMessages);
+  const qaStatus = useQuantStore((s) => s.qaStatus);
+
   const terminalEndRef = useRef<HTMLDivElement>(null);
   const [executed, setExecuted] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
@@ -30,7 +36,7 @@ export default function AgentTerminal() {
   // Auto-scroll to bottom of terminal when reasoningSteps changes
   useEffect(() => {
     terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [reasoningSteps, sessionStatus]);
+  }, [reasoningSteps, sessionStatus, qaMessages, qaStatus]);
 
   // Reset execution status if the final trade plan changes
   useEffect(() => {
@@ -297,6 +303,11 @@ export default function AgentTerminal() {
             </div>
           </div>
         )}
+
+        {/* Q&A turns render INLINE here — the user's questions and the AI's
+            answers flow as a continuation of the agent's reasoning/tool log in
+            the same scroll region, so there is no separate Q&A view. */}
+        <QaMessages />
 
         <div ref={terminalEndRef} />
       </div>

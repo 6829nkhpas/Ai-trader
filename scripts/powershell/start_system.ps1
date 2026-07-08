@@ -248,6 +248,20 @@ try {
 
     Start-Sleep -Seconds 3
 
+    Write-Host "Installing Python dependencies for Deep Quant Agent..." -ForegroundColor Cyan
+    Push-Location agents/deep-quant-loop
+    if (Test-Path requirements.txt) {
+        python -m pip install -r requirements.txt
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  WARNING: pip install reported errors - continuing anyway." -ForegroundColor Yellow
+        } else {
+            Write-Host "  Python dependencies installed." -ForegroundColor Green
+        }
+    } else {
+        Write-Host "  WARNING: requirements.txt not found in agents/deep-quant-loop - skipping install." -ForegroundColor Yellow
+    }
+    Pop-Location
+
     Write-Host "Starting Python LangGraph Deep Quant Agent (Port 8086)..." -ForegroundColor Cyan
     Push-Location agents/deep-quant-loop
     $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "python" -ArgumentList "main.py"
