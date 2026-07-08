@@ -1,8 +1,52 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Send, Loader2, User, Cpu, Wrench, Eye } from 'lucide-react';
-import { useQuantStore, MODEL_PROVIDERS } from '../../store/useQuantStore';
+import { Send, Loader2, User, Cpu, Wrench, Eye, Copy, Check } from 'lucide-react';
+import { useQuantStore } from '../../store/useQuantStore';
+import ModelSelector from './deep-quant/ModelSelector';
+
+// Small copy-to-clipboard button with transient "copied" feedback. Used to copy
+// either a user prompt or the assistant's Q&A answer verbatim.
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const value = (text || '').trim();
+    if (!value) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        // Fallback for non-secure contexts / older webviews.
+        const ta = document.createElement('textarea');
+        ta.value = value;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Ignore clipboard failures silently — nothing actionable for the user.
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title={copied ? 'Copied!' : label}
+      aria-label={label}
+      className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-none text-text-muted hover:text-text-primary hover:bg-elevated/60 transition-colors"
+    >
+      {copied ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
+    </button>
+  );
+}
 
 // Inline bold (**text**) parser — mirrors AgentTerminal's helper so Q&A
 // answers render with the same emphasis treatment as the agent console.
@@ -114,10 +158,13 @@ export default function TradeQaPanel() {
           {qaMessages.map((msg) =>
             msg.role === 'user' ? (
               <div key={msg.id} className="flex justify-end animate-fade-in font-sans">
-                <div className="max-w-[85%] bg-elevated text-text-primary border border-border-default rounded-none px-3 py-2 text-[11px] leading-relaxed shadow-sm">
+                <div className="group max-w-[85%] bg-elevated text-text-primary border border-border-default rounded-none px-3 py-2 text-[11px] leading-relaxed shadow-sm">
                   <div className="flex items-center gap-1.5 text-[9px] text-text-secondary font-bold uppercase tracking-wider mb-1 select-none">
                     <User size={10} />
                     You
+                    <span className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
+                      <CopyButton text={msg.content} label="Copy your message" />
+                    </span>
                   </div>
                   <span className="text-text-primary">{msg.content}</span>
                 </div>
@@ -125,7 +172,7 @@ export default function TradeQaPanel() {
             ) : (
               <div key={msg.id} className="flex justify-start animate-fade-in font-sans w-full">
                 <div
-                  className={`max-w-[95%] w-full rounded-none px-3 py-2 text-[11px] leading-relaxed shadow-sm ${
+                  className={`group max-w-[95%] w-full rounded-none px-3 py-2 text-[11px] leading-relaxed shadow-sm ${
                     msg.error
                       ? 'bg-rose-500/5 text-text-primary border border-rose-500/20'
                       : 'bg-elevated/40 text-text-primary border border-border-default/40'
@@ -138,6 +185,11 @@ export default function TradeQaPanel() {
                   >
                     <Cpu size={10} className={msg.streaming ? 'animate-pulse' : ''} />
                     Quant AI
+                    {msg.content && !msg.streaming && (
+                      <span className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
+                        <CopyButton text={msg.content} label="Copy AI response" />
+                      </span>
+                    )}
                   </div>
 
                   {msg.activity && msg.activity.length > 0 && (
@@ -175,26 +227,10 @@ export default function TradeQaPanel() {
       <div className="shrink-0 border-t border-border-default bg-elevated/70 p-2.5 space-y-2">
         {/* Row 1: model provider selector + watcher status */}
         <div className="flex items-center justify-between gap-2">
-          <label className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-text-muted select-none">
-            <Cpu size={11} className="text-text-secondary" />
-            Model
-            <select
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              className="ml-1 rounded-none bg-surface border border-border-default px-2 py-1 text-[10px] font-sans font-semibold text-text-primary focus:outline-none focus:border-text-primary/40 cursor-pointer"
-              title="Select the LLM provider / model"
-            >
-              {MODEL_PROVIDERS.map((group) => (
-                <optgroup key={group.provider} label={group.provider}>
-                  {group.models.map((m) => (
-                    <option key={`${group.provider}:${m.id}`} value={m.id}>
-                      {m.label}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </label>
+          <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-text-muted select-none">
+            <span>Model</span>
+            <ModelSelector value={selectedModel} onChange={setSelectedModel} />
+          </div>
 
           {isWatching && (
             <span className="flex items-center gap-1 text-[8.5px] font-mono font-bold uppercase tracking-wide text-amber-500">
