@@ -36,7 +36,7 @@ struct LlmSentimentResponse {
 // Primary: Google News RSS for the stock symbol (always available, no auth).
 // Fallback: Local NEWS_API_URL if configured and reachable.
 
-async fn fetch_news_headlines(symbol: &str) -> Vec<String> {
+pub(crate) async fn fetch_news_headlines(symbol: &str) -> Vec<String> {
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()

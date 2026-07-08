@@ -1612,6 +1612,34 @@ async fn get_news_context(
     let url = sentiment_service_url();
     let client = reqwest::Client::new();
 
+    // Fetch the SAME Google News RSS headlines the frontend sentiment panel uses
+    // (commands::sentiment::fetch_news_headlines). This is the reliable, keyless
+    // source that actually returns data; the Node Sentiment_Service is only used
+    // (below) for the richer directional classification on top. So the agent
+    // always receives the same headlines the operator sees in the left panel,
+    // even when the Node service is empty or unreachable.
+    let rss_headlines: Vec<String> = crate::commands::sentiment::fetch_news_headlines(&payload.symbol).await;
+
+    // Honest fallback used when the Node classification service is unavailable:
+    // return the RSS headlines (so the agent can read the news itself) rather
+    // than an empty "Unavailable" marker. Only degrades to the empty marker when
+    // there are genuinely no headlines to show.
+    let headlines_only_fallback = |reason: String| -> serde_json::Value {
+        if rss_headlines.is_empty() {
+            unavailable_news(&reason)
+        } else {
+            serde_json::json!({
+                "symbol": payload.symbol.clone(),
+                "headlines": rss_headlines.clone(),
+                "sentiment": "Neutral",
+                // Not the "Unavailable" marker — headlines ARE present for the
+                // agent to analyze; only the LLM classification was unavailable.
+                "sentiment_summary": "Headlines retrieved from Google News; sentiment classification service unavailable — read the headlines directly.",
+                "note": reason,
+            })
+        }
+    };
+
     let resp = client
         .get(&url)
         .query(&[("symbol", &payload.symbol)])
@@ -1624,10 +1652,10 @@ async fn get_news_context(
             Ok(j) => j,
             Err(e) => {
                 info!(
-                    "[tool_server] get_news_context unavailable for symbol={}: invalid body: {}",
-                    payload.symbol, e
+                    "[tool_server] get_news_context: symbol={} classification body invalid ({}); returning {} RSS headlines",
+                    payload.symbol, e, rss_headlines.len()
                 );
-                return Ok(Json(unavailable_news(&format!(
+                return Ok(Json(headlines_only_fallback(format!(
                     "invalid sentiment service response: {}",
                     e
                 ))));
@@ -1636,20 +1664,20 @@ async fn get_news_context(
         Ok(r) => {
             let status = r.status();
             info!(
-                "[tool_server] get_news_context unavailable for symbol={}: HTTP {}",
-                payload.symbol, status
+                "[tool_server] get_news_context: symbol={} classification HTTP {}; returning {} RSS headlines",
+                payload.symbol, status, rss_headlines.len()
             );
-            return Ok(Json(unavailable_news(&format!(
+            return Ok(Json(headlines_only_fallback(format!(
                 "sentiment service returned HTTP {}",
                 status
             ))));
         }
         Err(e) => {
             info!(
-                "[tool_server] get_news_context unavailable for symbol={}: unreachable: {}",
-                payload.symbol, e
+                "[tool_server] get_news_context: symbol={} classification unreachable ({}); returning {} RSS headlines",
+                payload.symbol, e, rss_headlines.len()
             );
-            return Ok(Json(unavailable_news(&format!(
+            return Ok(Json(headlines_only_fallback(format!(
                 "sentiment service unreachable: {}",
                 e
             ))));
@@ -1658,7 +1686,9 @@ async fn get_news_context(
 
     let conviction_score = body.get("conviction_score").and_then(|v| v.as_f64());
 
-    let headlines: Vec<String> = body
+    // Prefer the Node service's own headlines when present, but fall back to the
+    // RSS headlines so the agent always receives the actual news items.
+    let upstream_headlines: Vec<String> = body
         .get("headlines")
         .and_then(|v| v.as_array())
         .map(|arr| {
@@ -1667,6 +1697,11 @@ async fn get_news_context(
                 .collect()
         })
         .unwrap_or_default();
+    let headlines: Vec<String> = if upstream_headlines.is_empty() {
+        rss_headlines.clone()
+    } else {
+        upstream_headlines
+    };
 
     // ── Strategic passthrough ──────────────────────────────────────────────
     // When the upstream service returns the richer strategic verdict (it carries
@@ -1748,11 +1783,11 @@ async fn get_news_context(
         }
         _ => {
             info!(
-                "[tool_server] get_news_context unavailable for symbol={}: no usable classification",
-                payload.symbol
+                "[tool_server] get_news_context: symbol={} no usable classification; returning {} RSS headlines",
+                payload.symbol, rss_headlines.len()
             );
-            Ok(Json(unavailable_news(
-                "sentiment service did not return a usable classification",
+            Ok(Json(headlines_only_fallback(
+                "sentiment service did not return a usable classification".to_string(),
             )))
         }
     }
