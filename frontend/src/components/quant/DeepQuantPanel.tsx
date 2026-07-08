@@ -164,6 +164,17 @@ export default function DeepQuantPanel() {
     setDeployed(false);
   }, [aiPlan]);
 
+  // Persist analysis per (symbol, profile): when the active chart symbol OR the
+  // workspace mode changes, load that combination's saved session (reasoning,
+  // tool calls, decision, Q&A) into the view. A run launched for another
+  // symbol/mode keeps streaming into its own session in the background, so
+  // switching away and back — across symbols AND across INTRADAY/SWING/INVESTOR/
+  // FNO — never wipes or stalls the analysis.
+  const activeProfile = useTradeStore((s) => s.activeProfile);
+  React.useEffect(() => {
+    useQuantStore.getState().activateSymbolSession(activeSymbol, activeProfile);
+  }, [activeSymbol, activeProfile]);
+
   const handleAIAnalysis = () => {
     useQuantStore.getState().resetTerminal();
     fetchDeepAnalysis(activeSymbol);
@@ -387,34 +398,45 @@ export default function DeepQuantPanel() {
       )}
 
       {/* ── Content Area ──────────────────────────────────── */}
-      <div className="flex-grow flex-shrink min-h-0 overflow-y-auto scrollbar-thin">
-        {reasoningSteps.length > 0 || sessionStatus !== 'idle' ? (
-          <div className="h-full p-0 min-h-[380px]">
-            <AgentTerminal />
-          </div>
-        ) : analysisError ? (
-          <ErrorState 
-            error={analysisError} 
-            dataReady={dataReady} 
-            activeMode={activeMode} 
-            onRetryFind={handleAIAnalysis} 
-            onRetryVerify={handleVerifyAnalysis} 
-          />
-        ) : aiPlan ? (
-          <AiExecutionPlanView
-            aiPlan={aiPlan}
-            deployed={deployed}
-            hasActivePosition={hasActivePosition}
-            onDeploy={handleDeployStrategy}
-            onClear={clearAiPlan}
-          />
-        ) : (
-          <EmptyState symbol={symbol} />
-        )}
+      {/* A flex column: ONLY the agent/analysis region scrolls; the Q&A composer
+          is pinned as a fixed footer so the input never scrolls away with the
+          agent log. */}
+      <div className="flex-grow flex-shrink min-h-0 flex flex-col overflow-hidden">
+        {/* Scrollable agent / analysis region */}
+        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin">
+          {reasoningSteps.length > 0 || sessionStatus !== 'idle' ? (
+            <div className="h-full p-0 min-h-[380px]">
+              <AgentTerminal />
+            </div>
+          ) : analysisError ? (
+            <ErrorState 
+              error={analysisError} 
+              dataReady={dataReady} 
+              activeMode={activeMode} 
+              onRetryFind={handleAIAnalysis} 
+              onRetryVerify={handleVerifyAnalysis} 
+            />
+          ) : aiPlan ? (
+            <AiExecutionPlanView
+              aiPlan={aiPlan}
+              deployed={deployed}
+              hasActivePosition={hasActivePosition}
+              onDeploy={handleDeployStrategy}
+              onClear={clearAiPlan}
+            />
+          ) : (
+            <EmptyState symbol={symbol} />
+          )}
+        </div>
 
-        {/* ── Trade Q&A Chat (post-analysis follow-up) ── */}
-        {currentThreadId && (sessionStatus === 'complete' || aiPlan || analysisError) && (
-          <div className="pb-2">
+        {/* ── Pinned unified Q&A composer — sits OUTSIDE the scroll region so it
+            stays fixed at the bottom of the agent section. It renders whenever a
+            session is active (disabled during the run) and unlocks the moment the
+            agent hits the AI-watcher state, letting the user chat while the AI
+            keeps watching for the price trigger. Its own message list scrolls
+            internally within a bounded height. */}
+        {(reasoningSteps.length > 0 || sessionStatus !== 'idle') && (
+          <div className="shrink-0">
             <TradeQaPanel />
           </div>
         )}

@@ -19,6 +19,7 @@ export default function LeftPanel() {
   const loadConsensusForSymbol = useQuantStore((s) => s.loadConsensusForSymbol);
   const isFetchingPatterns = useQuantStore((s) => s.isFetchingPatterns);
   const multiTfPatterns = useQuantStore((s) => s.multiTfPatterns);
+  const fetchMultiTfPatterns = useQuantStore((s) => s.fetchMultiTfPatterns);
 
   const activeSentiment = useQuantStore((s) => s.activeSentiment);
   const isFetchingSentiment = useQuantStore((s) => s.isFetchingSentiment);
@@ -38,6 +39,18 @@ export default function LeftPanel() {
       loadConsensusForSymbol(selectedSymbol);
     }
   }, [selectedSymbol, loadConsensusForSymbol]);
+
+  // Load multi-timeframe chart-pattern detection on symbol change, independent
+  // of a Deep Quant run (mirroring the sentiment/consensus loads above). Results
+  // are cached per symbol with a short TTL, so switching back to a symbol shows
+  // its patterns instantly and only refetches when the cache is stale. Without
+  // this, patterns only appeared right after running analysis and vanished on a
+  // plain symbol switch.
+  useEffect(() => {
+    if (selectedSymbol) {
+      fetchMultiTfPatterns(selectedSymbol);
+    }
+  }, [selectedSymbol, fetchMultiTfPatterns]);
 
   return (
     <div className="flex h-full flex-col select-none">
