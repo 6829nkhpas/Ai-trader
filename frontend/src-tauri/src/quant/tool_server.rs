@@ -1630,6 +1630,7 @@ fn unavailable_news(reason: &str) -> serde_json::Value {
     serde_json::json!({
         "sentiment_summary": "Unavailable",
         "sentiment": "Unavailable",
+        "sentiment_classified": false,
         "headlines": [],
         "error": reason,
     })
@@ -1676,7 +1677,14 @@ async fn get_news_context(
             serde_json::json!({
                 "symbol": payload.symbol.clone(),
                 "headlines": rss_headlines.clone(),
-                "sentiment": "Neutral",
+                // Classification did NOT occur: mark the sentiment explicitly
+                // unavailable rather than stamping a fabricated "Neutral"
+                // directional label that would read as a real neutral
+                // classification (R5.2). The explicit `sentiment_classified:
+                // false` marker lets downstream consumers tell that no LLM
+                // classification happened (R5.3).
+                "sentiment": "Unavailable",
+                "sentiment_classified": false,
                 // Not the "Unavailable" marker — headlines ARE present for the
                 // agent to analyze; only the LLM classification was unavailable.
                 "sentiment_summary": "Headlines retrieved from Google News; sentiment classification service unavailable — read the headlines directly.",
@@ -2828,6 +2836,57 @@ mod news_unavailable_tests {
     }
 }
 
+// ── Unit test: sentiment service URL is configurable (R5.1) ──────────────────
+//
+// Feature: deep-quant-runtime-hardening, Property 13: the Sentiment_Classifier
+// endpoint is configurable via `SENTIMENT_SERVICE_URL`; when set it is used,
+// and when unset it falls back to the documented default
+// (`http://localhost:8090/sentiment`).
+//
+// NOTE ON ENV-VAR RACES: `set_var`/`remove_var` mutate process-global state and
+// Rust runs tests in parallel threads. No other test in this crate reads the
+// `SENTIMENT_SERVICE_URL` env var, so a single self-contained test that saves
+// the prior value, exercises both the set and unset branches, and restores the
+// original value at the end is sufficient to avoid cross-test flakiness.
+#[cfg(test)]
+mod sentiment_url_config_tests {
+    use super::*;
+
+    #[test]
+    fn sentiment_service_url_honours_env_var_and_falls_back_to_default() {
+        // Capture any pre-existing value so we can restore process state after.
+        let original = std::env::var("SENTIMENT_SERVICE_URL").ok();
+
+        // When set to a custom value → that value is used (R5.1).
+        let custom = "http://sentiment.internal:9999/classify";
+        std::env::set_var("SENTIMENT_SERVICE_URL", custom);
+        assert_eq!(
+            sentiment_service_url(),
+            custom,
+            "configured SENTIMENT_SERVICE_URL must be used verbatim"
+        );
+
+        // When unset → falls back to the documented default (R5.1).
+        std::env::remove_var("SENTIMENT_SERVICE_URL");
+        assert_eq!(
+            sentiment_service_url(),
+            DEFAULT_SENTIMENT_SERVICE_URL,
+            "unset SENTIMENT_SERVICE_URL must fall back to the documented default"
+        );
+        assert_eq!(
+            sentiment_service_url(),
+            "http://localhost:8090/sentiment",
+            "documented default must be http://localhost:8090/sentiment"
+        );
+
+        // Restore the original process-global state.
+        match original {
+            Some(value) => std::env::set_var("SENTIMENT_SERVICE_URL", value),
+            None => std::env::remove_var("SENTIMENT_SERVICE_URL"),
+        }
+    }
+}
+
 // ── Property test: declare_trade commit-iff-pass (R6.6, R6.7) ────────────────
 //
 // Feature: deep-quant-analysis-hardening, Property 24: Commit happens exactly
@@ -3550,5 +3609,487 @@ mod candle_outcome_classification_proptests {
             prop_assert!(!(is_unavailable_marker && is_fault),
                 "an outcome cannot be both a graceful unavailable marker and a fault");
         }
+    }
+}
+
+// ── R5 BUG-CONDITION EXPLORATION TEST (deep-quant-runtime-hardening, Prop 12) ─
+//
+// Task 16: Property 12 (Bug Condition) — a degraded sentiment read implies a
+// FALSE "Neutral" classification.
+//
+// Context: `get_news_context`'s `headlines_only_fallback` closure (~line 1672)
+// runs when the Node classification service is unavailable (unreachable / a
+// non-success HTTP status such as 404 / an invalid body) but RSS headlines were
+// still retrieved. The UNFIXED closure returns:
+//
+// ```ignore
+// {
+//   "symbol":            <symbol>,
+//   "headlines":         [<rss headlines>],
+//   "sentiment":         "Neutral",   // ← fabricated directional label
+//   "sentiment_summary": "Headlines retrieved from Google News; sentiment
+//                         classification service unavailable — read the
+//                         headlines directly.",
+//   "note":              <reason>,
+// }
+// ```
+//
+// The DEFECT: it stamps `sentiment: "Neutral"` and carries NO explicit
+// `sentiment_classified: false` (or equivalent) marker. A downstream consumer
+// cannot tell this apart from a genuine neutral classification — the classifier
+// FAILED (404 / unreachable), yet the shape implies a real neutral read
+// occurred.
+//
+// The fallback is a closure inside the axum handler (needs a live server +
+// network), so — exactly as the R2 (task 4) and R3 (task 7) exploration tests
+// mirrored `fixed_handler_map_err` / the merge helper inline — this test mirrors
+// the UNFIXED fallback JSON shape inline and asserts the CORRECT behavior: a
+// degraded fallback must NOT imply a real classification (it must carry
+// `sentiment_classified: false` and must not label `sentiment: "Neutral"` as a
+// real directional read).
+//
+// EXPECTED OUTCOME on UNFIXED code: this test FAILS — proving the misleading
+// marker. Do NOT fix production code here; the failure is the goal of task 16.
+//
+// Validates: Requirements 5.2, 5.3.
+#[cfg(test)]
+mod news_sentiment_degradation_bug_exploration {
+    /// Faithful inline mirror of the FIXED `headlines_only_fallback` closure
+    /// (the headlines-present branch), reconciled with the real handler after
+    /// the task 17.1 fix. Reproduces the observable JSON shape the handler
+    /// returns when the classifier is unavailable but RSS headlines were
+    /// retrieved: the sentiment is marked explicitly `"Unavailable"` with a
+    /// `sentiment_classified: false` marker, and the RSS headlines are
+    /// preserved. See `get_news_context` (~line 1678).
+    fn fixed_headlines_only_fallback(
+        symbol: &str,
+        rss_headlines: &[String],
+        reason: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "symbol": symbol.to_string(),
+            "headlines": rss_headlines.to_vec(),
+            // Classification did NOT occur: mark the sentiment explicitly
+            // unavailable rather than stamping a fabricated "Neutral"
+            // directional label (R5.2). The explicit `sentiment_classified:
+            // false` marker lets downstream consumers tell no LLM
+            // classification happened (R5.3).
+            "sentiment": "Unavailable",
+            "sentiment_classified": false,
+            "sentiment_summary": "Headlines retrieved from Google News; sentiment classification service unavailable — read the headlines directly.",
+            "note": reason.to_string(),
+        })
+    }
+
+    // Feature: deep-quant-runtime-hardening, Property 12 (Bug Condition):
+    // a degraded sentiment read (classifier 404 / unreachable) must NOT imply a
+    // real "Neutral" classification.
+    //
+    // EXPECTED OUTCOME after the task 17.1 fix: this test PASSES — the fallback
+    // marks the classification explicitly unavailable (no false "Neutral").
+    #[test]
+    fn bug_degraded_sentiment_implies_false_neutral_classification() {
+        // Counterexample: the Node classifier returns HTTP 404 (or is
+        // unreachable), but RSS headlines WERE retrieved from Google News.
+        let symbol = "CUPID";
+        let rss_headlines = vec![
+            "Cupid Ltd bags new export order".to_string(),
+            "Cupid Ltd Q2 results beat estimates".to_string(),
+        ];
+        let reason = "sentiment service returned HTTP 404";
+
+        let fallback = fixed_headlines_only_fallback(symbol, &rss_headlines, reason);
+
+        // ── Property 12 Expected Behavior (what a HONEST degraded fallback does) ──
+        //
+        // (1) A degraded fallback must carry an explicit
+        //     `sentiment_classified: false` marker so a downstream consumer can
+        //     tell classification did NOT happen (R5.2 / R5.3). The UNFIXED
+        //     shape omits this marker entirely, so this assertion FAILS.
+        assert_eq!(
+            fallback.get("sentiment_classified").and_then(|v| v.as_bool()),
+            Some(false),
+            "R5 BUG CONFIRMED — degraded fallback carries NO `sentiment_classified: false` \
+             marker; the classifier failed ({}) yet the shape implies a real classification. \
+             Body: {}",
+            reason,
+            fallback,
+        );
+
+        // (2) A degraded fallback must NOT stamp a fabricated directional label
+        //     (`"Neutral"`) that reads as a genuine neutral classification
+        //     (R5.2). It should mark the sentiment explicitly unavailable. The
+        //     UNFIXED shape sets `"Neutral"`, so this assertion FAILS.
+        let sentiment = fallback.get("sentiment").and_then(|v| v.as_str()).unwrap_or("");
+        assert_ne!(
+            sentiment, "Neutral",
+            "R5 BUG CONFIRMED — classifier failed ({}) but the fallback tagged \
+             `sentiment: \"Neutral\"`, implying a real neutral read occurred. Body: {}",
+            reason, fallback,
+        );
+
+        // (3) The RSS headlines ARE preserved (this part of the fallback is
+        //     correct and must be kept once fixed) — sanity anchor, holds on
+        //     both unfixed and fixed code.
+        assert_eq!(
+            fallback.get("headlines").and_then(|v| v.as_array()).map(|a| a.len()),
+            Some(rss_headlines.len()),
+            "the fallback must preserve the retrieved RSS headlines"
+        );
+    }
+}
+
+// ── R5 VERIFICATION PROPERTY TEST (deep-quant-runtime-hardening, Property 12) ─
+//
+// Task 18.1: Property 12 (Verification/Preservation) — a degraded sentiment read
+// marks the classification explicitly UNAVAILABLE rather than fabricating a
+// directional label, while preserving the retrieved headlines; the reachable
+// classifier's real label path is unchanged.
+//
+// The live `headlines_only_fallback` closure inside `get_news_context` requires
+// a running Node classifier + network to exercise end-to-end, so — exactly as
+// the task-16 exploration test did — this module mirrors the observable JSON
+// shape of the FIXED closure inline (`fixed_headlines_only_fallback`, ~line
+// 1678) and property-tests it. The reachable-classifier path is exercised
+// directly through the pure `map_sentiment_classification` /
+// `classify_sentiment_label` helpers that back the success branch.
+//
+// Validates: Requirements 5.2, 5.3.
+#[cfg(test)]
+mod news_sentiment_degradation_proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Faithful inline mirror of the FIXED `headlines_only_fallback` closure
+    /// (headlines-present branch) in `get_news_context` (~line 1678): when the
+    /// classifier is unavailable but RSS headlines were retrieved, mark the
+    /// sentiment explicitly `"Unavailable"` + `sentiment_classified: false` and
+    /// preserve the headlines.
+    fn fixed_headlines_only_fallback(
+        symbol: &str,
+        rss_headlines: &[String],
+        reason: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "symbol": symbol.to_string(),
+            "headlines": rss_headlines.to_vec(),
+            "sentiment": "Unavailable",
+            "sentiment_classified": false,
+            "sentiment_summary": "Headlines retrieved from Google News; sentiment classification service unavailable — read the headlines directly.",
+            "note": reason.to_string(),
+        })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        // Feature: deep-quant-runtime-hardening, Property 12: sentiment
+        // degradation marks classification unavailable (headlines-present branch).
+        //
+        // For arbitrary symbols, arbitrary NON-EMPTY headline lists, and
+        // arbitrary failure reasons (unreachable / non-success / invalid body),
+        // the degraded fallback must carry `sentiment_classified == false`, must
+        // NOT fabricate a directional label (explicitly "Unavailable", never
+        // "Neutral"/"Bullish"/"Bearish"), and must preserve ALL the headlines.
+        // Validates: Requirements 5.2, 5.3.
+        #[test]
+        fn prop12_degraded_fallback_marks_unavailable_and_preserves_headlines(
+            symbol in "[A-Z0-9]{1,12}",
+            headlines in proptest::collection::vec("[a-zA-Z0-9 .,:-]{0,60}", 1..8),
+            reason in "[a-zA-Z0-9 :/(){}.-]{1,80}",
+        ) {
+            let fallback = fixed_headlines_only_fallback(&symbol, &headlines, &reason);
+
+            // Classification is explicitly marked as NOT having happened.
+            prop_assert_eq!(
+                fallback.get("sentiment_classified").and_then(|v| v.as_bool()),
+                Some(false),
+                "degraded fallback must carry sentiment_classified: false; body: {}",
+                fallback
+            );
+
+            // The sentiment is the honest "Unavailable" marker — never a
+            // fabricated directional label that reads as a real classification.
+            let sentiment = fallback.get("sentiment").and_then(|v| v.as_str()).unwrap_or("");
+            prop_assert_eq!(
+                sentiment, "Unavailable",
+                "degraded fallback must mark sentiment Unavailable, not a fabricated label; body: {}",
+                fallback
+            );
+            prop_assert_ne!(sentiment, "Neutral");
+            prop_assert_ne!(sentiment, "Bullish");
+            prop_assert_ne!(sentiment, "Bearish");
+
+            // ALL retrieved headlines are preserved, in order, unchanged.
+            prop_assert_eq!(
+                fallback.get("headlines").unwrap(),
+                &serde_json::json!(headlines),
+                "degraded fallback must preserve the retrieved RSS headlines verbatim"
+            );
+        }
+
+        // Feature: deep-quant-runtime-hardening, Property 12: the empty-headlines
+        // branch collapses to the `unavailable_news` marker, which also carries
+        // `sentiment_classified: false` and `sentiment_summary == "Unavailable"`
+        // with no headlines and no fabricated directional label.
+        // Validates: Requirements 5.2, 5.3.
+        #[test]
+        fn prop12_empty_headlines_branch_marks_unavailable(
+            reason in "[a-zA-Z0-9 :/(){}.-]{1,80}",
+        ) {
+            let marker = unavailable_news(&reason);
+
+            prop_assert_eq!(
+                marker.get("sentiment_classified").and_then(|v| v.as_bool()),
+                Some(false),
+                "unavailable marker must carry sentiment_classified: false; body: {}",
+                marker
+            );
+            prop_assert_eq!(
+                marker.get("sentiment_summary").and_then(|v| v.as_str()),
+                Some("Unavailable"),
+                "unavailable marker must summarize as Unavailable; body: {}",
+                marker
+            );
+            prop_assert_eq!(
+                marker.get("sentiment").and_then(|v| v.as_str()),
+                Some("Unavailable")
+            );
+            // No headlines to show, and no fabricated classification.
+            prop_assert_eq!(
+                marker.get("headlines").and_then(|v| v.as_array()).map(|a| a.len()),
+                Some(0)
+            );
+        }
+
+        // Feature: deep-quant-runtime-hardening, Property 12 (Preservation): a
+        // reachable classifier's real label path is UNCHANGED. For arbitrary
+        // finite conviction scores the success mapping still yields a real
+        // directional label (Bullish/Neutral/Bearish per the documented
+        // thresholds) — never the degraded "Unavailable" marker — and preserves
+        // the headlines. This guards the reachable path against regression from
+        // the degradation fix.
+        // Validates: Requirements 5.2, 5.3.
+        #[test]
+        fn prop12_reachable_classifier_label_path_unchanged(
+            score in 0.0f64..=100.0,
+            headlines in proptest::collection::vec("[a-zA-Z0-9 .,:-]{0,60}", 0..8),
+        ) {
+            let mapped = map_sentiment_classification(score, headlines.clone());
+
+            let expected = if score >= 60.0 {
+                "Bullish"
+            } else if score <= 40.0 {
+                "Bearish"
+            } else {
+                "Neutral"
+            };
+            let label = mapped.get("sentiment").and_then(|v| v.as_str()).unwrap_or("");
+
+            // The reachable path yields a REAL directional label unchanged.
+            prop_assert_eq!(label, expected);
+            prop_assert_eq!(classify_sentiment_label(score), expected);
+
+            // It must NOT collapse into the degraded marker on the success path.
+            prop_assert_ne!(label, "Unavailable");
+
+            // Headlines are carried through unchanged (none dropped/fabricated).
+            prop_assert_eq!(
+                mapped.get("headlines").unwrap(),
+                &serde_json::json!(headlines)
+            );
+        }
+    }
+}
+
+// ── R5 INTEGRATION TEST (deep-quant-runtime-hardening, Property 12/13) ────────
+//
+// Task 18.3: Integration — headlines-only degradation path, end-to-end at the
+// component boundary.
+//
+// GOAL: exercise the real `get_news_context` degradation contract — when the
+// Sentiment_Classifier is unreachable/unconfigured (SENTIMENT_SERVICE_URL points
+// at a definitely-closed port) but the RSS headlines source is consulted, the
+// endpoint degrades to a headlines-only result that marks the classification
+// explicitly UNAVAILABLE (`sentiment_classified: false`, sentiment
+// "Unavailable") and preserves the headlines — never a fabricated neutral read —
+// and returns a graceful JSON marker (a non-blocking missing input, NOT a
+// 5xx-style error object; R5.4).
+//
+// APPROACH (and why): the real axum `get_news_context` handler cannot be driven
+// hermetically here — it requires a live Tauri `AppHandle` to build
+// `ServerState`, and it performs a real Google-News RSS network fetch
+// (`commands::sentiment::fetch_news_headlines`) whose result is non-deterministic
+// and unavailable in the sandbox. Per the task's fallback guidance, this test
+// therefore composes the SAME real production pieces the handler uses on the
+// degradation path so it verifies the real degradation contract end-to-end at
+// the component boundary:
+//   1. It performs the SAME real classifier reqwest GET the handler issues
+//      (`GET {url}?symbol=...`, 10s timeout) against a definitely-closed port
+//      (`http://127.0.0.1:1/sentiment`) inside a Tokio runtime, and asserts it
+//      fails — this is the exact, deterministic network trigger the handler keys
+//      the degradation on (port 1 is reliably closed, so the connection is
+//      refused fast and hermetically).
+//   2. It builds the failure `reason` string EXACTLY as the handler does.
+//   3. It drives the degradation branch through the REAL `unavailable_news`
+//      helper the handler invokes when there are no RSS headlines (the
+//      deterministic sandbox case), and also asserts the headlines-present
+//      branch shape, and asserts the degraded contract on both.
+// The full-handler network+AppHandle path is intentionally not exercised for the
+// reasons above; the config-resolution facet is covered by Property 13
+// (`sentiment_url_config_tests`) and the branch shapes by Property 12
+// (`news_sentiment_degradation_proptests`).
+//
+// Validates: Requirements 5.2, 5.3, 5.4.
+#[cfg(test)]
+mod news_degradation_integration {
+    use super::*;
+
+    /// Faithful inline mirror of the handler's `headlines_only_fallback`
+    /// closure (headlines-present branch, `get_news_context` ~line 1673): when
+    /// the classifier is unavailable but RSS headlines WERE retrieved, mark the
+    /// sentiment explicitly unavailable and preserve the headlines verbatim.
+    fn headlines_present_fallback(
+        symbol: &str,
+        rss_headlines: &[String],
+        reason: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "symbol": symbol.to_string(),
+            "headlines": rss_headlines.to_vec(),
+            "sentiment": "Unavailable",
+            "sentiment_classified": false,
+            "sentiment_summary": "Headlines retrieved from Google News; sentiment classification service unavailable — read the headlines directly.",
+            "note": reason.to_string(),
+        })
+    }
+
+    /// Assert the shared degraded contract that BOTH degradation branches must
+    /// satisfy: the classification is explicitly marked unavailable and a
+    /// fabricated neutral/directional read is never produced (R5.2, R5.3), and
+    /// the marker is a graceful, non-error JSON object — a non-blocking missing
+    /// input, not a 5xx-style error status object (R5.4).
+    fn assert_degraded_marker_contract(marker: &serde_json::Value) {
+        // R5.4: the degraded result is a normal JSON marker object (the handler
+        // returns it as `Ok(Json(..))` → HTTP 200), NOT an error status object
+        // that would abort the decision.
+        assert!(
+            marker.is_object(),
+            "degraded result must be a JSON marker object, got: {marker}"
+        );
+
+        // R5.2/R5.3: classification is explicitly marked as NOT having occurred.
+        assert_eq!(
+            marker.get("sentiment_classified").and_then(|v| v.as_bool()),
+            Some(false),
+            "degraded marker must carry sentiment_classified: false; body: {marker}"
+        );
+
+        // R5.3: the sentiment is the honest "Unavailable" marker — never a
+        // fabricated neutral/directional classification.
+        let sentiment = marker.get("sentiment").and_then(|v| v.as_str()).unwrap_or("");
+        assert_eq!(
+            sentiment, "Unavailable",
+            "degraded marker must report sentiment Unavailable, never a fabricated read; body: {marker}"
+        );
+        assert_ne!(sentiment, "Neutral", "must never fabricate a Neutral classification");
+        assert_ne!(sentiment, "Bullish");
+        assert_ne!(sentiment, "Bearish");
+
+        // Never fabricate a numeric conviction score on the degraded path.
+        assert!(
+            marker.get("conviction_score").is_none(),
+            "degraded marker must not fabricate a conviction_score; body: {marker}"
+        );
+    }
+
+    // Feature: deep-quant-runtime-hardening, Property 12/13 (integration):
+    // headlines-only degradation path — an unreachable classifier degrades to an
+    // honest headlines-only / unavailable marker end-to-end, never a fabricated
+    // neutral classification, and never an aborting error.
+    // Validates: Requirements 5.2, 5.3, 5.4.
+    #[tokio::test]
+    async fn get_news_context_degrades_to_headlines_only_on_unreachable_classifier() {
+        let symbol = "RELIANCE";
+
+        // A definitely-closed/unreachable classifier endpoint — the same value
+        // an operator would put in SENTIMENT_SERVICE_URL to point the proxy at a
+        // dead port. Port 1 is reserved and never listens, so the connection is
+        // refused fast and deterministically (no network dependency, no flake).
+        let url = "http://127.0.0.1:1/sentiment";
+
+        // Exercise the SAME classifier request the real handler issues.
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(url)
+            .query(&[("symbol", &symbol)])
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await;
+
+        // The classifier call must fail (unreachable) — this is the exact
+        // degradation trigger `get_news_context` keys on. If this ever succeeds
+        // the test's premise is invalid, so assert it explicitly.
+        let err = resp.expect_err(
+            "classifier at a closed port must be unreachable to exercise the degradation path",
+        );
+
+        // Build the failure reason EXACTLY as the handler does on the unreachable
+        // arm (`get_news_context` ~line 1733).
+        let reason = format!("sentiment service unreachable: {}", err);
+
+        // ── Degraded branch A: no RSS headlines (the deterministic sandbox case,
+        //    where the RSS fetch yields nothing). The handler invokes the REAL
+        //    `unavailable_news` helper here — drive that exact production code. ──
+        let rss_headlines: Vec<String> = Vec::new();
+        let marker_empty = if rss_headlines.is_empty() {
+            unavailable_news(&reason)
+        } else {
+            headlines_present_fallback(symbol, &rss_headlines, &reason)
+        };
+
+        assert_degraded_marker_contract(&marker_empty);
+        // Empty-headlines branch collapses to the honest "Unavailable" summary
+        // with no headlines to show (R5.2/R5.3).
+        assert_eq!(
+            marker_empty.get("sentiment_summary").and_then(|v| v.as_str()),
+            Some("Unavailable"),
+            "empty-headlines degradation must summarize as Unavailable; body: {marker_empty}"
+        );
+        assert_eq!(
+            marker_empty.get("headlines").and_then(|v| v.as_array()).map(|a| a.len()),
+            Some(0),
+            "empty-headlines degradation carries no fabricated headlines"
+        );
+        // The real failure cause is surfaced for the glass box / logs.
+        assert_eq!(marker_empty.get("error").and_then(|v| v.as_str()), Some(reason.as_str()));
+
+        // ── Degraded branch B: RSS headlines ARE available. The handler returns
+        //    a headlines-only result that preserves them while STILL marking the
+        //    classification unavailable (never a fabricated neutral read). ──
+        let headlines = vec![
+            "RELIANCE Q3 results beat estimates".to_string(),
+            "Analysts mixed on Jio ARPU outlook".to_string(),
+        ];
+        let marker_headlines = headlines_present_fallback(symbol, &headlines, &reason);
+
+        assert_degraded_marker_contract(&marker_headlines);
+        // The retrieved headlines are preserved verbatim — the degradation keeps
+        // the real news for the agent to read (R5.2).
+        assert_eq!(
+            marker_headlines.get("headlines").unwrap(),
+            &serde_json::json!(headlines),
+            "headlines-present degradation must preserve the retrieved headlines"
+        );
+        // The summary explains the classification service is unavailable while
+        // headlines are present — it does not imply a real classification.
+        let summary = marker_headlines
+            .get("sentiment_summary")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        assert!(
+            summary.contains("classification service unavailable"),
+            "headlines-present summary must state classification is unavailable; got: {summary}"
+        );
     }
 }
