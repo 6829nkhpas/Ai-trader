@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Terminal, Shield, Target, Zap, Rocket, CheckCircle2, Cpu, Loader2 } from 'lucide-react';
 import { useTradeStore } from '../../store/useTradeStore';
-import { useQuantStore } from '../../store/useQuantStore';
+import { useQuantStore, isActionableTrade } from '../../store/useQuantStore';
 
 import WatchingIndicator from './deep-quant/WatchingIndicator';
 import MarkdownRenderer, { parseInlineMarkdown } from './deep-quant/MarkdownRenderer';
@@ -43,38 +43,24 @@ export default function AgentTerminal() {
     setExecuted(false);
   }, [finalTrade]);
 
-  // Parse entry, target, and stop loss from execution_plan text
+  // Derive the executable trade levels DIRECTLY from the committed decision's
+  // validated Execution_Levels (R1.4/R1.8). No prose-scraping, no synthesis
+  // from the last close: a plan is only actionable when `isActionableTrade`
+  // holds (directional BUY/SELL carrying three finite positive prices), and in
+  // that case the entry/stop/target come verbatim from `execution_levels`.
+  // HOLD / stand_aside / missing levels return `null` — the card is gated off.
   const parsePlanDetails = () => {
-    if (!finalTrade) return null;
-    
-    const executionPlan = finalTrade.execution_plan || '';
-    const closePrice = useTradeStore.getState().ohlcCandles.find(c => c.symbol === selectedSymbol)?.close || 0;
-    
-    let entryPrice = closePrice;
-    let stopLoss = 0;
-    let takeProfit = 0;
-    let side = 'BUY';
+    if (!isActionableTrade(finalTrade)) return null;
 
-    const entryMatch = executionPlan.match(/entry:\s*([\d.]+)/i);
-    const slMatch = executionPlan.match(/stop-loss:\s*([\d.]+)/i) || executionPlan.match(/sl:\s*([\d.]+)/i);
-    const tpMatch = executionPlan.match(/target\s*1?:\s*([\d.]+)/i) || executionPlan.match(/target:\s*([\d.]+)/i) || executionPlan.match(/tp:\s*([\d.]+)/i);
-    const sideMatch = executionPlan.match(/side:\s*(buy|sell)/i) || executionPlan.match(/(buy|sell)/i);
+    const { execution_levels, action } = finalTrade;
+    const side = action === 'SELL' ? 'SELL' : 'BUY';
 
-    if (entryMatch) entryPrice = parseFloat(entryMatch[1]);
-    if (slMatch) stopLoss = parseFloat(slMatch[1]);
-    if (tpMatch) takeProfit = parseFloat(tpMatch[1]);
-    if (sideMatch) {
-      const matchedSide = sideMatch[1].toUpperCase();
-      if (matchedSide === 'BUY' || matchedSide === 'SELL') {
-        side = matchedSide;
-      }
-    }
-
-    if (entryPrice <= 0) entryPrice = closePrice;
-    if (stopLoss <= 0) stopLoss = side === 'BUY' ? entryPrice * 0.98 : entryPrice * 1.02;
-    if (takeProfit <= 0) takeProfit = side === 'BUY' ? entryPrice * 1.05 : entryPrice * 0.95;
-
-    return { side, entryPrice, stopLoss, takeProfit };
+    return {
+      side,
+      entryPrice: execution_levels.entry,
+      stopLoss: execution_levels.stop_loss,
+      takeProfit: execution_levels.take_profit,
+    };
   };
 
   const parsedPlan = parsePlanDetails();
@@ -312,8 +298,41 @@ export default function AgentTerminal() {
         <div ref={terminalEndRef} />
       </div>
 
-      {/* Execution Plan Card Handoff */}
-      {sessionStatus === 'complete' && finalTrade && parsedPlan && (
+      {/* Stand-Aside handoff — a completed run whose committed decision is
+          non-actionable (HOLD / stand_aside / no validated levels). Renders a
+          distinct "No Trade" panel: NO APPROVE & EXECUTE control, NO
+          entry/stop/target cells, NO fabricated conviction badge (R1.2–R1.8).
+          Surfaces the rationale / Best_Current_Read text instead. */}
+      {sessionStatus === 'complete' && finalTrade && !isActionableTrade(finalTrade) && (
+        <div className="p-4 bg-surface border-t border-border-default animate-slide-up shadow-xl shrink-0">
+          <div className="flex items-center gap-2 mb-3">
+            <Shield size={12} className="text-text-muted" />
+            <h3 className="text-[10px] font-bold text-text-muted uppercase tracking-widest">
+              Stand Aside — No Trade
+            </h3>
+            {finalTrade.action && (
+              <span className="ml-auto rounded-none px-2 py-0.5 text-[9px] font-black tracking-widest bg-elevated text-text-muted border border-border-default">
+                {String(finalTrade.action).toUpperCase()}
+              </span>
+            )}
+          </div>
+
+          {finalTrade.setup_validation && (
+            <div className="text-xs text-text-secondary italic border-l-2 border-border-default pl-2">
+              "{finalTrade.setup_validation}"
+            </div>
+          )}
+          {finalTrade.execution_plan && (
+            <p className="text-[10px] text-text-muted font-mono mt-2 leading-relaxed">
+              {finalTrade.execution_plan}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Execution Plan Card Handoff — gated on a genuinely actionable,
+          directional trade carrying validated Execution_Levels (R1.1). */}
+      {sessionStatus === 'complete' && isActionableTrade(finalTrade) && parsedPlan && (
         <div className="p-4 bg-surface border-t border-border-default animate-slide-up shadow-xl shrink-0">
           <div className="flex items-center gap-2 mb-3">
             <Shield size={12} className="text-text-primary" />

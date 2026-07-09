@@ -2,7 +2,7 @@
 
 import React, { useMemo } from 'react';
 import { Zap, Loader2, Shield, ChevronDown } from 'lucide-react';
-import { useQuantStore } from '../../store/useQuantStore';
+import { useQuantStore, isActionableTrade } from '../../store/useQuantStore';
 import type { StreamEventPayload } from '../../store/useQuantStore';
 import { useTradeStore } from '../../store/useTradeStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
@@ -200,51 +200,29 @@ export default function DeepQuantPanel() {
     });
   };
 
+  // A plan is deployable only when it is a validated directional trade. A
+  // HOLD / stand_aside, an unknown/absent action, or a plan missing structured
+  // execution_levels is never deployable (R1.5/R1.6/R1.8). The deploy control
+  // itself is gated on this below so the action is not even offered.
+  const planActionable = isActionableTrade(aiPlan);
+
   const handleDeployStrategy = async () => {
-    if (!aiPlan) return;
+    // Fail safe: never deploy a non-actionable plan, and never synthesize
+    // levels from prose or the last close. Levels come only from the validated
+    // Declare_Trade_Args carried in aiPlan.execution_levels.
+    if (!isActionableTrade(aiPlan)) return;
 
-    const closePrice = useTradeStore.getState().ohlcCandles.find(c => c.symbol === symbol)?.close || 0;
-
-    let entryPrice = closePrice;
-    let stopLossPrice = 0;
-    let takeProfitPrice = 0;
-    let tradeSide = 'BUY';
-
-    const executionPlan = aiPlan.execution_plan || '';
-
-    // Extract values with regex
-    const entryMatch = executionPlan.match(/entry:\s*([\d.]+)/i);
-    const slMatch = executionPlan.match(/stop-loss:\s*([\d.]+)/i) || executionPlan.match(/sl:\s*([\d.]+)/i);
-    const tpMatch = executionPlan.match(/target\s*1?:\s*([\d.]+)/i) || executionPlan.match(/target:\s*([\d.]+)/i) || executionPlan.match(/tp:\s*([\d.]+)/i);
-    const sideMatch = executionPlan.match(/side:\s*(buy|sell)/i) || executionPlan.match(/(buy|sell)/i);
-
-    if (entryMatch) entryPrice = parseFloat(entryMatch[1]);
-    if (slMatch) stopLossPrice = parseFloat(slMatch[1]);
-    if (tpMatch) takeProfitPrice = parseFloat(tpMatch[1]);
-    if (sideMatch) {
-      const matchedSide = sideMatch[1].toUpperCase();
-      if (matchedSide === 'BUY' || matchedSide === 'SELL') {
-        tradeSide = matchedSide;
-      }
-    }
-
-    // Dynamic fallbacks
-    if (entryPrice <= 0) entryPrice = closePrice;
-    if (stopLossPrice <= 0) {
-      stopLossPrice = tradeSide === 'BUY' ? entryPrice * 0.98 : entryPrice * 1.02;
-    }
-    if (takeProfitPrice <= 0) {
-      takeProfitPrice = tradeSide === 'BUY' ? entryPrice * 1.05 : entryPrice * 0.95;
-    }
+    const { entry, stop_loss, take_profit } = aiPlan.execution_levels;
+    const tradeSide = aiPlan.action === 'SELL' ? 'SELL' : 'BUY';
 
     try {
       const { invoke: tauriInvoke } = await import('@tauri-apps/api/core');
       const resMsg = await tauriInvoke<string>('execute_paper_trade', {
         symbol,
         side: tradeSide,
-        entryPrice,
-        stopLoss: stopLossPrice,
-        takeProfit: takeProfitPrice,
+        entryPrice: entry,
+        stopLoss: stop_loss,
+        takeProfit: take_profit,
       });
       useTradeStore.getState().addSystemLog('INFO', `🚀 [Paper Engine] ${resMsg}`);
 
@@ -419,6 +397,7 @@ export default function DeepQuantPanel() {
           ) : aiPlan ? (
             <AiExecutionPlanView
               aiPlan={aiPlan}
+              actionable={planActionable}
               deployed={deployed}
               hasActivePosition={hasActivePosition}
               onDeploy={handleDeployStrategy}
