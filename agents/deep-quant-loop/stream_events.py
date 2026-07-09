@@ -34,6 +34,7 @@ async stream.
 """
 
 import json
+import math
 import re
 from typing import Any, Iterator, List, Optional, Tuple
 
@@ -1012,17 +1013,41 @@ def build_verification_steps(decision: Any) -> List[dict]:
 
 # ── Decision event (R16.7) ───────────────────────────────────────────────────
 
+def _is_finite_num(value: Any) -> bool:
+    """True only for a real, finite number (not bool, not NaN/inf, not a string).
+
+    Used to gate the directional ``execution_levels`` block so the UI never
+    receives a synthesized, zero-filled, or non-numeric price (R1.5 / Property
+    11). ``bool`` is explicitly rejected because ``isinstance(True, int)`` is
+    ``True`` in Python and a boolean is never a valid price.
+    """
+    if isinstance(value, bool):
+        return False
+    if not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value)
+
+
 def build_decision_event(decision: Any) -> Optional[dict]:
     """Build a ``DECISION`` payload: action + conviction score + rationale (R16.7).
 
     Returns ``None`` when ``decision`` is not a structured decision dict. The
     rationale prefers the ``setup_validation`` synthesis and falls back to the
     forced/gated ``reason`` so a HOLD always carries a rationale.
+
+    The committed ``action`` is always threaded so the UI can gate on it, and a
+    directional (BUY/SELL) decision whose entry/stop_loss/take_profit are all
+    finite numbers additionally carries an ``execution_levels`` block with those
+    three validated prices (R1.1, R1.5 / Property 11). A HOLD / ``stand_aside``
+    decision — or any decision missing a finite level — carries no
+    ``execution_levels``; levels are never synthesized or zero-filled.
     """
     if not isinstance(decision, dict):
         return None
+    action = decision.get("action")
     payload = {
-        "action": decision.get("action"),
+        "action": action,
+        # Conviction is threaded verbatim — no Python-side default (R1.7).
         "conviction_score": decision.get("conviction_score"),
         "rationale": decision.get("setup_validation") or decision.get("reason"),
         # Carry the execution plan so the UI can populate the trade card directly
@@ -1038,6 +1063,25 @@ def build_decision_event(decision: Any) -> Optional[dict]:
         payload["opportunity_tier"] = tier
     if "size_factor" in decision:
         payload["size_factor"] = decision.get("size_factor")
+
+    # Thread the validated execution levels ONLY for a directional decision whose
+    # three prices are all finite numbers — never for HOLD / stand_aside and
+    # never synthesized/zero-filled (R1.5 / Property 11).
+    normalized_action = action.strip().upper() if isinstance(action, str) else ""
+    if normalized_action in ("BUY", "SELL"):
+        entry = decision.get("entry")
+        stop_loss = decision.get("stop_loss")
+        take_profit = decision.get("take_profit")
+        if (
+            _is_finite_num(entry)
+            and _is_finite_num(stop_loss)
+            and _is_finite_num(take_profit)
+        ):
+            payload["execution_levels"] = {
+                "entry": entry,
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
+            }
     return payload
 
 

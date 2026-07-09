@@ -818,12 +818,28 @@ def get_candles(symbol: str, timeframe: str, limit: int) -> list:
             json={"symbol": symbol, "timeframe": timeframe, "limit": limit},
             timeout=10.0
         )
-        if response.status_code != 200:
-            print(f"[Tool Error] Server returned {response.status_code}: {response.text}")
-        response.raise_for_status()
-        res = response.json()
-        print(f"[Tool Success] <<< get_candles: symbol={symbol}, timeframe={timeframe}, retrieved {len(res)} candles.")
-        return validate_contract("get_candles", res)
+        # Classify the differentiated candle-endpoint outcomes (R2). The Rust
+        # Tool_Server now distinguishes an Availability_Shortfall from an
+        # Infrastructure_Fault, so we must NOT call raise_for_status() blindly
+        # (which would mask both behind the same opaque failure).
+        if response.status_code == 200:
+            res = response.json()
+            # Availability_Shortfall: a graceful, non-5xx "not enough data yet"
+            # result. Surface it as the honest list-error Unavailable_Marker that
+            # _has_honest_marker and the Data_Tools already tolerate.
+            if isinstance(res, dict) and res.get("unavailable"):
+                reason = res.get("reason", "candle data unavailable")
+                print(f"[Tool Success] <<< get_candles: symbol={symbol}, timeframe={timeframe}, unavailable ({reason})")
+                return [{"error": reason}]
+            # Normal candle list.
+            count = len(res) if isinstance(res, list) else 0
+            print(f"[Tool Success] <<< get_candles: symbol={symbol}, timeframe={timeframe}, retrieved {count} candles.")
+            return validate_contract("get_candles", res)
+        # 5xx (and any other non-200): a genuine Infrastructure_Fault. Surface the
+        # named cause the server provided — still non-fatal (list-error marker).
+        detail = response.text.strip()[:200]
+        print(f"[Tool Error] Server returned {response.status_code}: {detail}")
+        return [{"error": f"candle store fault: {detail}"}]
     except Exception as e:
         print(f"[Tool Error] <<< get_candles FAIL: {str(e)}")
         return [{"error": f"Failed to retrieve candles from Rust server: {str(e)}"}]

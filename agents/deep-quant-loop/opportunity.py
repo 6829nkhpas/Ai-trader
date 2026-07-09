@@ -1451,11 +1451,22 @@ def best_current_read(evidence, tier_eval) -> dict:
     else:
         bias = "neutral"
 
+    # Prefer structured reference levels (support/resistance, VWAP, value-area, or
+    # the registered watch levels) assembled by ``_evidence_for_tier``; only fall
+    # back to the evidence entry/stop/target triple when it is structurally sourced
+    # (validated ``declare_trade`` / manual_trade args, not prose-parsed). A field
+    # with no defensible price is omitted rather than surfaced (R4.1, R4.4).
     levels: dict = {}
-    for key in ("entry", "stop", "target"):
-        val = ev.get(key)
-        if _is_finite_number(val):
-            levels[key] = float(val)
+    reference = ev.get("reference_levels")
+    if isinstance(reference, dict):
+        for key, val in reference.items():
+            if _is_finite_number(val):
+                levels[key] = float(val)
+    if not levels and ev.get("levels_structural", True):
+        for key in ("entry", "stop", "target"):
+            val = ev.get(key)
+            if _is_finite_number(val):
+                levels[key] = float(val)
 
     why = ""
     rationale = getattr(tier_eval, "rationale", None)

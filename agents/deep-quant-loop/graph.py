@@ -1034,6 +1034,24 @@ MARKET_DATA_TOOL_NAMES = {
     "get_event_risk",
 }
 
+# The FIND-critical Core_Data_Tools whose first-pass acquisition the R6 heartbeat
+# gate keys on (design R6 / Property 14). These are the tools that establish the
+# baseline read the model needs before a heartbeat wake is allowed to precipitate
+# a stand-aside HOLD: the market regime (also read via the consensus report),
+# relative strength vs the benchmark, the session/time-of-day context, and the
+# order-flow tape. `market_data_seen` latches True on ANY single market-data tool,
+# which is why it cannot express "all core tools have finished their first pass" —
+# `_core_acquisition_resolved` (below) is the per-tool predicate that can. Kept a
+# strict subset of MARKET_DATA_TOOL_NAMES so both flags share the same
+# usable/unavailable/error result conventions.
+CORE_DATA_TOOL_NAMES = {
+    "get_market_regime",
+    "get_consensus_report",
+    "get_relative_strength",
+    "get_session_context",
+    "get_order_flow",
+}
+
 # DeepSeek/HuggingFace custom-token markup boundaries.
 _CALL_BLOCK_RE = re.compile(r"<｜tool▁call▁begin｜>(.*?)<｜tool▁call▁end｜>", re.DOTALL)
 _SEP_NAME_RE = re.compile(r"<｜tool▁sep｜>\s*([^\s`{]+)")
@@ -1416,6 +1434,82 @@ def _market_data_attempted(messages) -> bool:
     return False
 
 
+def _tool_result_is_usable(content) -> bool:
+    """True when a tool result carries real, usable data.
+
+    A result is usable when it is present, is NOT a failure (no ``error`` marker
+    per ``_tool_result_is_error``), and is NOT an explicit graceful-degradation
+    Unavailable_Marker (per ``_tool_result_is_unavailable``). This is the
+    complement used to build the core-acquisition predicate: a usable result and
+    an explicit unavailable result both count as *resolved*, while a still-failing
+    (hard error) or absent result does not. Total — never raises.
+    """
+    if content is None:
+        return False
+    return not _tool_result_is_error(content) and not _tool_result_is_unavailable(content)
+
+
+def _resolved_core_tools(messages) -> set:
+    """The set of Core_Data_Tools that have *resolved* their first-pass acquisition.
+
+    A core tool is resolved once it has returned — at least once this run —
+    either usable data (``_tool_result_is_usable``) OR an explicit
+    Unavailable_Marker (``_tool_result_is_unavailable``). A core tool that has
+    only ever produced a hard error (still failing) or was never called is NOT
+    included, which is precisely how this distinguishes "explicitly unavailable"
+    (a resolved, non-blocking missing input) from "not yet acquired" (design
+    Property 14).
+
+    Pure and total: it reads only the message history and never raises over
+    malformed, empty, or non-tool messages. Returned so the heartbeat gate can
+    name the still-unresolved core tools in its feedback (task 14.2).
+    """
+    resolved = set()
+    for m in messages:
+        if not _is_tool_message(m):
+            continue
+        name = getattr(m, "name", None)
+        if name not in CORE_DATA_TOOL_NAMES:
+            continue
+        content = getattr(m, "content", None)
+        if _tool_result_is_usable(content) or _tool_result_is_unavailable(content):
+            resolved.add(name)
+    return resolved
+
+
+def _core_acquisition_resolved(messages) -> bool:
+    """True once every Core_Data_Tool has *resolved* its first-pass acquisition.
+
+    A core tool is resolved once it has returned — at least once this run —
+    either usable data (``_tool_result_is_usable``) OR an explicit
+    Unavailable_Marker (``_tool_result_is_unavailable``). A core tool that has
+    only ever produced a hard error (still failing) or was never called is NOT
+    counted as resolved, which is precisely how this predicate distinguishes
+    "explicitly unavailable" (a resolved, non-blocking missing input) from
+    "not yet acquired" (design Property 14). Unlike ``market_data_seen`` — which
+    latches True on ANY single market-data tool — this returns True only when
+    EVERY core tool has resolved.
+
+    Pure and total: it reads only the message history and never raises over
+    malformed, empty, or non-tool messages.
+    """
+    return CORE_DATA_TOOL_NAMES.issubset(_resolved_core_tools(messages))
+
+
+def _declare_is_directional(args) -> bool:
+    """True when a declare_trade's args commit a directional BUY/SELL.
+
+    A directional trade is NEVER gated by the heartbeat acquisition gate (task
+    14.2). Anything that is not an explicit BUY/SELL — a HOLD, a stand-aside, or
+    a missing/malformed action — is treated as non-directional (fail-safe), so a
+    premature stand-aside cannot slip through the gate. Pure and total.
+    """
+    action = (args or {}).get("action")
+    if not isinstance(action, str):
+        return False
+    return action.strip().upper() in {"BUY", "SELL"}
+
+
 def _decision_from_declare(ok_calls) -> Optional[dict]:
     """Build the structured decision from a declare_trade tool call, if present.
 
@@ -1478,9 +1572,28 @@ def _declare_was_rejected(messages) -> bool:
 PATTERN_CONFIDENCE_THRESHOLD = 0.6
 
 _LEVEL_NUM = r"([0-9]+(?:\.[0-9]+)?)"
-_ENTRY_RE = re.compile(r"entry\b[^0-9\-]*" + _LEVEL_NUM, re.IGNORECASE)
-_SL_RE = re.compile(r"(?:stop[\s\-]?loss|stop|sl)\b[^0-9\-]*" + _LEVEL_NUM, re.IGNORECASE)
-_TP_RE = re.compile(r"(?:take[\s\-]?profit|target|tp)\b[^0-9\-]*" + _LEVEL_NUM, re.IGNORECASE)
+# Negative-lookahead guard rejecting a captured number that is actually a
+# volatility *multiplier* ("1.5x ATR") or an ATR token rather than a price: the
+# number must NOT be immediately followed (optionally after further digits/dots
+# or whitespace) by an x / X / × multiplier token or an ATR token (R4.2). This
+# stops "stop >= 1.5x ATR" from yielding stop_loss=1.5 (or the backtracked 1).
+_NOT_MULT = r"(?![0-9.]*\s*(?:[xX" + "\u00d7" + r"]|[Aa][Tt][Rr]))"
+_ENTRY_RE = re.compile(r"entry\b[^0-9\-]*" + _LEVEL_NUM + _NOT_MULT, re.IGNORECASE)
+_SL_RE = re.compile(
+    r"(?:stop[\s\-]?loss|stop|sl)\b[^0-9\-]*" + _LEVEL_NUM + _NOT_MULT,
+    re.IGNORECASE,
+)
+# Optionally consume a "Target N" ordinal label (N + a :/.)/- delimiter) so the
+# PRICE that follows is captured, not the ordinal — "Target 1: 24300" yields
+# 24300 not 1 (R4.3). The optional ordinal-consume and the number-gap are wrapped
+# in an atomic group so a failed price match cannot backtrack and re-capture the
+# ordinal digit as the price; a bare "target 24300" (no ordinal) still captures
+# 24300 since the ordinal requires a trailing delimiter.
+_TP_RE = re.compile(
+    r"(?:take[\s\-]?profit|target|tp)\b(?>(?:\s*\d{1,2}\s*[:.)\-])?[^0-9\-]*)"
+    + _LEVEL_NUM + _NOT_MULT,
+    re.IGNORECASE,
+)
 
 
 def _is_finite_num(x) -> bool:
@@ -2875,6 +2988,87 @@ def _macro_signal_for_tier(results, action) -> dict:
     return {"available": True, "alignment": "misaligned"}
 
 
+def _levels_are_structural(decision, mode, manual_trade) -> bool:
+    """True when the resolved execution levels are structurally sourced — the
+    validated ``declare_trade`` args (all three of entry/stop_loss/take_profit
+    finite) or the user-proposed VERIFY ``manual_trade`` — rather than recovered
+    from free-form plan prose (R4.1, R4.4).
+
+    Mirrors the branch ``_resolve_action_and_levels`` takes to decide whether it
+    returns the structured triple or falls back to the prose parse, so a
+    prose-parsed number is never treated as a defensible price. Pure; never raises.
+    """
+    if mode == "VERIFY" and manual_trade:
+        return True
+    d = decision or {}
+    return all(_is_finite_num(d.get(k)) for k in ("entry", "stop_loss", "take_profit"))
+
+
+def _reference_levels(results, watch_args) -> dict:
+    """Assemble structured reference price levels for the Best_Current_Read.
+
+    Priority order (R4.1): (1) the nearest support/resistance bracketing the last
+    price from ``get_support_resistance``, (2) VWAP from ``get_consensus_report``
+    plus the value-area edges (VAH/VAL) from ``get_volume_profile``, (3) the
+    registered watch's ``price_level`` / ``invalidation_level``. The first source
+    group that yields at least one finite, structurally-sourced price wins; a field
+    with no defensible price is omitted (R4.4). Returns ``{}`` when no source is
+    defensible. Pure; never raises.
+    """
+    results = results if isinstance(results, dict) else {}
+
+    consensus = results.get("get_consensus_report")
+    consensus = consensus if isinstance(consensus, dict) else {}
+    ref_price = consensus.get("current_price")
+    if not _is_finite_num(ref_price):
+        ref_price = None
+
+    # (1) get_support_resistance — nearest support/resistance around the anchor.
+    sr = results.get("get_support_resistance")
+    if isinstance(sr, dict) and not sr.get("unavailable"):
+        supports = [float(sr[k]) for k in ("s1", "s2", "s3") if _is_finite_num(sr.get(k))]
+        resistances = [float(sr[k]) for k in ("r1", "r2", "r3") if _is_finite_num(sr.get(k))]
+        pivot = sr.get("pivot")
+        anchor = ref_price if ref_price is not None else (
+            float(pivot) if _is_finite_num(pivot) else None
+        )
+        levels: dict = {}
+        if supports:
+            below = [s for s in supports if anchor is None or s <= anchor]
+            levels["support"] = max(below) if below else min(
+                supports, key=lambda s: abs(s - (anchor if anchor is not None else s))
+            )
+        if resistances:
+            above = [r for r in resistances if anchor is None or r >= anchor]
+            levels["resistance"] = min(above) if above else min(
+                resistances, key=lambda r: abs(r - (anchor if anchor is not None else r))
+            )
+        if levels:
+            return levels
+
+    # (2) get_consensus_report VWAP + get_volume_profile value-area edges.
+    levels = {}
+    if _is_finite_num(consensus.get("vwap")):
+        levels["vwap"] = float(consensus["vwap"])
+    vp = results.get("get_volume_profile")
+    if isinstance(vp, dict):
+        if _is_finite_num(vp.get("vah")):
+            levels["value_area_high"] = float(vp["vah"])
+        if _is_finite_num(vp.get("val")):
+            levels["value_area_low"] = float(vp["val"])
+    if levels:
+        return levels
+
+    # (3) registered watch price_level / invalidation_level.
+    wa = watch_args if isinstance(watch_args, dict) else {}
+    levels = {}
+    if _is_finite_num(wa.get("price_level")):
+        levels["watch_price"] = float(wa["price_level"])
+    if _is_finite_num(wa.get("invalidation_level")):
+        levels["invalidation"] = float(wa["invalidation_level"])
+    return levels
+
+
 def _evidence_for_tier(state: AgentState, decision: dict):
     """Assemble the ``opportunity.evaluate_tier`` evidence dict from the same tool
     results the defensibility record cites (adaptive-opportunity-engine R1).
@@ -2885,6 +3079,11 @@ def _evidence_for_tier(state: AgentState, decision: dict):
     strongest structural pattern confidence. Returns ``(evidence, action)``. Pure
     read; the ladder never relaxes the Trade_Validator (the levels here have
     ALREADY passed it), it only classifies the setup quality.
+
+    Also carries a structured ``reference_levels`` dict (support/resistance, VWAP,
+    value-area, or the registered watch levels) and a ``levels_structural`` flag so
+    ``opportunity.best_current_read`` can prefer real, structurally-sourced prices
+    over any prose-parsed number (R4.1, R4.4).
     """
     messages = state.get("messages") or []
     results = _latest_tool_results(messages)
@@ -2903,6 +3102,10 @@ def _evidence_for_tier(state: AgentState, decision: dict):
         "forecast": _forecast_entry(results),
         "options": _options_entry(results),
         "macro": _macro_signal_for_tier(results, action),
+        "reference_levels": _reference_levels(results, _latest_watch_args(messages)),
+        "levels_structural": _levels_are_structural(
+            decision, state.get("mode"), state.get("manual_trade")
+        ),
     }
     return evidence, action
 
@@ -2957,6 +3160,30 @@ def _finalize_decision(state: AgentState, decision: dict) -> dict:
         mode=state.get("mode"),
         manual_trade=state.get("manual_trade"),
     )
+    # Degraded-data label (R6.3, Property 15). Every terminal decision funnels
+    # through this chokepoint, so this is the single place to detect a commit made
+    # while core acquisition is still unresolved. When `_core_acquisition_resolved`
+    # is False, stamp `data_degraded: True` on the decision and append a note to
+    # the defensibility record naming the still-unresolved core tools. A decision
+    # committed with ALL core tools resolved is NOT labeled (key absent/False, no
+    # note). Best-effort and total: never raise into the run.
+    try:
+        if not _core_acquisition_resolved(state["messages"]):
+            unresolved = sorted(CORE_DATA_TOOL_NAMES - _resolved_core_tools(state["messages"]))
+            note = (
+                "decision reached on degraded data (core tools unresolved: "
+                f"{', '.join(unresolved) if unresolved else 'unknown'})"
+            )
+            decision["data_degraded"] = True
+            record = decision["defensibility"]
+            if isinstance(record, dict):
+                record["data_degraded"] = True
+                record["data_degraded_note"] = note
+                summary = record.get("summary")
+                if isinstance(summary, str):
+                    record["summary"] = f"{summary} {note}."
+    except Exception as e:
+        print(f"[Deep Quant] WARN: data_degraded stamping failed: {e}")
     # Opt-in Feature-Attribution Weight_Map consultation (feature-attribution-pruning,
     # R6.2-6.5, R9.3-9.4). Runs AFTER the defensibility record is built (and thus
     # after the Trade_Validator that gates which declare_trade reaches finalize),
@@ -3194,6 +3421,36 @@ def tool_node(state: AgentState):
                 retained.append(tc)
         ok_calls = retained
 
+    # ── Heartbeat core-acquisition gate (R6.1, R6.2) ─────────────────────────
+    # A heartbeat pulse must not precipitate a premature stand-aside before the
+    # Core_Data_Tools have finished their first-pass acquisition. `market_data_seen`
+    # latches True on ANY single market-data tool (e.g. a usable consensus read),
+    # so it cannot express "all core tools have finished their first pass" — that
+    # is `_core_acquisition_resolved`. When ALL of the following hold, hold the
+    # non-directional (HOLD / stand-aside) declare back so it is answered with
+    # feedback and the loop continues to finish acquiring the core tools:
+    #   • the most recent resume was a heartbeat (`last_resume_kind`), AND
+    #   • the core acquisition is still unresolved, AND
+    #   • no bounded-hunt cap has fired (`opportunity.termination_reason`).
+    # A directional BUY/SELL is NEVER gated, and a fired cap (Watch_Cap /
+    # Session_Budget) retains ABSOLUTE precedence — in either case the declare
+    # passes straight through to the normal finalize path (Property 14, 16).
+    # Symmetric to the `blocked_declares` gate above; inert for every
+    # non-heartbeat resume and once core acquisition has resolved.
+    heartbeat_gated_declares: List[dict] = []
+    if (
+        state.get("last_resume_kind") == opportunity.RESUME_HEARTBEAT
+        and not _core_acquisition_resolved(state["messages"])
+        and opportunity.termination_reason(state, _OPPORTUNITY_CFG, time.time()) is None
+    ):
+        retained = []
+        for tc in ok_calls:
+            if tc.get("name") == "declare_trade" and not _declare_is_directional(tc.get("args") or {}):
+                heartbeat_gated_declares.append(tc)
+            else:
+                retained.append(tc)
+        ok_calls = retained
+
     # ── Invalidation post-mortem re-arm gate (adaptive-opportunity-engine R4) ──
     # After an invalidation resume set `postmortem_pending` + `prior_thesis` (see
     # the invalidation-detection bookkeeping below). While a post-mortem is pending,
@@ -3403,6 +3660,34 @@ def tool_node(state: AgentState):
         # else: premature finalize with no data acquired at all → no decision is
         # set, so route_after_tools returns the agent to gather data (R3.3). The
         # bounded reasoning cap still guarantees eventual termination.
+        return update
+
+    # ── Resolve heartbeat-gated declare_trade calls (R6.1, R6.2) ─────────────
+    # A stand-aside HOLD the heartbeat acquisition gate held back is answered
+    # with feedback naming the still-unresolved core tools and is NOT committed
+    # (no `state["decision"]` is set), so route_after_tools returns the agent to
+    # finish acquiring (or explicitly resolving as unavailable) the core tools
+    # before a terminal HOLD may be committed. The bounded reasoning cap and the
+    # Watch_Cap / Session_Budget still guarantee eventual termination — and once
+    # a cap fires, `termination_reason` is non-None so this gate no longer
+    # triggers and the terminal decision is permitted (Property 14, 16).
+    if heartbeat_gated_declares:
+        unresolved = sorted(CORE_DATA_TOOL_NAMES - _resolved_core_tools(state["messages"]))
+        for tc in heartbeat_gated_declares:
+            note = (
+                "declare_trade not committed: this stand-aside HOLD was proposed on a "
+                "heartbeat wake before your core data acquisition finished. Core tools "
+                f"still unresolved: {', '.join(unresolved)}. Finish acquiring these core "
+                "tools (or confirm each is explicitly unavailable) before committing a "
+                "terminal HOLD, then re-declare. Continue your analysis."
+            )
+            print(
+                "[Deep Quant Tools] Gated heartbeat declare_trade "
+                f"(core unresolved={unresolved}) -> block+loop."
+            )
+            out_messages.append(
+                ToolMessage(content=note, tool_call_id=tc["id"], name="declare_trade")
+            )
         return update
 
     # ── Normal finalize path ─────────────────────────────────────────────────
