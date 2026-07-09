@@ -47,10 +47,44 @@ export interface ConsensusReport {
   };
 }
 
+// Validated directional Execution_Levels — present ONLY for a committed
+// BUY/SELL trade whose Declare_Trade_Args carried finite entry/stop/target.
+export interface ExecutionLevels {
+  entry: number;
+  stop_loss: number;
+  take_profit: number;
+}
+
 export interface AiExecutionPlan {
-  conviction_score: number;   // 1–100
+  // `undefined` when the committed decision emitted no conviction — the UI
+  // renders "—" rather than fabricating a default (R1.7). Never defaulted to 75.
+  conviction_score: number | undefined;   // 1–100, or undefined when absent
   setup_validation: string;
   execution_plan: string;
+  action?: 'BUY' | 'SELL' | 'HOLD';   // from the committed decision
+  opportunity_tier?: string;          // e.g. 'a_plus' | 'stand_aside'
+  execution_levels?: ExecutionLevels; // present ONLY for a validated directional trade
+}
+
+// Shared, pure render-guard predicate (R1). A plan is actionable only when the
+// committed decision is a directional BUY/SELL carrying three finite positive
+// prices. HOLD, `stand_aside`, an unknown/absent action, or missing/malformed
+// levels all fail safe to non-actionable. Total over null/partial plans.
+export function isActionableTrade(
+  plan: AiExecutionPlan | null,
+): plan is AiExecutionPlan & { execution_levels: ExecutionLevels } {
+  if (!plan) return false;
+  const act = (plan.action || '').toUpperCase();
+  if (act === 'HOLD') return false;
+  if (plan.opportunity_tier === 'stand_aside') return false;
+  if (act !== 'BUY' && act !== 'SELL') return false;
+  const l = plan.execution_levels;
+  return (
+    !!l &&
+    [l.entry, l.stop_loss, l.take_profit].every(
+      (n) => typeof n === 'number' && Number.isFinite(n) && n > 0,
+    )
+  );
 }
 
 export interface ChartPattern {
@@ -447,11 +481,14 @@ function extractFinalTrade(text: string): AiExecutionPlan | null {
 
   // Coerce an unknown JSON value to a string, defaulting to empty.
   const asString = (v: unknown): string => (typeof v === 'string' ? v : '');
-  const asScore = (...vals: unknown[]): number => {
+  // Return the first finite numeric conviction found, or `undefined` when none
+  // was emitted. RUN_FINISHED text-extraction must NOT reintroduce a `75`
+  // default — an absent conviction stays undefined so the UI renders "—" (R1.7).
+  const asScore = (...vals: unknown[]): number | undefined => {
     for (const v of vals) {
       if (typeof v === 'number' && Number.isFinite(v)) return v;
     }
-    return 75;
+    return undefined;
   };
 
   if (validCandidates.length === 0) {
@@ -678,14 +715,31 @@ function applyStreamEvent(session: QuantSession, payload: StreamEventPayload): Q
       const conviction = typeof convictionRaw === 'number' && Number.isFinite(convictionRaw) ? convictionRaw : undefined;
       const rationale = (data?.rationale as string) || (data?.setup_validation as string) || (data?.thesis as string) || '';
       const executionPlan = (data?.execution_plan as string) || '';
+      // Carry the committed decision's action / tier / validated levels through
+      // to the plan so the UI can gate on them (R1.1). `execution_levels` is
+      // only ever the structured object the Python payload threads for a
+      // directional trade — never synthesized here.
+      const tier = (data?.opportunity_tier as string) || undefined;
+      const levels = (data?.execution_levels && typeof data.execution_levels === 'object')
+        ? (data.execution_levels as ExecutionLevels)
+        : undefined;
       const summaryLines = [
         `**Decision${action ? `: ${action}` : ''}**`,
         conviction !== undefined ? `Conviction: ${conviction}/100` : '',
         rationale ? `Rationale: ${rationale}` : '',
         executionPlan ? `Plan: ${executionPlan}` : '',
       ].filter(Boolean);
-      const decisionPlan: AiExecutionPlan | null = (conviction !== undefined || rationale || executionPlan)
-        ? { conviction_score: conviction ?? 75, setup_validation: rationale, execution_plan: executionPlan }
+      // Leave `conviction_score` undefined when the payload omits it — no `?? 75`
+      // default (R1.7). Build a plan whenever we have any decision signal.
+      const decisionPlan: AiExecutionPlan | null = (conviction !== undefined || rationale || executionPlan || action)
+        ? {
+            conviction_score: conviction,
+            setup_validation: rationale,
+            execution_plan: executionPlan,
+            action: (action as AiExecutionPlan['action']) || undefined,
+            opportunity_tier: tier,
+            execution_levels: levels,
+          }
         : null;
       return {
         ...session,
