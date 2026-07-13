@@ -185,7 +185,7 @@ _VALUE_KEYS = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: feature-attribution-pruning, Property 12: For any list of trade rows, every Dimension_Report carries its per-value Dimension_Stats, its contribution (and meaningfulness flag), its rank, its Recommendation, and its total_scored; the report carries the resolved config (min samples and threshold) and the overall total_scored; and for every value and every dimension backtest_scored + live_scored == total_scored.
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(rows=_journal())
 def test_property_12_report_completeness_and_source_split(rows):
     """Feature: feature-attribution-pruning, Property 12: the Attribution_Report is

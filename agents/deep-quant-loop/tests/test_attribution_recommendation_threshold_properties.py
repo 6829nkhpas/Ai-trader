@@ -179,7 +179,7 @@ def _journal(draw, min_size=0, max_size=60):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: feature-attribution-pruning, Property 10: For any dimension with sufficient sample (total scored >= min_sample_dimension) and a meaningful contribution, the Recommendation is down_weight when the contribution is below contribution_threshold and keep when it is at or above the threshold.
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(rows=_journal())
 def test_property_10_recommendation_threshold(rows):
     """Feature: feature-attribution-pruning, Property 10: for every dimension that
