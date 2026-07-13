@@ -209,6 +209,11 @@ describe('F4 scope boundary — invokes no trade-execution command (R9.2)', () =
     'get_fno_analytics',
     'fno_subscribe',
     'fno_unsubscribe',
+    // Data-ingestion bridge: requests the backend start ingesting a stock
+    // underlying's option chain (bounded/validated server-side). Like the four
+    // above it is a transport/data command — it computes no analytic and places
+    // no trade, so it is within the consumption-only F&O boundary (R9.2).
+    'fno_request_underlying',
   ]);
 
   // Matches `invoke('cmd'`, `invoke("cmd"`, and `invoke<T>('cmd'` (Tauri's

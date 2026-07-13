@@ -191,20 +191,37 @@ export default function SymbolSearchBlock() {
     };
 
     if (r.kind === 'FNO' && typeof r.underlying === 'string') {
-      setActiveProfile('FNO');
+      const underlying = r.underlying;
       const matchedConfig = configuredUnderlyings.find((u) => {
-        const ru = r.underlying.toUpperCase();
+        const ru = underlying.toUpperCase();
         return u.toUpperCase() === ru || nfoNameOf(u).toUpperCase() === ru;
       });
-      setFnoUnderlying(matchedConfig ?? r.underlying);
-      routeSymbolToChart(symbol);
-      closeDropdown();
 
-      if (!matchedConfig) {
-        invoke<boolean>('fno_request_underlying', { underlying: r.underlying }).catch(
-          (err) => console.warn('[SymbolSearchBlock] fno_request_underlying failed:', err),
-        );
+      if (matchedConfig) {
+        // Configured index underlying (e.g. NIFTY 50 / BANKNIFTY) → open the
+        // F&O workspace directly; setFnoUnderlying resets fnoExpiry to ''.
+        setActiveProfile('FNO');
+        setFnoUnderlying(matchedConfig);
+        closeDropdown();
+        return;
       }
+
+      // Non-configured (stock) underlying → ask the backend to start ingesting
+      // its chain. Activate F&O ONLY when the backend confirms it is a real F&O
+      // underlying; on rejection (or error) fall back to charting the contract
+      // symbol exactly like an equity selection — do NOT activate F&O.
+      closeDropdown();
+      try {
+        const accepted = await invoke<boolean>('fno_request_underlying', { underlying });
+        if (accepted) {
+          setActiveProfile('FNO');
+          setFnoUnderlying(underlying);
+          return;
+        }
+      } catch (err) {
+        console.warn('[SymbolSearchBlock] fno_request_underlying failed:', err);
+      }
+      routeSymbolToChart(symbol);
       return;
     }
 

@@ -268,8 +268,40 @@ async function processTicker(symbol, NewsSentiment) {
  *
  * @returns {import('node:http').Server}
  */
-function startSentimentHttpServer() {
-  const server = http.createServer((req, res) => {
+function startSentimentHttpServer(NewsSentiment) {
+  // Symbols with an on-demand classification currently in flight, so concurrent
+  // requests for the same uncached symbol coalesce onto one run instead of
+  // launching a storm of duplicate LLM classifications.
+  const onDemandInFlight = new Map(); // symbol → Promise<void>
+
+  // Max time a request waits for a fresh on-demand classification before
+  // degrading to 404 (the Rust proxy then serves headlines-only). The
+  // classification keeps running in the background so a later request is served
+  // from cache.
+  const ON_DEMAND_TIMEOUT_MS = parseInt(process.env.SENTIMENT_ON_DEMAND_TIMEOUT_MS ?? '25000', 10);
+
+  /**
+   * Classify a symbol on demand (cache miss), coalescing concurrent callers.
+   * Never throws — a failure simply leaves the cache unpopulated.
+   * @param {string} symbol - Upper-cased NSE ticker.
+   * @returns {Promise<void>}
+   */
+  function classifyOnDemand(symbol) {
+    if (onDemandInFlight.has(symbol)) return onDemandInFlight.get(symbol);
+    if (!NewsSentiment) return Promise.resolve();
+    console.log(`[index] On-demand sentiment classification requested for ${symbol}.`);
+    const run = processTicker(symbol, NewsSentiment)
+      .catch((err) => {
+        console.error(`[index] On-demand classification failed for ${symbol}: ${err.message}`);
+      })
+      .finally(() => {
+        onDemandInFlight.delete(symbol);
+      });
+    onDemandInFlight.set(symbol, run);
+    return run;
+  }
+
+  const server = http.createServer(async (req, res) => {
     const sendJson = (status, body) => {
       res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(body));
@@ -286,9 +318,25 @@ function startSentimentHttpServer() {
         if (!symbol) {
           return sendJson(400, { error: 'symbol query parameter is required' });
         }
-        const entry = latestSentiment.get(symbol);
+        let entry = latestSentiment.get(symbol);
         if (!entry) {
-          // No classification yet — the proxy treats a non-200 as "Unavailable".
+          // Cache miss → classify this symbol on demand rather than serving a
+          // permanent 404 for every symbol outside the fixed polling set. Wait
+          // up to ON_DEMAND_TIMEOUT_MS for a fresh verdict; if it does not
+          // arrive in time, degrade to 404 (the proxy falls back to
+          // headlines-only) while the classification finishes in the background.
+          const classification = classifyOnDemand(symbol);
+          let timer;
+          const timeout = new Promise((resolve) => {
+            timer = setTimeout(resolve, ON_DEMAND_TIMEOUT_MS);
+          });
+          await Promise.race([classification, timeout]);
+          clearTimeout(timer);
+          entry = latestSentiment.get(symbol);
+        }
+        if (!entry) {
+          // Still no classification (in flight or failed) — the proxy treats a
+          // non-200 as "Unavailable" and reads the headlines directly.
           return sendJson(404, { error: `no sentiment computed yet for ${symbol}` });
         }
         return sendJson(200, entry);
@@ -365,7 +413,7 @@ async function run() {
   }
 
   // ── 3b. Start the on-demand sentiment HTTP API ───────────────────────────
-  const httpServer = startSentimentHttpServer();
+  const httpServer = startSentimentHttpServer(NewsSentiment);
 
   // ── 4. Poll loop ──────────────────────────────────────────────────────────
   console.log(
