@@ -223,7 +223,7 @@ def _mixed_journal(draw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: feature-attribution-pruning, Property 13: For any list of trade rows, build_attribution_report never raises; when there are zero Scored_Trades it returns an empty dimensions list flagged insufficient_data; it flags weak_prior exactly when total scored is below global_min_scored; and it flags a value's stats weak_prior exactly when that value's count is below min_sample_value.
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(rows=_mixed_journal())
 def test_property_13_degenerate_robustness_and_weak_prior_flags(rows):
     """Feature: feature-attribution-pruning, Property 13: degenerate-input

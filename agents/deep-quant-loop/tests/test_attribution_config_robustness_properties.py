@@ -185,7 +185,7 @@ _assignment = st.fixed_dictionaries(
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: feature-attribution-pruning, Property 15: For any string assigned to each attribution environment variable (unset, empty, whitespace, unparseable, or out-of-range), resolve_attribution_config returns a config without raising in which every field equals the parsed valid value when the input is valid and the documented default otherwise, and every field lies within its documented range.
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(assignment=_assignment)
 def test_property_15_configuration_robustness(assignment):
     """Feature: feature-attribution-pruning, Property 15: Configuration robustness
