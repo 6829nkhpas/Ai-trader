@@ -85,6 +85,7 @@ pub fn compute_ghost_curve(
     if candles.len() < MIN_CANDLES_FOR_FIT {
         return Ok(ProjectionPayload {
             linear_points: vec![],
+            volume_points: vec![],
             curved_points: vec![],
             acceleration_coefficient: 0.0,
         });

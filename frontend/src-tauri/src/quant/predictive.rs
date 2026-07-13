@@ -38,8 +38,12 @@ use super::vwepr::{self, OhlcCandle, ProjectedPoint};
 ///   - `a ≈ 0` → trend is approximately linear
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct ProjectionPayload {
-    /// OLS linear regression projection points.
+    /// OLS linear regression projection points (unweighted baseline).
     pub linear_points: Vec<ProjectedPoint>,
+    /// VWLR — Volume-Weighted Linear Regression points. An "advanced OLS":
+    /// still a straight-line fit, but each bar is weighted by its traded
+    /// volume so high-participation bars dominate the trend estimate.
+    pub volume_points: Vec<ProjectedPoint>,
     /// VWEPR curved polynomial projection points.
     pub curved_points: Vec<ProjectedPoint>,
     /// The quadratic coefficient `a` from the VWEPR fit.
@@ -156,6 +160,76 @@ pub fn calculate_ols(
     result
 }
 
+// ── Volume-Weighted Linear Regression (VWLR) ────────────────────────────────
+
+/// Calculate a **volume-weighted** linear regression over recent candles and
+/// project forward. This is the "advanced OLS": identical straight-line model,
+/// but each observation is weighted by its traded volume (weighted least
+/// squares), so bars with heavy participation pull the trend line more than
+/// thin, low-conviction bars. Sits between plain OLS (unweighted line) and
+/// VWEPR (volume-weighted curve).
+///
+/// Uses array indices as the x-axis (like OLS) to avoid float overflow, and
+/// anchors the projection to the last actual close price.
+///
+/// Returns `Vec<ProjectedPoint>` with `projection_length + 1` entries (index 0
+/// = anchor), or an empty `Vec` when the fit is degenerate.
+pub fn calculate_vwlr(
+    candles: &[OhlcCandle],
+    projection_length: usize,
+    interval_sec: i64,
+) -> Vec<ProjectedPoint> {
+    if candles.is_empty() || projection_length == 0 {
+        return Vec::new();
+    }
+
+    let window_size = candles.len().min(OLS_MAX_WINDOW);
+    let window = &candles[candles.len() - window_size..];
+
+    // Weighted sums (weight = volume, floored at 1.0 so zero-volume bars still
+    // contribute a minimal amount instead of vanishing).
+    let mut sw: f64 = 0.0;
+    let mut swx: f64 = 0.0;
+    let mut swy: f64 = 0.0;
+    let mut swxx: f64 = 0.0;
+    let mut swxy: f64 = 0.0;
+
+    for (i, candle) in window.iter().enumerate() {
+        let x = i as f64;
+        let y = candle.close;
+        let w = candle.volume.max(1.0);
+        sw += w;
+        swx += w * x;
+        swy += w * y;
+        swxx += w * x * x;
+        swxy += w * x * y;
+    }
+
+    let last_candle = &window[window.len() - 1];
+    let last_close = last_candle.close;
+    let last_time = last_candle.time;
+
+    let denom = sw * swxx - swx * swx;
+    if denom.abs() < 1e-30 {
+        return vec![ProjectedPoint { time: last_time, value: last_close }];
+    }
+
+    let slope = (sw * swxy - swx * swy) / denom;
+    if !slope.is_finite() {
+        return vec![ProjectedPoint { time: last_time, value: last_close }];
+    }
+
+    let mut result = Vec::with_capacity(projection_length + 1);
+    result.push(ProjectedPoint { time: last_time, value: last_close });
+    for k in 1..=projection_length {
+        result.push(ProjectedPoint {
+            time: last_time + (k as i64 * interval_sec),
+            value: last_close + slope * k as f64,
+        });
+    }
+    result
+}
+
 // ── Dual-Engine Unified API ─────────────────────────────────────────────────
 
 /// Run both predictive engines and return the bundled `ProjectionPayload`.
@@ -174,11 +248,13 @@ pub fn calculate_dual_projection(
     interval_sec: i64,
 ) -> ProjectionPayload {
     let linear_points = calculate_ols(candles, projection_length, interval_sec);
+    let volume_points = calculate_vwlr(candles, projection_length, interval_sec);
     let (curved_points, acceleration_coefficient) =
         vwepr::calculate_vwepr_with_accel(candles, projection_length, interval_sec);
 
     ProjectionPayload {
         linear_points,
+        volume_points,
         curved_points,
         acceleration_coefficient,
     }
