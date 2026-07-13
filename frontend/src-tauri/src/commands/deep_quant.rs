@@ -464,6 +464,15 @@ pub(crate) async fn load_candles_with_ts(
         None
     };
 
+    // Records a Proactive_Backfill failure (the leader's Kite fetch returned an
+    // Err). Previously the backfill result was discarded with `let _ = …`, so a
+    // failed fetch (expired/invalid Kite token, rate-limit, network) was
+    // invisible: the reader silently proceeded against whatever stale/partial
+    // rows already existed, and an empty table was misreported as a plain
+    // "Insufficient historical data" Shortfall. Capturing it lets an empty union
+    // surface as a Fault that NAMES the real cause instead.
+    let mut backfill_error: Option<(String, String)> = None;
+
     // ── Proactive Zerodha Kite loading if AppHandle is provided ──────────────────
     if let Some(app) = app {
         let (api_key_val, access_token_val) = get_kite_credentials();
@@ -533,13 +542,19 @@ pub(crate) async fn load_candles_with_ts(
 
                         if is_daily {
                             info!("[deep_quant] Proactive fetch daily (leader): {} (token {})", symbol, token);
-                            let _ = crate::services::history_loader::load_historical_data(
+                            if let Err(e) = crate::services::history_loader::load_historical_data(
                                 pool,
                                 token,
                                 symbol,
                                 &api_key,
                                 &access_token,
-                            ).await;
+                            ).await {
+                                warn!(
+                                    "[deep_quant] Proactive daily backfill FAILED for {} (token {}): {}",
+                                    symbol, token, e
+                                );
+                                backfill_error = Some(("kite_backfill_daily".to_string(), e));
+                            }
                         } else {
                             let base_tf = match timeframe.to_lowercase().as_str() {
                                 "1m" | "1min" | "2m" | "2min" | "4m" | "4min" => "1m",
@@ -552,14 +567,20 @@ pub(crate) async fn load_candles_with_ts(
                                 _ => "10m",
                             };
                             info!("[deep_quant] Proactive fetch intraday (leader): {} (token {}) [base_tf={}]", symbol, token, base_tf);
-                            let _ = crate::services::history_loader::load_intraday_data(
+                            if let Err(e) = crate::services::history_loader::load_intraday_data(
                                 pool,
                                 token,
                                 symbol,
                                 base_tf,
                                 &api_key,
                                 &access_token,
-                            ).await;
+                            ).await {
+                                warn!(
+                                    "[deep_quant] Proactive intraday backfill FAILED for {} (token {}) [base_tf={}]: {}",
+                                    symbol, token, base_tf, e
+                                );
+                                backfill_error = Some(("kite_backfill_intraday".to_string(), e));
+                            }
                         }
 
                         // Broadcast completion to any followers already waiting,
@@ -852,6 +873,17 @@ pub(crate) async fn load_candles_with_ts(
         if let Some((source, detail)) = infra_fault {
             warn!(
                 "[deep_quant] merge_result: ALL sources empty for {} — infrastructure fault on {}: {}",
+                symbol, source, detail
+            );
+            return Err(CandleLoadError::Fault { source, detail });
+        }
+        // No DB infra fault, but if the leader's Proactive_Backfill failed, the
+        // empty union is a consequence of that fetch failure — surface it as a
+        // Fault naming the real cause (expired Kite token / rate-limit / network)
+        // rather than a misleading "Insufficient historical data" Shortfall.
+        if let Some((source, detail)) = backfill_error {
+            warn!(
+                "[deep_quant] merge_result: ALL sources empty for {} — proactive backfill fault on {}: {}",
                 symbol, source, detail
             );
             return Err(CandleLoadError::Fault { source, detail });
