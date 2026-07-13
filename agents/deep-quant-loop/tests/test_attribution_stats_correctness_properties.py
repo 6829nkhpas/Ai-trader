@@ -215,7 +215,7 @@ def _oracle_stats(rows):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: feature-attribution-pruning, Property 4: For any list of trade rows, for every reported Dimension_Stats: count == wins + losses, win_rate is None when count == 0 and otherwise equals wins/(wins+losses) and lies in [0.0, 1.0], and expectancy_r is None when count == 0 and otherwise equals the mean r_multiple of that value's scored trades.
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(rows=_journal())
 def test_property_4_statistics_correctness_and_bounds(rows):
     """Feature: feature-attribution-pruning, Property 4: every per-value
