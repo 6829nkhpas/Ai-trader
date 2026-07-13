@@ -2598,6 +2598,126 @@ mod intraday_sr_proptests {
     }
 }
 
+// ── Property tests: SR_Engine determinism (R9.4) ─────────────────────────────
+//
+// Property-based coverage for the purity of `compute_sr`: for any candle
+// dataset and timeframe, two calls over the *identical* inputs must yield the
+// identical `SrLevels`. The generator deliberately includes non-finite (NaN,
+// ±infinity) and degenerate (flat / zero) OHLC so determinism is exercised on
+// the same non-finite paths that set `ordering_exception`.
+//
+// Note on comparison: `SrLevels` derives `PartialEq`, but IEEE-754 defines
+// `NaN != NaN`, so a plain `==` cannot express "identical" for NaN-bearing
+// outputs. Determinism means the two calls produce the *same bit pattern* for
+// every field, so we compare each `f64` by `to_bits()`. For finite outputs this
+// is exactly the equality `PartialEq` would report, so the check is a strict
+// superset of `compute_sr(..) == compute_sr(..)`.
+#[cfg(test)]
+mod sr_determinism_proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// An OHLC component mixing the common finite band with degenerate and
+    /// non-finite values so the determinism guarantee is checked across the
+    /// whole input space (including the NaN/inf paths).
+    fn ohlc_component() -> impl Strategy<Value = f64> {
+        prop_oneof![
+            8 => -1.0e6f64..1.0e6,
+            1 => prop_oneof![Just(0.0f64), Just(-0.0f64)],
+            1 => prop_oneof![
+                Just(f64::NAN),
+                Just(f64::INFINITY),
+                Just(f64::NEG_INFINITY),
+            ],
+        ]
+    }
+
+    /// An arbitrary candle, possibly degenerate or non-finite.
+    fn candle_strat() -> impl Strategy<Value = Candle> {
+        (
+            ohlc_component(),
+            ohlc_component(),
+            ohlc_component(),
+            ohlc_component(),
+            0.0f64..1.0e6,
+        )
+            .prop_map(|(open, high, low, close, volume)| Candle {
+                open,
+                high,
+                low,
+                close,
+                volume,
+            })
+    }
+
+    /// One of the supported timeframes (intraday + daily).
+    fn timeframe_strat() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("1m".to_string()),
+            Just("5m".to_string()),
+            Just("15m".to_string()),
+            Just("1h".to_string()),
+            Just("4h".to_string()),
+            Just("1d".to_string()),
+        ]
+    }
+
+    /// Bit-exact equality for a single `f64` (so `NaN` bit patterns match).
+    fn f64_bit_eq(a: f64, b: f64) -> bool {
+        a.to_bits() == b.to_bits()
+    }
+
+    /// Bit-exact equality for the optional intraday levels.
+    fn opt_f64_bit_eq(a: Option<f64>, b: Option<f64>) -> bool {
+        match (a, b) {
+            (Some(x), Some(y)) => f64_bit_eq(x, y),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
+    /// Two `SrLevels` are "identical" when every field is bit-for-bit equal.
+    fn sr_levels_identical(a: &SrLevels, b: &SrLevels) -> bool {
+        f64_bit_eq(a.pivot, b.pivot)
+            && f64_bit_eq(a.s1, b.s1)
+            && f64_bit_eq(a.s2, b.s2)
+            && f64_bit_eq(a.s3, b.s3)
+            && f64_bit_eq(a.r1, b.r1)
+            && f64_bit_eq(a.r2, b.r2)
+            && f64_bit_eq(a.r3, b.r3)
+            && f64_bit_eq(a.recent_high, b.recent_high)
+            && f64_bit_eq(a.recent_low, b.recent_low)
+            && opt_f64_bit_eq(a.opening_range_high, b.opening_range_high)
+            && opt_f64_bit_eq(a.opening_range_low, b.opening_range_low)
+            && opt_f64_bit_eq(a.daily_pivot, b.daily_pivot)
+            && a.ordering_exception == b.ordering_exception
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        // Feature: deep-quant-analysis-hardening, Property 36: SR computation is
+        // deterministic — repeated calls over identical inputs return identical
+        // levels.
+        // Validates: Requirements 9.4
+        #[test]
+        fn prop36_repeated_calls_are_identical(
+            candles in proptest::collection::vec(candle_strat(), 0..30),
+            tf in timeframe_strat(),
+        ) {
+            let first = compute_sr(&candles, &tf);
+            let second = compute_sr(&candles, &tf);
+            prop_assert!(
+                sr_levels_identical(&first, &second),
+                "compute_sr is non-deterministic for tf '{}': {:?} != {:?}",
+                tf,
+                first,
+                second
+            );
+        }
+    }
+}
+
 // ── Property tests: Consensus_Report contract (R4.2, R4.3) ───────────────────
 //
 // Property-based coverage for the numeric-or-null contract on the compiled

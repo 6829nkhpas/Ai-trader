@@ -10,7 +10,7 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
 
 ## Tasks
 
-- [ ] 1. Project setup and shared Rust contracts
+- [x] 1. Project setup and shared Rust contracts
   - [x] 1.1 Add property-test tooling to all runtimes
     - Add `hypothesis` to `agents/deep-quant-loop/requirements.txt` and a test directory
     - Add `proptest` as a dev-dependency in `frontend/src-tauri/Cargo.toml`, `agents/technical/Cargo.toml`, `agents/quant-rag/Cargo.toml`, and `agents/predictive/Cargo.toml`
@@ -25,7 +25,7 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
     - **Property 16: Unsupported timeframes are rejected with a descriptive error**
     - **Validates: Requirements 4.5**
 
-- [ ] 2. Tool-call extraction (`graph.py`)
+- [x] 2. Tool-call extraction (`graph.py`)
   - [x] 2.1 Implement `extract_tool_calls` with `ExtractedCall`/`ToolCallExtraction`
     - Replace `parse_deepseek_custom_tool_calls` and inline cleanup with a single structured extractor
     - Native `tool_calls` path is primary (no text extraction); custom-token markup path classifies each call as `ok`/`parse_failure`/`invalid_tool` and preserves source order
@@ -52,7 +52,7 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
     - **Property 5: Extraction preserves every call in order**
     - **Validates: Requirements 1.5**
 
-- [ ] 3. ReAct loop control and termination (`graph.py`)
+- [x] 3. ReAct loop control and termination (`graph.py`)
   - [x] 3.1 Extend `AgentState` and rewrite `should_continue` routing precedence
     - Add `decision`, `reasoning_turns`, `market_data_seen` fields and `MAX_REASONING_TURNS` constant (default 3)
     - Enforce precedence: pending `ok` tool calls → tools; else `decision` set → terminate; else active watch → suspend; else bounded reasoning loop; else inject HOLD `no-decision-reached`
@@ -111,7 +111,7 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
 - [x] 4. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 5. Trade_Validator pure module (Rust + Python mirror)
+- [x] 5. Trade_Validator pure module (Rust + Python mirror)
   - [x] 5.1 Implement the Rust Trade_Validator (`quant/mod.rs`)
     - Add `ExecutionLevels`, `ValidatorOutcome`, `ValidatorReason`, and `validate_trade(action, levels, atr_14)`
     - Rules: MissingLevels (R6.1), RiskRewardTooLow `< 2.0` (R6.2), StopTooTight `< 1.5×ATR` (R6.3), direction consistency per side (R6.4/R6.5); HOLD bypasses level checks
@@ -137,7 +137,7 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
     - **Property 23: Direction consistency is enforced per side**
     - **Validates: Requirements 6.4, 6.5**
 
-- [ ] 6. Enriched conviction scoring (`agents/technical/src/signal_engine.rs`)
+- [x] 6. Enriched conviction scoring (`agents/technical/src/signal_engine.rs`)
   - [x] 6.1 Replace RSI+VWAP bucket logic with the weighted confluence model
     - Add `ConvictionInputs`/`ConvictionResult`; compute signed votes for momentum, trend, volatility, and volume families; renormalize over present families; map aggregate to `[0,100]` with agreement amplification; report `missing_indicators`
     - Keep it a pure function (no clock/RNG/ambient state)
@@ -163,7 +163,7 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
     - **Property 32: Conviction scoring is deterministic**
     - **Validates: Requirements 8.5**
 
-- [ ] 7. Authoritative SR_Engine (`quant/mod.rs` + `tool_server.rs`)
+- [x] 7. Authoritative SR_Engine (`quant/mod.rs` + `tool_server.rs`)
   - [x] 7.1 Implement `compute_sr(candles, timeframe) -> SrLevels` pure function (`quant/mod.rs`)
     - Classic pivot formulas from the shared candle source; set `ordering_exception` when data forces an ordering violation; add intraday opening range + daily macro pivot
     - _Requirements: 9.1, 9.2, 9.3, 9.4_
@@ -180,7 +180,7 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
     - **Property 35: Intraday SR adds opening range and daily macro levels**
     - **Validates: Requirements 9.3**
 
-  - [ ]* 7.5 Write property test for SR determinism
+  - [x]* 7.5 Write property test for SR determinism
     - **Property 36: SR computation is deterministic**
     - **Validates: Requirements 9.4**
 
@@ -188,7 +188,7 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
     - Resolve candles via the shared `load_candles_from_db`; return the `SrLevels` contract through the shared timeframe validator
     - _Requirements: 9.1, 9.3_
 
-- [ ] 8. Tool Server contracts: candles, consensus, sufficiency, multi-TF
+- [x] 8. Tool Server contracts: candles, consensus, sufficiency, multi-TF
   - [x] 8.1 Enforce the consensus-report contract (`tool_server.rs` / consensus serialization)
     - Serialize every documented indicator field as a finite number or explicit `null`; never NaN/Inf
     - _Requirements: 4.2, 4.3_
@@ -228,7 +228,7 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
 - [x] 9. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 10. Price watcher reliability (`tool_server.rs` / `quant/mod.rs`)
+- [x] 10. Price watcher reliability (`tool_server.rs` / `quant/mod.rs`)
   - [x] 10.1 Implement the watcher registry, trigger predicate, and suspend/resume
     - Register watchers keyed by `thread_id`, suspend the run resumably; trigger predicate fires iff price condition AND `volume >= average_volume × volume_multiplier`; remove the watcher on fire; resume via `/resume`
     - _Requirements: 14.1, 14.2, 14.4_
@@ -249,7 +249,7 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
     - Registration failing after configured retries → agent declares HOLD and outputs no trade
     - _Requirements: 14.3_
 
-- [ ] 11. External engine integrations (RAG, predictive, sentiment)
+- [x] 11. External engine integrations (RAG, predictive, sentiment)
   - [x] 11.1 Pin RAG pattern contract at the boundary (`agents/quant-rag/src/patterns.rs`)
     - Ensure returned patterns carry `pattern_type`, `sentiment`, `description`, and `confidence` clamped to `[0.0, 1.0]`
     - _Requirements: 11.1, 11.2_
@@ -282,7 +282,7 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
     - Sentiment service unreachable → `Unavailable` marker, no fabricated classification
     - _Requirements: 10.3_
 
-- [ ] 12. Python tool client and contract revalidation (`tools.py`)
+- [x] 12. Python tool client and contract revalidation (`tools.py`)
   - [x] 12.1 Convert SR/news/prediction tools to thin HTTP clients
     - Replace local computation in `get_support_resistance` and `get_news_context` with calls to the new Rust endpoints; add `get_prediction` client
     - _Requirements: 9.1, 10.1, 12.1_
@@ -295,7 +295,7 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
     - A contract-violating payload yields a structured error result, not an exception, and never reaches the model
     - _Requirements: 4.1_
 
-- [ ] 13. declare_trade commit and defensibility record
+- [x] 13. declare_trade commit and defensibility record
   - [x] 13.1 Wire Trade_Validator into the `declare_trade` commit path (`tool_server.rs`)
     - Commit and emit the final-analysis decision event only when validation passes; on any failure return the reason and do not commit
     - _Requirements: 6.6, 6.7_
@@ -335,7 +335,7 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
 - [x] 14. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 15. Glass-box SSE stream (`main.py`)
+- [x] 15. Glass-box SSE stream (`main.py`)
   - [x] 15.1 Implement the reasoning splitter and event vocabulary in `event_generator`
     - Emit `REASONING` (markup stripped), `TOOL_CALL_START`, `TOOL_CALL_RESULT`, `TOOL_CALL_END` (with `error_reason` on failure), `VERIFICATION_STEP`, and `DECISION`; ensure no raw tool-call markup leaks into `REASONING`
     - _Requirements: 16.1, 16.2, 16.3, 16.4, 16.5, 16.6, 16.7, 16.8_
@@ -396,7 +396,7 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
     - Stream failure mid-run surfaces `ERROR` and emits no `DECISION`/trade plan
     - _Requirements: 5.5, 17.5_
 
-- [ ] 16. Trade Q&A mode (`graph.py` + `main.py`)
+- [x] 16. Trade Q&A mode (`graph.py` + `main.py`)
   - [x] 16.1 Implement the Trade_QA_Mode handler reusing the MemorySaver context (`graph.py`)
     - Answer from the thread's `Session_Analysis_Context`; cite recorded entry/SL/TP/RR/volatility basis for level questions; state "no trade declared" when none exists; call the relevant tool or state unavailable rather than fabricate; never mutate the committed trade; preserve context across turns
     - _Requirements: 18.1, 18.2, 18.3, 18.4, 18.5, 18.6_
@@ -421,7 +421,7 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
     - Answer from context, state "no trade declared", and cite recorded level rationale (verify context is loaded/attached and guardrail branches are exercised)
     - _Requirements: 18.1, 18.2, 18.3, 18.4_
 
-- [ ] 17. Evaluation harness (new offline component alongside `agents/deep-quant-loop/`)
+- [x] 17. Evaluation harness (new offline component alongside `agents/deep-quant-loop/`)
   - [x] 17.1 Implement `EvalReport` replay over the deterministic layer
     - Feed historical candle series through SR_Engine, Signal_Engine, Predictive_Engine, and Trade_Validator (no live LLM); compute `directional_accuracy`, `rr_met_proportion`, `validator_pass_proportion`, `sample_count`; emit a summary report
     - _Requirements: 15.1, 15.2, 15.3, 15.4_
@@ -446,7 +446,7 @@ Property-based tests use Hypothesis (Python, `max_examples=100`) and proptest (R
     - **Property 52: Evaluation metrics are deterministic across identical runs**
     - **Validates: Requirements 15.5**
 
-- [ ] 18. Integration wiring and verification
+- [x] 18. Integration wiring and verification
   - [x] 18.1 Wire all new tools into the agent registry and system prompt
     - Register `get_support_resistance`, `get_news_context`, `get_prediction` in `tools.py`/`graph.py`; add prompt rules for high-confidence patterns, predictive conflict, and macro-trend conflict so they surface in `setup_validation`
     - _Requirements: 10.1, 11.3, 12.1, 12.3, 13.3_
