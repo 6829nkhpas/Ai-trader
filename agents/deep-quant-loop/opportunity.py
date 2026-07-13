@@ -1131,8 +1131,19 @@ _DELTA_RECHECK_PLANS = {
     ),
 }
 
+# Symbol_Class token (matches ``tools.classify_symbol_class``) that promotes
+# options positioning to a PRIMARY confirmation. For a spot index, options is the
+# lead confirmation and MUST be re-consulted before a target resume confirms an
+# entry so a stale options read cannot confirm a trade (index-options-intraday-
+# context Requirement 5.2). Compared case-insensitively; any other / missing /
+# non-index class leaves the plan byte-identical to the equity default so equity
+# resume behavior is unchanged (Requirement 5.3 / no-regression). Kept as a bare
+# string constant so ``opportunity.py`` stays pure with no import of ``tools`` (the
+# import direction is tools -> opportunity).
+_INDEX_SYMBOL_CLASS = "index"
 
-def delta_recheck_plan(trigger_kind, thesis=None) -> list:
+
+def delta_recheck_plan(trigger_kind, thesis=None, symbol_class=None) -> list:
     """The minimal, trigger-relevant Analysis_Tool set to consult on resume (R6).
 
     Given a resume ``trigger_kind`` (any spelling — normalized via
@@ -1148,14 +1159,37 @@ def delta_recheck_plan(trigger_kind, thesis=None) -> list:
     (task 12.1) and future thesis-aware refinement; the current minimal plan is
     trigger-driven and deterministic, so ``thesis`` does not change the result.
 
+    ``symbol_class`` is the resolved Symbol_Class of the analyzed symbol
+    (``"index"`` | ``"equity"`` | ``None``). When it is ``"index"`` AND the
+    resume is a ``target`` reach, ``get_options_analytics`` is added to the plan
+    in canonical order-of-operations position (2e, immediately before the 2f
+    event-risk gate) so an index target resume re-consults options positioning
+    before confirming an entry (index-options-intraday-context Requirement 5.2).
+    For an equity / missing / unrecognized class — and for any non-target
+    trigger — the plan is byte-identical to today, so equity resume behavior is
+    unchanged (Requirement 5.3). The augmented index target plan remains a
+    NON-EMPTY, STRICT subset of ``FULL_ORDER_OF_OPERATIONS_TOOLS``.
+
     PURE and TOTAL — an unrecognized / ``None`` / malformed trigger normalizes to
     the documented fallback (``'target'``) and still yields a valid plan. Never
     raises.
     """
     del thesis  # reserved for future thesis-aware refinement; plan is trigger-driven
     kind = classify_resume(trigger_kind)
-    plan = _DELTA_RECHECK_PLANS.get(kind, _DELTA_RECHECK_PLANS[_RESUME_FALLBACK])
-    return list(plan)
+    plan = list(_DELTA_RECHECK_PLANS.get(kind, _DELTA_RECHECK_PLANS[_RESUME_FALLBACK]))
+    if (
+        kind == RESUME_TARGET
+        and isinstance(symbol_class, str)
+        and symbol_class.strip().lower() == _INDEX_SYMBOL_CLASS
+        and "get_options_analytics" not in plan
+    ):
+        # Insert in canonical order-of-operations order: 2e (options) precedes 2f
+        # (event risk). Fall back to append if the event-risk step is absent.
+        if "get_event_risk" in plan:
+            plan.insert(plan.index("get_event_risk"), "get_options_analytics")
+        else:
+            plan.append("get_options_analytics")
+    return plan
 
 
 # ── Heartbeat accounting ──────────────────────────────────────────────────────

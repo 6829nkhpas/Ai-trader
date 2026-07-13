@@ -244,6 +244,23 @@ _OPTIONS_NUMERIC_OR_NULL_FIELDS = ("pcr_oi", "pcr_volume", "max_pain", "futures_
 # Matched case-insensitively against the upper-cased symbol.
 INDEX_UNDERLYINGS = {"NIFTY 50", "NIFTY", "BANKNIFTY"}
 
+
+def classify_symbol_class(symbol) -> str:
+    """Resolve the Symbol_Class of the analyzed symbol.
+
+    Returns ``"index"`` when ``symbol`` matches a known index Underlying
+    (case-insensitive membership against ``INDEX_UNDERLYINGS``, the single
+    source of truth) and ``"equity"`` otherwise. Pure and total: a missing,
+    empty, or non-string ``symbol`` defaults to ``"equity"`` and the function
+    never raises (Requirements 1.1, 1.2, 1.3).
+    """
+    if not isinstance(symbol, str):
+        return "equity"
+    if symbol.strip().upper() in INDEX_UNDERLYINGS:
+        return "index"
+    return "equity"
+
+
 # QuestDB HTTP query API for the Live_Ticks_Source (the same endpoint backtest.py
 # uses for the historical archive). The Tick_OFI layer reads recent ticks for the
 # symbol from the `live_ticks` table via this API; an unreachable server / empty
@@ -2954,7 +2971,10 @@ def watch_price_condition(
     # Classify the resume trigger to one canonical kind and scope a cheap,
     # trigger-relevant Delta_Recheck instead of a full re-scan (R6.1-6.3).
     kind = opportunity.classify_resume(trigger_kind)
-    recheck = opportunity.delta_recheck_plan(kind)
+    # Pass the Symbol_Class so an index target resume re-consults options
+    # positioning (a PRIMARY confirmation for an index) before confirming an
+    # entry; an equity resume is byte-identical to today (Requirements 5.2, 5.3).
+    recheck = opportunity.delta_recheck_plan(kind, symbol_class=classify_symbol_class(symbol))
     recheck_str = ", ".join(recheck)
 
     if kind == opportunity.RESUME_INVALIDATION:

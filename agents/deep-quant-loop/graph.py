@@ -91,6 +91,10 @@ from tools import (
     get_forecast,
     get_session_context,
     get_options_analytics,
+    # Symbol_Class resolver (single source of truth beside INDEX_UNDERLYINGS) —
+    # used to enable options as a first-class confirmation for an index in the
+    # non-F&O workspaces. Do NOT duplicate the index set.
+    classify_symbol_class,
     get_event_risk,
     watch_price_condition,
     declare_trade,
@@ -356,7 +360,7 @@ You must follow this exact loop until a perfect setup is found or registered:
    - expiry_context (is_expiry_day / days_until_expiry) — whether the candle's date is the weekly-expiry day and how close the next expiry is,
    - time_favorability (favorable / unfavorable / neutral) — whether the clock favors taking a new trade right now.
    The veteran principle: the NSE session is NOT uniform — the opening drive is violent and mean-reverting, the midday lull is thin and chop-prone, and expiry-afternoon flow is distorted. Use time_favorability as a calibration filter, NOT a trade generator: a `favorable` window does NOT force a trade, and the session context never blocks or overrides your decision. If the session context is unavailable (missing / non-finite timestamp / retrieval failure / unavailable marker), treat it as a missing optional input — note it as unavailable and proceed with the remaining analysis; do NOT fabricate a session label and do NOT abort the decision on that basis.
-2e. OPTIONS POSITIONING — F&O WORKSPACE ONLY: This step applies ONLY when the active workspace is F&O. In the INTRADAY, SWING, and INVESTOR workspaces the `get_options_analytics` tool is NOT available to you and you MUST NOT attempt to call it — skip this step entirely and analyze ONLY the active symbol's own price, volume, and structure. In the F&O workspace, call `get_options_analytics` with the symbol under analysis (with own_chain=true for a stock so its OWN chain is read, the analyzed expiry, and your proposed_direction) to read institutional options positioning — the single biggest source of intraday edge on NSE. For an index underlying its own chain is analyzed; for a stock with own_chain=true the stock's OWN chain is analyzed (falling back to its benchmark index chain only if the stock has no snapshot). The result reports:
+2e. OPTIONS POSITIONING: Call `get_options_analytics` in the F&O workspace OR when the analyzed symbol is an INDEX (even in the INTRADAY, SWING, and INVESTOR workspaces); NEVER call it for a non-index symbol outside the F&O workspace. For a non-index symbol outside F&O the tool is NOT available to you and you MUST NOT attempt to call it — skip this step entirely and analyze ONLY the active symbol's own price, volume, and structure. When this step applies (the F&O workspace, or an INDEX symbol in any workspace), call `get_options_analytics` with the symbol under analysis (with own_chain=true for a stock so its OWN chain is read, the analyzed expiry, and your proposed_direction) to read institutional options positioning — the single biggest source of intraday edge on NSE. For an index underlying its own chain is analyzed; for a stock with own_chain=true the stock's OWN chain is analyzed (falling back to its benchmark index chain only if the stock has no snapshot). The result reports:
    - pcr_oi / pcr_volume (Put-Call Ratio) — put-heavy (high PCR) marks support-building below, call-heavy (low PCR) marks resistance overhead,
    - max_pain — the strike toward which price tends to be pinned into expiry (a max-pain above spot pulls price up, below spot pulls price down),
    - oi_buildup (aggregate call / put) — where option writers are positioning,
@@ -617,6 +621,39 @@ def _build_fno_directive(state: AgentState) -> str:
     )
 
 
+# Symbol-class-aware addendum appended to the system prompt when the analyzed
+# symbol is an INDEX and the workspace profile is NOT F&O. A spot index carries
+# ZERO traded volume, so the volume-derived confirmations are structurally
+# unusable; the signal that genuinely drives an index intraday — options/futures
+# positioning — is already available via `get_options_analytics`. This block
+# (a) enables + prioritizes options for the index in the ordinary
+# INTRADAY/SWING/INVESTOR workspaces, (b) marks the spot-volume tools as
+# EXPECTED-unavailable (not evidence against the setup), and (c) keeps options a
+# calibration filter that never forces, blocks, or overrides the decision.
+INDEX_OPTIONS_ADDENDUM = (
+    "\n\n<index_options_context>\n"
+    "SYMBOL CLASS: INDEX (spot underlying such as NIFTY 50 / BANKNIFTY). A spot index has NO traded "
+    "volume, so the usual volume-derived confirmations are structurally unusable for THIS instrument. "
+    "You MUST adapt your confirmation set accordingly.\n"
+    "- OPTIONS IS ENABLED AND PRIMARY HERE: call `get_options_analytics` for this index EVEN THOUGH the "
+    "workspace is not F&O. Options/futures positioning — max pain, OI walls, PCR, IV skew, futures basis, "
+    "`options_bias_state`, and `alignment` — is your PRIMARY confirmation for a directional decision on an "
+    "index; lead your read with it alongside price structure.\n"
+    "- SPOT-VOLUME TOOLS ARE EXPECTED-UNAVAILABLE: VWAP, volume profile (POC/VAH/VAL), OBV, CMF, and the "
+    "candle-derived order-flow proxies are legitimately unavailable/zero for a spot index. Treat their "
+    "absence as EXPECTED for the instrument — do NOT count it as missing evidence and do NOT downgrade or "
+    "stand aside merely because these spot-volume signals are absent.\n"
+    "- LEAD WITH: options/futures positioning + price structure (`get_support_resistance`, "
+    "`get_multi_tf_trend`, `get_chart_patterns`, `get_forecast`) rather than spot volume.\n"
+    "- OPTIONS REMAINS A CALIBRATION FILTER: when positioning conflicts with a proposed direction (a heavy "
+    "call OI-wall just overhead, max-pain pinning against the trade, a PCR extreme), bias toward lower "
+    "conviction, a different level, or HOLD. Options NEVER forces, blocks, or overrides the decision, and "
+    "the Trade_Validator hard risk rules are unchanged. If `get_options_analytics` is unavailable, note it "
+    "and proceed on price structure — never fabricate an options read.\n"
+    "</index_options_context>"
+)
+
+
 def _resolve_profile_directive(state: AgentState) -> str:
     """Return the profile-specific directive block for the run's workspace profile.
 
@@ -643,6 +680,17 @@ def format_system_prompt(state: AgentState) -> str:
     # the user is in (INTRADAY / SWING / INVESTOR / FNO). Appended after the
     # timeframe requirement for both FIND/DEBATE and VERIFY runs.
     profile_directive = _resolve_profile_directive(state)
+    # Symbol-class-aware options addendum: when the analyzed symbol is a spot
+    # INDEX and the workspace is NOT F&O, append INDEX_OPTIONS_ADDENDUM to enable
+    # + prioritize options and mark spot-volume tools expected-N/A. The symbol is
+    # resolved from the SAME field `_build_fno_directive` reads (state["symbol"]),
+    # and the profile is resolved the SAME way `_resolve_profile_directive` does.
+    # The equity and F&O paths are left byte-identical (index_addendum == "").
+    raw_profile = state.get("profile")
+    profile_key = raw_profile.strip().upper() if isinstance(raw_profile, str) and raw_profile.strip() else "INTRADAY"
+    index_addendum = ""
+    if profile_key != "FNO" and classify_symbol_class(state.get("symbol")) == "index":
+        index_addendum = INDEX_OPTIONS_ADDENDUM
     if mode == "VERIFY":
         trade = state.get("manual_trade") or {}
         base_prompt = RISK_MANAGER_PROMPT.format(
@@ -653,8 +701,8 @@ def format_system_prompt(state: AgentState) -> str:
             take_profit=trade.get("take_profit", 0),
             user_analysis=trade.get("user_analysis", "None")
         )
-        return base_prompt + tf_instruction + profile_directive
-    return DEEP_QUANT_SYSTEM_PROMPT + tf_instruction + profile_directive
+        return base_prompt + tf_instruction + profile_directive + index_addendum
+    return DEEP_QUANT_SYSTEM_PROMPT + tf_instruction + profile_directive + index_addendum
 
 # ── Model & Tools Binding ───────────────────────────────────────────────────
 

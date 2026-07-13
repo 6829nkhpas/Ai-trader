@@ -822,25 +822,6 @@ def classify_order_flow(
             "buying_pressure_ratio": buying_pressure_ratio,
         }
 
-        # A structurally zero-volume candle series (e.g. a spot INDEX whose feed
-        # carries no traded volume) makes every candle-derived proxy a
-        # meaningless artifact: ``candle_delta`` and ``cvd_proxy`` collapse to
-        # ``0.0`` (close-location value x zero volume) and ``buying_pressure_ratio``
-        # is ``None``. Left unchecked those would be misreported as a real
-        # ``balanced`` read. When the total traded volume over the lookback is
-        # negligible AND no live Tick_OFI is available, candle-derived order flow
-        # is genuinely UNAVAILABLE, not balanced — surface an honest marker so the
-        # agent does not count a phantom "balanced" as confirmation (R4.6).
-        window_volume = sum(r[4] for r in rows[-config.lookback:])
-        if window_volume < _OFI_TOTAL_VOLUME_EPSILON and tick_ofi is None:
-            return _order_flow_unavailable(
-                "no traded volume in the candle series (zero-volume / index spot "
-                "feed) and no live tick order flow — candle-derived order flow "
-                "cannot be trusted",
-                symbol,
-                timeframe,
-            )
-
         # If every candle-derived proxy is null AND the Tick_OFI is unavailable,
         # order flow is genuinely unavailable rather than a default label
         # (Requirement 4.6). ``up_volume`` / ``down_volume`` are always finite
