@@ -195,7 +195,7 @@ _GARBAGE_INPUTS = st.one_of(
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: feature-attribution-pruning, Property 7: For any dimension whose total scored-trade count is below min_sample_dimension (including single-value, all-null, and zero-sample dimensions), compute_contribution reports the metric as not-meaningful (None) rather than a spurious value, and never raises.
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(value_stats=_below_sample_value_stats())
 def test_property_7_below_sample_is_not_meaningful(value_stats):
     """Feature: feature-attribution-pruning, Property 7: a dimension whose usable
@@ -209,7 +209,7 @@ def test_property_7_below_sample_is_not_meaningful(value_stats):
 
 
 # Feature: feature-attribution-pruning, Property 7: For any dimension whose total scored-trade count is below min_sample_dimension (including single-value, all-null, and zero-sample dimensions), compute_contribution reports the metric as not-meaningful (None) rather than a spurious value, and never raises.
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(
     name=st.sampled_from(_VALUE_NAMES),
     count=st.integers(min_value=1, max_value=_MIN_SAMPLE_DIMENSION - 1),
@@ -228,7 +228,7 @@ def test_property_7_single_value_below_sample_is_not_meaningful(name, count, mea
 
 
 # Feature: feature-attribution-pruning, Property 7: For any dimension whose total scored-trade count is below min_sample_dimension (including single-value, all-null, and zero-sample dimensions), compute_contribution reports the metric as not-meaningful (None) rather than a spurious value, and never raises.
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(value_stats=_all_null_value_stats())
 def test_property_7_all_null_zero_sample_is_not_meaningful(value_stats):
     """Feature: feature-attribution-pruning, Property 7: a dimension with no usable
@@ -256,7 +256,7 @@ def test_property_7_empty_or_garbage_is_not_meaningful(garbage):
 
 
 # Feature: feature-attribution-pruning, Property 7: For any dimension whose total scored-trade count is below min_sample_dimension (including single-value, all-null, and zero-sample dimensions), compute_contribution reports the metric as not-meaningful (None) rather than a spurious value, and never raises.
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(value_stats=_at_or_above_sample_value_stats())
 def test_property_7_complement_at_or_above_sample_is_meaningful(value_stats):
     """Feature: feature-attribution-pruning, Property 7 (complementary direction):

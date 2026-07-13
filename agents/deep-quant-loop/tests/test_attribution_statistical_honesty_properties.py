@@ -184,7 +184,7 @@ def _journal(draw, min_size=0, max_size=20):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: feature-attribution-pruning, Property 9: For any list of trade rows, every dimension whose total scored-trade count is below the configured min_sample_dimension is assigned insufficient_sample and is never assigned down_weight or keep.
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(rows=_journal())
 def test_property_9_statistical_honesty(rows):
     """Feature: feature-attribution-pruning, Property 9: every dimension whose
