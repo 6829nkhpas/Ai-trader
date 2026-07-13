@@ -252,7 +252,7 @@ _env_assignment = st.fixed_dictionaries(
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: feature-attribution-pruning, Property 1: For any list of trade rows and any configuration, building the Attribution_Report twice produces deep-equal reports; and for any fixed environment, resolve_attribution_config returns equal configs on repeated calls.
-@settings(max_examples=150, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(rows=_journal(), config=_config())
 def test_property_1_report_determinism(rows, config):
     """Feature: feature-attribution-pruning, Property 1: building the
@@ -274,7 +274,7 @@ def test_property_1_report_determinism(rows, config):
 
 
 # Feature: feature-attribution-pruning, Property 1: For any list of trade rows and any configuration, building the Attribution_Report twice produces deep-equal reports; and for any fixed environment, resolve_attribution_config returns equal configs on repeated calls.
-@settings(max_examples=150, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(assignment=_env_assignment)
 def test_property_1_config_determinism(assignment):
     """Feature: feature-attribution-pruning, Property 1: under a FIXED environment

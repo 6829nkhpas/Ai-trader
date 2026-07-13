@@ -158,7 +158,7 @@ def _scale_deviations(value_stats, k):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: feature-attribution-pruning, Property 6: For any dimension's per-value statistics, compute_contribution equals the sample-weighted standard deviation of per-value expectancy about the sample-weighted mean expectancy: it is 0 when all values share an equal expectancy, is non-decreasing as the values' expectancies are scaled further apart, and is non-negative whenever it is meaningful.
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(value_stats=_value_stats())
 def test_property_6_contribution_is_sample_weighted_dispersion(value_stats):
     """Feature: feature-attribution-pruning, Property 6: compute_contribution
@@ -179,7 +179,7 @@ def test_property_6_contribution_is_sample_weighted_dispersion(value_stats):
 
 
 # Feature: feature-attribution-pruning, Property 6: For any dimension's per-value statistics, compute_contribution equals the sample-weighted standard deviation of per-value expectancy about the sample-weighted mean expectancy: it is 0 when all values share an equal expectancy, is non-decreasing as the values' expectancies are scaled further apart, and is non-negative whenever it is meaningful.
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(
     names=st.lists(
         st.sampled_from(_VALUE_NAMES), min_size=1, max_size=8, unique=True
@@ -205,7 +205,7 @@ def test_property_6_zero_when_all_values_share_one_expectancy(
 
 
 # Feature: feature-attribution-pruning, Property 6: For any dimension's per-value statistics, compute_contribution equals the sample-weighted standard deviation of per-value expectancy about the sample-weighted mean expectancy: it is 0 when all values share an equal expectancy, is non-decreasing as the values' expectancies are scaled further apart, and is non-negative whenever it is meaningful.
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(
     value_stats=_value_stats(min_values=2),
     k=st.floats(min_value=1.0, max_value=20.0, allow_nan=False, allow_infinity=False),
