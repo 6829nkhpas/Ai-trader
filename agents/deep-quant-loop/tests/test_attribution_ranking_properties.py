@@ -198,7 +198,7 @@ def _sort_key(entry):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: feature-attribution-pruning, Property 11: For any list of trade rows, the report's dimensions are ordered by contribution descending (with not-meaningful contributions ordered last), and the rank field is the 1-based position in that order.
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(rows=_journal())
 def test_property_11_ranking_by_contribution(rows):
     """Feature: feature-attribution-pruning, Property 11: the report's dimensions

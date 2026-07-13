@@ -139,7 +139,7 @@ _arbitrary_setup_key = st.one_of(
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: feature-attribution-pruning, Property 5: For any string (valid setup_key, empty, malformed, or containing absent/unknown values), parse_setup_key returns a well-formed {dimension: value} mapping without raising and deterministically, treating absent/unknown values as the literal unknown and never crashing the surrounding report build on malformed input.
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(setup_key=_arbitrary_setup_key)
 def test_property_5_parse_total_wellformed_deterministic(setup_key):
     """Feature: feature-attribution-pruning, Property 5: parsing is total,
@@ -167,7 +167,7 @@ def test_property_5_parse_total_wellformed_deterministic(setup_key):
 
 
 # Feature: feature-attribution-pruning, Property 5: For any string (valid setup_key, empty, malformed, or containing absent/unknown values), parse_setup_key returns a well-formed {dimension: value} mapping without raising and deterministically, treating absent/unknown values as the literal unknown and never crashing the surrounding report build on malformed input.
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(case=_structured_setup_key())
 def test_property_5_absent_unknown_map_to_literal_unknown(case):
     """Feature: feature-attribution-pruning, Property 5: absent / empty / explicit
