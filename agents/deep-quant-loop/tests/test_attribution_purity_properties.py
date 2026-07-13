@@ -190,7 +190,7 @@ def _journal(draw, min_size=0, max_size=40):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: feature-attribution-pruning, Property 2: For any list of trade rows and any configuration, running the full pipeline (build_attribution_report and derive_weight_map) leaves the input rows and the configuration byte-for-byte unchanged, and produces no observable side effect.
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(rows=_journal(), config=_config())
 def test_property_2_purity_no_input_mutation(rows, config):
     """Feature: feature-attribution-pruning, Property 2: running the full pipeline

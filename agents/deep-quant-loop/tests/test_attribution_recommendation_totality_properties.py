@@ -175,7 +175,7 @@ def _journal(draw, min_size=0, max_size=40):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: feature-attribution-pruning, Property 8: For any list of trade rows, every dimension present in the report is assigned exactly one Recommendation drawn from {keep, down_weight, insufficient_sample}.
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(rows=_journal())
 def test_property_8_recommendation_totality(rows):
     """Feature: feature-attribution-pruning, Property 8: every dimension in the

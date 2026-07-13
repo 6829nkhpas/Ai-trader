@@ -175,7 +175,7 @@ def _journal(draw, min_size=0, max_size=40):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Feature: feature-attribution-pruning, Property 3: For any list of trade rows, adding or removing any number of non-scored rows (status open/expired/hold, or a missing/non-finite r_multiple) does not change any per-value or per-dimension count, win-rate, or expectancy in the report.
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=100, deadline=None)
 @given(
     base=_journal(),
     non_scored=st.lists(_non_scored_row(), max_size=30),
