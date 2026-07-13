@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import { flushSync } from 'react-dom';
 import dynamic from 'next/dynamic';
 import {
   Bell,
@@ -51,6 +52,39 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
   const theme = useChartUIStore((s) => s.theme);
   const toggleTheme = useChartUIStore((s) => s.toggleTheme);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const handleThemeToggle = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const nextTheme = theme === 'dark' ? 'light' : 'dark';
+    const doc = document as any;
+
+    if (!doc.startViewTransition) {
+      toggleTheme();
+      return;
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = event.clientX || (rect.left + rect.width / 2);
+    const y = event.clientY || (rect.top + rect.height / 2);
+    const endRadius = Math.hypot(
+      Math.max(x, window.innerWidth - x),
+      Math.max(y, window.innerHeight - y)
+    );
+
+    document.documentElement.style.setProperty('--theme-x', `${x}px`);
+    document.documentElement.style.setProperty('--theme-y', `${y}px`);
+    document.documentElement.style.setProperty('--theme-r', `${endRadius}px`);
+    document.documentElement.setAttribute('data-theme-changing', 'true');
+
+    const transition = doc.startViewTransition(() => {
+      flushSync(() => {
+        toggleTheme();
+      });
+    });
+
+    transition.finished.finally(() => {
+      document.documentElement.removeAttribute('data-theme-changing');
+    });
+  };
   const [profileOpen, setProfileOpen] = useState(false);
 
   const [leftPanelWidth, setLeftPanelWidth] = useState(224);
@@ -201,7 +235,7 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
         <div className="flex flex-1 items-center justify-end gap-3.5 relative">
           <button 
             type="button"
-            onClick={toggleTheme}
+            onClick={handleThemeToggle}
             className="text-text-secondary hover:text-text-primary transition-colors p-1 hover:bg-elevated/20 rounded"
             title={theme === 'dark' ? 'Switch to Light Theme' : 'Switch to Dark Theme'}
           >

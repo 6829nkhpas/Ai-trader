@@ -698,3 +698,47 @@ body {
 .shadow-lg.overflow-y-auto::-webkit-scrollbar {
   display: none !important; /* Chrome, Safari and Opera */
 }
+
+/* ================================================
+   Butter Smooth Theme Switch Transitions (View Transitions API)
+   ================================================ */
+
+/* Disable standard transitions temporarily so snapshots capture the target styles instantly */
+html[data-theme-changing],
+html[data-theme-changing] * {
+  transition: none !important;
+}
+
+/* Custom styles for circular theme reveal animation */
+::view-transition-image-pair(root) {
+  isolation: auto;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+  display: block;
+}
+
+/* Old screen stays visible underneath */
+::view-transition-old(root) {
+  z-index: 1;
+}
+
+/* New screen animates clip-path over the old screen */
+::view-transition-new(root) {
+  z-index: 9999;
+  animation: 2000ms cubic-bezier(0.16, 1, 0.3, 1) reveal-theme;
+  background: var(--bg-base);
+}
+
+@keyframes reveal-theme {
+  from {
+    clip-path: circle(0px at var(--theme-x, 50%) var(--theme-y, 50%));
+  }
+  to {
+    clip-path: circle(var(--theme-r, 100%) at var(--theme-x, 50%) var(--theme-y, 50%));
+  }
+}
+
