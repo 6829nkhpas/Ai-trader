@@ -1335,13 +1335,26 @@ async fn get_multi_tf_trend_handler(
     let ema_100_1d = IndicatorState::compute_ema(&candles_1d, 100);
     let trend_1d = horizon_trend(ema_50_1d, ema_100_1d);
 
+    // Emit each EMA as a real rounded number when computable, or JSON `null`
+    // when the horizon has insufficient history (the moving average is
+    // non-finite). Previously a non-finite EMA was serialized as `0.0`, a
+    // fabricated value that reads downstream as a real price of zero rather than
+    // an honest "unavailable"; `null` makes the missing input unambiguous while
+    // the horizon's `trend_*` bias already degrades to `Neutral`.
+    let ema_or_null = |v: f64| -> serde_json::Value {
+        if v.is_finite() {
+            serde_json::json!((v * 100.0).round() / 100.0)
+        } else {
+            serde_json::Value::Null
+        }
+    };
     let indicators = serde_json::json!({
-        "ema_9_1h": if ema_9_1h.is_finite() { (ema_9_1h * 100.0).round() / 100.0 } else { 0.0 },
-        "ema_21_1h": if ema_21_1h.is_finite() { (ema_21_1h * 100.0).round() / 100.0 } else { 0.0 },
-        "ema_21_4h": if ema_21_4h.is_finite() { (ema_21_4h * 100.0).round() / 100.0 } else { 0.0 },
-        "ema_50_4h": if ema_50_4h.is_finite() { (ema_50_4h * 100.0).round() / 100.0 } else { 0.0 },
-        "ema_50_1d": if ema_50_1d.is_finite() { (ema_50_1d * 100.0).round() / 100.0 } else { 0.0 },
-        "ema_100_1d": if ema_100_1d.is_finite() { (ema_100_1d * 100.0).round() / 100.0 } else { 0.0 },
+        "ema_9_1h": ema_or_null(ema_9_1h),
+        "ema_21_1h": ema_or_null(ema_21_1h),
+        "ema_21_4h": ema_or_null(ema_21_4h),
+        "ema_50_4h": ema_or_null(ema_50_4h),
+        "ema_50_1d": ema_or_null(ema_50_1d),
+        "ema_100_1d": ema_or_null(ema_100_1d),
     });
 
     Ok(Json(MultiTfResponse {
