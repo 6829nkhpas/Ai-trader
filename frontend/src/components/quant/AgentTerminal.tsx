@@ -170,7 +170,14 @@ export default function AgentTerminal() {
             const endsAfterHere = reasoningSteps.slice(stepIdx + 1).filter(
               (s) => s.type === 'tool_end' && s.toolName === step.toolName
             ).length;
-            const isCompleted = endsAfterHere >= startsUpToHere;
+            // A tool is only genuinely executing while the run is 'running'. Once
+            // the run has settled — a decision was committed ('complete'), the
+            // agent paused into a watch ('watching'), or it errored ('error') —
+            // nothing is still executing, so a dangling tool_start whose tool_end
+            // was never streamed (early stream end, a paused tool batch, or a
+            // dropped SSE frame) must NOT spin on ACTIVE forever.
+            const runSettled = sessionStatus !== 'running';
+            const isCompleted = endsAfterHere >= startsUpToHere || runSettled;
 
             return (
               <div key={step.id} className="flex justify-start animate-fade-in font-sans pl-1 w-full my-1.5">
