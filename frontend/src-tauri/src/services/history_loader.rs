@@ -155,6 +155,119 @@ pub fn map_timeframe_to_kite_interval(timeframe: &str) -> Option<KiteIntervalCon
     }
 }
 
+// ── Depth-Gap Fetch Planning ────────────────────────────────────────────────
+
+/// A single chunk window `[start, end]` the intraday backfill should request
+/// from Kite. `start`/`end` map directly to the `from`/`to` query params.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchWindow {
+    pub start: NaiveDate,
+    pub end: NaiveDate,
+}
+
+/// Compute the set of chunk windows the intraday backfill should fetch, healing
+/// depth behind a short cached window rather than only topping up recency.
+///
+/// The returned set contains:
+///   * the **forward top-up** from `existing_max_ts` toward `today` (as today —
+///     starting at `existing_max_ts − 1 day` when a max exists, else the full
+///     `[lookback_start, today]` window when `existing` is `None`), AND
+///   * the **backward Depth_Gap** `[lookback_start, existing_min_ts)` — included
+///     **only** when `existing_min_ts > lookback_start` (there is an older gap to
+///     heal).
+///
+/// It returns an empty `Vec` (a no-op) when the cached window already spans the
+/// full Lookback_Window, because every candidate chunk is already covered by the
+/// existing `[min_ts, max_ts]` range. The same "chunk already covered" skip guard
+/// used by the fetch loops is applied here so no covered chunk is ever emitted.
+///
+/// This is a **pure** function (no I/O) so the depth-gap planning can be unit
+/// tested in isolation (see Property 1).
+pub fn intraday_fetch_windows(
+    lookback_start: NaiveDate,
+    existing_min_ts: Option<NaiveDate>,
+    existing_max_ts: Option<NaiveDate>,
+    today: NaiveDate,
+    chunk_days: i64,
+) -> Vec<FetchWindow> {
+    let mut windows = Vec::new();
+
+    // ── Backward Depth_Gap: [lookback_start, existing_min_ts) ───────────
+    // Only when the cached window's earliest candle is more recent than
+    // `lookback_start` (an older gap exists). When `existing_min_ts` is None
+    // the forward path below already fetches the full window, so depth is
+    // covered there.
+    if let Some(min) = existing_min_ts {
+        if min > lookback_start {
+            chunk_range(
+                lookback_start,
+                min,
+                chunk_days,
+                existing_min_ts,
+                existing_max_ts,
+                &mut windows,
+            );
+        }
+    }
+
+    // ── Forward top-up from existing_max_ts (full window when None) ─────
+    // Mirrors the existing loop: start at `lookback_start`, but jump forward
+    // to `existing_max_ts − 1 day` when that is later, then chunk to `today`.
+    let mut forward_start = lookback_start;
+    if let Some(max) = existing_max_ts {
+        let max_start = max - chrono::Duration::days(1);
+        if max_start > forward_start {
+            forward_start = max_start;
+        }
+    }
+    chunk_range(
+        forward_start,
+        today,
+        chunk_days,
+        existing_min_ts,
+        existing_max_ts,
+        &mut windows,
+    );
+
+    windows
+}
+
+/// Slice `[range_start, range_end)` into `chunk_days`-sized windows, appending
+/// each window not already covered by the existing `[min, max]` range to `out`.
+///
+/// Replicates the "chunk already covered" skip guard used by both fetch loops so
+/// the planned windows match what the loops would actually request.
+fn chunk_range(
+    range_start: NaiveDate,
+    range_end: NaiveDate,
+    chunk_days: i64,
+    existing_min: Option<NaiveDate>,
+    existing_max: Option<NaiveDate>,
+    out: &mut Vec<FetchWindow>,
+) {
+    let mut chunk_start = range_start;
+    while chunk_start < range_end {
+        let chunk_end = std::cmp::min(
+            chunk_start + chrono::Duration::days(chunk_days),
+            range_end,
+        );
+
+        // Skip if QuestDB already covers this chunk (same guard as the loops).
+        let covered = matches!(
+            (existing_min, existing_max),
+            (Some(min), Some(max)) if chunk_start >= min && chunk_end <= max
+        );
+        if !covered {
+            out.push(FetchWindow {
+                start: chunk_start,
+                end: chunk_end,
+            });
+        }
+
+        chunk_start = chunk_end + chrono::Duration::days(1);
+    }
+}
+
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /// Run QuestDB migrations to ensure both `historical_candles` (daily) and
@@ -355,37 +468,43 @@ pub async fn load_intraday_data(
     );
 
     // ── 2. Build chunk windows ──────────────────────────────────────────
-    let mut chunk_start = lookback_start;
-    if let Some(max) = existing.max_ts {
-        let max_start = max - chrono::Duration::days(1);
-        if max_start > chunk_start {
-            chunk_start = max_start;
-            info!(
-                "Optimizing intraday load for {} [{}]: starting from existing max ({}) - 1 day",
-                symbol, timeframe, max
-            );
-        }
+    // `intraday_fetch_windows` returns BOTH the forward top-up from
+    // `existing.max_ts` (preserving the prior forward-only behavior exactly)
+    // AND the backward Depth_Gap `[lookback_start, existing.min_ts)` when the
+    // cached window's earliest candle is more recent than `lookback_start`
+    // (R1.1). The same "chunk already covered" skip guard is applied inside
+    // the helper, so nothing already in QuestDB is re-fetched (R1.2). When the
+    // window is already deep — or `existing` is `None` (full-window forward
+    // fetch already covers depth) — no extra Depth_Gap window is emitted, so
+    // this stays a no-op for symbols that are already deep enough (R5.3).
+    let windows = intraday_fetch_windows(
+        lookback_start,
+        existing.min_ts,
+        existing.max_ts,
+        today,
+        config.chunk_days,
+    );
+
+    if existing.min_ts.map_or(false, |min| min > lookback_start) {
+        info!(
+            "Intraday depth-heal for {} [{}]: cached window starts at {:?} (> lookback_start {}) — \
+             planning backward Depth_Gap fetch in addition to forward top-up.",
+            symbol, timeframe, existing.min_ts, lookback_start
+        );
     }
+
     let mut total_inserted: u64 = 0;
     let client = reqwest::Client::new();
 
-    while chunk_start < today {
-        let chunk_end = std::cmp::min(
-            chunk_start + chrono::Duration::days(config.chunk_days),
-            today,
-        );
-
-        // Skip if QuestDB already covers this chunk
-        if let (Some(min), Some(max)) = (existing.min_ts, existing.max_ts) {
-            if chunk_start >= min && chunk_end <= max {
-                info!(
-                    "Intraday chunk {} → {} already covered for {} [{}] — skipping.",
-                    chunk_start, chunk_end, symbol, timeframe
-                );
-                chunk_start = chunk_end + chrono::Duration::days(1);
-                continue;
-            }
-        }
+    // ── 3-5. Fetch each planned window (forward top-up + Depth_Gap) ─────
+    // Same KiteIntervalConfig chunk size, same 350ms rate-limit, and same
+    // `historical_intraday` write path as the prior forward fetch. Per-chunk
+    // errors are logged (never raised into the caller) exactly as before, so
+    // an overall backfill error still surfaces to the caller as it does today
+    // (R1.3, R1.4).
+    for window in windows {
+        let chunk_start = window.start;
+        let chunk_end = window.end;
 
         info!(
             "Fetching intraday chunk: {} → {} (interval={})",
@@ -431,8 +550,6 @@ pub async fn load_intraday_data(
 
         // ── 5. Rate-limit delay (Kite: 3 req/sec max) ──────────────────
         tokio::time::sleep(std::time::Duration::from_millis(350)).await;
-
-        chunk_start = chunk_end + chrono::Duration::days(1);
     }
 
     info!(
@@ -709,4 +826,163 @@ fn parse_kite_timestamp(ts_str: &str) -> Result<i64, String> {
     }
 
     Err(format!("Unable to parse Kite timestamp: {}", ts_str))
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Feature: intraday-candle-availability, Property 1: Depth-gap window is
+// computed correctly and only when needed.
+//
+// `intraday_fetch_windows` is a pure planner, so these unit tests exercise the
+// full decision without any I/O: the backward Depth_Gap `[lookback_start,
+// existing_min_ts)` is emitted IFF `existing_min_ts > lookback_start`, the
+// forward top-up toward `today` is always emitted, both collapse to a no-op
+// when the cached window already spans the full Lookback_Window, and the
+// `existing = None` case yields a full-window forward fetch with no backward
+// gap.
+//
+// Validates: Requirements 1.1, 1.2, 5.3.
+// ════════════════════════════════════════════════════════════════════════
+#[cfg(test)]
+mod intraday_fetch_windows_tests {
+    use super::*;
+
+    /// Build a `NaiveDate`, panicking on an invalid calendar date (test-only).
+    fn d(y: i32, m: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, day).expect("valid test date")
+    }
+
+    /// Shorthand for a `FetchWindow`.
+    fn w(start: NaiveDate, end: NaiveDate) -> FetchWindow {
+        FetchWindow { start, end }
+    }
+
+    const CHUNK_DAYS: i64 = 15;
+
+    /// `today` for every case; `lookback_start` sits 30 days earlier.
+    fn today() -> NaiveDate {
+        d(2024, 1, 31)
+    }
+    fn lookback_start() -> NaiveDate {
+        d(2024, 1, 1)
+    }
+
+    /// `existing = None`: the forward path already fetches the full
+    /// `[lookback_start, today]` window (depth is covered there), so there is
+    /// no separate backward Depth_Gap. (R1.2 / R5.3 — the `None` case.)
+    #[test]
+    fn none_existing_fetches_full_forward_window_and_no_backward_gap() {
+        let windows =
+            intraday_fetch_windows(lookback_start(), None, None, today(), CHUNK_DAYS);
+
+        // Full forward window, chunked at CHUNK_DAYS.
+        assert_eq!(
+            windows,
+            vec![
+                w(d(2024, 1, 1), d(2024, 1, 16)),
+                w(d(2024, 1, 17), d(2024, 1, 31)),
+            ],
+            "None existing should fetch the full forward window"
+        );
+
+        // Spans exactly [lookback_start, today]; nothing reaches before it.
+        assert_eq!(windows.first().unwrap().start, lookback_start());
+        assert_eq!(windows.last().unwrap().end, today());
+        assert!(windows.iter().all(|win| win.start >= lookback_start()));
+    }
+
+    /// `existing_min_ts > lookback_start`: the backward Depth_Gap
+    /// `[lookback_start, existing_min_ts)` IS included, alongside the forward
+    /// top-up toward `today`. (R1.1 — the "57/114" heal.)
+    #[test]
+    fn backward_gap_included_when_min_ts_after_lookback_start() {
+        let min = d(2024, 1, 10);
+        let max = d(2024, 1, 15);
+
+        let windows = intraday_fetch_windows(
+            lookback_start(),
+            Some(min),
+            Some(max),
+            today(),
+            CHUNK_DAYS,
+        );
+
+        // Backward Depth_Gap [lookback_start, min_ts) is present.
+        assert!(
+            windows.contains(&w(lookback_start(), min)),
+            "expected backward Depth_Gap window [lookback_start, min_ts), got {:?}",
+            windows
+        );
+        // Forward top-up toward today is present.
+        assert!(
+            windows.iter().any(|win| win.end == today()),
+            "expected forward top-up reaching today, got {:?}",
+            windows
+        );
+
+        // Exact planned set (backward gap first, then forward chunks).
+        assert_eq!(
+            windows,
+            vec![
+                w(d(2024, 1, 1), d(2024, 1, 10)),
+                w(d(2024, 1, 14), d(2024, 1, 29)),
+                w(d(2024, 1, 30), d(2024, 1, 31)),
+            ]
+        );
+    }
+
+    /// Boundary of the IFF: when `existing_min_ts == lookback_start` the gap is
+    /// NOT older than the window, so no backward Depth_Gap is emitted (the test
+    /// is a strict `>`), while the forward top-up is still planned. (R1.1/R1.2.)
+    #[test]
+    fn backward_gap_excluded_when_min_ts_equals_lookback_start() {
+        let min = lookback_start(); // == lookback_start → strict `>` is false
+        let max = d(2024, 1, 15);
+
+        let windows = intraday_fetch_windows(
+            lookback_start(),
+            Some(min),
+            Some(max),
+            today(),
+            CHUNK_DAYS,
+        );
+
+        // No window reaches back to lookback_start (no Depth_Gap emitted).
+        assert!(
+            !windows.iter().any(|win| win.start == lookback_start()),
+            "no backward Depth_Gap should start at lookback_start when \
+             min_ts == lookback_start, got {:?}",
+            windows
+        );
+        // Forward top-up toward today is still present.
+        assert!(
+            windows.iter().any(|win| win.end == today()),
+            "expected forward top-up reaching today, got {:?}",
+            windows
+        );
+    }
+
+    /// Already deep: the cached window already spans the full Lookback_Window
+    /// (`min_ts <= lookback_start` and `max_ts >= today`), so BOTH the backward
+    /// Depth_Gap and the forward top-up collapse to a no-op — nothing is
+    /// re-fetched. (R1.2 / R5.3 — the no-op guarantee.)
+    #[test]
+    fn already_deep_window_is_noop() {
+        let min = d(2023, 12, 1); // older than lookback_start
+        let max = d(2024, 2, 5); // beyond today
+
+        let windows = intraday_fetch_windows(
+            lookback_start(),
+            Some(min),
+            Some(max),
+            today(),
+            CHUNK_DAYS,
+        );
+
+        assert!(
+            windows.is_empty(),
+            "cached window already spans the Lookback_Window; expected a no-op, \
+             got {:?}",
+            windows
+        );
+    }
 }
