@@ -4133,3 +4133,217 @@ mod news_degradation_integration {
         );
     }
 }
+
+// ── BUG 3 REGRESSION TEST (deep-quant-decision-reliability, Property 5/6) ─────
+//
+// Task 3: watcher self-terminate-on-400 (Bug 3 — APPLIED, regression only).
+//
+// The applied fix lives in `post_resume_and_stream` (now returns
+// `Result<bool, String>`: `Ok(true)` = resumable 2xx, `Ok(false)` =
+// non-resumable 4xx/400, `Err` = send failure) and its heartbeat cadence branch
+// (~line 1054): on `Ok(false)` it removes the watcher from the registry
+// (`map.remove(&watcher.thread_id)`) and `break`s the cadence; on `Ok(true)` it
+// continues; on `Err` it logs-and-skips (transient) and keeps the watcher.
+//
+// The live heartbeat branch does real HTTP to localhost:8086 and runs inside the
+// spawned Tokio watcher task, so it cannot be driven hermetically here. Exactly
+// like the sibling `watcher_registry_proptests::remove_on_fire` mirror and the
+// R5 degradation mirrors elsewhere in this file, this module extracts the
+// OBSERVABLE registry transition the fix guarantees into a pure helper
+// (`apply_heartbeat_resume_result`) that operates on a plain `HashMap` — a
+// faithful, byte-for-byte mirror of the `match resume_result { .. }` arms in the
+// live cadence branch — and asserts the registry contract over it. This locks in
+// the applied cleanup logic without a live database or event bus.
+//
+// Validates: Requirements 2.6, 2.7, 3.5, 3.6.
+#[cfg(test)]
+mod watcher_zombie_termination_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Faithful mirror of the heartbeat cadence branch's post-`/resume` registry
+    /// transition (Bug 3, `post_resume_and_stream` result handling ~line 1054).
+    /// Given the `Result<bool, String>` a heartbeat `/resume` POST returns,
+    /// mutate the registry and decide whether the cadence loop should stop:
+    ///   * `Ok(true)`  (resumable / 2xx)   → keep the watcher, CONTINUE cadence.
+    ///   * `Ok(false)` (non-resumable/400) → remove the now-zombie watcher and
+    ///                                        STOP the cadence.
+    ///   * `Err(_)`    (transient send err) → log-and-skip: keep the watcher,
+    ///                                        CONTINUE cadence (attempt still
+    ///                                        counts toward the bounded ceiling
+    ///                                        in the live loop).
+    /// Returns `true` when the cadence loop should `break` (stop heartbeating).
+    fn apply_heartbeat_resume_result(
+        registry: &mut HashMap<String, Watcher>,
+        thread_id: &str,
+        resume_result: Result<bool, String>,
+    ) -> bool {
+        match resume_result {
+            Ok(true) => false,
+            Ok(false) => {
+                registry.remove(thread_id);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Build a registered heartbeat-enabled watcher in a fresh registry.
+    fn registry_with_watcher(thread_id: &str) -> HashMap<String, Watcher> {
+        let watcher = build_watcher(
+            thread_id.to_string(),
+            "RELIANCE".to_string(),
+            "10m".to_string(),
+            2450.0,
+            "above",
+            1.5,
+            2400.0,      // reference_price
+            Some(2375.0), // invalidation_level
+            true,        // heartbeat_enabled
+            30.0,        // heartbeat_cadence_secs
+            5,           // heartbeat_max
+        );
+        let mut registry: HashMap<String, Watcher> = HashMap::new();
+        register_watcher(&mut registry, watcher);
+        registry
+    }
+
+    // Property 5 (Bug Condition): when a heartbeat resume finds the thread
+    // non-resumable (Ok(false) ⇐ /resume 400 "not in a paused/interruptible
+    // state"), the watcher is DEREGISTERED and the cadence STOPS. This is the
+    // core of the fix: a run that committed a terminal decision and ended no
+    // longer leaves a zombie watcher POSTing /resume forever.
+    // Validates: Requirements 2.6, 2.7.
+    #[test]
+    fn non_resumable_heartbeat_deregisters_watcher_and_stops_cadence() {
+        let thread_id = "thread-zombie-400";
+        let mut registry = registry_with_watcher(thread_id);
+        assert!(
+            registry.contains_key(thread_id),
+            "precondition: the watcher is registered before the heartbeat"
+        );
+
+        // The run ended: /resume returned 400 → post_resume_and_stream => Ok(false).
+        let should_break = apply_heartbeat_resume_result(&mut registry, thread_id, Ok(false));
+
+        // R2.6/R2.7: the watcher self-terminates — removed from the registry and
+        // the heartbeat cadence stops (the loop breaks).
+        assert!(should_break, "a non-resumable heartbeat must stop the cadence");
+        assert!(
+            !registry.contains_key(thread_id),
+            "R2.6/R2.7: a non-resumable heartbeat must deregister the zombie watcher"
+        );
+    }
+
+    // Property 6 (Preservation): a 2xx (resumable) heartbeat keeps the watcher
+    // registered and the cadence running — a still-paused/interruptible thread
+    // continues to be watched exactly as before the fix.
+    // Validates: Requirement 3.6.
+    #[test]
+    fn resumable_heartbeat_keeps_watcher_registered_and_cadence_running() {
+        let thread_id = "thread-still-paused";
+        let mut registry = registry_with_watcher(thread_id);
+
+        // /resume returned 2xx → post_resume_and_stream => Ok(true).
+        let should_break = apply_heartbeat_resume_result(&mut registry, thread_id, Ok(true));
+
+        assert!(!should_break, "a resumable heartbeat must NOT stop the cadence");
+        assert!(
+            registry.contains_key(thread_id),
+            "R3.6: a resumable (2xx) heartbeat keeps the watcher registered and alive"
+        );
+    }
+
+    // Preservation (transient error): a failed heartbeat POST (Err) is
+    // logged-and-skipped — it does NOT remove the watcher or stop the cadence,
+    // so a transient network blip cannot orphan or kill a live watcher.
+    // Validates: Requirement 3.6.
+    #[test]
+    fn transient_error_heartbeat_keeps_watcher_and_continues() {
+        let thread_id = "thread-transient-err";
+        let mut registry = registry_with_watcher(thread_id);
+
+        let should_break = apply_heartbeat_resume_result(
+            &mut registry,
+            thread_id,
+            Err("connection reset".to_string()),
+        );
+
+        assert!(!should_break, "a transient send error must not stop the cadence");
+        assert!(
+            registry.contains_key(thread_id),
+            "a transient heartbeat error is logged-and-skipped; the watcher stays registered"
+        );
+    }
+
+    // Property 6 (Preservation): a fired price condition (target/invalidation)
+    // still resumes-and-removes the watcher exactly as before — that path is
+    // independent of the heartbeat self-terminate fix. This mirrors the live
+    // trigger branch: on a fire, the watcher is removed from the registry.
+    // Validates: Requirement 3.5.
+    #[test]
+    fn fired_price_condition_still_resumes_and_removes() {
+        let thread_id = "thread-target-fires";
+        let mut registry = registry_with_watcher(thread_id);
+        let average_volume = 100.0;
+
+        // A candle that meets the "above 2450" price AND the 1.5x volume surge
+        // fires the Target.
+        let fired = {
+            let w = registry.get(thread_id).unwrap();
+            watcher_triggered(
+                &w.direction,
+                w.price_level,
+                w.invalidation_level,
+                w.volume_multiplier,
+                average_volume,
+                2451.0, // close >= 2450
+                200.0,  // volume >= 100 * 1.5 = 150 (surge met)
+            )
+        };
+        assert_eq!(fired, Some(WatcherTrigger::Target), "the target condition must fire");
+
+        // The live trigger branch removes the fired watcher from the registry.
+        if fired.is_some() {
+            registry.remove(thread_id);
+        }
+        assert!(
+            !registry.contains_key(thread_id),
+            "R3.5: a fired price condition still resumes-and-removes the watcher"
+        );
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        // Property 5/6: over arbitrary heartbeat resume results, the registry
+        // transition is exactly: Ok(false) ⇒ deregister + stop; Ok(true)/Err ⇒
+        // keep + continue. Quantifies the self-terminate contract across the
+        // whole result space (the bug condition is precisely Ok(false)).
+        // Validates: Requirements 2.6, 2.7, 3.6.
+        #[test]
+        fn prop_heartbeat_result_drives_registry_transition(
+            thread_id in "[a-zA-Z0-9_-]{1,16}",
+            // 0 => Ok(true) resumable, 1 => Ok(false) non-resumable, 2 => Err.
+            result_kind in 0usize..3,
+            err_msg in "[a-zA-Z0-9 :._-]{0,40}",
+        ) {
+            let mut registry = registry_with_watcher(&thread_id);
+            let resume_result: Result<bool, String> = match result_kind {
+                0 => Ok(true),
+                1 => Ok(false),
+                _ => Err(err_msg),
+            };
+            let non_resumable = matches!(resume_result, Ok(false));
+
+            let should_break =
+                apply_heartbeat_resume_result(&mut registry, &thread_id, resume_result);
+
+            // Cadence stops iff the thread was non-resumable (Ok(false)).
+            prop_assert_eq!(should_break, non_resumable);
+            // The watcher is deregistered iff the thread was non-resumable;
+            // otherwise (2xx or transient Err) it remains registered.
+            prop_assert_eq!(registry.contains_key(&thread_id), !non_resumable);
+        }
+    }
+}

@@ -126,7 +126,35 @@ def _init_db(conn: sqlite3.Connection) -> None:
     # upgrade in place without touching legacy single-target rows.
     _ensure_column(conn, "management_plan", "TEXT")
     _ensure_column(conn, "exit_breakdown", "TEXT")
+    # Idempotent-commit migration (Bug 5): persist the LangGraph ``thread_id`` that
+    # committed each decision so a re-entered finalize for the same thread cannot
+    # write a second journal row. Additive and nullable — legacy rows (written
+    # before this column existed) keep NULL and are unaffected. The partial UNIQUE
+    # index enforces at most one row per non-NULL ``thread_id`` at the storage
+    # layer (defense in depth behind the pre-insert existence check in
+    # ``record_decision``) while the ``WHERE thread_id IS NOT NULL`` predicate lets
+    # any number of legacy NULL rows coexist.
+    _ensure_column(conn, "thread_id", "TEXT")
+    _ensure_thread_id_index(conn)
     conn.commit()
+
+
+def _ensure_thread_id_index(conn: sqlite3.Connection) -> None:
+    """Create the partial UNIQUE index on ``thread_id`` (idempotent). Never raises.
+
+    ``CREATE UNIQUE INDEX IF NOT EXISTS ... WHERE thread_id IS NOT NULL`` is a
+    partial index: it enforces uniqueness only across rows with a non-NULL
+    ``thread_id`` so multiple legacy NULL rows are permitted, and re-running on an
+    already-migrated journal is a no-op. Guarded so a failure degrades the run to
+    the pre-insert existence check rather than aborting the agent loop.
+    """
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_thread "
+            "ON trades(thread_id) WHERE thread_id IS NOT NULL"
+        )
+    except Exception as e:
+        print(f"[Trade_Journal] WARN: could not ensure thread_id index: {e}")
 
 
 def _ensure_column(conn: sqlite3.Connection, column: str, decl_type: str) -> None:
@@ -787,6 +815,7 @@ def record_decision(
     timeframe: Optional[str] = None,
     mode: Optional[str] = None,
     management_plan=None,
+    thread_id: Optional[str] = None,
 ) -> Optional[int]:
     """Persist a committed decision to the journal. Never raises into the loop.
 
@@ -800,6 +829,15 @@ def record_decision(
     ``management_plan`` column so a managed trade can be re-scored reproducibly on
     later candles (R6.3); a Single_Target_Trade persists a NULL plan and is scored
     on the unchanged legacy path.
+
+    Idempotent commit (Bug 5): when a non-NULL ``thread_id`` is supplied, the
+    write is idempotent per thread — if a row for this ``thread_id`` already
+    exists, the insert is skipped and the EXISTING row id is returned, so N calls
+    for one thread produce exactly one row (Property 9). The ``thread_id``
+    parameter is optional and defaults to ``None``: legacy callers that omit it
+    keep the pre-existing behavior unchanged (every call inserts a fresh row with
+    a NULL ``thread_id``), preserving the first-commit-writes-one-row contract
+    (Property 10).
     """
     try:
         d = decision or {}
@@ -838,17 +876,40 @@ def record_decision(
 
         plan_json = _serialize_management_plan(management_plan, d, entry, stop_loss, d.get("atr_14"))
 
+        # Normalize the thread id so only a non-empty string participates in the
+        # idempotency guard; anything else (None, "", non-string) is treated as a
+        # legacy NULL write that inserts a fresh row (preservation).
+        tid = thread_id if (isinstance(thread_id, str) and thread_id.strip()) else None
+
         conn = _connect()
         try:
             _init_db(conn)
+            # Idempotent commit: a prior row for this non-NULL thread_id means the
+            # decision is already journaled — skip the insert and return the
+            # existing id (N calls -> exactly 1 row). Guarded so a lookup failure
+            # degrades to attempting the insert rather than aborting the loop.
+            if tid is not None:
+                existing = conn.execute(
+                    "SELECT id FROM trades WHERE thread_id=? ORDER BY id ASC LIMIT 1",
+                    (tid,),
+                ).fetchone()
+                if existing is not None:
+                    existing_id = existing[0]
+                    print(
+                        f"[Trade_Journal] Idempotent commit: thread {tid} already "
+                        f"journaled (id={existing_id}); skipping duplicate {action} "
+                        f"{symbol}/{timeframe}."
+                    )
+                    return existing_id
             cur = conn.execute(
                 """
                 INSERT INTO trades (
                     created_at, mode, symbol, timeframe, action, entry, stop_loss,
                     take_profit, atr_14, conviction, risk_reward, setup_key,
                     setup_tags, source, status, outcome_price, outcome_at,
-                    r_multiple, scored_at, forecast_up_probability, management_plan
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    r_multiple, scored_at, forecast_up_probability, management_plan,
+                    thread_id
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     _now(), (mode or "FIND"), symbol, timeframe, action,
@@ -860,12 +921,29 @@ def record_decision(
                     rr if _is_num(rr) else None,
                     key, json.dumps(tags), d.get("source"),
                     status, None, None, None, None, fc_up_prob, plan_json,
+                    tid,
                 ),
             )
             conn.commit()
             row_id = cur.lastrowid
             print(f"[Trade_Journal] Recorded {action} {symbol}/{timeframe} as '{status}' (setup={key}, id={row_id}).")
             return row_id
+        except sqlite3.IntegrityError as e:
+            # A concurrent writer won the race and inserted the same thread_id
+            # first; the partial UNIQUE index rejected this insert. Resolve
+            # idempotently by returning the row that won rather than raising.
+            print(f"[Trade_Journal] Idempotent commit: unique thread_id conflict for {tid}: {e}")
+            try:
+                if tid is not None:
+                    row = conn.execute(
+                        "SELECT id FROM trades WHERE thread_id=? ORDER BY id ASC LIMIT 1",
+                        (tid,),
+                    ).fetchone()
+                    if row is not None:
+                        return row[0]
+            except Exception:
+                pass
+            return None
         finally:
             conn.close()
     except Exception as e:
@@ -1324,3 +1402,106 @@ def purge(source: Optional[str] = None, symbol: Optional[str] = None) -> int:
     except Exception as e:
         print(f"[Trade_Journal] WARN: purge failed: {e}")
         return 0
+
+
+def dedupe_thread_rows() -> int:
+    """One-time cleanup: collapse duplicate journal rows to one per decision.
+
+    Legacy rows written BEFORE the Bug 5 idempotency fix can contain duplicate
+    decisions for a single committed run (observed: two HOLD rows for one run,
+    ids 24202/24203) that pollute the track record and bias the agent toward
+    HOLD. This function removes those duplicates so each committed decision is
+    represented exactly once, keeping the EARLIEST row (``MIN(id)``) of every
+    duplicate group.
+
+    Two duplicate keys are used, matching the two eras of journal rows:
+
+      1. **Non-NULL ``thread_id`` rows** (written after the fix): the duplicate
+         key is the ``thread_id`` itself — the canonical per-decision identity
+         (design: "remove duplicate (thread_id, decision) rows keeping the
+         earliest row per thread"). At most one row per thread is retained.
+
+      2. **Legacy NULL-``thread_id`` rows** (predate the column, so no thread
+         identity exists): the duplicate key is the tuple
+         ``(symbol, timeframe, action, setup_key, created_at-truncated-to-whole-
+         seconds)``. ``created_at`` is a wall-clock ``time.time()`` value, so two
+         rows from a re-entered finalize for the same decision share every
+         dimension and land in the same one-second bucket. This key is
+         deliberately conservative: two rows collapse ONLY when they agree on
+         symbol, timeframe, action AND the full regime/session/etc. setup
+         fingerprint AND were written within the same wall-clock second, so
+         genuinely distinct decisions (different symbol/timeframe/action/setup,
+         or made seconds apart) are never merged.
+
+    Returns the total number of rows deleted (0 when the journal is already
+    clean). This is a DESTRUCTIVE operation and is invoked ONLY explicitly (see
+    the ``--dedupe`` CLI guard at the bottom of this module); it is NEVER called
+    from ``record_decision``, ``_finalize_decision``, or any run path. Wrapped
+    like ``purge`` so a failure degrades to "nothing removed" and never raises
+    into a caller.
+    """
+    try:
+        conn = _connect()
+        try:
+            _init_db(conn)
+            deleted = 0
+            # 1) Non-NULL thread_id rows: keep MIN(id) per thread_id.
+            cur = conn.execute(
+                """
+                DELETE FROM trades
+                WHERE thread_id IS NOT NULL
+                  AND id NOT IN (
+                      SELECT MIN(id) FROM trades
+                      WHERE thread_id IS NOT NULL
+                      GROUP BY thread_id
+                  )
+                """
+            )
+            deleted += cur.rowcount or 0
+            # 2) Legacy NULL-thread_id rows: keep MIN(id) per conservative key
+            #    (symbol, timeframe, action, setup_key, created_at truncated to a
+            #    whole second). COALESCE guards NULL dimensions so they group
+            #    consistently rather than being excluded by SQL NULL semantics.
+            cur = conn.execute(
+                """
+                DELETE FROM trades
+                WHERE thread_id IS NULL
+                  AND id NOT IN (
+                      SELECT MIN(id) FROM trades
+                      WHERE thread_id IS NULL
+                      GROUP BY
+                          COALESCE(symbol, ''),
+                          COALESCE(timeframe, ''),
+                          COALESCE(action, ''),
+                          COALESCE(setup_key, ''),
+                          CAST(COALESCE(created_at, 0) AS INTEGER)
+                  )
+                """
+            )
+            deleted += cur.rowcount or 0
+            conn.commit()
+            return deleted
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[Trade_Journal] WARN: dedupe_thread_rows failed: {e}")
+        return 0
+
+
+# ── Guarded CLI ─────────────────────────────────────────────────────────────
+# The ONLY entry point that runs the destructive one-time cleanup. It executes
+# ``dedupe_thread_rows()`` exclusively when invoked with an explicit ``--dedupe``
+# flag (``python -m journal --dedupe`` or ``python journal.py --dedupe``); with
+# no flag it is inert and touches no data, so importing this module or running it
+# accidentally never mutates the journal (Bug 5: cleanup is explicit-only).
+if __name__ == "__main__":
+    import sys
+
+    if "--dedupe" in sys.argv[1:]:
+        removed = dedupe_thread_rows()
+        print(f"[Trade_Journal] dedupe complete: removed {removed} duplicate row(s).")
+    else:
+        print(
+            "[Trade_Journal] No action taken. Pass --dedupe to run the one-time "
+            "duplicate-row cleanup (destructive)."
+        )

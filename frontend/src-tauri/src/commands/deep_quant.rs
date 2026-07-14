@@ -837,7 +837,7 @@ pub(crate) async fn load_candles_with_ts(
                         max(high) AS high, \
                         min(low) AS low, \
                         last(close) AS close, \
-                        sum(volume) AS volume \
+                        last(volume) AS volume \
                  FROM historical_intraday \
                  WHERE symbol = $1 AND timeframe = $2 \
                  SAMPLE BY {} ALIGN TO CALENDAR \
@@ -3920,6 +3920,641 @@ mod property2_read_retry_gating {
         assert_eq!(
             true_count, 1,
             "exactly one of the 16 boolean combinations must return true (the false-zero case)"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bug 1 (deep-quant-decision-reliability) — Candle dedup read regression.
+//
+// APPLIED FIX (do NOT re-implement here): the two plain (non-derived) read
+// branches of `load_candles_with_ts` select
+// `last(open/high/low/close/volume)` with the implicit GROUP BY on the
+// non-aggregated `ts`, so a re-backfilled table holding duplicate rows per
+// `(symbol, timeframe, ts)` collapses to one bar per timestamp at read time and
+// `ORDER BY ts DESC LIMIT n` therefore counts DISTINCT bars (not raw dupes).
+// `run_migration` additionally enables `DEDUP ENABLE UPSERT KEYS(...)` so NEW
+// writes never duplicate.
+//
+// A live QuestDB pool is NOT available in the test sandbox, so — exactly as the
+// `property4_merge_dedup_invariance` module does for the inline production merge
+// — this module (1) faithfully MIRRORS the SQL read-time dedup semantics
+// (`last(col)` per `ts` = last-written value; `ORDER BY ts DESC`; `LIMIT n`) as
+// a pure helper and proves the two properties against it, AND (2) adds a durable
+// source-shape assertion that both plain-read branches still carry the
+// `last(...)` dedup aggregation (so reverting the fix fails the test).
+//
+// Validates: Requirements 2.1, 2.2, 2.3 (Property 1 — Bug Condition) and
+//            Requirements 3.1, 3.2 (Property 2 — Preservation).
+#[cfg(test)]
+mod property1_candle_dedup_read {
+    use crate::quant::patterns::Candle;
+    use proptest::prelude::*;
+    use std::collections::BTreeMap;
+
+    /// Bitwise (exact) comparison key for an output candle — the read only ever
+    /// COPIES stored values, so `to_bits()` equality is the correct "same bar"
+    /// notion. Generators avoid NaN, so this is total.
+    fn key(pair: &(i64, Candle)) -> (i64, u64, u64, u64, u64, u64) {
+        let (ts, c) = pair;
+        (
+            *ts,
+            c.open.to_bits(),
+            c.high.to_bits(),
+            c.low.to_bits(),
+            c.close.to_bits(),
+            c.volume.to_bits(),
+        )
+    }
+
+    /// Faithful mirror of the plain-read dedup SQL in `load_candles_with_ts`:
+    ///
+    /// ```sql
+    /// SELECT ts, last(open) AS open, last(high) AS high, last(low) AS low,
+    ///        last(close) AS close, last(volume) AS volume
+    /// FROM <table> WHERE ... ORDER BY ts DESC LIMIT n
+    /// ```
+    ///
+    /// `raw_rows` are supplied in INSERTION order (index 0 = earliest write),
+    /// mirroring how re-backfills append overlapping rows. QuestDB's `last(col)`
+    /// with the implicit GROUP BY on the non-aggregated `ts` keeps the
+    /// most-recently-written value per timestamp (⇒ last occurrence wins);
+    /// `ORDER BY ts DESC` then orders the DISTINCT-ts groups newest-first; and
+    /// `LIMIT n` keeps at most `n` of them. `LIMIT` therefore counts DISTINCT
+    /// bars, never raw duplicate rows.
+    fn dedup_read(raw_rows: &[(i64, Candle)], limit: usize) -> Vec<(i64, Candle)> {
+        // GROUP BY ts, last-write-wins (later insertion overwrites earlier).
+        let mut by_ts: BTreeMap<i64, Candle> = BTreeMap::new();
+        for (ts, c) in raw_rows {
+            by_ts.insert(*ts, c.clone());
+        }
+        // ORDER BY ts DESC (BTreeMap iterates ascending → reverse for DESC).
+        let mut distinct: Vec<(i64, Candle)> =
+            by_ts.into_iter().rev().collect();
+        // LIMIT n.
+        distinct.truncate(limit);
+        distinct
+    }
+
+    // ── Generators ─────────────────────────────────────────────────────────
+
+    fn candle_strategy() -> impl Strategy<Value = Candle> {
+        // Finite, non-NaN OHLCV; the dedup read never inspects candle contents,
+        // so magnitudes are irrelevant to the properties.
+        (
+            0.1f64..100_000.0,
+            0.1f64..100_000.0,
+            0.1f64..100_000.0,
+            0.1f64..100_000.0,
+            0.0f64..1_000_000.0,
+        )
+            .prop_map(|(open, high, low, close, volume)| Candle {
+                open,
+                high,
+                low,
+                close,
+                volume,
+            })
+    }
+
+    /// Raw rows drawn from a SMALL timestamp range (0..20) with a length up to
+    /// 80 — collisions are near-certain, mirroring a re-backfilled table that
+    /// holds duplicate rows per `(ts)`. Insertion order is the vec order.
+    fn raw_rows_strategy() -> impl Strategy<Value = Vec<(i64, Candle)>> {
+        prop::collection::vec((0i64..20, candle_strategy()), 1..=80)
+    }
+
+    /// Duplicate-free raw rows: UNIQUE timestamps only (each table/query returns
+    /// one row per bar). Built by deduping within the generator.
+    fn unique_rows_strategy() -> impl Strategy<Value = Vec<(i64, Candle)>> {
+        prop::collection::vec((0i64..200, candle_strategy()), 0..=60).prop_map(|rows| {
+            let mut by_ts: BTreeMap<i64, Candle> = BTreeMap::new();
+            for (ts, c) in rows {
+                by_ts.insert(ts, c);
+            }
+            by_ts.into_iter().collect()
+        })
+    }
+
+    /// Independent computation of the DISTINCT timestamps available in the raw
+    /// rows (a different code path than `dedup_read`) — used as the oracle for
+    /// the expected result count.
+    fn distinct_ts(raw_rows: &[(i64, Candle)]) -> Vec<i64> {
+        let mut set: BTreeMap<i64, ()> = BTreeMap::new();
+        for (ts, _c) in raw_rows {
+            set.insert(*ts, ());
+        }
+        set.into_keys().collect()
+    }
+
+    // ── Concrete example: the observed "starvation" shape ────────────────────
+
+    /// Concrete regression of the observed defect: a table holding ~3× duplicate
+    /// rows per timestamp with 100 DISTINCT bars. Pre-fix, `LIMIT 234` over ~300
+    /// RAW rows then merge-deduped to far fewer distinct bars (the "75/114"
+    /// starvation). Post-fix, the read returns all 100 distinct bars for a
+    /// generous limit, and exactly `limit` distinct bars for a tight one.
+    #[test]
+    fn dedup_read_counts_distinct_bars_not_raw_duplicates() {
+        let distinct_available = 100usize;
+        let dup_factor = 3usize;
+
+        // Build raw rows: each of 100 timestamps repeated `dup_factor` times,
+        // interleaved so duplicates are not adjacent (as re-backfills append).
+        let mut raw: Vec<(i64, Candle)> = Vec::new();
+        for pass in 0..dup_factor {
+            for t in 0..distinct_available as i64 {
+                // Vary values per write so last-write-wins is observable.
+                let v = (t as f64) + (pass as f64) * 1000.0;
+                raw.push((
+                    t,
+                    Candle { open: v, high: v + 1.0, low: v - 1.0, close: v + 0.5, volume: v * 2.0 },
+                ));
+            }
+        }
+        assert_eq!(raw.len(), distinct_available * dup_factor);
+
+        // Generous limit (like get_market_regime's 234): every distinct bar returns.
+        let generous = dedup_read(&raw, 234);
+        assert_eq!(
+            generous.len(),
+            distinct_available,
+            "Property 1: a limit >= distinct bars must return ALL distinct bars, \
+             not raw-duplicate-collapsed fewer"
+        );
+        let mut seen: BTreeMap<i64, ()> = BTreeMap::new();
+        for (ts, _c) in &generous {
+            assert!(seen.insert(*ts, ()).is_none(), "Property 1: no duplicate timestamps");
+        }
+
+        // Tight limit: exactly `limit` distinct bars, newest-first.
+        let tight = dedup_read(&raw, 50);
+        assert_eq!(tight.len(), 50, "Property 1: count == min(limit, distinct_available)");
+        assert_eq!(tight[0].0, 99, "Property 2: ORDER BY ts DESC — newest first");
+        assert_eq!(tight[49].0, 50, "Property 1: tight slice keeps the 50 most-recent bars");
+
+        // last-write-wins: the kept bar for ts=99 carries the LAST pass's values.
+        let last_pass_v = 99.0 + (dup_factor as f64 - 1.0) * 1000.0;
+        assert_eq!(tight[0].1.open.to_bits(), last_pass_v.to_bits(),
+            "Property: last(col) keeps the most-recently-written value per ts");
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(200))]
+
+        /// Property 1 (Bug Condition): FOR ALL reads WHERE duplicate rows exist,
+        /// the dedup read returns DISTINCT-timestamp candles up to the limit:
+        ///   * NO duplicate timestamps in the result, and
+        ///   * `count == min(limit, distinct_available)`
+        /// so raw duplicate rows never reduce the effective candle count.
+        ///
+        /// Validates: Requirements 2.1, 2.2, 2.3
+        #[test]
+        fn distinct_count_equals_min_limit_distinct(
+            raw in raw_rows_strategy(),
+            limit in 1usize..=234,
+        ) {
+            let distinct = distinct_ts(&raw);
+            // Focus on the bug condition: duplicate rows actually present.
+            prop_assume!(raw.len() > distinct.len());
+
+            let result = dedup_read(&raw, limit);
+
+            // (1) No duplicate timestamps in the result.
+            let mut seen: BTreeMap<i64, ()> = BTreeMap::new();
+            for (ts, _c) in &result {
+                prop_assert!(
+                    seen.insert(*ts, ()).is_none(),
+                    "Property 1: result must contain no duplicate timestamps (ts={})",
+                    ts
+                );
+            }
+
+            // (2) count == min(limit, distinct_available) — raw dupes don't shrink it.
+            prop_assert_eq!(
+                result.len(),
+                distinct.len().min(limit),
+                "Property 1: distinct_count(result) must equal min(limit, distinct_available)"
+            );
+
+            // (3) Every returned timestamp is a real distinct ts from the source
+            // (no fabrication), and the result is ordered ts DESC.
+            for (ts, _c) in &result {
+                prop_assert!(distinct.contains(ts), "Property 1: ts={} not in source", ts);
+            }
+            for w in result.windows(2) {
+                prop_assert!(w[0].0 > w[1].0, "Property 1/2: result must be strictly ts DESC");
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(200))]
+
+        /// Property 2 (Preservation): FOR ALL reads WHERE no duplicate rows
+        /// exist, the read returns the same candles in `ts DESC` order up to the
+        /// limit, with OHLCV values and timestamps unchanged per distinct bar.
+        ///
+        /// Validates: Requirements 3.1, 3.2
+        #[test]
+        fn preserves_ts_desc_and_ohlcv_when_no_duplicates(
+            rows in unique_rows_strategy(),
+            limit in 1usize..=234,
+        ) {
+            // Bug condition does NOT hold here (all timestamps unique).
+            let distinct = distinct_ts(&rows);
+            prop_assume!(rows.len() == distinct.len());
+
+            let result = dedup_read(&rows, limit);
+
+            // Expected: rows sorted ts DESC, truncated to `limit`, values verbatim.
+            let mut expected: Vec<(i64, Candle)> = rows.clone();
+            expected.sort_by(|a, b| b.0.cmp(&a.0));
+            expected.truncate(limit);
+
+            let result_keys: Vec<_> = result.iter().map(key).collect();
+            let expected_keys: Vec<_> = expected.iter().map(key).collect();
+            prop_assert_eq!(
+                &result_keys,
+                &expected_keys,
+                "Property 2: with no duplicates the read must return the same bars in \
+                 ts DESC order up to limit, OHLCV + timestamps unchanged"
+            );
+
+            // Strictly descending, length preserved to min(len, limit).
+            prop_assert_eq!(result.len(), distinct.len().min(limit));
+            for w in result.windows(2) {
+                prop_assert!(w[0].0 > w[1].0, "Property 2: ts DESC order preserved");
+            }
+        }
+    }
+
+    /// Durable source-shape assertion: both plain (non-derived) read branches of
+    /// `load_candles_with_ts` MUST still carry the `last(...)` dedup aggregation.
+    /// The daily and intraday plain reads each project `last(open) AS open` and
+    /// `last(volume) AS volume`. The derived `SAMPLE BY` branches use
+    /// `first(open)` (so `last(open) AS open` appears EXACTLY twice — once per
+    /// plain branch — and uniquely marks the plain reads). For volume, the two
+    /// plain branches plus the intraday derived branch all project
+    /// `last(volume) AS volume` (Bug 7: the derived intraday `sum(volume)` was
+    /// changed to `last(volume)` so duplicate underlying rows don't inflate the
+    /// bucket), while the daily-archive derived branch keeps `sum(volume)` and
+    /// the live branch uses a volume delta — so `last(volume) AS volume` appears
+    /// EXACTLY three times.
+    /// Reverting the Bug 1 fix (dropping the `last(...)` dedup) would change
+    /// these counts and fail this test.
+    #[test]
+    fn plain_read_branches_retain_last_dedup_aggregation() {
+        // Scope the scan to the PRODUCTION portion of the file — everything
+        // before this test module — so the module's own doc-comments and assert
+        // messages (which quote the same SQL literals) do not inflate the count.
+        let full_src = include_str!("deep_quant.rs");
+        let src = full_src
+            .split("mod property1_candle_dedup_read")
+            .next()
+            .expect("source must contain the production code preceding this test module");
+        let open_dedup = src.matches("last(open) AS open").count();
+        let volume_dedup = src.matches("last(volume) AS volume").count();
+        assert_eq!(
+            open_dedup, 2,
+            "Bug 1: both plain-read branches must select `last(open) AS open` (dedup by ts)"
+        );
+        assert_eq!(
+            volume_dedup, 3,
+            "Bug 1 + Bug 7: both plain-read branches AND the intraday derived branch must \
+             select `last(volume) AS volume` (dedup by ts / no duplicate-row inflation)"
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bug 7 — Derived-timeframe volume inflation regression (task 5.2)
+//
+// A live QuestDB pool is not available in the unit-test sandbox, so — following
+// the same convention as `property1_candle_dedup_read` above — this module
+// mirrors the intraday derived-timeframe `SAMPLE BY` aggregation semantics of
+// `load_candles_with_ts` as a PURE function and asserts the fixed behavior over
+// base rows that contain DUPLICATE timestamps (the bug condition).
+//
+// The derived branch buckets base-timeframe rows into the coarser interval and
+// aggregates each bucket with first(open)/max(high)/min(low)/last(close) and —
+// AFTER the task 5.1 fix — last(volume). Pre-fix it used sum(volume), which
+// double-counts every duplicated underlying row and inflates the bar volume by
+// the duplication factor. These tests contrast the two aggregates to lock the
+// fix in and to guard the OHLC geometry (Property 14 preservation).
+//
+// Validates: Requirements 2.19 (Property 13 — Bug Condition) and
+//            Requirements 3.16, 3.17 (Property 14 — Preservation).
+#[cfg(test)]
+mod property13_derived_volume_not_inflated {
+    use crate::quant::patterns::Candle;
+    use std::collections::BTreeMap;
+
+    /// Volume aggregate selector for the derived bucket, mirroring the two
+    /// possible SQL projections in the intraday derived branch.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    enum VolAgg {
+        /// The FIXED behavior (task 5.1): `last(volume) AS volume`.
+        Last,
+        /// The PRE-FIX buggy behavior: `sum(volume) AS volume`.
+        Sum,
+    }
+
+    /// `SAMPLE BY {interval} ALIGN TO CALENDAR` bucket boundary for a timestamp
+    /// (floor to the interval). Base rows within the same interval collapse to
+    /// one derived bar keyed by the bucket start.
+    fn bucket(ts: i64, interval: i64) -> i64 {
+        ts - ts.rem_euclid(interval)
+    }
+
+    /// Faithful mirror of the intraday derived-timeframe `SAMPLE BY` aggregation
+    /// in `load_candles_with_ts`:
+    ///
+    /// ```sql
+    /// SELECT ts, first(open) AS open, max(high) AS high, min(low) AS low,
+    ///        last(close) AS close, <VOL>(volume) AS volume
+    /// FROM historical_intraday WHERE ...
+    /// SAMPLE BY {interval} ALIGN TO CALENDAR ORDER BY ts DESC LIMIT n
+    /// ```
+    ///
+    /// `raw_rows` are supplied in INSERTION order (index 0 = earliest write),
+    /// mirroring how re-backfills append overlapping/duplicate rows. Within each
+    /// bucket, rows are ordered by the designated timestamp (stable on ties, so
+    /// insertion order breaks equal-`ts` ties) — this matches QuestDB's
+    /// `first()`/`last()` semantics. `ORDER BY ts DESC` then orders the derived
+    /// bars newest-first and `LIMIT n` keeps at most `n`.
+    fn derived_read(
+        raw_rows: &[(i64, Candle)],
+        interval: i64,
+        vol: VolAgg,
+        limit: usize,
+    ) -> Vec<(i64, Candle)> {
+        // Group by SAMPLE BY bucket. BTreeMap keeps buckets ordered ascending;
+        // the Vec preserves insertion order within a bucket.
+        let mut buckets: BTreeMap<i64, Vec<(i64, Candle)>> = BTreeMap::new();
+        for (ts, c) in raw_rows {
+            buckets
+                .entry(bucket(*ts, interval))
+                .or_default()
+                .push((*ts, c.clone()));
+        }
+
+        // Aggregate each bucket into a single derived bar.
+        let mut bars: Vec<(i64, Candle)> = Vec::new();
+        for (bstart, mut rows) in buckets {
+            // Order by designated timestamp; stable sort keeps insertion order
+            // for equal `ts` (duplicate rows), so last-written wins on ties.
+            rows.sort_by_key(|(ts, _)| *ts);
+
+            let open = rows.first().expect("non-empty bucket").1.open; // first(open)
+            let close = rows.last().expect("non-empty bucket").1.close; // last(close)
+            let high = rows
+                .iter()
+                .map(|(_, c)| c.high)
+                .fold(f64::NEG_INFINITY, f64::max); // max(high)
+            let low = rows
+                .iter()
+                .map(|(_, c)| c.low)
+                .fold(f64::INFINITY, f64::min); // min(low)
+            let volume = match vol {
+                VolAgg::Last => rows.last().expect("non-empty bucket").1.volume,
+                VolAgg::Sum => rows.iter().map(|(_, c)| c.volume).sum(),
+            };
+
+            bars.push((
+                bstart,
+                Candle {
+                    open,
+                    high,
+                    low,
+                    close,
+                    volume,
+                },
+            ));
+        }
+
+        // ORDER BY ts DESC then LIMIT n.
+        bars.sort_by(|a, b| b.0.cmp(&a.0));
+        bars.truncate(limit);
+        bars
+    }
+
+    /// Native (non-derived) read: `last(volume)` per distinct `ts` — stored
+    /// volume for the most-recently-written row, never aggregated across bars.
+    fn native_read(raw_rows: &[(i64, Candle)], limit: usize) -> Vec<(i64, Candle)> {
+        let mut by_ts: BTreeMap<i64, Candle> = BTreeMap::new();
+        for (ts, c) in raw_rows {
+            by_ts.insert(*ts, c.clone()); // last-write-wins per ts
+        }
+        let mut out: Vec<(i64, Candle)> = by_ts.into_iter().rev().collect();
+        out.truncate(limit);
+        out
+    }
+
+    /// Build one base-timeframe row per timestamp in `[0, n)`, values derived
+    /// from the timestamp so they are distinct and easy to reason about.
+    fn base_series(n: i64) -> Vec<(i64, Candle)> {
+        (0..n)
+            .map(|t| {
+                let v = t as f64;
+                (
+                    t,
+                    Candle {
+                        open: 100.0 + v,
+                        high: 100.0 + v + 2.0,
+                        low: 100.0 + v - 2.0,
+                        close: 100.0 + v + 0.5,
+                        volume: 10.0 + v, // strictly positive, distinct per bar
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// Duplicate every row `factor` times, interleaved pass-by-pass (as
+    /// re-backfills append), so duplicates are not adjacent.
+    fn duplicate_rows(base: &[(i64, Candle)], factor: usize) -> Vec<(i64, Candle)> {
+        let mut raw = Vec::with_capacity(base.len() * factor);
+        for _pass in 0..factor {
+            for row in base {
+                raw.push(row.clone());
+            }
+        }
+        raw
+    }
+
+    // ── Property 13 (Bug Condition) ──────────────────────────────────────────
+
+    /// FOR the intraday derived read WHERE the bug condition holds (duplicate
+    /// underlying rows in the window), the FIXED `last(volume)` aggregation
+    /// yields the SAME per-bucket volume as the duplicate-free series — i.e. it
+    /// is NOT inflated by the duplication factor. The pre-fix `sum(volume)`
+    /// aggregation, by contrast, scales the volume by exactly the duplication
+    /// factor. This is the exact defect task 5.1 fixed.
+    ///
+    /// Validates: Requirements 2.19 (Property 13)
+    #[test]
+    fn derived_last_volume_not_inflated_by_duplicate_rows() {
+        // 12 base 1m rows resampled to 4m ⇒ 3 derived buckets of 4 rows each.
+        let interval = 4i64;
+        let base = base_series(12);
+        let deduped_bars = derived_read(&base, interval, VolAgg::Last, 100);
+
+        for factor in [2usize, 3, 5] {
+            let raw = duplicate_rows(&base, factor);
+            assert_eq!(raw.len(), base.len() * factor);
+
+            // FIXED: last(volume) is duplication-invariant — identical to the
+            // duplicate-free derived bars (bucket-for-bucket, volume included).
+            let fixed_bars = derived_read(&raw, interval, VolAgg::Last, 100);
+            assert_eq!(
+                fixed_bars.len(),
+                deduped_bars.len(),
+                "Property 13: bucket count is unaffected by duplicate rows"
+            );
+            for (fixed, expected) in fixed_bars.iter().zip(deduped_bars.iter()) {
+                assert_eq!(fixed.0, expected.0, "Property 13: same bucket boundary");
+                assert_eq!(
+                    fixed.1.volume.to_bits(),
+                    expected.1.volume.to_bits(),
+                    "Property 13: last(volume) must NOT be inflated by the {}x duplication \
+                     (bucket ts={})",
+                    factor,
+                    fixed.0
+                );
+            }
+
+            // CONTRAST: the pre-fix sum(volume) WOULD inflate volume by exactly
+            // `factor` — demonstrating the bug the fix removes.
+            let buggy_bars = derived_read(&raw, interval, VolAgg::Sum, 100);
+            for (buggy, expected) in buggy_bars.iter().zip(deduped_bars.iter()) {
+                // Expected deduped bucket volume under sum semantics = sum of the
+                // (distinct) base-row volumes in that bucket.
+                let expected_sum: f64 = base
+                    .iter()
+                    .filter(|(ts, _)| bucket(*ts, interval) == expected.0)
+                    .map(|(_, c)| c.volume)
+                    .sum();
+                assert!(
+                    (buggy.1.volume - expected_sum * factor as f64).abs() < 1e-6,
+                    "sanity: pre-fix sum(volume) inflates by the duplication factor \
+                     (bucket ts={}, factor={})",
+                    buggy.0,
+                    factor
+                );
+                assert!(
+                    buggy.1.volume > expected.1.volume,
+                    "Property 13: pre-fix sum(volume) is strictly larger than the \
+                     fixed last(volume) under duplication (proves the bug)"
+                );
+            }
+        }
+    }
+
+    // ── Property 14 (Preservation) ───────────────────────────────────────────
+
+    /// FOR the intraday derived read, the OHLC bucket aggregation
+    /// (first/max/min/last) is unchanged by the volume-aggregate fix and is
+    /// duplication-invariant: derived bars over duplicated rows match the
+    /// duplicate-free derived bars for open/high/low/close and bucket
+    /// boundaries. The fix touches ONLY the volume projection.
+    ///
+    /// Validates: Requirements 3.16 (Property 14)
+    #[test]
+    fn derived_ohlc_bucketing_unchanged() {
+        let interval = 4i64;
+        let base = base_series(12);
+        let deduped_bars = derived_read(&base, interval, VolAgg::Last, 100);
+
+        // Expected OHLC computed directly from the base series per bucket.
+        let mut expected: BTreeMap<i64, (f64, f64, f64, f64)> = BTreeMap::new();
+        for (ts, c) in &base {
+            let b = bucket(*ts, interval);
+            let e = expected
+                .entry(b)
+                .or_insert((c.open, c.high, c.low, c.close));
+            // first(open) stays as the earliest ts's open (base is ts-ordered);
+            // max(high)/min(low); last(close) becomes the latest ts's close.
+            e.1 = e.1.max(c.high);
+            e.2 = e.2.min(c.low);
+            e.3 = c.close;
+        }
+
+        for factor in [1usize, 2, 4] {
+            let raw = duplicate_rows(&base, factor);
+            let bars = derived_read(&raw, interval, VolAgg::Last, 100);
+            assert_eq!(bars.len(), deduped_bars.len());
+            for (bar, dedup) in bars.iter().zip(deduped_bars.iter()) {
+                assert_eq!(bar.0, dedup.0, "Property 14: bucket boundary unchanged");
+                let (eo, eh, el, ec) = expected[&bar.0];
+                assert_eq!(bar.1.open.to_bits(), eo.to_bits(), "Property 14: first(open)");
+                assert_eq!(bar.1.high.to_bits(), eh.to_bits(), "Property 14: max(high)");
+                assert_eq!(bar.1.low.to_bits(), el.to_bits(), "Property 14: min(low)");
+                assert_eq!(bar.1.close.to_bits(), ec.to_bits(), "Property 14: last(close)");
+            }
+        }
+    }
+
+    /// FOR a native (non-derived) read, stored volume is returned UNCHANGED —
+    /// the derived volume-aggregate change does not touch native reads. With no
+    /// duplicate rows the native read returns each bar's stored volume verbatim
+    /// in ts DESC order.
+    ///
+    /// Validates: Requirements 3.17 (Property 14)
+    #[test]
+    fn native_read_returns_stored_volume_unchanged() {
+        let base = base_series(6);
+        let result = native_read(&base, 100);
+
+        assert_eq!(result.len(), base.len());
+        // ts DESC and stored volume verbatim per bar.
+        for (i, (ts, c)) in result.iter().enumerate() {
+            let expected_ts = base.len() as i64 - 1 - i as i64;
+            assert_eq!(*ts, expected_ts, "native read is ts DESC");
+            let stored = &base[*ts as usize].1;
+            assert_eq!(
+                c.volume.to_bits(),
+                stored.volume.to_bits(),
+                "Property 14: native read returns stored volume unchanged (ts={})",
+                ts
+            );
+        }
+    }
+
+    // ── Source-shape guard (focused on the derived branch) ───────────────────
+
+    /// The intraday derived-timeframe branch string MUST project
+    /// `last(volume) AS volume` and MUST NOT use `sum(volume)` (task 5.1 fix).
+    /// This isolates the `derived_query` block (the only `format!` that reads
+    /// `FROM historical_intraday ... SAMPLE BY`) so the daily-archive derived
+    /// branch — which legitimately keeps `sum(volume)` — cannot mask a
+    /// regression here.
+    #[test]
+    fn intraday_derived_branch_uses_last_volume_not_sum() {
+        let full_src = include_str!("deep_quant.rs");
+        // Scope to production code (before this test module) and grab the
+        // intraday derived query block.
+        let src = full_src
+            .split("mod property13_derived_volume_not_inflated")
+            .next()
+            .expect("source must contain the production code preceding this test module");
+        let block_start = src
+            .find("let derived_query = format!(")
+            .expect("intraday derived branch (`let derived_query = format!(`) must exist");
+        let block = &src[block_start..block_start + 400];
+
+        assert!(
+            block.contains("FROM historical_intraday"),
+            "sanity: isolated block must be the intraday derived query"
+        );
+        assert!(
+            block.contains("last(volume) AS volume"),
+            "Bug 7: intraday derived branch must project `last(volume) AS volume`"
+        );
+        assert!(
+            !block.contains("sum(volume)"),
+            "Bug 7: intraday derived branch must NOT use `sum(volume)` (inflates volume \
+             across duplicate underlying rows)"
         );
     }
 }

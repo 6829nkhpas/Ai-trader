@@ -431,12 +431,15 @@ You must follow this exact loop until a perfect setup is found or registered:
    - Expected_Move_ATR — the expected signed next-bar move sized in ATR units (may be null if ATR is unavailable),
    - Forecast_Confidence ([0.0, 1.0]) — drift strength relative to volatility,
    - Forecast_Alignment (aligned / misaligned / neutral) — whether your proposed trade direction agrees with the Projected_Direction.
-   Use the forecast as a calibration cross-check, NOT a trade generator: it never forces, blocks, or overrides your decision. THEN, as a SECONDARY input, also call `get_prediction` to obtain the naive OLS Predictive_Engine projection (projected_direction Up/Down/Flat, projected_value, confidence) and weigh it below the forecast. If `get_forecast` is unavailable (insufficient data / unavailable marker), treat it as a missing optional input — note it as unavailable and proceed with the remaining inputs; do NOT fabricate a forecast and do NOT abort the decision on that basis. Likewise, if `get_prediction` is unavailable, note it as unavailable and proceed.
-7. NEWS CATALYST: Call `get_news_context` to obtain the dedicated Sentiment_Service classification (recent headlines + directional label). If sentiment is Unavailable, treat it as a missing — but non-blocking — input and continue.
+   Use the forecast as a calibration cross-check, NOT a trade generator: it never forces, blocks, or overrides your decision. THEN, as a SECONDARY input, also call `get_prediction` to obtain the naive OLS Predictive_Engine projection (projected_direction Up/Down/Flat, projected_value, confidence) and weigh it below the forecast. If `get_forecast` is unavailable (insufficient data / unavailable marker), treat it as a missing optional input — note it as unavailable and proceed with the remaining inputs; do NOT fabricate a forecast and do NOT abort the decision on that basis. Likewise, if `get_prediction` is unavailable, treat it as a missing optional input — note it as unavailable and proceed; do NOT fabricate a prediction and do NOT stand aside solely because the prediction could not be computed.
+7. NEWS CATALYST: Call `get_news_context` to obtain the dedicated Sentiment_Service classification (recent headlines + directional label). If sentiment is Unavailable, treat it as a missing optional input — note it as unavailable and proceed; the sentiment classification is non-blocking, so do NOT stand aside solely because sentiment could not be computed.
 8. TRACK-RECORD CALIBRATION: Call `get_trade_performance` for the symbol to review YOUR OWN realized results — win rate and expectancy (in R) overall and per setup type. This is your edge audit, not market data. Use it to calibrate conviction:
    - If a comparable setup (same direction / macro alignment / value-area location) historically shows NEGATIVE expectancy_r or a win rate that does not support its Risk:Reward, you MUST lower your conviction_score, tighten your criteria, or HOLD.
    - If the matching setup has strong positive expectancy over a real sample, you may raise conviction accordingly.
    - When `low_sample` is true, treat the stats as a weak prior only — do not over-fit to a handful of trades.
+   - CALIBRATION, NOT A GATE (Bug 6): the track record MAY lower conviction on a comparable setup, but it MUST NOT, by itself, be the sole reason you stand aside. A poor OR low-sample track record (`low_sample` true, i.e. fewer than the low-sample threshold of realized trades) is a weak prior only — when confluence supports a directional call AND the Trade_Validator passes, do NOT convert a poor/low-sample record into a standalone HOLD. The realized track record never overrides the Trade_Validator (whose hard risk rules are unchanged) and is never a substitute for a genuine risk-gate failure or a genuine lack of confluence.
+
+OPTIONAL-INPUTS POLICY (Bug 6): the confirmation inputs above — market regime, relative strength, session/expiry context, options positioning, event risk, forecast, prediction, and news sentiment — are OPTIONAL calibration filters, NOT required inputs and NOT trade gates. Whenever ANY optional input is unavailable, note it as unavailable and PROCEED with the remaining analysis; you must NOT abort, block, or stand aside SOLELY because one or more optional inputs could not be computed. This does NOT relax anything REQUIRED: the multi-timeframe/microstructure structure a directional call rests on, honest (non-fabricated) data, and the Trade_Validator hard rules (stop >= 1.5x ATR, R:R >= 1:2, required numeric levels present) remain fully in force — a genuinely missing REQUIRED input or a genuine data-integrity problem still means you refuse to fabricate and stand aside.
 
 CRITICAL: You must execute at least one tool call (e.g., `get_multi_tf_trend`) on your very first turn. Do not output text reasoning without calling a tool in the same turn.
 </order_of_operations>
@@ -451,7 +454,7 @@ Ask yourself:
 - Does my entry respect the Volume Profile from `get_volume_profile`? (Avoid buying into a High-Volume Node overhead or selling into one below; prefer entries at VAL/VAH or HVN support, and use Low-Volume Nodes as fast-move targets. Stops are safer beyond an HVN shelf than inside a thin Low-Volume Node.)
 - Is price above or below VWAP? (Buy setups stronger above VWAP, sell setups stronger below)
 - Does volume flow (OBV, CMF) confirm my direction?
-- What does my TRACK RECORD say? Have I checked `get_trade_performance` for this setup type? If a comparable setup has negative expectancy or a win rate too low for its R:R (and the sample is not tiny), I must scrap or downgrade this trade.
+- What does my TRACK RECORD say? Have I checked `get_trade_performance` for this setup type? If a comparable setup has negative expectancy or a win rate too low for its R:R (and the sample is not tiny), I must scrap or downgrade this trade. BUT the track record is a CONVICTION CALIBRATION, not a hard gate (Bug 6): a poor OR low-sample track record MUST NOT be my sole reason to HOLD when confluence is present and the Trade_Validator passes — it may downgrade the setup, but it never single-handedly forces a stand-aside and never overrides the (unchanged) Trade_Validator.
 - WHAT IS THE MARKET REGIME? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `favorability` from `get_market_regime`. If the favorability is `unfavorable` for the proposed setup type (e.g. a trend/momentum entry in a ranging or volatility-extreme regime), you MUST take exactly one of these actions: lower your conviction_score, wait for a better setup (e.g. via `watch_price_condition`), or HOLD. If the regime is unavailable, note it as unavailable and proceed — do NOT block the trade solely because the regime could not be computed.
 - AM I FIGHTING THE INDEX? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `index_direction` and `relative_strength_state` for `alignment` from `get_relative_strength`. If the alignment is `misaligned` (for example a BUY in a `laggard` against a `down` index, or a SELL in a `leader` against an `up` index), you MUST take exactly one of these actions: lower your conviction_score, wait for a better setup (e.g. via `watch_price_condition`), or HOLD. If relative strength is unavailable, note it as unavailable and proceed — do NOT block the trade solely because relative strength could not be computed.
 - WHAT DOES THE FORECAST SAY? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `Forecast_Alignment` and the `Up_Probability` from `get_forecast`. If the Forecast_Alignment is `misaligned` OR the Up_Probability does not support your direction (a BUY needs Up_Probability >= 0.5; a SELL needs Up_Probability <= 0.5), you MUST take exactly one of these actions: lower your conviction_score, wait for a better setup (e.g. via `watch_price_condition`), or HOLD. If the forecast is unavailable, note it as unavailable and proceed — do NOT block the trade solely because the forecast could not be computed.
@@ -2384,6 +2387,58 @@ def _forecast_entry(results) -> dict:
     return entry
 
 
+def _prediction_entry(results) -> dict:
+    """Build the SECONDARY prediction entry from the most recent get_prediction
+    result already in message history (Bug 6, R2.17 / R3.14).
+
+    ``results['get_prediction']`` is the most-recent successfully-parsed, non-error
+    prediction result. The naive OLS Predictive_Engine reports a
+    ``projected_direction`` in {Up, Down, Flat}, a numeric ``projected_value``, and
+    a numeric ``confidence``. This pure read:
+
+      * copies ``projected_direction`` / ``projected_value`` / ``confidence``
+        VERBATIM into a normalized entry (``direction`` lower-cased to
+        up/down/flat so the Best_Current_Read fallback can read it uniformly), and
+      * records the entry as unavailable — with NO fabricated direction — when no
+        usable prediction is present (none in history, a non-dict, or an explicit
+        Unavailable_Marker).
+
+    It NEVER touches the committed decision and is NOT a tier signal (it is not
+    consumed by ``opportunity.evaluate_tier``); it exists ONLY as a graceful,
+    secondary directional fallback for the interim Best_Current_Read when the
+    PRIMARY forecast is unavailable. When both forecast and prediction are
+    unavailable the read stays neutral (no fabricated direction).
+    """
+    pr = results.get("get_prediction")
+    if not isinstance(pr, dict):
+        return {"available": False, "reason": "no get_prediction result present in message history"}
+    if pr.get("unavailable") is True:
+        return {"available": False, "reason": pr.get("reason") or "prediction unavailable"}
+
+    direction = pr.get("projected_direction")
+    projected_value = pr.get("projected_value")
+    confidence = pr.get("confidence")
+    if (
+        not isinstance(direction, str)
+        or direction not in ("Up", "Down", "Flat")  # Predictive_Engine projection enum
+        or not _is_finite_num(projected_value)
+        or not _is_finite_num(confidence)
+    ):
+        return {"available": False, "reason": "no usable get_prediction projection present in message history"}
+
+    entry = {
+        "available": True,
+        "projected_direction": direction,
+        "direction": direction.strip().lower(),  # up | down | flat
+        "projected_value": projected_value,
+        "confidence": confidence,
+    }
+    for k in ("symbol", "timeframe"):
+        if k in pr:
+            entry[k] = pr[k]
+    return entry
+
+
 def _management_entry(decision, action, levels, results, atr_14) -> Optional[dict]:
     """Build the defensibility management entry for a committed directional trade
     (R9.1-R9.3).
@@ -3175,6 +3230,13 @@ def _evidence_for_tier(state: AgentState, decision: dict):
         "session": _session_entry(results),
         "relative_strength": _relative_strength_entry(results),
         "forecast": _forecast_entry(results),
+        # Bug 6 (R2.17 / R3.14): the SECONDARY prediction is surfaced into the
+        # evidence purely as a graceful directional fallback for the interim
+        # Best_Current_Read. It is an ADDITIVE key that `opportunity.evaluate_tier`
+        # / `_signal_states` do NOT read, so the committed-trade tier + Size_Factor
+        # (and thus the Trade_Validator path) stay byte-identical; only
+        # `_best_current_read` consults it, and only when the forecast is absent.
+        "prediction": _prediction_entry(results),
         "options": _options_entry(results),
         "macro": _macro_signal_for_tier(results, action),
         "reference_levels": _reference_levels(results, _latest_watch_args(messages)),
@@ -3183,6 +3245,55 @@ def _evidence_for_tier(state: AgentState, decision: dict):
         ),
     }
     return evidence, action
+
+
+def _best_current_read(evidence, tier_eval) -> dict:
+    """Compute the interim Best_Current_Read and surface a directional read from
+    the forecast/prediction path whenever the agent waits (Bug 6, R2.17 / R3.14).
+
+    Delegates to the existing ``opportunity.best_current_read`` (which already
+    derives a coarse bias from the confluence-signal net — INCLUDING the PRIMARY
+    forecast signal — plus the defensible-triple direction), then applies a single
+    additive, non-fabricating augmentation:
+
+      * ONLY when the primary read is ``neutral`` AND the PRIMARY forecast is
+        unavailable, fall back to the SECONDARY ``get_prediction`` projection: if
+        it carries a genuine directional call (up/down) the bias is set from it and
+        the rationale notes the fallback source. A ``flat``/absent prediction, or a
+        prediction present alongside an available forecast, changes nothing.
+
+    When BOTH the forecast and the prediction are unavailable, the read stays
+    neutral — no direction is fabricated (R3.14). This never touches the committed
+    decision, the Opportunity_Tier, the Size_Factor, or the Trade_Validator; it
+    only enriches the non-committal interim read. Best-effort and total: any
+    failure degrades to the un-augmented ``opportunity.best_current_read`` output.
+    """
+    read = opportunity.best_current_read(evidence, tier_eval)
+    try:
+        if not isinstance(read, dict) or read.get("bias") != "neutral":
+            return read
+        ev = evidence if isinstance(evidence, dict) else {}
+        forecast = ev.get("forecast")
+        forecast_available = isinstance(forecast, dict) and forecast.get("available") is True
+        if forecast_available:
+            # The forecast already fed the primary bias; do not override it.
+            return read
+        prediction = ev.get("prediction")
+        if not (isinstance(prediction, dict) and prediction.get("available") is True):
+            return read  # both forecast + prediction unavailable → stay neutral
+        direction = prediction.get("direction")
+        if direction == "up":
+            read["bias"] = "bullish"
+        elif direction == "down":
+            read["bias"] = "bearish"
+        else:
+            return read  # 'flat' → no directional fallback, stay neutral
+        why = read.get("why_standing_aside") or ""
+        note = "Interim direction from the secondary prediction (forecast unavailable)."
+        read["why_standing_aside"] = f"{why} {note}".strip() if why else note
+    except Exception as e:  # noqa: BLE001 - interim read must never break a finalize/pulse
+        print(f"[Deep Quant] WARN: best_current_read prediction fallback failed: {e}")
+    return read
 
 
 def _stamp_opportunity_tier(state: AgentState, decision: dict) -> None:
@@ -3209,14 +3320,45 @@ def _stamp_opportunity_tier(state: AgentState, decision: dict) -> None:
         decision["opportunity_tier"] = tier
         decision["size_factor"] = opportunity.size_factor(tier, _OPPORTUNITY_CFG)
         if tier == "stand_aside":
+            # Bug 6 (R2.17): surface a directional interim read on any stand-aside,
+            # falling back to the secondary prediction when the forecast is absent.
             decision.setdefault(
-                "best_current_read", opportunity.best_current_read(evidence, tier_eval)
+                "best_current_read", _best_current_read(evidence, tier_eval)
             )
     except Exception as e:  # noqa: BLE001 - tagging must never break a finalize
         print(f"[Deep Quant] WARN: opportunity tier stamping failed: {e}")
 
 
-def _finalize_decision(state: AgentState, decision: dict) -> dict:
+# ── Per-thread commit guard (Bug 5, Layer 1) ─────────────────────────────────
+# Best-effort, process-level dedupe of the finalize chokepoint keyed on the
+# LangGraph thread_id. Maps a committed thread_id to the FIRST defensibility
+# record it produced, so a second finalize for the same thread is a journaling
+# no-op that returns the original record instead of writing another journal row.
+# This is the fast in-process backstop; the journal's own idempotent insert
+# (record_decision, task 6.1) is the durable one. Never raises into a node.
+_COMMITTED_THREAD_RECORDS: dict = {}
+
+
+def _thread_id_from_config(config) -> Optional[str]:
+    """Extract the LangGraph thread_id from a node ``config``, or None.
+
+    LangGraph passes ``config`` to any node callable that declares a ``config``
+    parameter; the thread_id lives at ``config["configurable"]["thread_id"]``.
+    Every access is guarded so a missing / non-dict / mistyped config degrades to
+    None and this helper NEVER raises into a node.
+    """
+    try:
+        configurable = config.get("configurable") if isinstance(config, dict) else None
+        if isinstance(configurable, dict):
+            tid = configurable.get("thread_id")
+            if tid is not None:
+                return str(tid)
+    except Exception:
+        pass
+    return None
+
+
+def _finalize_decision(state: AgentState, decision: dict, thread_id: Optional[str] = None) -> dict:
     """Attach the defensibility record AND persist the decision to the journal.
 
     Single chokepoint for every finalize path (validated declare_trade, the
@@ -3225,7 +3367,25 @@ def _finalize_decision(state: AgentState, decision: dict) -> dict:
     feedback loop (Phase 2). The Adaptive Opportunity Engine tier is stamped here
     too, so every committed decision carries its Opportunity_Tier (R1.5, R9.1).
     Journaling is best-effort and never raises into the run.
+
+    Per-thread idempotency (Bug 5): when a non-NULL ``thread_id`` is supplied and
+    that thread already committed in this process, a second finalize is a
+    journaling NO-OP — the first committed defensibility record is returned and
+    ``journal.record_decision`` is NOT called again. ``state["decision"]`` already
+    routes to ``end`` in ``should_continue``; this guard closes the residual
+    re-entry / same-turn duplicate-journal path. The guard is best-effort and
+    never raises; the journal's idempotent insert is the durable backstop.
     """
+    # Bug 5 Layer 1: short-circuit a re-entered commit for an already-committed
+    # thread. Return the FIRST defensibility record unchanged and skip journaling.
+    if thread_id is not None:
+        try:
+            if thread_id in _COMMITTED_THREAD_RECORDS:
+                prior = _COMMITTED_THREAD_RECORDS.get(thread_id)
+                decision["defensibility"] = prior
+                return prior
+        except Exception as e:  # noqa: BLE001 - guard must never break a finalize
+            print(f"[Deep Quant] WARN: per-thread commit guard lookup failed: {e}")
     # Stamp the evidence-derived Opportunity_Tier BEFORE building the defensibility
     # record so build_defensibility_record can mirror it into the record (R9.1).
     _stamp_opportunity_tier(state, decision)
@@ -3271,9 +3431,17 @@ def _finalize_decision(state: AgentState, decision: dict) -> dict:
             symbol=state.get("symbol"),
             timeframe=state.get("timeframe"),
             mode=state.get("mode"),
+            thread_id=thread_id,
         )
     except Exception as e:
         print(f"[Deep Quant] WARN: journal.record_decision failed: {e}")
+    # Bug 5 Layer 1: record this thread's first commit so any re-entry short-
+    # circuits above. Best-effort — a guard failure never breaks the finalize.
+    if thread_id is not None:
+        try:
+            _COMMITTED_THREAD_RECORDS[thread_id] = decision["defensibility"]
+        except Exception as e:  # noqa: BLE001 - guard must never break a finalize
+            print(f"[Deep Quant] WARN: per-thread commit guard update failed: {e}")
     return decision["defensibility"]
 
 
@@ -3434,7 +3602,7 @@ def call_model(state: AgentState):
 _base_tool_node = ToolNode(tools)
 
 
-def tool_node(state: AgentState):
+def tool_node(state: AgentState, config=None):
     """Execute only `ok` tool calls; answer failed calls with synthetic results.
 
     Every tool call present on the assistant message receives a ToolMessage so
@@ -3449,6 +3617,9 @@ def tool_node(state: AgentState):
     If market-data tools were attempted but yielded no usable directional data,
     the run finalizes with a HOLD that states the data limitation (R5.3).
     """
+    # Bug 5: the LangGraph thread_id (if provided by the runtime) keys the
+    # per-thread idempotency guard at the finalize chokepoint. Best-effort → None.
+    thread_id = _thread_id_from_config(config)
     last_message = state["messages"][-1]
     all_calls = list(getattr(last_message, "tool_calls", None) or [])
     statuses = (last_message.additional_kwargs or {}).get("_extraction_status", {})
@@ -3641,7 +3812,10 @@ def tool_node(state: AgentState):
             try:
                 _hb_evidence, _ = _evidence_for_tier(state, {})
                 _hb_tier = opportunity.evaluate_tier(_hb_evidence, _OPPORTUNITY_CFG)
-                update["best_current_read"] = opportunity.best_current_read(_hb_evidence, _hb_tier)
+                # Bug 6 (R2.17): surface a directional interim read on each wait
+                # pulse, falling back to the secondary prediction when the forecast
+                # is unavailable (neutral stays neutral when both are absent).
+                update["best_current_read"] = _best_current_read(_hb_evidence, _hb_tier)
             except Exception as _hb_read_err:  # noqa: BLE001 - read must never break the loop
                 print(f"[Deep Quant Tools] WARN: heartbeat best_current_read failed: {_hb_read_err}")
             print(f"[Deep Quant Tools] Heartbeat resume (accepted={account.accepted}, count={account.heartbeat_count}).")
@@ -3719,7 +3893,7 @@ def tool_node(state: AgentState):
                 "execution_plan": "HOLD — no trade taken due to a data limitation.",
                 "source": "data_gating",
             }
-            hold_decision["defensibility"] = _finalize_decision(state, hold_decision)
+            hold_decision["defensibility"] = _finalize_decision(state, hold_decision, thread_id=thread_id)
             out_messages.append(
                 AIMessage(
                     content=json.dumps(
@@ -3782,7 +3956,7 @@ def tool_node(state: AgentState):
         # Attach the defensibility record assembled from the tool results seen
         # so far so the committed trade carries the evidence behind it (R7), and
         # record it to the Trade_Journal for the measurement loop (Phase 2).
-        _finalize_decision(state, decision)
+        _finalize_decision(state, decision, thread_id=thread_id)
         update["decision"] = decision
 
     return update
@@ -3879,7 +4053,7 @@ def should_continue(state: AgentState) -> str:
     return "force_hold"
 
 
-def force_hold(state: AgentState):
+def force_hold(state: AgentState, config=None):
     """Inject a HOLD decision when the reasoning budget is exhausted (R2.5).
 
     The agent produced no validated decision and no pending tool call within
@@ -3903,20 +4077,54 @@ def force_hold(state: AgentState):
     # identically to force_terminal (R3.1/R3.2). A reasoning-exhaustion HOLD is thus
     # as actionable as a bounded-hunt one, and no directional entry/stop/target is
     # fabricated for the stand-aside.
-    decision["defensibility"] = _finalize_decision(state, decision)
+    decision["defensibility"] = _finalize_decision(state, decision, thread_id=_thread_id_from_config(config))
+    # Bug 6 (R2.13 / R2.17): make the reasoning-cap HOLD an ACTIONABLE stand-aside
+    # rather than a content-free one. The Best_Current_Read (bias, key levels, why
+    # waiting) was already computed by _stamp_opportunity_tier during finalize; fold
+    # it into the surfaced setup_validation / execution_plan so a directional read
+    # accompanies the wait. This does NOT fabricate a trade — best_current_read
+    # levels are structural REFERENCE reads, never an entry/stop/target for a
+    # committed position, and the termination guarantee (finite MAX_REASONING_TURNS)
+    # is unchanged. Best-effort: any failure leaves the base HOLD text intact.
+    try:
+        _read = decision.get("best_current_read")
+        if isinstance(_read, dict):
+            _bias = _read.get("bias")
+            _levels = _read.get("levels") if isinstance(_read.get("levels"), dict) else {}
+            _why = _read.get("why_standing_aside")
+            _read_bits = []
+            if isinstance(_bias, str) and _bias:
+                _read_bits.append(f"directional bias {_bias}")
+            if _levels:
+                _lv = ", ".join(f"{k}={v}" for k, v in _levels.items())
+                _read_bits.append(f"key reference levels ({_lv})")
+            if isinstance(_why, str) and _why.strip():
+                _read_bits.append(_why.strip())
+            if _read_bits:
+                _read_text = "Best_Current_Read: " + "; ".join(_read_bits) + "."
+                decision["setup_validation"] = decision["setup_validation"] + " " + _read_text
+                decision["execution_plan"] = (
+                    "HOLD — no trade taken; standing aside with a directional read "
+                    f"({_bias if isinstance(_bias, str) and _bias else 'neutral'}). No entry/stop/target committed."
+                )
+    except Exception as e:  # noqa: BLE001 - surfacing must never break the forced HOLD
+        print(f"[Deep Quant] WARN: force_hold best_current_read surfacing failed: {e}")
     final_message = AIMessage(
         content=json.dumps(
             {
                 "conviction_score": decision["conviction_score"],
                 "setup_validation": decision["setup_validation"],
                 "execution_plan": decision["execution_plan"],
+                # Surface the interim directional read alongside the reasoning-cap
+                # HOLD so the glass box shows an actionable stand-aside (Bug 6).
+                "best_current_read": decision.get("best_current_read"),
             }
         )
     )
     return {"decision": decision, "messages": [final_message]}
 
 
-def force_terminal(state: AgentState):
+def force_terminal(state: AgentState, config=None):
     """Commit a terminal decision when the bounded hunt is exhausted (R3, R8).
 
     Reached from ``should_continue`` when the Watch_Cap or Session_Budget is met —
@@ -3967,7 +4175,7 @@ def force_terminal(state: AgentState):
     }
     # _finalize_decision stamps opportunity_tier (stand_aside), size_factor, and the
     # Best_Current_Read, then attaches the defensibility record and journals it.
-    decision["defensibility"] = _finalize_decision(state, decision)
+    decision["defensibility"] = _finalize_decision(state, decision, thread_id=_thread_id_from_config(config))
 
     final_message = AIMessage(
         content=json.dumps(
@@ -4825,7 +5033,7 @@ def _build_judge_prompt(state: AgentState) -> str:
     return preamble + format_system_prompt(state)
 
 
-def judge_node(state: AgentState):
+def judge_node(state: AgentState, config=None):
     """Judge_Agent — weigh both stances, set the verdict, and commit (R4.1-R4.7).
 
     Reconstructs the stored Bull/Bear ``DebateStance``s, classifies the
@@ -4841,6 +5049,9 @@ def judge_node(state: AgentState):
     """
     cfg = resolve_debate_config(model_name)
     budget = cfg.judge_max_tool_calls
+    # Bug 5: the LangGraph thread_id (if provided by the runtime) keys the
+    # per-thread idempotency guard at the finalize chokepoint. Best-effort → None.
+    thread_id = _thread_id_from_config(config)
 
     # Reconstruct the stored stances (parse_stance round-trips stance_to_dict)
     # and run the deterministic synthesis. An unavailable/missing stance is
@@ -5034,7 +5245,7 @@ def judge_node(state: AgentState):
         }
         # Single finalize chokepoint: attach the defensibility record and journal
         # the decision exactly like a single-agent commit (R5.5).
-        _finalize_decision(state, decision)
+        _finalize_decision(state, decision, thread_id=thread_id)
         decision.pop("_debate", None)
         update["decision"] = decision
         return update
@@ -5065,7 +5276,7 @@ def judge_node(state: AgentState):
         "consensus": consensus,
         "conviction": conviction,
     }
-    hold_decision["defensibility"] = _finalize_decision(state, hold_decision)
+    hold_decision["defensibility"] = _finalize_decision(state, hold_decision, thread_id=thread_id)
     hold_decision.pop("_debate", None)
     new_messages.append(
         AIMessage(
