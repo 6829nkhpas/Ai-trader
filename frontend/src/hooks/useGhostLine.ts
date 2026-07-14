@@ -20,6 +20,10 @@ function removeGhostSegments(chart: any, entityIds: string[]): void {
  * into the future whitespace. The points are already a smooth, bounded curve,
  * so the joined segments read as one continuous dashed line.
  */
+/** Total bars kept in view so the projection is always the same on-screen
+ *  size with a visible forward slope, regardless of the user's zoom. */
+const VIEW_BARS = 60;
+
 async function drawGhostSegments(
   chart: any,
   points: { time: number; price: number }[],
@@ -33,7 +37,12 @@ async function drawGhostSegments(
     if (clean.length === 0 || p.time > clean[clean.length - 1].time) clean.push(p);
   }
 
-  console.log('[GhostLine] Drawing', clean.length, 'points as connected segments');
+  console.log(
+    '[GhostLine] DRAW', clean.length, 'pts times=',
+    clean.map((p) => p.time).join(','),
+    'prices=', clean.map((p) => p.price).join(','),
+  );
+  if (clean.length < 2) return entityIds;
 
   for (let i = 0; i < clean.length - 1; i++) {
     try {
@@ -64,31 +73,22 @@ async function drawGhostSegments(
     }
   }
 
-  // Ensure the projection tail is visible — WITHOUT yanking the user's view.
-  // TradingView's setVisibleRange / getVisibleRange are in UNIX *seconds*
-  // (same unit as the shape point times), NOT milliseconds. The old code
-  // multiplied by 1000, scrolling the chart to ~year 55446 so the line
-  // vanished — that was the "ghost line not working" bug.
+  // Frame to a FIXED bar-window on EVERY draw so the projection is always the
+  // same on-screen size with a visible forward slope, no matter the zoom state.
+  // TradingView drawings live on the time axis, so without pinning the visible
+  // bar count they compress into a vertical sliver (zoomed out) or overshoot
+  // (zoomed in). Pinning ~VIEW_BARS bars — history on the left, the 8-bar
+  // projection on the right — keeps the line's size and slope constant.
+  // Units are UNIX seconds.
   if (entityIds.length > 0) {
     try {
-      const intervalSec  = clean.length > 1 ? Math.abs(clean[1].time - clean[0].time) : 600;
-      const projEndSec   = clean[clean.length - 1].time;
-      const desiredToSec = projEndSec + intervalSec * 3;
-
-      let current: { from: number; to: number } | null = null;
-      try { current = chart.getVisibleRange(); } catch { current = null; }
-
-      if (current && Number.isFinite(current.from) && Number.isFinite(current.to)) {
-        if (desiredToSec > current.to) {
-          chart.setVisibleRange(
-            { from: current.from, to: desiredToSec },
-            { applyDefaultRightMargin: false },
-          );
-        }
-      } else {
-        const fromSec = clean[0].time - intervalSec * 30;
-        chart.setVisibleRange({ from: fromSec, to: desiredToSec });
-      }
+      const stepSec  = Math.abs(clean[1].time - clean[0].time) || 600;
+      const projEnd  = clean[clean.length - 1].time;
+      const projBars = clean.length - 1;                 // bars of projection
+      const histBars = Math.max(VIEW_BARS - projBars - 2, 10);
+      const from = clean[0].time - stepSec * histBars;   // history on the left
+      const to   = projEnd + stepSec * 2;                // small right margin
+      chart.setVisibleRange({ from, to });
     } catch (err) {
       console.warn('[GhostLine] setVisibleRange failed:', err);
     }
