@@ -387,6 +387,35 @@ pub(crate) fn backfill_family(timeframe: &str) -> String {
     .to_string()
 }
 
+/// Decide whether an empty candle union warrants a single read-retry.
+///
+/// This is the false-zero gate for the Candle_Loader's read-retry (R2): a
+/// reader that finds an empty union *immediately after* a coordinated backfill
+/// completed for a token-resolved symbol may be observing a write-visibility
+/// race rather than a genuine absence of data. In that specific case one more
+/// SELECT pass is warranted before concluding an Availability_Shortfall.
+///
+/// Returns `true` ONLY when every condition holds:
+/// - `union_empty` — the merged daily ∪ intraday ∪ live read came back empty,
+/// - `token_resolved` — the symbol's instrument token resolved, so a
+///   coordinated backfill actually applied to this key,
+/// - `backfill_ran` — that coordinated backfill ran (leader or follower),
+/// - `!fault_recorded` — no infra/backfill Fault was recorded (a Fault must
+///   surface as an Infrastructure_Fault, never be masked by a retry).
+///
+/// Every other combination returns `false`: a token that did not resolve
+/// (genuine no-data), a non-empty union (data already present), or a recorded
+/// Fault (surface it) all skip the retry. The retry never fabricates a candle;
+/// it only re-reads the existing sources once.
+pub(crate) fn should_retry_empty_read(
+    union_empty: bool,
+    token_resolved: bool,
+    backfill_ran: bool,
+    fault_recorded: bool,
+) -> bool {
+    union_empty && token_resolved && backfill_ran && !fault_recorded
+}
+
 /// Load the most recent N candles from QuestDB for quant analysis.
 ///
 /// **V3 Merge Strategy** — replaces the old early-return waterfall.
@@ -473,6 +502,17 @@ pub(crate) async fn load_candles_with_ts(
     // surface as a Fault that NAMES the real cause instead.
     let mut backfill_error: Option<(String, String)> = None;
 
+    // Signals feeding the false-zero read-retry (R2). `token_resolved` = the
+    // symbol's instrument token resolved, so a coordinated backfill actually
+    // applied to this key; `backfill_ran` = that coordinated backfill ran (the
+    // leader ran it, or a follower awaited its completion). A recorded Fault is
+    // tracked separately (`backfill_error` / `infra_fault`) and suppresses the
+    // retry so a genuine Fault always surfaces rather than being masked. These
+    // gate `should_retry_empty_read` so the retry fires ONLY on the write-
+    // visibility false zero and never on a genuine empty or a Fault.
+    let mut token_resolved = false;
+    let mut backfill_ran = false;
+
     // ── Proactive Zerodha Kite loading if AppHandle is provided ──────────────────
     if let Some(app) = app {
         let (api_key_val, access_token_val) = get_kite_credentials();
@@ -488,6 +528,11 @@ pub(crate) async fn load_candles_with_ts(
                         )
                     })
             };
+
+            // The token resolved for this symbol, so a coordinated backfill
+            // applies to this key. Recorded here (not inside the leader/follower
+            // arms) so both roles set it — R2's retry gate requires it.
+            token_resolved = local_token.is_some();
 
             if let Some(token) = local_token {
                 // ── Single-flight Proactive_Backfill coordinator (R3) ────────
@@ -597,6 +642,23 @@ pub(crate) async fn load_candles_with_ts(
                         flight_guard.armed = false;
                     }
                 }
+
+                // A coordinated backfill ran for this token-resolved symbol
+                // (leader ran it, or a follower awaited its completion). This
+                // arms R2's read-retry so a union that comes back empty here is
+                // re-read once before concluding a Shortfall.
+                backfill_ran = true;
+            } else {
+                // R3.2: the instrument token did NOT resolve, so NO proactive
+                // backfill runs for this key. Log it as a distinct, named
+                // condition so a resolvable symbol that is silently not
+                // resolving is diagnosable rather than falling through to a
+                // thin/empty read unnoticed. The read still proceeds against
+                // whatever already exists and degrades honestly.
+                warn!(
+                    "[deep_quant] backfill_skipped_token_unresolved symbol={} timeframe={} — instrument token did not resolve; no proactive backfill ran, reading existing store only",
+                    symbol, timeframe
+                );
             }
         }
     }
@@ -657,6 +719,21 @@ pub(crate) async fn load_candles_with_ts(
     // here so that — if NO source yields any rows — the empty union is reported
     // as a `Fault` naming the failing source rather than a false Shortfall (R3.4).
     let mut infra_fault: Option<(String, String)> = None;
+
+    // ── Three-source read with a bounded false-zero retry (R2) ───────────
+    // The three source SELECTs below run at most twice: if the merged union is
+    // empty for a token-resolved symbol whose coordinated backfill ran without a
+    // recorded Fault, that is a write-visibility race (the backfill's rows are
+    // not yet visible to this reader), so the union is re-read EXACTLY ONCE.
+    // `read_attempt` guards against ever looping; a genuine empty (token did not
+    // resolve) and a recorded Fault both skip the retry via
+    // `should_retry_empty_read`. The retry only re-reads existing sources — it
+    // never fabricates a candle. On a retry iteration `all_candles` is already
+    // empty and `infra_fault` is `None` (a recorded Fault would have suppressed
+    // the retry), so no reset is needed.
+    let mut read_attempt: u8 = 0;
+    loop {
+        read_attempt += 1;
 
     if is_daily {
         // ── Source 1: historical_candles (daily archive) ─────────────────────
@@ -864,6 +941,26 @@ pub(crate) async fn load_candles_with_ts(
     }
     }
 
+        // R2 gate: retry the union read at most once on a false zero. The
+        // predicate is true only when the union is empty AND the token resolved
+        // AND the coordinated backfill ran AND no infra/backfill Fault was
+        // recorded. `read_attempt < 2` guarantees exactly one retry (never a
+        // loop). A genuine empty and a recorded Fault fall straight through to
+        // the existing Shortfall / Fault handling below.
+        let fault_recorded = infra_fault.is_some() || backfill_error.is_some();
+        if read_attempt < 2
+            && should_retry_empty_read(
+                all_candles.is_empty(),
+                token_resolved,
+                backfill_ran,
+                fault_recorded,
+            )
+        {
+            continue;
+        }
+        break;
+    }
+
     if all_candles.is_empty() {
         // No source yielded any rows. If a per-source query failed for an
         // infrastructure reason, this empty union is NOT a genuine
@@ -926,6 +1023,34 @@ pub(crate) async fn load_candles_with_ts(
         .iter()
         .map(|pc| (pc.ts_millis, pc.candle.clone()))
         .collect();
+
+    // R3.1: single summary of the FINAL resolved candle count for this
+    // (symbol, timeframe) after merge/dedup/slice. The per-source
+    // `merge_source=… count=…` breakdown is emitted above and is NOT
+    // duplicated here. Logged before the min_candles floor check so the
+    // resolved count is recorded even on a sub-floor (Shortfall) result.
+    info!(
+        "[deep_quant] resolved_candles symbol={} timeframe={} count={} min_candles={}",
+        symbol, timeframe, final_candles.len(), min_candles
+    );
+
+    // R3.3: a token-resolved symbol whose coordinated backfill ran without a
+    // recorded Fault but still resolves below the minimum viable floor is a
+    // starvation worth surfacing (the observed "57 received / 114 required"
+    // case) — warn naming the symbol, timeframe, and received-vs-expected
+    // counts. Gated on no recorded Fault so a genuine infra/backfill failure
+    // is not relabelled as a floor shortfall.
+    if token_resolved
+        && backfill_ran
+        && infra_fault.is_none()
+        && backfill_error.is_none()
+        && final_candles.len() < min_candles
+    {
+        warn!(
+            "[deep_quant] candle_floor_shortfall symbol={} timeframe={} received={} expected>={} — token resolved and backfill ran but final count is below the minimum viable floor",
+            symbol, timeframe, final_candles.len(), min_candles
+        );
+    }
 
     if final_candles.len() < min_candles {
         return Err(CandleLoadError::Shortfall {
@@ -3588,5 +3713,196 @@ mod property4_merge_dedup_invariance {
                  arrival order produce the identical ascending/deduped/sliced series"
             );
         }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        /// Feature: intraday-candle-availability, Property 3: merge/dedup/slice
+        /// is unchanged — including the R2 read-retry path.
+        ///
+        /// The R2 fix (task 2.2) adds a bounded read-retry: on a false-zero, the
+        /// three source `SELECT`s are re-run exactly once before concluding a
+        /// Shortfall. The retry re-READS the sources; it does not change what the
+        /// merge does with them. For IDENTICAL per-source inputs (the retry reads
+        /// the same rows the initial read would have, once the write-visibility
+        /// race settles), the merged/deduped/sliced series MUST be byte-identical
+        /// to the initial read's — the retry is idempotent w.r.t. the output.
+        ///
+        /// This asserts that running the exact production merge twice over the
+        /// same source inputs (simulating initial-read then retry-re-read) yields
+        /// a byte-identical series, and that both equal the independent pre-fix
+        /// spec merge — so the retry can never alter the ascending-sort,
+        /// source-priority-dedup (live > intraday > daily), or recent-`limit`
+        /// slice contract.
+        ///
+        /// **Validates: Requirements 5.1, 5.2**
+        #[test]
+        fn retry_reread_is_byte_identical(
+            daily in source_strategy(PRIO_DAILY),
+            intraday in source_strategy(PRIO_INTRADAY),
+            live in source_strategy(PRIO_LIVE),
+            limit in 1usize..=50,
+        ) {
+            // Production appends in source order: daily, then intraday, then live.
+            let build_union = || {
+                let mut u: Vec<PrioC> = Vec::new();
+                u.extend(daily.clone());
+                u.extend(intraday.clone());
+                u.extend(live.clone());
+                u
+            };
+
+            // Initial read: the first SELECT union → merge/dedup/slice.
+            let initial = production_merge(build_union(), limit);
+
+            // Retry re-read: the R2 path re-runs the same three source SELECTs
+            // (identical rows once the write-visibility race settles) and merges
+            // again. Same inputs in, same merge algorithm ⇒ same series out.
+            let retried = production_merge(build_union(), limit);
+
+            let initial_keys: Vec<_> = initial.iter().map(key).collect();
+            let retried_keys: Vec<_> = retried.iter().map(key).collect();
+
+            // (1) The retry-re-read output is byte-identical to the initial read.
+            prop_assert_eq!(
+                &retried_keys,
+                &initial_keys,
+                "Property 3: the R2 read-retry must re-produce a byte-identical \
+                 ascending/priority-deduped/limit-sliced series for identical source inputs"
+            );
+
+            // (2) Both the initial read and the retry re-read equal the independent
+            // pre-fix spec semantics — the retry never changes the merge contract.
+            let spec = spec_merge(&build_union(), limit);
+            let spec_keys: Vec<_> = spec.iter().map(key).collect();
+            prop_assert_eq!(
+                &initial_keys,
+                &spec_keys,
+                "Property 3: the initial read must equal the pre-change merge/dedup/slice series"
+            );
+            prop_assert_eq!(
+                &retried_keys,
+                &spec_keys,
+                "Property 3: the retry re-read must equal the pre-change merge/dedup/slice series"
+            );
+
+            // (3) The retry never fabricates: the re-read series contains exactly the
+            // timestamps present in the source union (no added/synthetic candles).
+            let mut source_ts: BTreeMap<i64, ()> = BTreeMap::new();
+            for pc in build_union() {
+                source_ts.insert(pc.ts_millis, ());
+            }
+            for (ts, _c) in &retried {
+                prop_assert!(
+                    source_ts.contains_key(ts),
+                    "Property 3: the retry must never fabricate a candle — ts={} not in sources",
+                    ts
+                );
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Property 2 (read-retry gating): `should_retry_empty_read` fires the single
+// read-retry ONLY for the false-zero case and never otherwise. This unit test
+// exhaustively enumerates all 16 boolean combinations of the four inputs and
+// asserts that exactly one — the false-zero case (union empty AND token
+// resolved AND backfill ran AND no fault) — returns `true`; every other
+// combination returns `false`. Covers the token-unresolved, non-empty-union,
+// and fault-recorded skip cases explicitly.
+//
+// Validates: Requirements 2.2, 2.3 (Property 2)
+#[cfg(test)]
+mod property2_read_retry_gating {
+    use super::should_retry_empty_read;
+
+    /// The one and only combination that must return `true`: the false-zero
+    /// race — the union is empty, the token resolved, a coordinated backfill
+    /// ran, and no infra/backfill Fault was recorded.
+    #[test]
+    fn returns_true_only_for_the_false_zero_case() {
+        assert!(
+            should_retry_empty_read(true, true, true, false),
+            "the false-zero case (empty + token-resolved + backfill-ran + no-fault) must retry"
+        );
+    }
+
+    /// A non-empty union means data is already present — never retry.
+    #[test]
+    fn no_retry_when_union_is_not_empty() {
+        assert!(
+            !should_retry_empty_read(false, true, true, false),
+            "a populated union must not trigger a retry"
+        );
+    }
+
+    /// An unresolved token means no backfill applied to this key — a genuine
+    /// no-data outcome, not a false zero, so never retry.
+    #[test]
+    fn no_retry_when_token_unresolved() {
+        assert!(
+            !should_retry_empty_read(true, false, true, false),
+            "an unresolved token is genuine no-data, not a false zero — must not retry"
+        );
+    }
+
+    /// No coordinated backfill ran, so there is no just-completed write whose
+    /// visibility could be racing — never retry.
+    #[test]
+    fn no_retry_when_backfill_did_not_run() {
+        assert!(
+            !should_retry_empty_read(true, true, false, false),
+            "with no backfill run there is no write-visibility race to retry past"
+        );
+    }
+
+    /// A recorded infra/backfill Fault must surface as an Infrastructure_Fault,
+    /// never be masked by a retry.
+    #[test]
+    fn no_retry_when_fault_recorded() {
+        assert!(
+            !should_retry_empty_read(true, true, true, true),
+            "a recorded Fault must surface, not be masked by a retry"
+        );
+    }
+
+    /// Exhaustively enumerate all 2^4 = 16 boolean combinations and assert that
+    /// exactly one (the false-zero case) returns `true`.
+    #[test]
+    fn exhaustive_only_one_of_sixteen_combinations_is_true() {
+        let bools = [false, true];
+        let mut true_count = 0usize;
+        for &union_empty in &bools {
+            for &token_resolved in &bools {
+                for &backfill_ran in &bools {
+                    for &fault_recorded in &bools {
+                        let result = should_retry_empty_read(
+                            union_empty,
+                            token_resolved,
+                            backfill_ran,
+                            fault_recorded,
+                        );
+                        // The predicate must equal the exact false-zero conjunction.
+                        let expected =
+                            union_empty && token_resolved && backfill_ran && !fault_recorded;
+                        assert_eq!(
+                            result, expected,
+                            "combination (union_empty={union_empty}, token_resolved={token_resolved}, \
+                             backfill_ran={backfill_ran}, fault_recorded={fault_recorded}) \
+                             must return {expected}"
+                        );
+                        if result {
+                            true_count += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            true_count, 1,
+            "exactly one of the 16 boolean combinations must return true (the false-zero case)"
+        );
     }
 }
