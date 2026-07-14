@@ -513,17 +513,20 @@ fn register_watcher(registry: &mut HashMap<String, Watcher>, watcher: Watcher) {
 /// `heartbeat_seq` is `Some`, a monotonic `heartbeat_seq` field is added to the
 /// payload (R5.1).
 ///
-/// Returns `Ok(())` when the outbound POST succeeds (regardless of stream
-/// content) and `Err(String)` when the POST itself fails, so a heartbeat caller
-/// can log-and-skip a failed POST without crashing the watcher task while the
-/// target/invalidation caller can surface its existing ERROR event.
+/// Returns `Ok(true)` when the outbound POST reached a *resumable* thread (a 2xx
+/// SSE response), `Ok(false)` when the server reported the thread is NOT
+/// resumable (a 4xx — notably `/resume` 400 "not in a paused/interruptible
+/// state", i.e. the run already committed a terminal decision and ended), and
+/// `Err(String)` when the POST itself fails to send. A heartbeat caller uses the
+/// `Ok(false)` signal to stop a now-zombie watcher instead of re-POSTing on
+/// every cadence tick forever, and can still log-and-skip a transient `Err`.
 async fn post_resume_and_stream(
     app: &AppHandle,
     thread_id: &str,
     candle: &OhlcCandle,
     trigger_kind: serde_json::Value,
     heartbeat_seq: Option<u32>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let client = reqwest::Client::new();
     let mut response_payload = serde_json::json!({
         "thread_id": thread_id,
@@ -545,7 +548,14 @@ async fn post_resume_and_stream(
         .await
     {
         Ok(res) => {
-            info!("[watcher] Outbound handoff resume POST response status: {}", res.status());
+            let status = res.status();
+            info!("[watcher] Outbound handoff resume POST response status: {}", status);
+
+            // A non-2xx status (notably /resume 400 "not in a paused/interruptible
+            // state") means the run already committed a terminal decision and
+            // ended, so the thread can no longer be resumed. Signal that to the
+            // caller so a now-zombie watcher stops instead of spamming /resume.
+            let resumable = status.is_success();
 
             // Consume the SSE stream returned by /resume
             let mut stream = res.bytes_stream();
@@ -600,7 +610,7 @@ async fn post_resume_and_stream(
                     }
                 }
             }
-            Ok(())
+            Ok(resumable)
         }
         Err(err) => {
             error!(
@@ -1035,8 +1045,13 @@ async fn watch_condition(
 
                     // Log-and-skip a failed heartbeat POST so a transient error
                     // never crashes the watcher task; the attempt still counts
-                    // toward the ceiling so emission stays bounded.
-                    if let Err(err) = post_resume_and_stream(
+                    // toward the ceiling so emission stays bounded. A resumable
+                    // (2xx) response continues the cadence; a NON-resumable (400)
+                    // response means the run already committed a terminal decision
+                    // and ended — so this watcher is now a zombie: remove it and
+                    // stop the cadence instead of re-POSTing /resume forever
+                    // (which otherwise spams 400s and can drive stray re-commits).
+                    match post_resume_and_stream(
                         &app_clone,
                         &watcher.thread_id,
                         &candle,
@@ -1045,10 +1060,22 @@ async fn watch_condition(
                     )
                     .await
                     {
-                        error!(
-                            "[watcher] Heartbeat #{} POST failed for thread_id={}: {} (skipping)",
-                            seq, watcher.thread_id, err
-                        );
+                        Ok(true) => {}
+                        Ok(false) => {
+                            info!(
+                                "[watcher] thread_id={} is no longer resumable (run ended); removing zombie watcher and stopping heartbeats.",
+                                watcher.thread_id
+                            );
+                            let mut map = watchers_clone.write().await;
+                            map.remove(&watcher.thread_id);
+                            break;
+                        }
+                        Err(err) => {
+                            error!(
+                                "[watcher] Heartbeat #{} POST failed for thread_id={}: {} (skipping)",
+                                seq, watcher.thread_id, err
+                            );
+                        }
                     }
                     heartbeat_seq = seq;
                 }
