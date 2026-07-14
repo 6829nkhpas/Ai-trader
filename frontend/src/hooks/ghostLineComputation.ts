@@ -488,7 +488,10 @@ export async function computeGhostPoints(
   console.log(`[GhostLine] intervalSec=${intervalSec} (map=${mapInterval}, inferred=${barInterval})`);
   if (!Number.isFinite(last.close) || last.close <= 0) return [];
 
-  const window = lookback.slice(-60);
+  // 40-bar window keeps the OLS/VWLR slope responsive to recent price action.
+  // (A 60-bar OLS on a range-bound stock is near-flat and sits invisibly on the
+  // last-price line. VWEPR/forecaster use their own shorter internal windows.)
+  const window = lookback.slice(-40);
   let points: { time: number; price: number }[] = [];
 
   // ── Path 1: backend predictive signal (mode-agnostic ML close) ───────
@@ -523,10 +526,9 @@ export async function computeGhostPoints(
       });
       useChartUIStore.getState().setAccelerationCoefficient(payload.acceleration_coefficient);
       const raw =
-        ghostLineMode === 'linear' ? payload.linear_points :
         ghostLineMode === 'volume' ? payload.volume_points :
         ghostLineMode === 'curved' ? payload.curved_points :
-        undefined; // 'forecast' has no Rust engine — served by Path 3 (JS).
+        undefined; // 'linear' & 'forecast' → JS Path 3 (short, responsive window).
       if (raw?.length > 0) {
         points = raw.map((p: any) => ({ time: p.time, price: +p.value.toFixed(2) }));
         console.log('[GhostLine] Path2 Tauri:', points.length, 'points');
@@ -540,8 +542,12 @@ export async function computeGhostPoints(
   if (points.length === 0) {
     console.log('[GhostLine] Path3: pure-JS engine, mode=', ghostLineMode);
     const closes = window.map(c => c.close);
+    // OLS uses a shorter (20-bar) window so it tracks the RECENT trend and
+    // always shows a visible slope, instead of a near-flat 40/60-bar line that
+    // hides on the last-price line.
+    const olsCloses = closes.slice(-20);
     points =
-      ghostLineMode === 'linear'   ? olsProjection(closes, last.time, intervalSec, PROJECTION_BARS) :
+      ghostLineMode === 'linear'   ? olsProjection(olsCloses, last.time, intervalSec, PROJECTION_BARS) :
       ghostLineMode === 'volume'   ? vwlrProjection(window, last.time, intervalSec, PROJECTION_BARS) :
       ghostLineMode === 'forecast' ? forecastProjection(window, last.time, intervalSec, PROJECTION_BARS) :
       vweprProjection(window, last.time, intervalSec, PROJECTION_BARS);
@@ -587,8 +593,28 @@ export async function computeGhostPoints(
   if (points.length > 1) {
     const slots = nextSessionSlots(points[0].time, intervalSec, points.length - 1);
     points = points.map((p, i) => ({ time: i === 0 ? p.time : slots[i - 1], price: p.price }));
-    console.log('[GhostLine] Final points:', points.length);
   }
 
+  // ── Safety net: times must be strictly forward ──────────────────────
+  // Guarantees the line can NEVER render vertically. If any upstream step
+  // collapsed the timestamps (span ≤ 0 or non-increasing), rebuild a clean
+  // forward ramp from the anchor using the resolved interval.
+  if (points.length > 1) {
+    const span = points[points.length - 1].time - points[0].time;
+    let strictlyIncreasing = true;
+    for (let i = 1; i < points.length; i++) {
+      if (points[i].time <= points[i - 1].time) { strictlyIncreasing = false; break; }
+    }
+    if (!(span > 0) || !strictlyIncreasing) {
+      const base = points[0].time;
+      points = points.map((p, i) => ({ time: base + i * intervalSec, price: p.price }));
+      console.warn('[GhostLine] collapsed/non-increasing times — forced forward ramp');
+    }
+  }
+
+  console.log(
+    '[GhostLine] FINAL times=', points.map((p) => p.time).join(','),
+    'prices=', points.map((p) => p.price).join(','),
+  );
   return points;
 }
