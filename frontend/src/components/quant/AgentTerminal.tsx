@@ -297,6 +297,37 @@ export default function AgentTerminal() {
           </div>
         )}
 
+        {/* Stand-Aside decision rendered INLINE in the terminal log (not as a
+            separate pinned overlay box), so the "No Trade" rationale reads as
+            the natural conclusion of the agent's reasoning flow and scrolls
+            with it. NO execute control / entry-stop-target cells / fabricated
+            conviction for a non-actionable decision (R1.2–R1.8). */}
+        {sessionStatus === 'complete' && finalTrade && !isActionableTrade(finalTrade) && (
+          <div className="flex justify-start animate-fade-in font-sans w-full">
+            <div className="max-w-[95%] w-full rounded-none border border-border-default bg-elevated/40 px-3 py-2 text-[11px] leading-relaxed shadow-sm">
+              <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-text-muted mb-1.5 select-none">
+                <Shield size={10} />
+                Stand Aside — No Trade
+                {finalTrade.action && (
+                  <span className="ml-auto rounded-none px-1.5 py-0.5 text-[8px] font-black tracking-widest bg-elevated text-text-muted border border-border-default">
+                    {String(finalTrade.action).toUpperCase()}
+                  </span>
+                )}
+              </div>
+              {finalTrade.setup_validation && (
+                <p className="text-text-secondary italic border-l-2 border-border-default pl-2 mb-1">
+                  "{finalTrade.setup_validation}"
+                </p>
+              )}
+              {finalTrade.execution_plan && (
+                <p className="text-[10px] text-text-muted font-mono mt-1 leading-relaxed">
+                  {finalTrade.execution_plan}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Q&A turns render INLINE here — the user's questions and the AI's
             answers flow as a continuation of the agent's reasoning/tool log in
             the same scroll region, so there is no separate Q&A view. */}
@@ -304,38 +335,6 @@ export default function AgentTerminal() {
 
         <div ref={terminalEndRef} />
       </div>
-
-      {/* Stand-Aside handoff — a completed run whose committed decision is
-          non-actionable (HOLD / stand_aside / no validated levels). Renders a
-          distinct "No Trade" panel: NO APPROVE & EXECUTE control, NO
-          entry/stop/target cells, NO fabricated conviction badge (R1.2–R1.8).
-          Surfaces the rationale / Best_Current_Read text instead. */}
-      {sessionStatus === 'complete' && finalTrade && !isActionableTrade(finalTrade) && (
-        <div className="p-4 bg-surface border-t border-border-default animate-slide-up shadow-xl shrink-0">
-          <div className="flex items-center gap-2 mb-3">
-            <Shield size={12} className="text-text-muted" />
-            <h3 className="text-[10px] font-bold text-text-muted uppercase tracking-widest">
-              Stand Aside — No Trade
-            </h3>
-            {finalTrade.action && (
-              <span className="ml-auto rounded-none px-2 py-0.5 text-[9px] font-black tracking-widest bg-elevated text-text-muted border border-border-default">
-                {String(finalTrade.action).toUpperCase()}
-              </span>
-            )}
-          </div>
-
-          {finalTrade.setup_validation && (
-            <div className="text-xs text-text-secondary italic border-l-2 border-border-default pl-2">
-              "{finalTrade.setup_validation}"
-            </div>
-          )}
-          {finalTrade.execution_plan && (
-            <p className="text-[10px] text-text-muted font-mono mt-2 leading-relaxed">
-              {finalTrade.execution_plan}
-            </p>
-          )}
-        </div>
-      )}
 
       {/* Execution Plan Card Handoff — gated on a genuinely actionable,
           directional trade carrying validated Execution_Levels (R1.1). */}
