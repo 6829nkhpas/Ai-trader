@@ -4,8 +4,10 @@
 //
 // GhostLineToggle — selects which predictive projection engine drives the
 // forward "ghost line" overlay:
-//   · OLS   → linear regression baseline   (ghostLineMode = 'linear')
-//   · VWEPR → volume-weighted polynomial    (ghostLineMode = 'curved')
+//   · OLS   → linear regression baseline           (ghostLineMode = 'linear')
+//   · VWLR  → volume-weighted linear regression     (ghostLineMode = 'volume')
+//   · VWEPR → volume-weighted polynomial            (ghostLineMode = 'curved')
+//   · FCST  → volatility-aware EWMA-drift forecaster (ghostLineMode = 'forecast')
 //
 // The selection lives in `useChartUIStore.ghostLineMode`; `useChartDataSync`
 // reads it to route the dataset returned by the Rust dual-engine projection.
@@ -18,15 +20,19 @@ import { useChartUIStore, type GhostLineMode } from '../../store/useChartUIStore
 
 const MODE_LABELS: Record<GhostLineMode, string> = {
   linear: 'OLS',
+  volume: 'VWLR',
   curved: 'VWEPR',
+  forecast: 'FCST',
 };
 
 const MODE_DESCRIPTIONS: Record<GhostLineMode, string> = {
   linear: 'Linear regression baseline',
+  volume: 'Volume-weighted linear regression',
   curved: 'Volume-weighted polynomial',
+  forecast: 'Volatility-aware forecaster',
 };
 
-const MODES: GhostLineMode[] = ['linear', 'curved'];
+const MODES: GhostLineMode[] = ['linear', 'volume', 'curved', 'forecast'];
 
 export interface GhostLineToggleProps {
   noText?: boolean;

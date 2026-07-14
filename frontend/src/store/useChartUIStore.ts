@@ -13,7 +13,7 @@ import { useTradeStore, type ChartTimeframe } from './useTradeStore';
 
 type CursorMode = 'cross' | 'dot' | 'arrow' | 'eraser';
 type MagnetMode = 'off' | 'weak' | 'strong';
-export type GhostLineMode = 'linear' | 'curved';
+export type GhostLineMode = 'linear' | 'volume' | 'curved' | 'forecast';
 
 // ── Split-Chart (Dual-Pane) Model ──────────────────────────────────────
 //
@@ -164,8 +164,10 @@ interface ChartUIState {
    *  duplicate DOM IDs and unreachable controls underneath the overlay. */
   isFullscreen: boolean;
 
-  // ── Ghost Line Dual-Engine ────────────────────────────────────────
-  /** Which regression engine to render: 'linear' (OLS) or 'curved' (VWEPR). */
+  // ── Ghost Line Engine ─────────────────────────────────────────────
+  /** Which projection engine to render:
+   *  'linear' (OLS) · 'volume' (VWLR) · 'curved' (VWEPR) ·
+   *  'forecast' (volatility-aware, regime-conditioned EWMA-drift forecaster). */
   ghostLineMode: GhostLineMode;
   /** The quadratic acceleration coefficient from the VWEPR fit.
    *  Positive = accelerating up, negative = accelerating down, ≈0 = linear. */

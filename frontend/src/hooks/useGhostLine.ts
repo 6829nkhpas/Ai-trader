@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTradeStore } from '../store/useTradeStore';
 import { useChartUIStore } from '../store/useChartUIStore';
 import { computeGhostPoints } from './ghostLineComputation';
@@ -12,40 +12,35 @@ function removeGhostSegments(chart: any, entityIds: string[]): void {
 }
 
 /**
- * Draw ghost line as connected dashed `trend_line` segments.
+ * Draw the ghost line as connected dashed `trend_line` segments.
  *
- * We intentionally do NOT use Catmull-Rom spline interpolation here.
- * Catmull-Rom interpolates both time AND price between control points.
- * When control points span an NSE session boundary (e.g. 15:25 → next day
- * 09:20), the interpolated sub-point timestamps fall in the overnight gap
- * and TradingView hides them — resulting in flat horizontal dashes at the
- * same X position instead of diagonal segments.
- *
- * The VWEPR Rust engine already outputs curved control points (quadratic
- * regression). Connecting them with direct line segments creates a smooth
- * piecewise-linear approximation that matches the target look.
+ * We deliberately use per-bar segments (NOT `polyline`/`path`): TradingView's
+ * `polyline` auto-closes into a triangle and `path` collapses to a stub in this
+ * build, whereas connected `trend_line` segments render reliably and extend
+ * into the future whitespace. The points are already a smooth, bounded curve,
+ * so the joined segments read as one continuous dashed line.
  */
 async function drawGhostSegments(
   chart: any,
   points: { time: number; price: number }[],
 ): Promise<string[]> {
-  console.log('[GhostLine] Drawing', points.length, 'control points as direct segments');
-
   const entityIds: string[] = [];
 
-  for (let i = 0; i < points.length - 1; i++) {
-    const p0 = points[i];
-    const p1 = points[i + 1];
+  // Keep strictly-increasing, de-duplicated points (guards against a session
+  // boundary producing two points at the same timestamp).
+  const clean: { time: number; price: number }[] = [];
+  for (const p of points) {
+    if (clean.length === 0 || p.time > clean[clean.length - 1].time) clean.push(p);
+  }
 
-    // Skip segments where both endpoints are at the same time
-    // (can happen at session boundaries after remap)
-    if (p0.time === p1.time) continue;
+  console.log('[GhostLine] Drawing', clean.length, 'points as connected segments');
 
+  for (let i = 0; i < clean.length - 1; i++) {
     try {
       const entityId = await chart.createMultipointShape(
         [
-          { time: p0.time, price: p0.price },
-          { time: p1.time, price: p1.price },
+          { time: clean[i].time,     price: clean[i].price },
+          { time: clean[i + 1].time, price: clean[i + 1].price },
         ],
         {
           shape: 'trend_line',
@@ -63,24 +58,37 @@ async function drawGhostSegments(
           },
         },
       );
-      if (entityId !== null && entityId !== undefined) {
-        entityIds.push(String(entityId));
-        console.log(`[GhostLine] Segment ${i}: [${p0.time},${p0.price}] → [${p1.time},${p1.price}] id=${entityId}`);
-      }
+      if (entityId !== null && entityId !== undefined) entityIds.push(String(entityId));
     } catch (err) {
       console.warn(`[GhostLine] Segment ${i} failed:`, err);
     }
   }
 
-  // Scroll chart to show the projection
+  // Ensure the projection tail is visible — WITHOUT yanking the user's view.
+  // TradingView's setVisibleRange / getVisibleRange are in UNIX *seconds*
+  // (same unit as the shape point times), NOT milliseconds. The old code
+  // multiplied by 1000, scrolling the chart to ~year 55446 so the line
+  // vanished — that was the "ghost line not working" bug.
   if (entityIds.length > 0) {
     try {
-      const intervalSec = points.length > 1 ? Math.abs(points[1].time - points[0].time) : 600;
-      const fromSec = points[0].time - intervalSec * 30;
-      const toSec   = points[points.length - 1].time + intervalSec * 3;
-      // TV setVisibleRange expects milliseconds
-      chart.setVisibleRange({ from: fromSec * 1000, to: toSec * 1000 });
-      console.log('[GhostLine] setVisibleRange:', { fromSec, toSec });
+      const intervalSec  = clean.length > 1 ? Math.abs(clean[1].time - clean[0].time) : 600;
+      const projEndSec   = clean[clean.length - 1].time;
+      const desiredToSec = projEndSec + intervalSec * 3;
+
+      let current: { from: number; to: number } | null = null;
+      try { current = chart.getVisibleRange(); } catch { current = null; }
+
+      if (current && Number.isFinite(current.from) && Number.isFinite(current.to)) {
+        if (desiredToSec > current.to) {
+          chart.setVisibleRange(
+            { from: current.from, to: desiredToSec },
+            { applyDefaultRightMargin: false },
+          );
+        }
+      } else {
+        const fromSec = clean[0].time - intervalSec * 30;
+        chart.setVisibleRange({ from: fromSec, to: desiredToSec });
+      }
     } catch (err) {
       console.warn('[GhostLine] setVisibleRange failed:', err);
     }
@@ -97,10 +105,58 @@ export function useGhostLine(
   activeSymbol: string,
   effectiveTimeframe: string,
 ) {
-  const predictiveSignals = useTradeStore((s) => s.predictiveSignals);
-  const ghostLineMode     = useChartUIStore((s) => s.ghostLineMode);
-  const entityIdsRef      = useRef<string[]>([]);
-  const abortRef          = useRef<boolean>(false);
+  const ghostLineMode = useChartUIStore((s) => s.ghostLineMode);
+
+  // Redraw triggers (lightweight so we don't thrash the async shape API):
+  //   · lastBarTime   advances only when a NEW bar forms for this symbol.
+  //   · predictiveKey changes when a fresh backend predictive signal arrives.
+  const lastBarTime = useTradeStore((s) => {
+    const sym = activeSymbol.toUpperCase();
+    let t = 0;
+    for (const c of s.ohlcCandles) {
+      if (c.symbol?.toUpperCase() === sym && c.start_timestamp_ms > t) t = c.start_timestamp_ms;
+    }
+    return t;
+  });
+  const predictiveKey = useTradeStore((s) => {
+    const sym = activeSymbol.toUpperCase();
+    for (let i = s.predictiveSignals.length - 1; i >= 0; i--) {
+      const sig = s.predictiveSignals[i];
+      if (sig.symbol?.toUpperCase() === sym) {
+        return `${sig.target_timestamp_ms}:${sig.predicted_close_price}`;
+      }
+    }
+    return '';
+  });
+
+  const entityIdsRef = useRef<string[]>([]);
+  const runIdRef     = useRef<number>(0);
+
+  // ── Realtime pulse ───────────────────────────────────────────────────
+  // Re-project intra-bar as the live price ticks (throttled to ≤ 1 / 4s).
+  const [pulse, setPulse] = useState(0);
+  const lastCloseRef = useRef(0);
+  const lastPulseRef = useRef(0);
+  useEffect(() => {
+    const sym = activeSymbol.toUpperCase();
+    const unsub = useTradeStore.subscribe((s) => {
+      let close = 0;
+      let t = 0;
+      for (const c of s.ohlcCandles) {
+        if (c.symbol?.toUpperCase() === sym && c.start_timestamp_ms > t) {
+          t = c.start_timestamp_ms;
+          close = c.close;
+        }
+      }
+      if (close === 0 || close === lastCloseRef.current) return;
+      lastCloseRef.current = close;
+      const now = Date.now();
+      if (now - lastPulseRef.current < 4000) return;
+      lastPulseRef.current = now;
+      setPulse((p) => p + 1);
+    });
+    return () => unsub();
+  }, [activeSymbol]);
 
   useEffect(() => {
     if (!widget) {
@@ -109,9 +165,18 @@ export function useGhostLine(
     }
 
     console.log('[GhostLine] useEffect fired — symbol=', activeSymbol, 'tf=', effectiveTimeframe, 'mode=', ghostLineMode);
-    abortRef.current = false;
+
+    // Per-run cancellation token + run id. Prevents the "double line" race
+    // where a stale async run finishes after a newer one and draws a second
+    // line (a shared abort boolean would be reset by every re-run).
+    let cancelled = false;
+    const myRunId = ++runIdRef.current;
+    const isStale = () => cancelled || runIdRef.current !== myRunId;
 
     const run = async () => {
+      // Read signals at run-time (not as a render subscription) so the effect
+      // isn't re-fired by every predictive tick's new array reference.
+      const predictiveSignals = useTradeStore.getState().predictiveSignals;
       const points = await computeGhostPoints(
         activeSymbol,
         effectiveTimeframe,
@@ -119,20 +184,17 @@ export function useGhostLine(
         predictiveSignals,
       );
 
-      if (abortRef.current) return;
-
+      if (isStale()) return;
       if (points.length < 2) {
         console.warn('[GhostLine] Not enough points:', points.length);
         return;
       }
 
       widget.onChartReady(() => {
-        if (abortRef.current) return;
-
+        if (isStale()) return;
         try {
           const chart = widget.activeChart();
 
-          // Remove previous ghost line
           if (entityIdsRef.current.length > 0) {
             removeGhostSegments(chart, entityIdsRef.current);
             entityIdsRef.current = [];
@@ -140,12 +202,12 @@ export function useGhostLine(
 
           drawGhostSegments(chart, points)
             .then((ids) => {
-              if (!abortRef.current) {
-                entityIdsRef.current = ids;
-                console.log('[GhostLine] Ghost line ready with', ids.length, 'segments');
-              } else {
-                removeGhostSegments(chart, ids);
+              if (isStale()) {
+                removeGhostSegments(chart, ids); // superseded — never keep two lines
+                return;
               }
+              entityIdsRef.current = ids;
+              console.log('[GhostLine] Ghost line ready with', ids.length, 'segments');
             })
             .catch((err) => console.error('[GhostLine] drawGhostSegments threw:', err));
         } catch (err) {
@@ -157,7 +219,7 @@ export function useGhostLine(
     run();
 
     return () => {
-      abortRef.current = true;
+      cancelled = true;
       if (entityIdsRef.current.length > 0) {
         try {
           const chart = widget.activeChart();
@@ -166,5 +228,5 @@ export function useGhostLine(
         entityIdsRef.current = [];
       }
     };
-  }, [widget, activeSymbol, effectiveTimeframe, ghostLineMode, predictiveSignals]);
+  }, [widget, activeSymbol, effectiveTimeframe, ghostLineMode, lastBarTime, predictiveKey, pulse]);
 }

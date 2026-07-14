@@ -152,7 +152,9 @@ export default function TradingViewWidget({
             const currentMode = useChartUIStore.getState().ghostLineMode;
             showIframeDropdown(ghostLineBtn, [
               { value: 'linear' as const, label: 'OLS', description: 'Linear regression baseline' },
-              { value: 'curved' as const, label: 'VWEPR', description: 'Volume-weighted polynomial' }
+              { value: 'volume' as const, label: 'VWLR', description: 'Volume-weighted linear regression' },
+              { value: 'curved' as const, label: 'VWEPR', description: 'Volume-weighted polynomial' },
+              { value: 'forecast' as const, label: 'FCST', description: 'Volatility-aware forecaster' }
             ], currentMode, (v) => {
               useChartUIStore.getState().setGhostLineMode(v);
               syncButtonStates(doc);
