@@ -160,7 +160,15 @@ export default function QaMessages() {
                   <Loader2 size={11} className="animate-spin text-text-muted" />
                   <span>Thinking…</span>
                 </div>
-              ) : null}
+              ) : (
+                // The turn finished with no answer text (e.g. the stream ended
+                // right after a tool call, or a synthetic completion arrived).
+                // Never render nothing — that reads as a silent freeze. Surface a
+                // graceful fallback so the user knows the turn ended and can retry.
+                <div className="text-[10px] italic text-text-muted/60">
+                  No answer was produced for this question. Please try rephrasing or ask again.
+                </div>
+              )}
             </div>
           </div>
         )

@@ -4272,12 +4272,38 @@ def qa_node(state: AgentState):
     # read-only Analysis_Tools remain available; declare_trade / watch are
     # refused downstream by qa_tool_node). Falls back to the default binding.
     _qa_model = state.get("model")
-    _qa_llm = (
-        _build_profile_llm_for_model(_qa_model.strip(), is_fno=True)
-        if isinstance(_qa_model, str) and _qa_model.strip()
-        else llm_with_tools
-    )
-    response = _qa_llm.invoke(llm_messages)
+    incoming_qa_turns = state.get("qa_turns") or 0
+
+    # On the FINAL permitted Q&A turn, force an answer-only turn: invoke the base
+    # model with NO tools bound plus an explicit synthesize-now directive. Without
+    # this, the model could spend the last budgeted turn on yet another tool call;
+    # `qa_should_continue` then routes to "end" with that call still pending, so
+    # the graph terminates on an AIMessage that carries a tool call but NO
+    # natural-language content. That streamed only a `TOOL_CALL_START`
+    # (`> get_candles…`) and no REASONING answer — leaving the UI frozen on the
+    # tool-activity line with an empty answer. A no-tools binding guarantees this
+    # last turn produces text and no further tool call, so the Q&A ALWAYS ends
+    # with a real answer grounded in whatever was already fetched.
+    is_final_qa_turn = incoming_qa_turns >= MAX_QA_TURNS - 1
+
+    if is_final_qa_turn:
+        final_directive = SystemMessage(
+            content=(
+                "You have reached the end of the Q&A tool-fetch budget. Do NOT request "
+                "any more tools. Answer the user's question NOW, in natural language, "
+                "using the information already gathered in this conversation. If some "
+                "data was unavailable, say so honestly and answer with what you have."
+            )
+        )
+        # Base `llm` has no tools bound, so the model must respond with text.
+        response = llm.invoke(llm_messages + [final_directive])
+    else:
+        _qa_llm = (
+            _build_profile_llm_for_model(_qa_model.strip(), is_fno=True)
+            if isinstance(_qa_model, str) and _qa_model.strip()
+            else llm_with_tools
+        )
+        response = _qa_llm.invoke(llm_messages)
 
     extraction = extract_tool_calls(response)
 

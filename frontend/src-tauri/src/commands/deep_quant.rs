@@ -760,14 +760,22 @@ pub(crate) async fn load_candles_with_ts(
                 .fetch_all(pool)
                 .await
         } else {
-            // Bound the fetch to the requested `limit` (already floored to 100
-            // above). The merge step slices the union of all sources to the most
-            // recent `limit` candles anyway, so fetching the full table (the old
-            // hardcoded LIMIT 5000) just wasted DB time + parsing on rows that
-            // were immediately discarded — multiplied across every timeframe and
-            // every radar cycle.
+            // Dedup by timestamp at read time: re-backfills blindly INSERT
+            // overlapping bars, so the table can hold duplicate rows per `ts`.
+            // A plain `LIMIT n` would count RAW rows (dominated by dupes) and the
+            // downstream merge-dedup would then collapse them to far fewer
+            // distinct bars — starving the reader even when the store is deep.
+            // `last(...)` with the implicit GROUP BY on the non-aggregated `ts`
+            // collapses exact-duplicate timestamps to one bar (last-written
+            // values), so `LIMIT` counts DISTINCT bars. (DEDUP on the table
+            // prevents NEW dupes; this covers the pre-existing backlog too.)
             sqlx::query(
-                "SELECT ts, open, high, low, close, volume \
+                "SELECT ts, \
+                        last(open) AS open, \
+                        last(high) AS high, \
+                        last(low) AS low, \
+                        last(close) AS close, \
+                        last(volume) AS volume \
                  FROM historical_candles \
                  WHERE symbol = $1 \
                  ORDER BY ts DESC \
@@ -844,11 +852,20 @@ pub(crate) async fn load_candles_with_ts(
                 .fetch_all(pool)
                 .await
         } else {
-            // Bound to the requested `limit` (see note in the daily branch) —
-            // the union is sliced to the most recent `limit` after merging, so
-            // the old LIMIT 5000 just over-fetched and discarded.
+            // Dedup by timestamp at read time (see the daily branch above). This
+            // is THE fix for the "75/114" starvation: the forward top-up
+            // re-inserts overlapping intraday bars on every run, so `LIMIT n`
+            // over raw rows returned only ~n/duplication_factor distinct bars
+            // after the merge-dedup, starving regime/relative-strength even
+            // though the store held 1000+ distinct bars. `last(...)` + implicit
+            // GROUP BY on `ts` makes `LIMIT` count DISTINCT bars.
             sqlx::query(
-                "SELECT ts, open, high, low, close, volume \
+                "SELECT ts, \
+                        last(open) AS open, \
+                        last(high) AS high, \
+                        last(low) AS low, \
+                        last(close) AS close, \
+                        last(volume) AS volume \
                  FROM historical_intraday \
                  WHERE symbol = $1 AND timeframe = $2 \
                  ORDER BY ts DESC \

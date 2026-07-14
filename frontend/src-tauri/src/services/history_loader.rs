@@ -293,6 +293,28 @@ pub async fn run_migration(pool: &PgPool) {
         Err(e) => error!("QuestDB migration for historical_candles failed: {}", e),
     }
 
+    // Make daily inserts idempotent. `bulk_insert` / re-backfills re-fetch
+    // overlapping ranges and blindly INSERT, so without a dedup key QuestDB
+    // accumulates duplicate rows for the same (symbol, ts). A duplicate-inflated
+    // table starves the reader: the read's `ORDER BY ts DESC LIMIT n` counts RAW
+    // rows (dominated by dupes), and the merge's timestamp-dedup then collapses
+    // them to far fewer distinct bars. Enabling DEDUP makes a matching insert
+    // overwrite instead of appending. Idempotent; non-destructive (no rows are
+    // removed). Requires a WAL table (QuestDB default for partitioned tables);
+    // logged and ignored if unsupported so startup never fails.
+    match sqlx::query(
+        "ALTER TABLE historical_candles DEDUP ENABLE UPSERT KEYS(ts, symbol);",
+    )
+    .execute(pool)
+    .await
+    {
+        Ok(_) => info!("QuestDB: historical_candles DEDUP enabled on (ts, symbol)."),
+        Err(e) => warn!(
+            "QuestDB: could not enable DEDUP on historical_candles (continuing): {}",
+            e
+        ),
+    }
+
     // ── Intraday table ──────────────────────────────────────────────────
     let ddl_intraday = "
         CREATE TABLE IF NOT EXISTS historical_intraday (
@@ -310,6 +332,28 @@ pub async fn run_migration(pool: &PgPool) {
     match sqlx::query(ddl_intraday).execute(pool).await {
         Ok(_) => info!("QuestDB: historical_intraday table ready (PARTITION BY MONTH)."),
         Err(e) => error!("QuestDB migration for historical_intraday failed: {}", e),
+    }
+
+    // Same idempotency fix for intraday (see historical_candles above). The
+    // forward top-up re-fetches `[max_ts − 1 day, today]` on EVERY run and
+    // re-inserts those bars, so duplicates accumulate fastest here — this is the
+    // root cause of the "insufficient data: 75/114" starvation on a liquid
+    // symbol whose store is actually deep. DEDUP on (ts, symbol, timeframe)
+    // makes re-inserting a bar overwrite instead of duplicate. Non-destructive;
+    // logged and ignored if the table is not WAL.
+    match sqlx::query(
+        "ALTER TABLE historical_intraday DEDUP ENABLE UPSERT KEYS(ts, symbol, timeframe);",
+    )
+    .execute(pool)
+    .await
+    {
+        Ok(_) => info!(
+            "QuestDB: historical_intraday DEDUP enabled on (ts, symbol, timeframe)."
+        ),
+        Err(e) => warn!(
+            "QuestDB: could not enable DEDUP on historical_intraday (continuing): {}",
+            e
+        ),
     }
 }
 
