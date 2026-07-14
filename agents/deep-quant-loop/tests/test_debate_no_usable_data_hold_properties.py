@@ -205,7 +205,7 @@ def test_property_31_no_usable_data_yields_stated_hold(tool_messages):
     # Stub the finalize chokepoint so no journal / DB write happens; the HOLD
     # decision dict is still built and set as update["decision"].
     original_finalize = graph._finalize_decision
-    graph._finalize_decision = lambda s, decision: {}
+    graph._finalize_decision = lambda s, decision, thread_id=None: {}
     try:
         update = tool_node(state)
     finally:

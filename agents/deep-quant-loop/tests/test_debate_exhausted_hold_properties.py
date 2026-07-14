@@ -204,7 +204,7 @@ def test_property_13_exhausted_debate_finalizes_hold(
     original_get_judge_llm = graph.get_judge_llm
     original_finalize = graph._finalize_decision
     graph.get_judge_llm = lambda: _StubJudgeLLM(content)
-    graph._finalize_decision = lambda state, decision: {}
+    graph._finalize_decision = lambda state, decision, thread_id=None: {}
     try:
         state = _build_state(bull_stance, bear_stance, evidence, debate_turns)
         update = judge_node(state)
