@@ -308,7 +308,34 @@ class AgentState(TypedDict):
 
 # Maximum number of consecutive reasoning-only turns the agent may take before
 # the loop forces a HOLD with reason `no-decision-reached` (R2.3, R2.5).
-MAX_REASONING_TURNS = 3
+# This is the DOCUMENTED DEFAULT budget (raised from 3 to 6 so the model has room
+# to synthesize across the full order-of-operations before the loop forces a
+# stand-aside). It is overridable per-deployment via DEEP_QUANT_MAX_REASONING_TURNS
+# through `resolve_max_reasoning_turns` below — the constant remains the fallback
+# value. The termination guarantee is unchanged: a higher-but-finite cap (R1.1-1.4).
+MAX_REASONING_TURNS = 6
+
+
+def resolve_max_reasoning_turns() -> int:
+    """Resolve the consecutive reasoning-only turn budget from the environment.
+
+    Reads ``DEEP_QUANT_MAX_REASONING_TURNS`` and returns it when it is a valid
+    integer ``>= 1``; otherwise falls back to the documented default
+    ``MAX_REASONING_TURNS`` (6). Any unset / empty / unparseable / out-of-range
+    (``< 1``) value degrades to the default. This NEVER raises, so the loop is
+    always deterministically bounded by a finite budget (R1.1-1.4). Mirrors the
+    env-resolution style of ``_env_nonempty`` above.
+    """
+    raw = os.getenv("DEEP_QUANT_MAX_REASONING_TURNS")
+    if raw is None or not raw.strip():
+        return MAX_REASONING_TURNS
+    try:
+        value = int(raw.strip())
+    except (TypeError, ValueError):
+        return MAX_REASONING_TURNS
+    if value < 1:
+        return MAX_REASONING_TURNS
+    return value
 
 # Routing label returned by `should_continue` / `route_after_tools` when a DEBATE
 # Research_Phase completes (either the model issued a suppressed `declare_trade`
@@ -3828,9 +3855,14 @@ def should_continue(state: AgentState) -> str:
         return "force_terminal"
 
     # ── Precedence 3: bounded reasoning loop ─────────────────────────────────
+    # The budget is resolved from the environment on each check so a deployment
+    # can tune DEEP_QUANT_MAX_REASONING_TURNS without a code change; it degrades
+    # to the documented default (6) for any invalid value (R1.1-1.4). The
+    # reset-on-tool-call semantics in `call_model` are unaffected.
+    reasoning_budget = resolve_max_reasoning_turns()
     reasoning_turns = state.get("reasoning_turns", 0)
-    print(f"[Deep Quant Routing] Consecutive reasoning turns: {reasoning_turns}/{MAX_REASONING_TURNS}")
-    if reasoning_turns < MAX_REASONING_TURNS:
+    print(f"[Deep Quant Routing] Consecutive reasoning turns: {reasoning_turns}/{reasoning_budget}")
+    if reasoning_turns < reasoning_budget:
         print("[Deep Quant Routing] Reasoning budget remaining. Routing to -> loop_agent")
         return "loop_agent"
 
@@ -3866,6 +3898,11 @@ def force_hold(state: AgentState):
         "execution_plan": "HOLD — no trade taken.",
         "source": "forced_hold",
     }
+    # _finalize_decision -> _stamp_opportunity_tier stamps opportunity_tier
+    # (stand_aside for this HOLD action), size_factor, and the Best_Current_Read,
+    # identically to force_terminal (R3.1/R3.2). A reasoning-exhaustion HOLD is thus
+    # as actionable as a bounded-hunt one, and no directional entry/stop/target is
+    # fabricated for the stand-aside.
     decision["defensibility"] = _finalize_decision(state, decision)
     final_message = AIMessage(
         content=json.dumps(

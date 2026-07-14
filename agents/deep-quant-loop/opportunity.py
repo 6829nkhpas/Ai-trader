@@ -1107,9 +1107,13 @@ def classify_resume(trigger_kind) -> str:
 #                  failed. Re-check what actually happened at the level, whether
 #                  momentum flipped, whether the regime changed, and whether the
 #                  levels still hold (4 tools).
-#   heartbeat    — a bounded mid-wait pulse: the CHEAPEST check — has the setup
-#                  developed or decayed? Re-check only fresh candles and the
-#                  indicator consensus (2 tools).
+#   heartbeat    — a bounded mid-wait pulse: a CHEAP but situation-aware check —
+#                  has the setup developed or decayed? Re-check fresh candles, the
+#                  indicator consensus, the market regime, and the key support/
+#                  resistance levels so the pulse refreshes the situation, not just
+#                  price (4 tools). For an index symbol, options positioning is
+#                  additionally appended by ``delta_recheck_plan`` as the
+#                  symbol-appropriate primary confirmation.
 _DELTA_RECHECK_PLANS = {
     RESUME_TARGET: (
         "get_candles",
@@ -1128,6 +1132,8 @@ _DELTA_RECHECK_PLANS = {
     RESUME_HEARTBEAT: (
         "get_candles",
         "get_consensus_report",
+        "get_market_regime",
+        "get_support_resistance",
     ),
 }
 
@@ -1160,15 +1166,18 @@ def delta_recheck_plan(trigger_kind, thesis=None, symbol_class=None) -> list:
     trigger-driven and deterministic, so ``thesis`` does not change the result.
 
     ``symbol_class`` is the resolved Symbol_Class of the analyzed symbol
-    (``"index"`` | ``"equity"`` | ``None``). When it is ``"index"`` AND the
-    resume is a ``target`` reach, ``get_options_analytics`` is added to the plan
-    in canonical order-of-operations position (2e, immediately before the 2f
-    event-risk gate) so an index target resume re-consults options positioning
-    before confirming an entry (index-options-intraday-context Requirement 5.2).
-    For an equity / missing / unrecognized class — and for any non-target
-    trigger — the plan is byte-identical to today, so equity resume behavior is
-    unchanged (Requirement 5.3). The augmented index target plan remains a
-    NON-EMPTY, STRICT subset of ``FULL_ORDER_OF_OPERATIONS_TOOLS``.
+    (``"index"`` | ``"equity"`` | ``None``, as produced by
+    ``tools.classify_symbol_class``). When it is ``"index"`` AND the resume is a
+    ``target`` reach OR a ``heartbeat`` pulse, ``get_options_analytics`` is added
+    to the plan as the symbol-appropriate primary confirmation — inserted in
+    canonical order-of-operations position (2e, immediately before the 2f
+    event-risk gate) for the target plan, and appended to the heartbeat plan
+    (which has no event-risk step) so an index resume re-consults options
+    positioning (index-options-intraday-context Requirement 5.2; heartbeat
+    enrichment Requirement 2.2). For an equity / missing / unrecognized class —
+    and for the invalidation trigger — the plan is byte-identical to today, so
+    equity resume behavior is unchanged (Requirement 5.3). The augmented index
+    plan remains a NON-EMPTY, STRICT subset of ``FULL_ORDER_OF_OPERATIONS_TOOLS``.
 
     PURE and TOTAL — an unrecognized / ``None`` / malformed trigger normalizes to
     the documented fallback (``'target'``) and still yields a valid plan. Never
@@ -1178,13 +1187,14 @@ def delta_recheck_plan(trigger_kind, thesis=None, symbol_class=None) -> list:
     kind = classify_resume(trigger_kind)
     plan = list(_DELTA_RECHECK_PLANS.get(kind, _DELTA_RECHECK_PLANS[_RESUME_FALLBACK]))
     if (
-        kind == RESUME_TARGET
+        kind in (RESUME_TARGET, RESUME_HEARTBEAT)
         and isinstance(symbol_class, str)
         and symbol_class.strip().lower() == _INDEX_SYMBOL_CLASS
         and "get_options_analytics" not in plan
     ):
         # Insert in canonical order-of-operations order: 2e (options) precedes 2f
-        # (event risk). Fall back to append if the event-risk step is absent.
+        # (event risk). Fall back to append if the event-risk step is absent (the
+        # heartbeat plan has no event-risk step, so options is appended there).
         if "get_event_risk" in plan:
             plan.insert(plan.index("get_event_risk"), "get_options_analytics")
         else:
