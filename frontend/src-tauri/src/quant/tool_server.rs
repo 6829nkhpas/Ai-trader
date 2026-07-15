@@ -1171,6 +1171,13 @@ pub struct DeclareTradeRequest {
     /// Current 14-period ATR used for the stop-distance check (R6.3). Optional:
     /// when absent the stop-too-tight rule is skipped (see [`validate_trade`]).
     pub atr_14: Option<f64>,
+    /// Workspace profile (INTRADAY / SWING / INVESTOR / FNO) of the run that
+    /// declared the trade. Resolves the minimum Risk_Reward floor
+    /// (INTRADAY → 1:1.5, all others → 1:2) via
+    /// [`crate::quant::min_risk_reward_for_profile`]. Absent (older callers) →
+    /// the safe 1:2 default. Never relaxes the stop-distance / ordering rules.
+    #[serde(default)]
+    pub profile: Option<String>,
 }
 
 /// Run the Trade_Validator over a declared trade's raw request fields (R6.6).
@@ -1193,6 +1200,24 @@ fn evaluate_declared_trade(
     take_profit: Option<f64>,
     atr_14: Option<f64>,
 ) -> crate::quant::ValidatorOutcome {
+    // Default profile (None) → the safe 1:2 Risk_Reward floor. Existing callers
+    // and tests keep the unchanged behaviour.
+    evaluate_declared_trade_with_profile(action_str, entry, stop_loss, take_profit, atr_14, None)
+}
+
+/// Profile-aware variant of [`evaluate_declared_trade`]: resolves the minimum
+/// Risk_Reward floor from the run's workspace `profile` (INTRADAY → 1:1.5, all
+/// others → 1:2) via [`crate::quant::min_risk_reward_for_profile`] and delegates
+/// to [`crate::quant::validate_trade_with_min_rr`]. The stop-distance and
+/// direction-ordering rules are profile-independent and unchanged.
+fn evaluate_declared_trade_with_profile(
+    action_str: &str,
+    entry: Option<f64>,
+    stop_loss: Option<f64>,
+    take_profit: Option<f64>,
+    atr_14: Option<f64>,
+    profile: Option<&str>,
+) -> crate::quant::ValidatorOutcome {
     let action = crate::quant::Action::from_str_lenient(action_str);
 
     // Build ExecutionLevels only when every level is supplied; a partial set
@@ -1206,7 +1231,8 @@ fn evaluate_declared_trade(
         _ => None,
     };
 
-    crate::quant::validate_trade(action, levels, atr_14)
+    let min_rr = crate::quant::min_risk_reward_for_profile(profile);
+    crate::quant::validate_trade_with_min_rr(action, levels, atr_14, min_rr)
 }
 
 /// POST /tools/declare_trade
@@ -1224,13 +1250,17 @@ async fn declare_trade(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let conviction = payload.conviction_score.clamp(0, 100);
 
-    // Trade_Validator gate (R6.6): only a passing trade is committed.
-    let outcome = evaluate_declared_trade(
+    // Trade_Validator gate (R6.6): only a passing trade is committed. The
+    // minimum Risk_Reward floor is resolved from the run's workspace profile
+    // (INTRADAY → 1:1.5, all others → 1:2); the stop-distance/ordering rules
+    // are profile-independent and unchanged.
+    let outcome = evaluate_declared_trade_with_profile(
         &payload.action,
         payload.entry,
         payload.stop_loss,
         payload.take_profit,
         payload.atr_14,
+        payload.profile.as_deref(),
     );
 
     // R6.7: a failing validation is NOT committed — return the reason and emit

@@ -578,15 +578,52 @@ impl ValidatorOutcome {
     }
 }
 
-/// The minimum acceptable Risk_Reward_Ratio (reward / risk). A value exactly at
-/// the boundary (2.0) passes; below 2.0 fails (R6.2).
+/// The minimum acceptable Risk_Reward_Ratio (reward / risk) for the SWING /
+/// INVESTOR / F&O profiles (and the safe default for any unknown profile). A
+/// value exactly at the boundary (2.0) passes; below 2.0 fails (R6.2).
 pub const MIN_RISK_REWARD: f64 = 2.0;
+
+/// The minimum acceptable Risk_Reward_Ratio for the INTRADAY profile. Intraday
+/// index/equity ranges are frequently too tight for an 80–100 pt (1:2) target
+/// to fit inside the session structure, so a swing-calibrated 1:2 floor makes a
+/// defensible intraday bracket mathematically impossible and forces perpetual
+/// HOLDs. The intraday floor is relaxed to 1:1.3 — still a positive-expectancy
+/// asymmetry given the high win-rate of intraday mean-reversion/continuation
+/// scalps — while the stop-distance floor (`MIN_STOP_ATR_MULTIPLE`) and every
+/// other hard rule stay UNCHANGED for all profiles. A value exactly at 1.3
+/// passes; below fails.
+pub const MIN_RISK_REWARD_INTRADAY: f64 = 1.3;
 
 /// The minimum stop-loss distance expressed as a multiple of ATR. A stop
 /// distance exactly at `1.5 × ATR` passes; below fails (R6.3).
 pub const MIN_STOP_ATR_MULTIPLE: f64 = 1.5;
 
-/// Validate a proposed/declared trade against the hard risk rules (R6.1–R6.5).
+/// Resolve the minimum Risk_Reward_Ratio for a workspace `profile` (case- and
+/// whitespace-insensitive). Returns `MIN_RISK_REWARD_INTRADAY` (1.5) for the
+/// INTRADAY profile and `MIN_RISK_REWARD` (2.0) for SWING / INVESTOR / FNO and
+/// for any unset / unrecognized profile — the safe default. Total; never panics.
+pub fn min_risk_reward_for_profile(profile: Option<&str>) -> f64 {
+    match profile {
+        Some(p) if p.trim().eq_ignore_ascii_case("INTRADAY") => MIN_RISK_REWARD_INTRADAY,
+        _ => MIN_RISK_REWARD,
+    }
+}
+
+/// Validate a proposed/declared trade against the hard risk rules (R6.1–R6.5)
+/// using the default (2.0) Risk_Reward floor. Preserved as the stable public API
+/// (and for every existing caller/test); delegates to
+/// [`validate_trade_with_min_rr`] with [`MIN_RISK_REWARD`].
+pub fn validate_trade(
+    action: Action,
+    levels: Option<ExecutionLevels>,
+    atr_14: Option<f64>,
+) -> ValidatorOutcome {
+    validate_trade_with_min_rr(action, levels, atr_14, MIN_RISK_REWARD)
+}
+
+/// Validate a proposed/declared trade against the hard risk rules (R6.1–R6.5)
+/// with a caller-supplied minimum Risk_Reward floor (resolved per workspace
+/// profile via [`min_risk_reward_for_profile`]).
 ///
 /// `HOLD` bypasses all level checks and always passes with a `risk_reward` of
 /// `0.0`. For `BUY`/`SELL` the checks are applied in this order:
@@ -597,15 +634,17 @@ pub const MIN_STOP_ATR_MULTIPLE: f64 = 1.5;
 ///    `stop_loss < entry < take_profit`; SELL requires
 ///    `take_profit < entry < stop_loss`.
 /// 3. **StopTooTight (R6.3)** — when `atr_14` is available and finite, the stop
-///    distance `|entry − stop_loss|` must be at least `1.5 × atr_14`.
+///    distance `|entry − stop_loss|` must be at least `1.5 × atr_14` (this
+///    volatility floor is profile-INDEPENDENT and never relaxed).
 /// 4. **RiskRewardTooLow (R6.2)** — `|take_profit − entry| / |entry − stop_loss|`
-///    must be at least `2.0`.
+///    must be at least `min_risk_reward`.
 ///
 /// The function is pure: identical inputs always yield an identical outcome.
-pub fn validate_trade(
+pub fn validate_trade_with_min_rr(
     action: Action,
     levels: Option<ExecutionLevels>,
     atr_14: Option<f64>,
+    min_risk_reward: f64,
 ) -> ValidatorOutcome {
     // HOLD abstains — no execution levels to check (R6).
     if action == Action::Hold {
@@ -640,15 +679,16 @@ pub fn validate_trade(
     }
 
     // R6.3 — stop must not be tighter than 1.5x ATR (only when ATR is known).
+    // This volatility floor is profile-independent and is never relaxed.
     if let Some(atr) = atr_14 {
         if atr.is_finite() && atr > 0.0 && risk < MIN_STOP_ATR_MULTIPLE * atr {
             return ValidatorOutcome::Fail { reason: ValidatorReason::StopTooTight };
         }
     }
 
-    // R6.2 — risk-reward must meet the 1:2 minimum (boundary passes).
+    // R6.2 — risk-reward must meet the profile-resolved minimum (boundary passes).
     let risk_reward = reward / risk;
-    if risk_reward < MIN_RISK_REWARD {
+    if risk_reward < min_risk_reward {
         return ValidatorOutcome::Fail { reason: ValidatorReason::RiskRewardTooLow };
     }
 
