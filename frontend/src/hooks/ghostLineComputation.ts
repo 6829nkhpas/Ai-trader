@@ -21,9 +21,26 @@ import { TIMEFRAME_MS, KITE_INTERVAL_MAP, type Timeframe } from '../utils/chartT
 
 const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
-/** How many bars to project forward. Kept short so the ghost is a compact
- *  projection off the last candle, not a long streak across the session. */
+/** Fallback projection length (bars) when the visible range is unknown. */
 const PROJECTION_BARS = 6;
+
+/** Dynamic projection sizing: the ghost extends forward by this fraction of the
+ *  number of bars currently visible on screen, so it scales with the user's
+ *  zoom (zoom out → longer, zoom in → shorter), clamped to sane bounds. */
+const PROJECTION_FRACTION = 0.12;
+const MIN_PROJECTION_BARS = 3;
+const MAX_PROJECTION_BARS = 20;
+
+/** Compute how many bars to project from how many bars are visible. Counting
+ *  ACTUAL bars (not raw seconds) makes this immune to overnight/weekend gaps. */
+function dynamicProjectionBars(lookback: { time: number }[], visibleFromSec: number): number {
+  if (!(visibleFromSec > 0)) return PROJECTION_BARS;
+  let visibleCount = 0;
+  for (const c of lookback) if (c.time >= visibleFromSec) visibleCount++;
+  if (visibleCount <= 0) return PROJECTION_BARS;
+  const raw = Math.round(visibleCount * PROJECTION_FRACTION);
+  return Math.max(MIN_PROJECTION_BARS, Math.min(MAX_PROJECTION_BARS, raw));
+}
 
 /** Lookback window (bars) for every regression engine. Kept identical to the
  *  Rust engines (`predictive::OLS_MAX_WINDOW` and `vwepr::MAX_WINDOW`, both 50)
@@ -477,6 +494,7 @@ export async function computeGhostPoints(
   effectiveTimeframe: string,
   ghostLineMode: string,
   predictiveSignals: any[],
+  visibleFromSec: number = 0,
 ): Promise<{ time: number; price: number }[]> {
   console.log(`[GhostLine] computeGhostPoints — symbol=${activeSymbol} tf=${effectiveTimeframe} mode=${ghostLineMode}`);
 
@@ -495,6 +513,10 @@ export async function computeGhostPoints(
   console.log(`[GhostLine] intervalSec=${intervalSec} (map=${mapInterval}, inferred=${barInterval})`);
   if (!Number.isFinite(last.close) || last.close <= 0) return [];
 
+  // Length scales with the current zoom (fraction of visible bars).
+  const projBars = dynamicProjectionBars(lookback, visibleFromSec);
+  console.log(`[GhostLine] projBars=${projBars} (visibleFromSec=${visibleFromSec})`);
+
   // Single 50-bar window shared by every engine (OLS, VWLR, VWEPR) and by both
   // the Rust and JS paths, so all four agree on exactly which bars are fit.
   const window = lookback.slice(-REGRESSION_WINDOW);
@@ -510,7 +532,7 @@ export async function computeGhostPoints(
       const dev = Math.abs(predicted - last.close) / last.close;
       const ok  = Number.isFinite(predicted) && predicted > 0 && dev < 0.20;
       if (ok && targetSec > last.time - intervalSec * 10) {
-        const N   = PROJECTION_BARS;
+        const N   = projBars;
         const end = Math.max(targetSec, last.time + intervalSec * N);
         const m   = (predicted - last.close) / N;
         points = Array.from({ length: N + 1 }, (_, i) => ({
@@ -528,7 +550,7 @@ export async function computeGhostPoints(
       const tauri = await import('@tauri-apps/api/core');
       const candles = window.map(c => ({ time: c.time, close: c.close, volume: c.volume || 1.0 }));
       const payload = await tauri.invoke<any>('compute_ghost_curve', {
-        candles, intervalSec, projectionLength: PROJECTION_BARS,
+        candles, intervalSec, projectionLength: projBars,
       });
       useChartUIStore.getState().setAccelerationCoefficient(payload.acceleration_coefficient);
       // OLS, VWLR and VWEPR all come from the single Rust engine so there is
@@ -555,10 +577,10 @@ export async function computeGhostPoints(
     // same 50-bar `window` as the Rust path so the two agree bar-for-bar.
     const closes = window.map(c => c.close);
     points =
-      ghostLineMode === 'linear'   ? olsProjection(closes, last.time, intervalSec, PROJECTION_BARS) :
-      ghostLineMode === 'volume'   ? vwlrProjection(window, last.time, intervalSec, PROJECTION_BARS) :
-      ghostLineMode === 'forecast' ? forecastProjection(window, last.time, intervalSec, PROJECTION_BARS) :
-      vweprProjection(window, last.time, intervalSec, PROJECTION_BARS);
+      ghostLineMode === 'linear'   ? olsProjection(closes, last.time, intervalSec, projBars) :
+      ghostLineMode === 'volume'   ? vwlrProjection(window, last.time, intervalSec, projBars) :
+      ghostLineMode === 'forecast' ? forecastProjection(window, last.time, intervalSec, projBars) :
+      vweprProjection(window, last.time, intervalSec, projBars);
     console.log('[GhostLine] Path3:', points.length, 'points');
   }
 

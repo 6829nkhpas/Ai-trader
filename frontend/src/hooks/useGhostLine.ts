@@ -29,10 +29,6 @@ function removeGhostSegments(chart: any, entityIds: string[]): string[] {
   return failed;
 }
 
-/** Total bars kept in view so the projection is always the same on-screen
- *  size with a visible forward slope, regardless of the user's zoom. */
-const VIEW_BARS = 60;
-
 /**
  * Draw the ghost line as connected dashed `trend_line` segments.
  *
@@ -111,30 +107,11 @@ async function drawGhostSegments(
     }
   }
 
-  // Frame to a FIXED bar-window on EVERY draw so the projection is always the
-  // same on-screen size with a visible forward slope, no matter the zoom state.
-  // TradingView drawings live on the time axis, so without pinning the visible
-  // bar count they compress into a vertical sliver (zoomed out) or overshoot
-  // (zoomed in). Pinning ~VIEW_BARS bars — history on the left, the short
-  // projection on the right — keeps the line's size and slope constant.
-  // Units are UNIX seconds.
-  if (entityIds.length > 0) {
-    try {
-      // Derive the bar step from the LAST two points — they are always
-      // contiguous session slots (one bar apart). The first pair can straddle
-      // the overnight/weekend gap, which would blow up the step.
-      const n = clean.length;
-      const stepSec  = Math.abs(clean[n - 1].time - clean[n - 2].time) || 600;
-      const projEnd  = clean[n - 1].time;
-      const projBars = n - 1;                            // bars of projection
-      const histBars = Math.max(VIEW_BARS - projBars - 2, 10);
-      const from = clean[0].time - stepSec * histBars;   // history on the left
-      const to   = projEnd + stepSec * 2;                // small right margin
-      chart.setVisibleRange({ from, to });
-    } catch (err) {
-      console.warn('[GhostLine] setVisibleRange failed:', err);
-    }
-  }
+  // NOTE: we intentionally do NOT call setVisibleRange here. The user owns the
+  // zoom; the projection length itself scales with the visible range (computed
+  // upstream), so the line stays proportional without us fighting their pan/
+  // zoom. Forcing a range here also caused a feedback loop with the zoom
+  // subscription that drives redraws.
 
   console.log('[GhostLine] Total segments drawn:', entityIds.length);
   return entityIds;
@@ -179,6 +156,32 @@ export function useGhostLine(
   // if it's already mid-draw.
   const genRef = useRef<number>(0);
 
+  // ── Zoom pulse ───────────────────────────────────────────────────────
+  // Re-project when the user zooms/pans so the line length tracks the visible
+  // range (throttled so a drag doesn't thrash the async shape API).
+  const [zoomPulse, setZoomPulse] = useState(0);
+  useEffect(() => {
+    if (!widget) return;
+    const token = {};            // unique owner for unsubscribeAll
+    let lastZoom = 0;
+    let subscribed = false;
+    widget.onChartReady(() => {
+      try {
+        widget.activeChart().onVisibleRangeChanged().subscribe(token, () => {
+          const now = Date.now();
+          if (now - lastZoom < 400) return;
+          lastZoom = now;
+          setZoomPulse((p) => p + 1);
+        });
+        subscribed = true;
+      } catch { /* ignore */ }
+    });
+    return () => {
+      if (!subscribed) return;
+      try { widget.activeChart().onVisibleRangeChanged().unsubscribeAll(token); } catch { /* torn down */ }
+    };
+  }, [widget]);
+
   // ── Realtime pulse ───────────────────────────────────────────────────
   // Re-project intra-bar as the live price ticks (throttled to ≤ 1 / 4s).
   const [pulse, setPulse] = useState(0);
@@ -219,7 +222,23 @@ export function useGhostLine(
     const myGen = ++genRef.current;
     const isStale = () => cancelled || genRef.current !== myGen;
 
-    const run = async () => {
+    widget.onChartReady(async () => {
+      // Only the latest generation is allowed to draw. A superseded run bails
+      // here before touching the chart, so two runs never both render.
+      if (isStale()) return;
+
+      const chart = widget.activeChart();
+
+      // Read the CURRENT zoom window so the projection length can scale to it.
+      // `from` is a UNIX-second timestamp of the left edge of the view.
+      let visibleFromSec = 0;
+      try {
+        const vr = chart.getVisibleRange();
+        if (vr && Number.isFinite(vr.from) && Number.isFinite(vr.to) && vr.to > vr.from) {
+          visibleFromSec = vr.from;
+        }
+      } catch { /* chart not ready to report a range yet */ }
+
       // Read signals at run-time (not as a render subscription) so the effect
       // isn't re-fired by every predictive tick's new array reference.
       const predictiveSignals = useTradeStore.getState().predictiveSignals;
@@ -228,53 +247,44 @@ export function useGhostLine(
         effectiveTimeframe,
         ghostLineMode,
         predictiveSignals,
+        visibleFromSec,
       );
       if (isStale()) return;
 
       // Straight engines (OLS 'linear' / VWLR 'volume') render as a SINGLE
       // trend_line entity (anchor → end) that can never fragment or ladder.
-      // Curved engines ('curved' / 'forecast') draw the raw ~6 projection
-      // points as connected segments — a handful of dashes, not a block.
+      // Curved engines ('curved' / 'forecast') draw the raw projection points
+      // as connected segments — a handful of dashes, not a block.
       const isStraight = ghostLineMode === 'linear' || ghostLineMode === 'volume';
 
-      widget.onChartReady(async () => {
-        // Only the latest generation is allowed to draw. A superseded run bails
-        // here before touching the chart, so two runs never both render.
-        if (isStale()) return;
+      try {
+        // ALWAYS clear the currently-displayed ghost before drawing a new one.
+        // Any ids that fail to remove stay tracked and are retried next time,
+        // so nothing can silently accumulate.
+        entityIdsRef.current = removeGhostSegments(chart, entityIdsRef.current);
 
-        try {
-          const chart = widget.activeChart();
-
-          // ALWAYS clear the currently-displayed ghost before drawing a new
-          // one. Any ids that fail to remove stay tracked and are retried next
-          // time, so nothing can silently accumulate.
-          entityIdsRef.current = removeGhostSegments(chart, entityIdsRef.current);
-
-          if (points.length < 2) {
-            console.warn('[GhostLine] Not enough points:', points.length);
-            return;
-          }
-
-          // Each draw tracks its own segment ids locally. If a newer run
-          // supersedes this one mid-draw, drawGhostSegments aborts and removes
-          // whatever it drew, so a stale run cleans up after itself.
-          const ids = await drawGhostSegments(chart, points, isStraight, isStale);
-
-          if (isStale()) {
-            const failed = removeGhostSegments(chart, ids);
-            entityIdsRef.current = [...entityIdsRef.current, ...failed];
-            return;
-          }
-
-          entityIdsRef.current = [...entityIdsRef.current, ...ids];
-          console.log('[GhostLine] Ghost line ready with', ids.length, 'segments');
-        } catch (err) {
-          console.error('[GhostLine] draw failed:', err);
+        if (points.length < 2) {
+          console.warn('[GhostLine] Not enough points:', points.length);
+          return;
         }
-      });
-    };
 
-    run();
+        // Each draw tracks its own segment ids locally. If a newer run
+        // supersedes this one mid-draw, drawGhostSegments aborts and removes
+        // whatever it drew, so a stale run cleans up after itself.
+        const ids = await drawGhostSegments(chart, points, isStraight, isStale);
+
+        if (isStale()) {
+          const failed = removeGhostSegments(chart, ids);
+          entityIdsRef.current = [...entityIdsRef.current, ...failed];
+          return;
+        }
+
+        entityIdsRef.current = [...entityIdsRef.current, ...ids];
+        console.log('[GhostLine] Ghost line ready with', ids.length, 'segments');
+      } catch (err) {
+        console.error('[GhostLine] draw failed:', err);
+      }
+    });
 
     return () => {
       // Mark stale so any in-flight draw aborts and no queued run draws.
@@ -285,5 +295,5 @@ export function useGhostLine(
         entityIdsRef.current = removeGhostSegments(chart, entityIdsRef.current);
       } catch { /* widget may be removed */ }
     };
-  }, [widget, activeSymbol, effectiveTimeframe, ghostLineMode, lastBarTime, predictiveKey, pulse]);
+  }, [widget, activeSymbol, effectiveTimeframe, ghostLineMode, lastBarTime, predictiveKey, pulse, zoomPulse]);
 }
