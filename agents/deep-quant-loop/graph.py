@@ -868,6 +868,9 @@ llm = ChatOpenAI(
     openai_api_base=base_url,
     temperature=0.2,
     extra_body=_effort_extra_body(),
+    default_headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    },
     # Honor the provider's Retry-After on 429s. This transparently absorbs
     # per-minute rate/token throttles (e.g. Groq's TPM window, which resets in
     # seconds) so a single throttled turn doesn't fail the whole run. It does
@@ -964,6 +967,9 @@ def _build_profile_llm_for_model(model: str, is_fno: bool):
             openai_api_base=base_url,
             temperature=0.2,
             extra_body=_effort_extra_body(),
+            default_headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
             max_retries=int(_env_nonempty("LLM_MAX_RETRIES", default="4")),
             timeout=float(_env_nonempty("LLM_TIMEOUT_SECS", default="90")),
         )
@@ -1030,6 +1036,9 @@ def _build_readonly_llm_for_model(role_model: str):
             openai_api_base=base_url,
             temperature=0.2,
             extra_body=_effort_extra_body(),
+            default_headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
             max_retries=int(_env_nonempty("LLM_MAX_RETRIES", default="4")),
             timeout=float(_env_nonempty("LLM_TIMEOUT_SECS", default="90")),
         )
@@ -1097,6 +1106,9 @@ def _build_full_llm_for_model(role_model: str):
             openai_api_base=base_url,
             temperature=0.2,
             extra_body=_effort_extra_body(),
+            default_headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
             max_retries=int(_env_nonempty("LLM_MAX_RETRIES", default="4")),
             timeout=float(_env_nonempty("LLM_TIMEOUT_SECS", default="90")),
         )
