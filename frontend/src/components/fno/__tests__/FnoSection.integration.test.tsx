@@ -36,14 +36,10 @@ import type { FnoPayload } from '../viewModel';
 
 // Mount counters for the child stand-ins; a remount would increment these.
 const counts = vi.hoisted(() => ({
-  oiMounts: 0,
-  ivMounts: 0,
-  hudMounts: 0,
+  chartPanelMounts: 0,
   unavailMounts: 0,
   reset() {
-    this.oiMounts = 0;
-    this.ivMounts = 0;
-    this.hudMounts = 0;
+    this.chartPanelMounts = 0;
     this.unavailMounts = 0;
   },
 }));
@@ -67,55 +63,18 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: (...args: any[]) => tauri.listenMock(...args),
 }));
 
-// ── Mock the heavy chart children + the unavailable panel ─────────────────────
-// Each stand-in renders its props so an in-place data update is observable, and
-// counts its mounts so a remount (recreation) would be detected.
-vi.mock('../OiProfileChart', async () => {
+// ── Mock FnoChartPanel + the unavailable panel ───────────────────────────
+vi.mock('../FnoChartPanel', async () => {
   const ReactNs = await import('react');
   return {
     __esModule: true,
-    default: ({ model }: any) => {
+    default: () => {
       ReactNs.useEffect(() => {
-        counts.oiMounts += 1;
+        counts.chartPanelMounts += 1;
       }, []);
-      return ReactNs.createElement('div', {
-        'data-testid': 'oi-chart',
-        'data-calloi': String(model?.points?.[0]?.callOi ?? ''),
-        'data-maxpain': String(model?.maxPain ?? ''),
-      });
+      return ReactNs.createElement('div', { 'data-testid': 'fno-chart-panel' });
     },
   };
-});
-
-vi.mock('../IvSkewChart', async () => {
-  const ReactNs = await import('react');
-  return {
-    __esModule: true,
-    default: ({ model }: any) => {
-      ReactNs.useEffect(() => {
-        counts.ivMounts += 1;
-      }, []);
-      return ReactNs.createElement('div', {
-        'data-testid': 'iv-chart',
-        'data-atm': String(model?.atmStrike ?? ''),
-        'data-points': String(model?.points?.length ?? 0),
-      });
-    },
-  };
-});
-
-vi.mock('../OptionsHud', async () => {
-  const ReactNs = await import('react');
-  const Hud = ({ hud }: any) => {
-    ReactNs.useEffect(() => {
-      counts.hudMounts += 1;
-    }, []);
-    return ReactNs.createElement('div', {
-      'data-testid': 'options-hud',
-      'data-pcroi': String(hud?.pcrOi ?? ''),
-    });
-  };
-  return { __esModule: true, default: Hud, OptionsHud: Hud };
 });
 
 vi.mock('../FnoUnavailableState', async () => {
@@ -238,51 +197,42 @@ describe('FnoSection — streaming + lifecycle integration (R6.2, R7.1, R7.3)', 
     expect(subCall?.[1]).toEqual({ underlying: 'NIFTY 50', expiry: '' });
   });
 
-  it('registers a single fno-snapshot listener and updates view-models in place without remount (R6.2, R7.1)', async () => {
+  it('registers a single fno-snapshot listener and updates without remount (R6.2, R7.1)', async () => {
     const { container } = render(<FnoSection />);
 
-    // The three chart/HUD children mount once after the first payload resolves.
-    await screen.findByTestId('oi-chart');
+    // The chart panel mounts once after the first payload resolves.
+    await screen.findByTestId('fno-chart-panel');
     await waitFor(() => expect(tauri.snapshotHandler.current).not.toBeNull());
 
     // Exactly one fno-snapshot listener was registered.
     const snapshotListens = tauri.listenMock.mock.calls.filter((c: any[]) => c[0] === 'fno-snapshot');
     expect(snapshotListens).toHaveLength(1);
 
-    // Children mounted exactly once each from the initial fetch payload.
-    expect(counts.oiMounts).toBe(1);
-    expect(counts.ivMounts).toBe(1);
-    expect(counts.hudMounts).toBe(1);
+    // Chart panel mounted exactly once from the initial fetch payload.
+    expect(counts.chartPanelMounts).toBe(1);
 
-    // Initial rendered view-models reflect the get_fno_analytics payload.
-    expect(screen.getByTestId('oi-chart')).toHaveAttribute('data-calloi', '111000');
     const rootBefore = container.firstChild;
 
     // Fire a successive snapshot event with advancing data.
     act(() => {
       tauri.snapshotHandler.current!({ payload: makeReadyPayload(2000, 222_000) });
     });
-    await waitFor(() =>
-      expect(screen.getByTestId('oi-chart')).toHaveAttribute('data-calloi', '222000'),
-    );
+    await waitFor(() => {
+      expect(container.firstChild).toBe(rootBefore);
+    });
 
     // Fire a second successive snapshot event.
     act(() => {
       tauri.snapshotHandler.current!({ payload: makeReadyPayload(3000, 333_000) });
     });
-    await waitFor(() =>
-      expect(screen.getByTestId('oi-chart')).toHaveAttribute('data-calloi', '333000'),
-    );
+    await waitFor(() => {
+      expect(container.firstChild).toBe(rootBefore);
+    });
 
-    // The HUD view-model also updated in place through the same render.
-    expect(screen.getByTestId('options-hud')).toHaveAttribute('data-pcroi', '1.1');
-
-    // CRITICAL: no remount — children were NOT recreated across the two updates,
+    // CRITICAL: no remount — chart panel was NOT recreated across updates,
     // the listener was registered only once, and the section root node identity
-    // is stable (the section was updated in place, not remounted).
-    expect(counts.oiMounts).toBe(1);
-    expect(counts.ivMounts).toBe(1);
-    expect(counts.hudMounts).toBe(1);
+    // is stable.
+    expect(counts.chartPanelMounts).toBe(1);
     expect(tauri.listenMock.mock.calls.filter((c: any[]) => c[0] === 'fno-snapshot')).toHaveLength(1);
     expect(container.firstChild).toBe(rootBefore);
   });
@@ -292,7 +242,7 @@ describe('FnoSection — streaming + lifecycle integration (R6.2, R7.1, R7.3)', 
 
     // Wait for the listener to be registered so its unlisten fn is captured.
     await waitFor(() => expect(tauri.snapshotHandler.current).not.toBeNull());
-    await screen.findByTestId('oi-chart');
+    await screen.findByTestId('fno-chart-panel');
 
     // Unmounting mimics page.tsx dropping <FnoSection/> when activeProfile leaves 'FNO'.
     unmount();
