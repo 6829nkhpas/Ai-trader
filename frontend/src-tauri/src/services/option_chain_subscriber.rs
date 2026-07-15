@@ -50,47 +50,101 @@ const POOL_WAIT_SECS: u64 = 5;
 /// tick exists for that symbol or the query fails — the caller treats `None` as
 /// "spot unavailable" and skips the underlying for this iteration. This function
 /// performs a read only and never mutates QuestDB.
+/// Candidate `live_ticks` / historical symbol names to try for an underlying's
+/// spot.
+///
+/// The option-chain config uses the NFO short name ("NIFTY"), but the tick and
+/// candle feeds may store the index under its equity/index symbol ("NIFTY 50")
+/// or a Kite-prefixed form ("NSE:NIFTY 50"). Without this mapping the subscriber
+/// queried `live_ticks WHERE symbol = 'NIFTY'`, found nothing (the feed stores
+/// "NIFTY 50"), and skipped the chain forever — so index options never ingested.
+/// The raw `underlying` is always tried first; index aliases are appended so a
+/// name mismatch can no longer leave the chain permanently un-ingested. A
+/// non-index symbol is its own only candidate (behaviour unchanged).
+fn spot_symbol_candidates(underlying: &str) -> Vec<String> {
+    let mut out = vec![underlying.to_string()];
+    let mut push = |s: &str| {
+        if !out.iter().any(|e| e.eq_ignore_ascii_case(s)) {
+            out.push(s.to_string());
+        }
+    };
+    match underlying.to_uppercase().as_str() {
+        "NIFTY" | "NIFTY 50" | "NSE:NIFTY 50" => {
+            push("NIFTY 50");
+            push("NIFTY");
+            push("NSE:NIFTY 50");
+        }
+        "BANKNIFTY" | "NIFTY BANK" | "NSE:NIFTY BANK" => {
+            push("NIFTY BANK");
+            push("BANKNIFTY");
+            push("NSE:NIFTY BANK");
+        }
+        "FINNIFTY" | "NIFTY FIN SERVICE" | "NSE:NIFTY FIN SERVICE" => {
+            push("NIFTY FIN SERVICE");
+            push("FINNIFTY");
+            push("NSE:NIFTY FIN SERVICE");
+        }
+        "MIDCPNIFTY" | "NIFTY MIDCAP SELECT" => {
+            push("NIFTY MIDCAP SELECT");
+            push("MIDCPNIFTY");
+        }
+        _ => {}
+    }
+    out
+}
+
 pub async fn read_spot(pool: &PgPool, underlying: &str) -> Option<f64> {
+    let candidates = spot_symbol_candidates(underlying);
+
+    // Source 1: live_ticks (most recent last_traded_price), trying each name variant.
     let query = "SELECT last_traded_price \
                  FROM live_ticks \
                  WHERE symbol = $1 \
                  ORDER BY timestamp DESC \
                  LIMIT 1";
-
-    if let Ok(Some(row)) = sqlx::query(query).bind(underlying).fetch_optional(pool).await {
-        if let Ok(price) = row.try_get::<f64, _>("last_traded_price") {
-            if price.is_finite() && price > 0.0 {
-                return Some(price);
+    for cand in &candidates {
+        if let Ok(Some(row)) = sqlx::query(query).bind(cand).fetch_optional(pool).await {
+            if let Ok(price) = row.try_get::<f64, _>("last_traded_price") {
+                if price.is_finite() && price > 0.0 {
+                    if !cand.eq_ignore_ascii_case(underlying) {
+                        info!("[OptionChainSub] resolved spot for {} via live_ticks alias '{}': {:.2}", underlying, cand, price);
+                    }
+                    return Some(price);
+                }
             }
         }
     }
 
-    // Fallback 1: check historical_intraday
+    // Fallback 1: historical_intraday (each name variant).
     let query_intra = "SELECT close \
                        FROM historical_intraday \
                        WHERE symbol = $1 \
                        ORDER BY ts DESC \
                        LIMIT 1";
-    if let Ok(Some(row)) = sqlx::query(query_intra).bind(underlying).fetch_optional(pool).await {
-        if let Ok(price) = row.try_get::<f64, _>("close") {
-            if price.is_finite() && price > 0.0 {
-                info!("[OptionChainSub] resolved spot from historical_intraday for {}: {:.2}", underlying, price);
-                return Some(price);
+    for cand in &candidates {
+        if let Ok(Some(row)) = sqlx::query(query_intra).bind(cand).fetch_optional(pool).await {
+            if let Ok(price) = row.try_get::<f64, _>("close") {
+                if price.is_finite() && price > 0.0 {
+                    info!("[OptionChainSub] resolved spot from historical_intraday for {} (alias '{}'): {:.2}", underlying, cand, price);
+                    return Some(price);
+                }
             }
         }
     }
 
-    // Fallback 2: check historical_candles
+    // Fallback 2: historical_candles (each name variant).
     let query_candles = "SELECT close \
                          FROM historical_candles \
                          WHERE symbol = $1 \
                          ORDER BY ts DESC \
                          LIMIT 1";
-    if let Ok(Some(row)) = sqlx::query(query_candles).bind(underlying).fetch_optional(pool).await {
-        if let Ok(price) = row.try_get::<f64, _>("close") {
-            if price.is_finite() && price > 0.0 {
-                info!("[OptionChainSub] resolved spot from historical_candles for {}: {:.2}", underlying, price);
-                return Some(price);
+    for cand in &candidates {
+        if let Ok(Some(row)) = sqlx::query(query_candles).bind(cand).fetch_optional(pool).await {
+            if let Ok(price) = row.try_get::<f64, _>("close") {
+                if price.is_finite() && price > 0.0 {
+                    info!("[OptionChainSub] resolved spot from historical_candles for {} (alias '{}'): {:.2}", underlying, cand, price);
+                    return Some(price);
+                }
             }
         }
     }
