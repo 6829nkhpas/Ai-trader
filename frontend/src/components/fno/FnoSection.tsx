@@ -219,48 +219,6 @@ export default function FnoSection() {
 
   return (
     <div className="flex h-full w-full min-h-0 flex-col bg-background font-sans">
-      {/* Header: underlying / expiry selectors + live-vs-most-recent status. */}
-      <div className="flex shrink-0 items-center gap-2 border-b border-border-default/30 bg-surface px-3 py-1.5">
-        <select
-          aria-label="F&O underlying"
-          value={fnoUnderlying}
-          onChange={(e) => setFnoUnderlying(e.target.value)}
-          className="rounded-none border border-border-default/40 bg-elevated px-2 py-1 text-[11px] font-semibold text-text-primary"
-        >
-          {underlyings.map((u) => (
-            <option key={u} value={u}>
-              {u}
-            </option>
-          ))}
-        </select>
-        <select
-          aria-label="F&O expiry"
-          value={fnoExpiry}
-          onChange={(e) => setFnoExpiry(e.target.value)}
-          className="rounded-none border border-border-default/40 bg-elevated px-2 py-1 text-[11px] font-semibold text-text-primary"
-        >
-          <option value="">Nearest</option>
-          {expiries.map((x) => (
-            <option key={x} value={x}>
-              {x}
-            </option>
-          ))}
-        </select>
-        {statusLabel && (
-          <span className="ml-auto flex items-center gap-1.5 text-[10px] font-mono text-text-muted">
-            <span
-              className={`inline-block h-1.5 w-1.5 rounded-full ${
-                statusLabel.closed ? 'bg-amber-400' : 'bg-emerald-400'
-              }`}
-            />
-            <span className="uppercase tracking-wider">
-              {statusLabel.closed ? 'Most recent' : 'Live'}
-            </span>
-            {statusLabel.ts && <span>{statusLabel.ts}</span>}
-          </span>
-        )}
-      </div>
-
       {/* Historical/cached-data banner when serving a fallback snapshot. */}
       {isFallback &&
         effectiveView &&
