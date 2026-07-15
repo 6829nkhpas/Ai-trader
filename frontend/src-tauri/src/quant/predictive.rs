@@ -53,8 +53,10 @@ pub struct ProjectionPayload {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-/// Maximum lookback window for OLS regression (same as VWEPR for consistency).
-const OLS_MAX_WINDOW: usize = 60;
+/// Maximum lookback window for OLS regression. Kept identical to VWEPR's
+/// `MAX_WINDOW` (50) so every engine — OLS, VWLR and VWEPR — fits over the
+/// exact same set of bars and the three lines stay directly comparable.
+const OLS_MAX_WINDOW: usize = 50;
 
 // ── Linear OLS Regression ───────────────────────────────────────────────────
 

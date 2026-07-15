@@ -21,8 +21,15 @@ import { TIMEFRAME_MS, KITE_INTERVAL_MAP, type Timeframe } from '../utils/chartT
 
 const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
-/** How many bars to project forward. */
-const PROJECTION_BARS = 8;
+/** How many bars to project forward. Kept short so the ghost is a compact
+ *  projection off the last candle, not a long streak across the session. */
+const PROJECTION_BARS = 6;
+
+/** Lookback window (bars) for every regression engine. Kept identical to the
+ *  Rust engines (`predictive::OLS_MAX_WINDOW` and `vwepr::MAX_WINDOW`, both 50)
+ *  so the Tauri path and the pure-JS fallback fit over the same bars and agree.
+ */
+const REGRESSION_WINDOW = 50;
 
 /** A lookback bar. `high`/`low` carry OHLC so the forecaster can classify the
  *  regime (ADX + choppiness); all data sources populate them. */
@@ -488,10 +495,9 @@ export async function computeGhostPoints(
   console.log(`[GhostLine] intervalSec=${intervalSec} (map=${mapInterval}, inferred=${barInterval})`);
   if (!Number.isFinite(last.close) || last.close <= 0) return [];
 
-  // 40-bar window keeps the OLS/VWLR slope responsive to recent price action.
-  // (A 60-bar OLS on a range-bound stock is near-flat and sits invisibly on the
-  // last-price line. VWEPR/forecaster use their own shorter internal windows.)
-  const window = lookback.slice(-40);
+  // Single 50-bar window shared by every engine (OLS, VWLR, VWEPR) and by both
+  // the Rust and JS paths, so all four agree on exactly which bars are fit.
+  const window = lookback.slice(-REGRESSION_WINDOW);
   let points: { time: number; price: number }[] = [];
 
   // ── Path 1: backend predictive signal (mode-agnostic ML close) ───────
@@ -525,10 +531,14 @@ export async function computeGhostPoints(
         candles, intervalSec, projectionLength: PROJECTION_BARS,
       });
       useChartUIStore.getState().setAccelerationCoefficient(payload.acceleration_coefficient);
+      // OLS, VWLR and VWEPR all come from the single Rust engine so there is
+      // exactly ONE implementation of each. Only 'forecast' (which Rust has no
+      // equivalent for) falls through to the JS Path 3.
       const raw =
+        ghostLineMode === 'linear' ? payload.linear_points :
         ghostLineMode === 'volume' ? payload.volume_points :
         ghostLineMode === 'curved' ? payload.curved_points :
-        undefined; // 'linear' & 'forecast' → JS Path 3 (short, responsive window).
+        undefined; // 'forecast' → JS Path 3.
       if (raw?.length > 0) {
         points = raw.map((p: any) => ({ time: p.time, price: +p.value.toFixed(2) }));
         console.log('[GhostLine] Path2 Tauri:', points.length, 'points');
@@ -541,13 +551,11 @@ export async function computeGhostPoints(
   // ── Path 3: pure-JS engines ─────────────────────────────────────────
   if (points.length === 0) {
     console.log('[GhostLine] Path3: pure-JS engine, mode=', ghostLineMode);
+    // Fallback (browser preview / Rust unavailable). Every engine fits the
+    // same 50-bar `window` as the Rust path so the two agree bar-for-bar.
     const closes = window.map(c => c.close);
-    // OLS uses a shorter (20-bar) window so it tracks the RECENT trend and
-    // always shows a visible slope, instead of a near-flat 40/60-bar line that
-    // hides on the last-price line.
-    const olsCloses = closes.slice(-20);
     points =
-      ghostLineMode === 'linear'   ? olsProjection(olsCloses, last.time, intervalSec, PROJECTION_BARS) :
+      ghostLineMode === 'linear'   ? olsProjection(closes, last.time, intervalSec, PROJECTION_BARS) :
       ghostLineMode === 'volume'   ? vwlrProjection(window, last.time, intervalSec, PROJECTION_BARS) :
       ghostLineMode === 'forecast' ? forecastProjection(window, last.time, intervalSec, PROJECTION_BARS) :
       vweprProjection(window, last.time, intervalSec, PROJECTION_BARS);
@@ -567,13 +575,18 @@ export async function computeGhostPoints(
   }
 
   // ── Bound the curve so it stays a smooth continuation (no cliff) ─────
-  if (points.length > 1) {
+  // Only the CURVED engines ('curved'/'forecast') can produce a runaway cliff
+  // that needs clamping. The straight-line engines ('linear' OLS and 'volume'
+  // VWLR) must stay perfectly straight — a per-step clamp would bend them into
+  // a curve, violating the "rigid straight vector" definition — so skip it.
+  const isStraightLine = ghostLineMode === 'linear' || ghostLineMode === 'volume';
+  if (points.length > 1 && !isStraightLine) {
     const recent = window.slice(-20).map((c) => c.close);
     let sumAbs = 0;
     for (let i = 1; i < recent.length; i++) sumAbs += Math.abs(recent[i] - recent[i - 1]);
     const avgStep  = (recent.length > 1 ? sumAbs / (recent.length - 1) : 0) || Math.max(0.01, last.close * 0.0005);
-    const maxStep  = avgStep * 2.5;
-    const maxTotal = maxStep * (points.length - 1);
+    const maxStep  = avgStep * 8.0;
+    const maxTotal = maxStep * (points.length - 1) * 5.0;
     const anchorPrice = points[0].price;
     let prev = anchorPrice;
     for (let i = 1; i < points.length; i++) {
