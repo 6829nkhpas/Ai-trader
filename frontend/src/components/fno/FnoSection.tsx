@@ -15,9 +15,6 @@ import {
   type FnoViewState,
 } from './viewModel';
 import { deriveExpiryOptions, deriveUnderlyingOptions } from './selectors';
-import OiProfileChart from './OiProfileChart';
-import IvSkewChart from './IvSkewChart';
-import OptionsHud from './OptionsHud';
 import FnoUnavailableState from './FnoUnavailableState';
 import FnoServiceState from './FnoServiceState';
 import HistoricalDataBanner from './HistoricalDataBanner';
@@ -212,27 +209,10 @@ export default function FnoSection() {
       );
     }
 
-    // ready | partial — render the analytics workspace + contract price chart.
+    // ready | partial — render the contract price chart.
     return (
       <div className="flex h-full w-full min-h-0 flex-col">
-        <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-          {/* Analytics column: OI-profile / max-pain + IV-skew + Options HUD. */}
-          <div className="flex min-h-0 flex-1 flex-col border-b border-border-default/30 lg:border-b-0 lg:border-r">
-            <div className="min-h-0 flex-1">
-              <OiProfileChart model={effectiveView.oi} />
-            </div>
-            <div className="min-h-0 flex-1 border-t border-border-default/30">
-              <IvSkewChart model={effectiveView.iv} />
-            </div>
-            <div className="shrink-0 border-t border-border-default/30">
-              <OptionsHud hud={effectiveView.hud} />
-            </div>
-          </div>
-          {/* Contract price chart for the selected F&O instrument. */}
-          <div className="flex min-h-0 flex-1 flex-col">
-            <FnoChartPanel />
-          </div>
-        </div>
+        <FnoChartPanel />
       </div>
     );
   };
