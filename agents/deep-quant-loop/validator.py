@@ -31,13 +31,35 @@ from typing import Optional
 
 # ── Constants (must match the Rust constants exactly) ─────────────────────────
 
-# The minimum acceptable Risk_Reward_Ratio (reward / risk). A value exactly at
-# the boundary (2.0) passes; below 2.0 fails (R6.2).
+# The minimum acceptable Risk_Reward_Ratio (reward / risk) for the SWING /
+# INVESTOR / F&O profiles (and the safe default for any unknown profile). A value
+# exactly at the boundary (2.0) passes; below 2.0 fails (R6.2).
 MIN_RISK_REWARD: float = 2.0
+
+# The minimum Risk_Reward_Ratio for the INTRADAY profile. Intraday ranges are
+# frequently too tight for a 1:2 target to fit inside the session structure, so a
+# swing-calibrated 1:2 floor makes a defensible intraday bracket impossible and
+# forces perpetual HOLDs. The intraday floor is relaxed to 1:1.3 while the
+# stop-distance floor (``MIN_STOP_ATR_MULTIPLE``) and every other hard rule stay
+# UNCHANGED for all profiles. Mirrors the Rust ``MIN_RISK_REWARD_INTRADAY``.
+MIN_RISK_REWARD_INTRADAY: float = 1.3
 
 # The minimum stop-loss distance expressed as a multiple of ATR. A stop distance
 # exactly at ``1.5 × ATR`` passes; below fails (R6.3).
 MIN_STOP_ATR_MULTIPLE: float = 1.5
+
+
+def min_risk_reward_for_profile(profile) -> float:
+    """Resolve the minimum Risk_Reward_Ratio for a workspace ``profile``.
+
+    Returns ``MIN_RISK_REWARD_INTRADAY`` (1.5) for the INTRADAY profile (case- and
+    whitespace-insensitive) and ``MIN_RISK_REWARD`` (2.0) for SWING / INVESTOR /
+    FNO and for any unset / non-string / unrecognized profile — the safe default.
+    Pure and total; never raises. Mirrors the Rust ``min_risk_reward_for_profile``.
+    """
+    if isinstance(profile, str) and profile.strip().upper() == "INTRADAY":
+        return MIN_RISK_REWARD_INTRADAY
+    return MIN_RISK_REWARD
 
 # Tolerance applied to the leg-fraction *sum* upper bound so that a plan whose
 # fractions sum to exactly ``1.0`` is not rejected by floating-point noise (for
@@ -340,6 +362,7 @@ def validate_trade(
     atr_14: Optional[float],
     plan=None,
     min_blended_reward_to_risk: Optional[float] = None,
+    min_risk_reward: Optional[float] = None,
 ) -> ValidatorOutcome:
     """Validate a proposed/declared trade against the hard risk rules (R6.1–R6.5),
     plus the multi-leg Management_Plan checks (R5) when a ``plan`` is supplied.
@@ -431,9 +454,19 @@ def validate_trade(
             min_blended_reward_to_risk,
         )
 
-    # R6.2 — single-target risk-reward must meet the 1:2 minimum (boundary passes).
+    # R6.2 — single-target risk-reward must meet the profile-resolved minimum
+    # (boundary passes). Defaults to MIN_RISK_REWARD (2.0) when the caller passes
+    # no override, so behaviour is byte-for-byte identical to before this feature
+    # unless an INTRADAY floor (1.5) is explicitly supplied.
+    effective_min_rr = (
+        min_risk_reward
+        if isinstance(min_risk_reward, (int, float))
+        and not isinstance(min_risk_reward, bool)
+        and min_risk_reward > 0.0
+        else MIN_RISK_REWARD
+    )
     risk_reward = reward / risk
-    if risk_reward < MIN_RISK_REWARD:
+    if risk_reward < effective_min_rr:
         return ValidatorOutcome.failed(ValidatorReason.RISK_REWARD_TOO_LOW)
 
     return ValidatorOutcome.passed(risk_reward)

@@ -244,6 +244,36 @@ _OPTIONS_NUMERIC_OR_NULL_FIELDS = ("pcr_oi", "pcr_volume", "max_pain", "futures_
 # Matched case-insensitively against the upper-cased symbol.
 INDEX_UNDERLYINGS = {"NIFTY 50", "NIFTY", "BANKNIFTY"}
 
+# Map an index spot/tradingsymbol to the NFO derivative name under which its
+# option chain is actually stored in QuestDB (``option_chain_snapshots.underlying``
+# / ``option_ticks.underlying``). The ingestion/subscriber key the chain under the
+# short derivative name ("NIFTY"), while the analyzed symbol is the NSE index
+# tradingsymbol ("NIFTY 50"). Without this mapping ``get_options_analytics`` queries
+# ``underlying='NIFTY 50'`` and finds 0 rows ("no chain snapshot") even though the
+# data exists under "NIFTY". Mirrors the Rust ``resolve_nfo_underlying_name``.
+_OPTIONS_CHAIN_NAME = {
+    "NIFTY 50": "NIFTY",
+    "NIFTY50": "NIFTY",
+    "NIFTY": "NIFTY",
+    "NIFTY BANK": "BANKNIFTY",
+    "BANKNIFTY": "BANKNIFTY",
+    "NIFTY FIN SERVICE": "FINNIFTY",
+    "FINNIFTY": "FINNIFTY",
+    "NIFTY MIDCAP SELECT": "MIDCPNIFTY",
+    "MIDCPNIFTY": "MIDCPNIFTY",
+}
+
+
+def resolve_options_chain_name(underlying) -> str:
+    """Map an index tradingsymbol to the NFO derivative name its option chain is
+    stored under (e.g. ``"NIFTY 50"`` -> ``"NIFTY"``); return a stock / unknown
+    name unchanged. Pure and total; never raises. Mirrors the Rust
+    ``resolve_nfo_underlying_name`` so the options READ matches how the chain is
+    WRITTEN by the ingestion subscriber."""
+    if not isinstance(underlying, str) or not underlying.strip():
+        return underlying if isinstance(underlying, str) else ""
+    return _OPTIONS_CHAIN_NAME.get(underlying.strip().upper(), underlying.strip())
+
 
 def classify_symbol_class(symbol) -> str:
     """Resolve the Symbol_Class of the analyzed symbol.
@@ -1880,7 +1910,11 @@ def get_options_analytics(symbol: str, expiry: str = "",
         #    An empty expiry means "nearest available expiry" — the engine treats a
         #    falsy expiry as the nearest chain.
         expiry_or_none = expiry.strip() if isinstance(expiry, str) else ""
-        analytics = options.compute_options_analytics(underlying, expiry_or_none)
+        # Map the resolved underlying to the NFO derivative name the chain is
+        # stored under (e.g. "NIFTY 50" -> "NIFTY"); the ingestion writes snapshots
+        # under the short name, so the READ must match or it finds 0 rows.
+        chain_query_name = resolve_options_chain_name(underlying)
+        analytics = options.compute_options_analytics(chain_query_name, expiry_or_none)
 
         # 3b. Own-chain fallback: if an own-chain analysis of a NON-index stock
         #     comes back unavailable (the stock's own chain has no snapshot — e.g.
@@ -1900,7 +1934,9 @@ def get_options_analytics(symbol: str, expiry: str = "",
                 and fallback_underlying.strip()
                 and fallback_underlying.strip().upper() != sym_up
             ):
-                fb = options.compute_options_analytics(fallback_underlying, expiry_or_none)
+                fb = options.compute_options_analytics(
+                    resolve_options_chain_name(fallback_underlying), expiry_or_none
+                )
                 if isinstance(fb, dict) and not fb.get("unavailable"):
                     print(
                         f"[Tool Info] <<< get_options_analytics: own-chain for "
@@ -3048,6 +3084,7 @@ def declare_trade(
     take_profit: Optional[float] = None,
     atr_14: Optional[float] = None,
     management_plan: Optional[dict] = None,
+    config: RunnableConfig = None,
 ) -> str:
     """
     Declares the final trading decision for the current analysis session and
@@ -3059,7 +3096,10 @@ def declare_trade(
       - all three levels present and finite,
       - direction consistency (BUY: stop_loss < entry < take_profit;
         SELL: take_profit < entry < stop_loss),
-      - Risk:Reward >= 1:2,
+      - Risk:Reward >= the run's profile minimum (1:1.3 for the INTRADAY
+        workspace; 1:2 for SWING / INVESTOR / F&O). On an INTRADAY run a bracket
+        with reward:risk >= 1.3 WILL be accepted — do NOT self-reject it believing
+        1:2 is required.
       - stop distance >= 1.5 x ATR (when atr_14 is supplied).
     If validation fails the trade is REJECTED (not committed) and you MUST revise
     the levels and call declare_trade again. A HOLD may omit the numeric levels.
@@ -3100,6 +3140,27 @@ def declare_trade(
     print(f"[Tool Detail] Setup Validation: {setup_validation}")
     print(f"[Tool Detail] Execution Plan: {execution_plan}")
 
+    # ── Profile-aware minimum Risk_Reward floor ──────────────────────────────
+    # Resolve the run's workspace profile from the injected RunnableConfig
+    # (main.py stamps it into config["configurable"]["profile"]). The INTRADAY
+    # profile relaxes the R:R floor to 1:1.5 (tight intraday ranges cannot fit a
+    # swing-calibrated 1:2 target); every other profile keeps 1:2. The
+    # stop-distance floor and all other hard rules are UNCHANGED. Resolution is
+    # total and never raises; a missing profile falls back to the 1:2 default.
+    profile = None
+    try:
+        if config is not None:
+            configurable = config.get("configurable", {}) if hasattr(config, "get") else {}
+            raw_profile = configurable.get("profile") if isinstance(configurable, dict) else None
+            if isinstance(raw_profile, str) and raw_profile.strip():
+                profile = raw_profile.strip()
+    except Exception:
+        profile = None
+    min_rr = validator.min_risk_reward_for_profile(profile)
+    # Human-readable "1:X" form for the rejection guidance so the model revises
+    # toward the floor that actually applies to THIS profile (e.g. 1:1.5 intraday).
+    min_rr_display = f"1:{min_rr:g}"
+
     # ── Management_Plan gate (Requirement 4) ─────────────────────────────────
     # When a management_plan is supplied, parse it into a Trade_Manager
     # ManagementPlan (reusing trade_manager.plan_from_json) and run the pure
@@ -3130,6 +3191,8 @@ def declare_trade(
             levels,
             atr_14,
             plan=plan,
+            min_blended_reward_to_risk=min_rr,
+            min_risk_reward=min_rr,
         )
         if not outcome.is_pass():
             reason = outcome.reason
@@ -3141,7 +3204,8 @@ def declare_trade(
                 f"because '{reason.message}'. Revise the management plan (leg fractions in "
                 f"(0.0, 1.0] summing to <= 1.0, scale-out targets ordered on the profit side, "
                 f"breakeven strictly between entry and the first target, and the blended "
-                f"Risk:Reward at/above the minimum), then call declare_trade again."
+                f"Risk:Reward at/above the {min_rr_display} minimum for this profile), then "
+                f"call declare_trade again."
             )
 
     # Persist the final decision to the Rust tool server, which runs the
@@ -3159,6 +3223,10 @@ def declare_trade(
             "stop_loss": stop_loss,
             "take_profit": take_profit,
             "atr_14": atr_14,
+            # Forward the run's profile so the authoritative Rust Trade_Validator
+            # resolves the SAME minimum Risk_Reward floor (INTRADAY 1:1.5, else
+            # 1:2). Omitted-friendly on the Rust side (serde default None -> 1:2).
+            "profile": profile,
         }
         # Forward the management plan alongside the base bracket; the Rust server
         # ignores fields it does not consume, so this is safe and keeps the
@@ -3180,7 +3248,8 @@ def declare_trade(
             return (
                 f"TRADE_REJECTED: the Trade_Validator rejected this {action} because "
                 f"'{reason}'. Revise the entry/stop_loss/take_profit so Risk:Reward "
-                f">= 1:2 and the stop is >= 1.5x ATR, then call declare_trade again."
+                f">= {min_rr_display} (the minimum for this profile) and the stop is "
+                f">= 1.5x ATR, then call declare_trade again."
             )
     except Exception as e:
         # Don't fail the agent run if persistence fails — the JSON is still

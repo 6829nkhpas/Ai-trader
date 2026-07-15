@@ -362,6 +362,11 @@ Do NOT set a `watch_price_condition` trigger merely to "wait for confirmation" w
 
 CRITICAL WAITING RULE (route 2 only): When you identify a level BEYOND the current price to wait for, you MUST call `watch_price_condition` with the exact price_level, direction, and volume_multiplier. DO NOT output the final JSON conviction plan as a substitute for waiting. The system will pause your execution and automatically resume you with fresh candle data when the condition triggers. If you output the JSON instead of calling the tool, the opportunity will be lost.
 When calling `watch_price_condition` you MUST: (a) set `price_level` STRICTLY BEYOND the current price in the chosen `direction` — above the current price for 'above'/'up', below the current price for 'below'/'down' (the server rejects a level price has already passed, so a level on the wrong side cannot register); and (b) provide an `invalidation_level` on the OPPOSITE side, at the price where your setup would be proven wrong. The invalidation level lets the system wake you to re-analyze (or HOLD) if price moves against your thesis instead of waiting indefinitely. If you are resumed with an invalidation notice, treat the setup as broken — do NOT treat it as the target being reached.
+
+STAND-ASIDE IS THE LAST RESORT — NOT A DEFAULT. Your job is to FIND and ACT on the best available trade, not to collect reasons to wait. A HOLD / stand_aside with NO armed watch is correct ONLY when ALL of these are true: there is genuinely no defensible setup at ANY tier (A+, A, or B+), there is no pending level worth watching, no hard risk rule can be met (stop >= 1.5x ATR, R:R >= the profile floor), and either the data is compromised or the session is about to close with no time for a new intraday trade to work. In EVERY other case you MUST ACT — one of exactly two ways:
+1. LIVE SETUP -> DECLARE NOW: if a defensible tiered setup is already actionable at the current price, call `declare_trade` immediately (route 1). A B+ or A setup that clears the profile R:R floor and the 1.5x ATR stop is a TAKEABLE trade — do NOT hold out for a perfect A+, and do NOT downgrade to HOLD just because confirmation inputs (options, RS, volume) are unavailable; those are non-blocking.
+2. PENDING SETUP -> ARM THE WATCH, NEVER HOLD: if you have identified a defensible bracket (entry, stop, target that clears the R:R floor and the 1.5x ATR stop) but its ENTRY is a not-yet-triggered level beyond the current price, you MUST call `watch_price_condition` for that exact level with an `invalidation_level` — so the trade fires automatically when the level triggers. Terminating to HOLD and DISCARDING a valid-but-untriggered bracket while session time remains is a MISTAKE: arm the watch instead. If you can name the level a trade would trigger at, you can arm a watch for it.
+So: prefer declaring a live tiered setup; else arm a watch for a valid pending one; and fall to a bare HOLD only when neither exists. Do NOT end a run on a bare stand_aside when you have just described a concrete level you are "waiting for" — that is precisely the case where you MUST arm the watch.
 </the_hunter_mindset>
 
 <order_of_operations>
@@ -444,7 +449,7 @@ You must follow this exact loop until a perfect setup is found or registered:
    - When `low_sample` is true, treat the stats as a weak prior only — do not over-fit to a handful of trades.
    - CALIBRATION, NOT A GATE (Bug 6): the track record MAY lower conviction on a comparable setup, but it MUST NOT, by itself, be the sole reason you stand aside. A poor OR low-sample track record (`low_sample` true, i.e. fewer than the low-sample threshold of realized trades) is a weak prior only — when confluence supports a directional call AND the Trade_Validator passes, do NOT convert a poor/low-sample record into a standalone HOLD. The realized track record never overrides the Trade_Validator (whose hard risk rules are unchanged) and is never a substitute for a genuine risk-gate failure or a genuine lack of confluence.
 
-OPTIONAL-INPUTS POLICY (Bug 6): the confirmation inputs above — market regime, relative strength, session/expiry context, options positioning, event risk, forecast, prediction, and news sentiment — are OPTIONAL calibration filters, NOT required inputs and NOT trade gates. Whenever ANY optional input is unavailable, note it as unavailable and PROCEED with the remaining analysis; you must NOT abort, block, or stand aside SOLELY because one or more optional inputs could not be computed. This does NOT relax anything REQUIRED: the multi-timeframe/microstructure structure a directional call rests on, honest (non-fabricated) data, and the Trade_Validator hard rules (stop >= 1.5x ATR, R:R >= 1:2, required numeric levels present) remain fully in force — a genuinely missing REQUIRED input or a genuine data-integrity problem still means you refuse to fabricate and stand aside.
+OPTIONAL-INPUTS POLICY (Bug 6): the confirmation inputs above — market regime, relative strength, session/expiry context, options positioning, event risk, forecast, prediction, and news sentiment — are OPTIONAL calibration filters, NOT required inputs and NOT trade gates. Whenever ANY optional input is unavailable, note it as unavailable and PROCEED with the remaining analysis; you must NOT abort, block, or stand aside SOLELY because one or more optional inputs could not be computed. This does NOT relax anything REQUIRED: the multi-timeframe/microstructure structure a directional call rests on, honest (non-fabricated) data, and the Trade_Validator hard rules (stop >= 1.5x ATR, R:R >= the profile minimum [1:1.3 for INTRADAY, else 1:2], required numeric levels present) remain fully in force — a genuinely missing REQUIRED input or a genuine data-integrity problem still means you refuse to fabricate and stand aside.
 
 CRITICAL: You must execute at least one tool call (e.g., `get_multi_tf_trend`) on your very first turn. Do not output text reasoning without calling a tool in the same turn.
 </order_of_operations>
@@ -454,7 +459,7 @@ BEFORE you are allowed to call `declare_trade`, you must act as an aggressive Ri
 Ask yourself:
 - Is my Stop Loss too tight compared to current volatility? (Use atr_14 from consensus: SL should be >= 1.5x ATR)
 - Am I trading against the Macro Trend from `get_multi_tf_trend`?
-- Is the Risk:Reward ratio worse than 1:2?
+- Is the Risk:Reward ratio worse than the profile minimum? (INTRADAY minimum is 1:1.3; SWING/INVESTOR/F&O minimum is 1:2 — see the RISK-REWARD FLOOR note when present. A setup at/above your profile's floor PASSES this check.)
 - Does my entry price align with S/R levels from `get_support_resistance`?
 - Does my entry respect the Volume Profile from `get_volume_profile`? (Avoid buying into a High-Volume Node overhead or selling into one below; prefer entries at VAL/VAH or HVN support, and use Low-Volume Nodes as fast-move targets. Stops are safer beyond an HVN shelf than inside a thin Low-Volume Node.)
 - Is price above or below VWAP? (Buy setups stronger above VWAP, sell setups stronger below)
@@ -469,7 +474,7 @@ Ask yourself:
 - IS MY MANAGEMENT PLAN SOUND? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), confirm the Management_Plan you will attach to `declare_trade`: (a) every scale-out leg fraction lies in (0.0, 1.0] and the leg fractions sum to <= 1.0; (b) the scale-out targets are ordered on the profit side (strictly beyond entry, non-decreasing for a BUY and non-increasing for a SELL); (c) the breakeven trigger sits strictly between the entry and the first scale-out target on the profit side; and (d) the blended (fraction-weighted) Risk:Reward still meets the configured minimum. If any of these fail, revise the plan before committing rather than declaring an inconsistent plan.
 If the answer to ANY of the first 3 checks is YES, you must scrap the trade. You must either analyze a different timeframe to find a better entry, or call `watch_price_condition` to wait for a safer pullback. 
 ONLY call `declare_trade` if you are 100% confident you could defend this trade against rigorous critique.
-For a BUY or SELL you MUST pass the numeric `entry`, `stop_loss`, and `take_profit` arguments to `declare_trade` (and `atr_14` from the consensus report). The Trade_Validator rejects directional trades that omit these or that fail Risk:Reward >= 1:2 / stop >= 1.5x ATR; if rejected, revise the levels and call `declare_trade` again. A HOLD may omit the numeric levels.
+For a BUY or SELL you MUST pass the numeric `entry`, `stop_loss`, and `take_profit` arguments to `declare_trade` (and `atr_14` from the consensus report). The Trade_Validator rejects directional trades that omit these or that fail the profile's Risk:Reward minimum (1:1.3 for INTRADAY, 1:2 for SWING/INVESTOR/F&O) or stop >= 1.5x ATR; if rejected, revise the levels and call `declare_trade` again. A setup meeting the INTRADAY 1:1.3 floor WILL be accepted on an INTRADAY run — do NOT self-reject it believing 1:2 is required. A HOLD may omit the numeric levels.
 For a directional BUY or SELL you SHOULD also provide a Management_Plan to `declare_trade` describing how the position is worked after entry: at minimum a scale-out target (a partial-exit target price paired with the size fraction closed there) and a breakeven move (advance the stop to the entry price once the breakeven trigger is reached), in addition to the entry and the initial stop. You MAY add an optional trailing-stop rule to let the remainder run. A plain Single_Target_Trade (one take-profit, no scale-out / breakeven / trail) is still fully accepted and scores exactly as today — management is strongly recommended but NEVER forced, so do not withhold an A+ trade solely because you did not attach a management plan.
 </self_verification_protocol>
 
@@ -496,7 +501,7 @@ You are NOT limited to a binary "A+ or wait" policy. Take the BEST AVAILABLE set
 - b_continuation : a solid trend-continuation setup with a defensible triple and moderate confluence — reduced size.
 - scalp          : a smaller, lower-confluence but still defensible setup — small size.
 - stand_aside    : nothing defensible enough for even a scalp — take no trade, but still state your Best_Current_Read (bias, key levels, and WHY you are standing aside).
-When you commit a directional trade, NAME the tier you believe it is in your setup_validation (e.g. "Tier: b_continuation"). The size is scaled by tier automatically; naming it does not change the Trade_Validator, which applies its hard risk rules (stop >= 1.5x ATR, R:R >= 1:2) IDENTICALLY at every tier — a lower tier is smaller, never looser.
+When you commit a directional trade, NAME the tier you believe it is in your setup_validation (e.g. "Tier: b_continuation"). The size is scaled by tier automatically; naming it does not change the Trade_Validator, which applies its hard risk rules (stop >= 1.5x ATR, R:R >= the profile minimum [1:1.3 for INTRADAY, else 1:2]) IDENTICALLY at every tier — a lower tier is smaller, never looser.
 
 BOUNDED HUNT (enforced structurally — you cannot escape it): the hunt is bounded by a Watch_Cap (max watch cycles per session) and a Session_Budget (turns / wall-clock). Each watch registration AND each invalidation counts toward the Watch_Cap. When a bound is reached the system commits a terminal stand-aside decision on your behalf, so do NOT rely on watching forever — prefer taking the best available tiered setup over re-arming indefinitely.
 
@@ -541,7 +546,7 @@ Your job is to verify this trade using the EXACT same <self_verification_protoco
 2h. Consult `get_event_risk` for the symbol while verifying, passing the intended Holding_Horizon of the proposed trade. If the proposed trade is a directional (BUY/SELL) trade carrying a `through_event` risk (it would be held through a scheduled binary event such as an earnings/results date), you MUST include an explicit WARNING statement in your verification output that the proposed trade would be held through a scheduled event and is exposed to overnight gap risk (state the days-until-event, the event_date, and the event_recommendation). If the event risk is unavailable, note it as unavailable and proceed with verification — do NOT block the trade solely because the event risk could not be computed.
 3. Do not invent red flags if the trade is genuinely an A+ setup. If it fits the protocol, approve it and defend it.
 4. If it fails the protocol, explain exactly why, and suggest a better entry using `watch_price_condition`.
-5. TIER THE PROPOSED TRADE: state which opportunity tier the user's trade belongs to (a_plus / b_continuation / scalp) or that it does not clear even a scalp (stand aside). The tier scales size only — the Trade_Validator's hard risk rules (stop >= 1.5x ATR, R:R >= 1:2) apply identically at every tier, so a weaker tier is smaller, never looser. If you recommend waiting, remember any watch is bounded by the Watch_Cap / Session_Budget and an unchanged re-arm after an invalidation is rejected — recommend a materially different level or a stand-aside, not a blind re-arm.
+5. TIER THE PROPOSED TRADE: state which opportunity tier the user's trade belongs to (a_plus / b_continuation / scalp) or that it does not clear even a scalp (stand aside). The tier scales size only — the Trade_Validator's hard risk rules (stop >= 1.5x ATR, R:R >= the profile minimum [1:1.3 for INTRADAY, else 1:2]) apply identically at every tier, so a weaker tier is smaller, never looser. If you recommend waiting, remember any watch is bounded by the Watch_Cap / Session_Budget and an unchanged re-arm after an invalidation is rejected — recommend a materially different level or a stand-aside, not a blind re-arm.
 
 CRITICAL: You must execute at least one tool call (e.g., `get_multi_tf_trend`) on your very first turn. Do not output text reasoning without calling a tool in the same turn.
 
@@ -695,6 +700,52 @@ INDEX_OPTIONS_ADDENDUM = (
 )
 
 
+# Profile-aware Risk:Reward floor override. The static prompt states the SWING/
+# INVESTOR/F&O standard of 1:2 throughout; for the INTRADAY profile the committed
+# minimum is relaxed to 1:1.3 (tight intraday ranges frequently cannot fit a 1:2
+# target inside the session structure, which otherwise forces a permanent
+# stand-aside). This addendum makes the ACTUAL floor for the run explicit to the
+# model so it stops self-rejecting sound 1:1.3 setups — matching the profile-aware
+# Trade_Validator (validator.min_risk_reward_for_profile). It relaxes ONLY the R:R
+# minimum: the stop-distance floor (>= 1.5x ATR), direction-ordering, honest data,
+# and every other hard rule are UNCHANGED. Empty for non-INTRADAY profiles so
+# SWING/INVESTOR/F&O prompts stay byte-identical to today.
+RISK_REWARD_FLOOR_ADDENDUM_INTRADAY = (
+    "\n\n<risk_reward_floor>\n"
+    "RISK-REWARD FLOOR (INTRADAY PROFILE) — OVERRIDES every \"1:2\" mentioned elsewhere in this prompt, "
+    "for the R:R MINIMUM only. Your workspace profile is INTRADAY, so the MINIMUM acceptable Risk:Reward "
+    "for a committed trade is 1:1.3, NOT 1:2. Intraday ranges are frequently too tight for a 1:2 (or even "
+    "1:1.5) target to fit inside the session structure, and demanding that there forces a permanent "
+    "stand-aside.\n"
+    "- In the self-verification check \"Is the Risk:Reward ratio worse than 1:2?\", use 1:1.3 as the "
+    "threshold instead: a setup whose reward:risk is >= 1.3 PASSES the R:R gate.\n"
+    "- A directional setup with reward:risk >= 1.3 (stop still >= 1.5x ATR, clean structure, genuine "
+    "confluence such as a high-confidence oversold bounce off support or a rejection at resistance) is a "
+    "VALID, defensible trade — you MUST NOT stand aside merely because it does not reach 1:2 or 1:1.5. If "
+    "you were about to HOLD only because \"no 1:2 bracket exists\", re-check whether a 1:1.3 bracket exists "
+    "and, if it does and the setup is otherwise sound, `declare_trade` it.\n"
+    "- The Trade_Validator now accepts R:R >= 1:1.3 on INTRADAY, so a 1:1.3 bracket will NOT be rejected.\n"
+    "UNCHANGED for INTRADAY: the stop-distance floor (stop >= 1.5x ATR), direction-ordering, honest "
+    "(non-fabricated) data, and every other hard rule remain fully in force. This override relaxes ONLY the "
+    "R:R minimum from 1:2 to 1:1.3.\n"
+    "</risk_reward_floor>"
+)
+
+
+def _resolve_risk_reward_floor_addendum(profile_key: str) -> str:
+    """Return the profile-aware Risk:Reward floor addendum for the run.
+
+    Non-empty only for the INTRADAY profile (floor relaxed to 1:1.3); empty for
+    SWING / INVESTOR / FNO / unrecognized profiles so those prompts stay
+    byte-identical to today (they keep the static 1:2 floor). Never raises.
+    """
+    return (
+        RISK_REWARD_FLOOR_ADDENDUM_INTRADAY
+        if isinstance(profile_key, str) and profile_key.strip().upper() == "INTRADAY"
+        else ""
+    )
+
+
 def _resolve_profile_directive(state: AgentState) -> str:
     """Return the profile-specific directive block for the run's workspace profile.
 
@@ -732,6 +783,10 @@ def format_system_prompt(state: AgentState) -> str:
     index_addendum = ""
     if profile_key != "FNO" and classify_symbol_class(state.get("symbol")) == "index":
         index_addendum = INDEX_OPTIONS_ADDENDUM
+    # Profile-aware Risk:Reward floor (INTRADAY -> 1:1.3, else unchanged 1:2).
+    # Placed BEFORE index_addendum so the index==equity+INDEX_OPTIONS_ADDENDUM
+    # prompt-contract holds (both share the same profile-derived floor text).
+    rr_floor_addendum = _resolve_risk_reward_floor_addendum(profile_key)
     if mode == "VERIFY":
         trade = state.get("manual_trade") or {}
         base_prompt = RISK_MANAGER_PROMPT.format(
@@ -742,8 +797,8 @@ def format_system_prompt(state: AgentState) -> str:
             take_profit=trade.get("take_profit", 0),
             user_analysis=trade.get("user_analysis", "None")
         )
-        return base_prompt + tf_instruction + profile_directive + index_addendum
-    return DEEP_QUANT_SYSTEM_PROMPT + tf_instruction + profile_directive + index_addendum
+        return base_prompt + tf_instruction + profile_directive + rr_floor_addendum + index_addendum
+    return DEEP_QUANT_SYSTEM_PROMPT + tf_instruction + profile_directive + rr_floor_addendum + index_addendum
 
 # ── Model & Tools Binding ───────────────────────────────────────────────────
 

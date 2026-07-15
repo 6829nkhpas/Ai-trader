@@ -136,6 +136,26 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None)
     yield format_sse(RUN_STARTED, build_run_started_event(thread_id))
 
     config = {"configurable": {"thread_id": thread_id}}
+    # Stamp the run's workspace profile into the tool config so profile-aware
+    # tools (e.g. declare_trade's Trade_Validator R:R floor: INTRADAY 1:1.5 vs
+    # 1:2 elsewhere) can resolve it. For a fresh /run the profile rides on the
+    # initial state; for a /resume or /qa turn it is read back from the persisted
+    # graph state so the same floor applies after a watcher wakes the agent.
+    # Guarded and additive: any failure leaves the config exactly as before.
+    try:
+        run_profile = None
+        if isinstance(graph_input, dict):
+            run_profile = graph_input.get("profile")
+        if not (isinstance(run_profile, str) and run_profile.strip()):
+            persisted = graph.get_state(config)
+            values = getattr(persisted, "values", None)
+            if isinstance(values, dict):
+                run_profile = values.get("profile")
+        if isinstance(run_profile, str) and run_profile.strip():
+            config["configurable"]["profile"] = run_profile.strip()
+    except Exception as _profile_err:  # noqa: BLE001 - never break the run on this
+        print(f"[main] WARN: could not resolve run profile for tool config ({_profile_err}).")
+
     target_input = resume_command if resume_command is not None else graph_input
 
     try:
