@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useMemo } from 'react';
-import { Zap, Loader2, Shield, ChevronDown } from 'lucide-react';
+import { Zap, Loader2, Shield, ChevronDown, Cpu } from 'lucide-react';
 import { useQuantStore, isActionableTrade } from '../../store/useQuantStore';
 import type { StreamEventPayload } from '../../store/useQuantStore';
 import { useTradeStore } from '../../store/useTradeStore';
@@ -9,6 +9,7 @@ import { useChartUIStore } from '../../store/useChartUIStore';
 import { listen } from '@tauri-apps/api/event';
 import AgentTerminal from './AgentTerminal';
 import TradeQaPanel from './TradeQaPanel';
+import ModelSelector from './deep-quant/ModelSelector';
 import { useAuthStore } from '../../store/useAuthStore';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -55,6 +56,8 @@ export default function DeepQuantPanel() {
     reasoningSteps,
     sessionStatus,
     currentThreadId,
+    selectedModel,
+    setSelectedModel,
   } = useQuantStore();
 
   // Register the deep-quant-stream listener at the PANEL level so it is mounted
@@ -341,12 +344,18 @@ export default function DeepQuantPanel() {
           </>
         )}
 
+        {/* ── Model Selector Row ── */}
+        <div className="flex items-center justify-between gap-2 mt-1.5">
+          <span className="text-[9px] font-bold uppercase tracking-wider text-text-muted select-none">Model</span>
+          <ModelSelector value={selectedModel} onChange={setSelectedModel} disabled={isAnalyzing} />
+        </div>
+
         <p className="text-[9px] text-text-muted/50 text-center mt-1.5">
           {symbol} • {activeTimeframe} • {!dataReady
             ? 'Loading candle data from QuestDB…'
             : insufficientData
               ? `⚠ Only ${symbolCandleCount} candles — may reduce accuracy`
-              : `${symbolCandleCount} candles • Consensus + News → DeepSeek AI`}
+              : `${symbolCandleCount} candles`}
         </p>
       </div>
 

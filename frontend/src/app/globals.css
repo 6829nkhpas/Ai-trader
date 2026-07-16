@@ -28,6 +28,11 @@
   --background: var(--bg-main);
   --foreground: var(--text-primary);
 
+  /* Reasoning green custom tokens */
+  --reasoning-green-300: #86efac;
+  --reasoning-green-400: #4ade80;
+  --reasoning-green-500: #22c55e;
+
   /* Shadow tokens — calm, professional depth */
   --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.06), 0 1px 2px 0 rgba(0, 0, 0, 0.04);
   --shadow-md:
@@ -53,6 +58,11 @@
   --chart-grid: var(--border-default);
   --background: var(--bg-main);
   --foreground: var(--text-primary);
+
+  /* High contrast reasoning greens for light background */
+  --reasoning-green-300: #15803d;
+  --reasoning-green-400: #166534;
+  --reasoning-green-500: #14532d;
 }
 
 @theme inline {
@@ -79,6 +89,11 @@
   --color-status-warning: var(--status-warning);
   --color-status-error: var(--status-error);
   --font-sans: var(--font-inter);
+
+  /* Register reasoning green theme tokens */
+  --color-reasoning-green-300: var(--reasoning-green-300);
+  --color-reasoning-green-400: var(--reasoning-green-400);
+  --color-reasoning-green-500: var(--reasoning-green-500);
 }
 
 html,
