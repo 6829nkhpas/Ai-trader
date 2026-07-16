@@ -673,9 +673,36 @@ function applyStreamEvent(session: QuantSession, payload: StreamEventPayload): Q
     case 'TEXT_MESSAGE': {
       const content = data?.content || '';
       if (!content) return session;
+
+      const steps = [...session.reasoningSteps];
+      const lastIdx = steps.length - 1;
+
+      if (lastIdx >= 0 && steps[lastIdx].type === 'message') {
+        const lastStep = steps[lastIdx];
+        
+        // Fast O(1) check to avoid catastrophic regex backtracking on long streams
+        const isJsonDecision = lastStep.content.trim().startsWith('{');
+
+        if (!isJsonDecision) {
+          steps[lastIdx] = {
+            ...lastStep,
+            content: lastStep.content + content,
+            timestamp: Date.now(),
+          };
+          return {
+            ...session,
+            reasoningSteps: steps,
+            updatedAt: Date.now(),
+          };
+        }
+      }
+
       return {
         ...session,
-        reasoningSteps: [...session.reasoningSteps, { id: _newStepId(), type: 'message', content, timestamp: Date.now() }],
+        reasoningSteps: [
+          ...session.reasoningSteps,
+          { id: _newStepId(), type: 'message', content, timestamp: Date.now() },
+        ],
         updatedAt: Date.now(),
       };
     }
