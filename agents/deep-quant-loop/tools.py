@@ -3018,22 +3018,38 @@ def watch_price_condition(
             "Setup INVALIDATED: price moved to the invalidation level AGAINST the "
             "setup before reaching the watched target. The target condition was NOT "
             "met — do NOT treat this as the level being reached. Run a brief "
-            f"post-mortem, then re-check ONLY: {recheck_str}. Do NOT blindly re-arm "
-            "the SAME thesis (an unchanged re-arm is rejected) — change the "
-            "structure / timeframe / tier, or stand aside. Invalidation candle "
-            f"details: {candle}"
+            f"post-mortem, then re-check ONLY: {recheck_str}. Then choose the BEST "
+            "action for the CURRENT market — do NOT blindly re-arm the SAME thesis (an "
+            "unchanged re-arm is rejected): (a) if a defensible LIVE trade now exists "
+            "at the current price (a chart-pattern / multi-timeframe / forecast-backed "
+            "setup that clears the profile R:R floor and the 1.5x ATR stop), DECLARE it "
+            "now with declare_trade; (b) re-arm a DIFFERENT structure / timeframe / "
+            "tier / level; or (c) stand aside only if none of these hold. Invalidation "
+            f"candle details: {candle}"
         )
 
     if kind == opportunity.RESUME_HEARTBEAT:
-        # A bounded mid-wait pulse: NOT the target being reached. Cheaply re-check
-        # whether the setup is developing or decaying, then re-arm the same watch
-        # to keep waiting, adapt to a different level/tier, or stand aside (R5.3).
+        # A bounded mid-wait pulse: NOT the target being reached. This is the model's
+        # chance to ADAPT — take a live trade that now exists, fix a mispriced level,
+        # switch strategy, keep waiting, or stand aside (R5.3).
         return (
-            "Heartbeat check (mid-wait pulse): the watched target was NOT reached — "
-            "do NOT treat this as the level being met. Cheaply re-check ONLY: "
-            f"{recheck_str}, then decide: keep waiting (the watch is still armed), "
-            "adapt to a different level/tier, or stand aside. Current candle "
-            f"details: {candle}"
+            "Heartbeat check (mid-wait pulse): the watched target was NOT reached — do "
+            "NOT treat this as the level being met. This pulse is your chance to ADAPT, "
+            "not merely to keep waiting. Cheaply re-check ONLY: "
+            f"{recheck_str}. Then choose the BEST action for the market RIGHT NOW: "
+            "(a) TAKE A LIVE TRADE — if a defensible setup is now actionable at the "
+            "current price (chart patterns aligned across timeframes, multi-TF trend, "
+            "a probabilistic forecast edge) that clears the profile R:R floor and the "
+            "1.5x ATR stop, DECLARE it now with declare_trade instead of continuing to "
+            "wait; you do NOT need this specific watched level to fire to take a good "
+            "trade; (b) FIX A MISPRICED LEVEL — if your watched level was set too far "
+            "above/below where price is actually trading (so it may never trigger), "
+            "re-arm a tighter, realistic level or a different timeframe/tier; (c) SWITCH "
+            "STRATEGY — if the original thesis is decaying, pursue a different setup; "
+            "(d) keep waiting only if the level is still close and realistic; (e) stand "
+            "aside only if genuinely nothing is actionable. Prefer taking a good live "
+            f"trade over waiting indefinitely for a level that is not being hit. Current "
+            f"candle details: {candle}"
         )
 
     return (

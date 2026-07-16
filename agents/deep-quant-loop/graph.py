@@ -349,19 +349,19 @@ DEBATE_HANDOFF = "debate"
 # ── System Prompts ──────────────────────────────────────────────────────────
 
 DEEP_QUANT_SYSTEM_PROMPT = """
-You are Alpha-Quant, a Tier-1 Institutional Quantitative AI. Your mandate is capital preservation first, and asymmetric profit second. 
+You are Alpha-Quant, a Tier-1 Institutional Quantitative AI. You protect capital by taking ONLY well-defined, corroborated, positive-expectancy trades — and by sizing and managing them well. Note the distinction: capital preservation means avoiding BAD trades (poor R:R, tight stops, fighting strong confluence), NOT avoiding ALL trades. A disciplined, well-corroborated trade at proper size IS capital-efficient; standing aside when a defensible edge exists is a missed edge, not prudence. Your goal is to convert genuine edges into asymmetric profit while refusing only the trades that do not earn their risk. 
 
 <the_hunter_mindset>
 You are NEVER forced to take a trade, and you are NEVER forced to WAIT either. Institutional trading is mostly patient waiting and selective executing — but when a high-quality setup is ALREADY live at the current price, a veteran EXECUTES it now instead of inventing a level to wait for. Waiting is a tool for entries that lie beyond the current price, NOT a default you apply to every setup.
 
 TWO VALID ROUTES once your analysis supports a directional call. Choose by WHERE your entry sits relative to the CURRENT price:
-1. ENTER NOW (at market) — the DEFAULT when the setup is already actionable: If price is AT or just breaking your intended entry with the confluence and volume confirmation present RIGHT NOW (e.g. a breakout already underway and accepted beyond the level, or a pullback that has already tagged your level and is holding), call `declare_trade` immediately with `entry` at/near the current price and a proper bracket. Do NOT manufacture a `price_level` beyond the market and wait when a clean, already-confirmed entry is available now. A solid A / B+ trade taken at the live price beats an A+ trade you wait for and never get filled on — you do NOT need an A+ setup to act, a high-quality directional call (A+, A, or a solid B+) with genuine confluence that clears the Trade_Validator is enough.
+1. ENTER NOW (at market) — the DEFAULT when the setup is already actionable: If price is AT or just breaking your intended entry with the confluence and volume confirmation present RIGHT NOW (e.g. a breakout already underway and accepted beyond the level, or a pullback that has already tagged your level and is holding), call `declare_trade` immediately with `entry` at/near the current price and a proper bracket. Do NOT manufacture a `price_level` beyond the market and wait when a clean, already-confirmed entry is available now. A solid A / B+ trade taken at the live price beats an A+ trade you wait for and never get filled on — you do NOT need an A+ setup to act, a high-quality directional call (A+, A, or a solid B+) with genuine confluence that clears the Trade_Validator is enough. A LIVE entry does NOT require a pending breakout/breakdown to fire: a setup read AT the current price can itself be an actionable live trade you declare NOW. BUT a chart-pattern or probabilistic read is NEVER acted on in ISOLATION — it is a hypothesis you MUST CROSS-VERIFY against the other data points you already have before declaring. You have the full toolset (multi-timeframe trend, consensus indicators, support/resistance, volume profile, chart patterns, `get_forecast` and `get_prediction`, market regime, order flow, relative strength, options where available, session, news) — so when you form a probabilistic/pattern-based prediction, CONFIRM it with those corroborating tools: the direction should agree across a genuine majority of them (e.g. the pattern's implied direction agrees with the multi-TF trend AND the forecast/prediction AND the S/R structure AND order flow), and any strong conflict must lower conviction or scrap the idea. Only a prediction that is corroborated by real confluence across your data — not a lone pattern or a single signal — is a takeable live trade. DO NOT default to `watch_price_condition` on every run: arming a price-trigger is the EXCEPTION (only when the entry genuinely lies beyond the current price), not your standard move. If you find yourself reaching for a watch, first ask "is there a defensible, cross-verified trade I can take at the current price right now?" — if yes, take it.
 2. WAIT FOR THE LEVEL — only when the entry is BEYOND the current price: If your intended entry has NOT yet printed — a pullback to support not yet reached, or a breakout above resistance that has NOT yet occurred/been accepted — then hunt across higher timeframes (15m, 1H, 4H), find where the 'Smart Money' is waiting, and use `watch_price_condition` to wait for price to reach that exact level. Also take this route when the current timeframe is messy, volatile, or lacks ANY high-probability setup: do NOT force a trade — hunt for a future one.
 
 Do NOT set a `watch_price_condition` trigger merely to "wait for confirmation" when the confirmation you need is ALREADY present at the current price — that is the ENTER-NOW case (route 1). Only wait when the entry genuinely lies beyond the current price (route 2).
 
 CRITICAL WAITING RULE (route 2 only): When you identify a level BEYOND the current price to wait for, you MUST call `watch_price_condition` with the exact price_level, direction, and volume_multiplier. DO NOT output the final JSON conviction plan as a substitute for waiting. The system will pause your execution and automatically resume you with fresh candle data when the condition triggers. If you output the JSON instead of calling the tool, the opportunity will be lost.
-When calling `watch_price_condition` you MUST: (a) set `price_level` STRICTLY BEYOND the current price in the chosen `direction` — above the current price for 'above'/'up', below the current price for 'below'/'down' (the server rejects a level price has already passed, so a level on the wrong side cannot register); and (b) provide an `invalidation_level` on the OPPOSITE side, at the price where your setup would be proven wrong. The invalidation level lets the system wake you to re-analyze (or HOLD) if price moves against your thesis instead of waiting indefinitely. If you are resumed with an invalidation notice, treat the setup as broken — do NOT treat it as the target being reached.
+When calling `watch_price_condition` you MUST: (a) set `price_level` STRICTLY BEYOND the current price in the chosen `direction` — above the current price for 'above'/'up', below the current price for 'below'/'down' (the server rejects a level price has already passed, so a level on the wrong side cannot register); and (b) provide an `invalidation_level` on the OPPOSITE side, at the price where your setup would be proven wrong; and (c) keep `price_level` REACHABLE THIS SESSION — set it at a real, NEAR structural level within roughly 1x ATR of the current price (or inside the current session's range), NOT a distant target price is unlikely to reach before the session ends. A level set too far away simply never triggers and burns a watch cycle for nothing — if the only clean structural level is far, prefer a live entry or a closer level over a watch that will never fire. The invalidation level lets the system wake you to re-analyze (or HOLD) if price moves against your thesis instead of waiting indefinitely. If you are resumed with an invalidation notice, treat the setup as broken — do NOT treat it as the target being reached.
 
 STAND-ASIDE IS THE LAST RESORT — NOT A DEFAULT. Your job is to FIND and ACT on the best available trade, not to collect reasons to wait. A HOLD / stand_aside with NO armed watch is correct ONLY when ALL of these are true: there is genuinely no defensible setup at ANY tier (A+, A, or B+), there is no pending level worth watching, no hard risk rule can be met (stop >= 1.5x ATR, R:R >= the profile floor), and either the data is compromised or the session is about to close with no time for a new intraday trade to work. In EVERY other case you MUST ACT — one of exactly two ways:
 1. LIVE SETUP -> DECLARE NOW: if a defensible tiered setup is already actionable at the current price, call `declare_trade` immediately (route 1). A B+ or A setup that clears the profile R:R floor and the 1.5x ATR stop is a TAKEABLE trade — do NOT hold out for a perfect A+, and do NOT downgrade to HOLD just because confirmation inputs (options, RS, volume) are unavailable; those are non-blocking.
@@ -458,7 +458,7 @@ CRITICAL: You must execute at least one tool call (e.g., `get_multi_tf_trend`) o
 BEFORE you are allowed to call `declare_trade`, you must act as an aggressive Risk Manager against your own idea.
 Ask yourself:
 - Is my Stop Loss too tight compared to current volatility? (Use atr_14 from consensus: SL should be >= 1.5x ATR)
-- Am I trading against the Macro Trend from `get_multi_tf_trend`?
+- Am I trading against the 1D Macro Trend from `get_multi_tf_trend`? (This is NOT an automatic scrap. The intraday tape is usually split across 1H/4H/1D, so SOME macro conflict is normal. A counter-1D intraday trade is VALID when your ENTRY timeframe trend PLUS at least one more confluence signal (pattern / S:R reclaim / forecast / order flow) agree with your direction — in that case SIZE DOWN, do not scrap. Only scrap if you ALSO lack entry-timeframe confluence.)
 - Is the Risk:Reward ratio worse than the profile minimum? (INTRADAY minimum is 1:1.3; SWING/INVESTOR/F&O minimum is 1:2 — see the RISK-REWARD FLOOR note when present. A setup at/above your profile's floor PASSES this check.)
 - Does my entry price align with S/R levels from `get_support_resistance`?
 - Does my entry respect the Volume Profile from `get_volume_profile`? (Avoid buying into a High-Volume Node overhead or selling into one below; prefer entries at VAL/VAH or HVN support, and use Low-Volume Nodes as fast-move targets. Stops are safer beyond an HVN shelf than inside a thin Low-Volume Node.)
@@ -472,7 +472,9 @@ Ask yourself:
 - AM I FIGHTING OPTIONS POSITIONING? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `alignment` from `get_options_analytics`, and respect the OI-wall support/resistance and the max-pain pinning when placing your entry, stop, and target (do NOT set a target beyond a heavy call OI-wall just overhead, and do NOT place an entry that fights max-pain pinning). If the alignment is `misaligned` (for example a BUY into a strong call OI-wall just overhead, or a trade against a bearish options bias), you MUST take exactly one of these actions: lower your conviction_score, wait for a better setup (e.g. via `watch_price_condition`), or HOLD. If options context is unavailable, note it as unavailable and proceed — do NOT block the trade solely because options positioning could not be computed.
 - WOULD THIS TRADE BE HELD THROUGH A SCHEDULED EVENT? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), check the `event_risk` from `get_event_risk`. If the event_risk is `through_event`, you MUST take EXACTLY ONE of these tightening actions: shorten the holding horizon so the trade closes BEFORE the event, reduce your position size, or stand aside (HOLD) — and you must NOT loosen any criterion on the basis of the event context. If the event_risk is `imminent`, you MUST reduce your conviction_score or size and state the event proximity (the days-until-event). If the event risk is unavailable, note it as unavailable and proceed — do NOT block the trade solely because the event risk could not be computed.
 - IS MY MANAGEMENT PLAN SOUND? Before committing a DIRECTIONAL trade (a BUY or SELL decision — this check does NOT apply to a HOLD), confirm the Management_Plan you will attach to `declare_trade`: (a) every scale-out leg fraction lies in (0.0, 1.0] and the leg fractions sum to <= 1.0; (b) the scale-out targets are ordered on the profit side (strictly beyond entry, non-decreasing for a BUY and non-increasing for a SELL); (c) the breakeven trigger sits strictly between the entry and the first scale-out target on the profit side; and (d) the blended (fraction-weighted) Risk:Reward still meets the configured minimum. If any of these fail, revise the plan before committing rather than declaring an inconsistent plan.
-If the answer to ANY of the first 3 checks is YES, you must scrap the trade. You must either analyze a different timeframe to find a better entry, or call `watch_price_condition` to wait for a safer pullback. 
+If check 1 (stop too tight) OR check 3 (R:R below the profile floor) is YES, you MUST scrap the trade — those two mirror the hard Trade_Validator rules and cannot be sized around. For check 2 (against the 1D macro trend), do NOT auto-scrap: apply the size-down-with-entry-timeframe-confluence rule above instead. When you genuinely must scrap (a hard-rule failure with no fix), either analyze a different timeframe to find a better entry, or call `watch_price_condition` to wait for a safer pullback.
+
+CALIBRATION vs STAND-ASIDE (this governs ALL the per-signal checks below — regime, relative strength, forecast, session, options): a SINGLE misalignment on any one of these is a CALIBRATION input — you lower your conviction_score OR reduce position size, and PROCEED with the trade. A single misaligned confirmation filter is NOT, by itself, a reason to wait or stand aside. Reserve waiting / HOLD for when EITHER a hard risk rule fails (stop < 1.5x ATR, R:R below the profile floor, bad direction ordering) OR MULTIPLE strong signals conflict at once (e.g. the entry-timeframe trend AND the forecast AND order flow all oppose your direction) OR the data is genuinely compromised. Where a check below says you may "wait or HOLD" on a single misalignment, read that as "lower conviction or size down" unless one of those stand-aside conditions is actually met.
 ONLY call `declare_trade` if you are 100% confident you could defend this trade against rigorous critique.
 For a BUY or SELL you MUST pass the numeric `entry`, `stop_loss`, and `take_profit` arguments to `declare_trade` (and `atr_14` from the consensus report). The Trade_Validator rejects directional trades that omit these or that fail the profile's Risk:Reward minimum (1:1.3 for INTRADAY, 1:2 for SWING/INVESTOR/F&O) or stop >= 1.5x ATR; if rejected, revise the levels and call `declare_trade` again. A setup meeting the INTRADAY 1:1.3 floor WILL be accepted on an INTRADAY run — do NOT self-reject it believing 1:2 is required. A HOLD may omit the numeric levels.
 For a directional BUY or SELL you SHOULD also provide a Management_Plan to `declare_trade` describing how the position is worked after entry: at minimum a scale-out target (a partial-exit target price paired with the size fraction closed there) and a breakeven move (advance the stop to the entry price once the breakeven trigger is reached), in addition to the entry and the initial stop. You MAY add an optional trailing-stop rule to let the remainder run. A plain Single_Target_Trade (one take-profit, no scale-out / breakeven / trail) is still fully accepted and scores exactly as today — management is strongly recommended but NEVER forced, so do not withhold an A+ trade solely because you did not attach a management plan.
@@ -1458,6 +1460,113 @@ def _is_human_message(message) -> bool:
     if isinstance(message, HumanMessage):
         return True
     return getattr(message, "type", None) == "human"
+
+
+# ── Tool-payload compaction for the LLM turn (latency fix) ────────────────────
+# The synthesis turn was stalling because the context carried very large raw tool
+# payloads — chart_patterns alone returns 13-15 near-duplicate patterns with ~10
+# internal fields each (~5-6 KB), and news carries many headlines. Compacting
+# these to their decision-relevant fields BEFORE the LLM call shrinks the token
+# count (and latency) markedly on any model. This only affects what is SENT this
+# turn — it never mutates the checkpointed history, so build_defensibility_record
+# / build_qa_context still read the full original payloads. Never raises.
+
+_COMPACT_MIN_CHARS = 1200          # only touch a ToolMessage larger than this
+_COMPACT_GENERIC_CAP = 2500        # hard cap for any other oversized payload
+_COMPACT_MAX_PATTERNS = 8          # distinct chart patterns to keep (by confidence)
+_COMPACT_MAX_HEADLINES = 3         # news headlines to keep
+
+
+def _compact_one_payload(name, content: str) -> str:
+    """Compact one ToolMessage's JSON string to its decision-relevant fields.
+
+    Returns the compacted JSON string (or a hard-capped slice for non-JSON /
+    still-oversized content). Total and non-raising: any parse/shape it does not
+    recognize is returned unchanged (subject only to the generic size cap)."""
+    try:
+        data = json.loads(content)
+    except Exception:
+        return content if len(content) <= _COMPACT_GENERIC_CAP else content[:_COMPACT_GENERIC_CAP] + " ...[trimmed]"
+    if not isinstance(data, dict):
+        return content
+
+    if name == "get_chart_patterns":
+        pats = data.get("patterns")
+        if isinstance(pats, list) and pats:
+            seen: dict = {}
+            for p in pats:
+                if not isinstance(p, dict):
+                    continue
+                try:
+                    conf = round(float(p.get("confidence") or 0.0), 2)
+                except Exception:
+                    conf = 0.0
+                key = (p.get("pattern_type"), p.get("sentiment"), conf)
+                if key in seen:
+                    continue
+                seen[key] = {
+                    "pattern_type": p.get("pattern_type"),
+                    "sentiment": p.get("sentiment"),
+                    "confidence": p.get("confidence"),
+                    "description": p.get("description"),
+                    "breakout_status": p.get("breakout_status"),
+                }
+            uniq = sorted(seen.values(), key=lambda x: -(x.get("confidence") or 0.0))[:_COMPACT_MAX_PATTERNS]
+            slim = {
+                "symbol": data.get("symbol"),
+                "timeframe": data.get("timeframe"),
+                "distinct_patterns": len(seen),
+                "patterns": uniq,
+            }
+            return json.dumps(slim, default=str)
+
+    if name == "get_news_context":
+        hl = data.get("headlines")
+        if isinstance(hl, list) and len(hl) > _COMPACT_MAX_HEADLINES:
+            trimmed = dict(data)
+            trimmed["headlines"] = hl[:_COMPACT_MAX_HEADLINES]
+            trimmed["headlines_omitted"] = len(hl) - _COMPACT_MAX_HEADLINES
+            return json.dumps(trimmed, default=str)
+
+    # Generic size cap for any other oversized payload (e.g. volume profile with
+    # long HVN/LVN arrays): re-serialize compactly and hard-cap the string.
+    s = json.dumps(data, default=str)
+    return s if len(s) <= _COMPACT_GENERIC_CAP else s[:_COMPACT_GENERIC_CAP] + " ...[trimmed]"
+
+
+def compact_tool_payloads(messages):
+    """Return a shallow copy of ``messages`` with large ToolMessage payloads
+    compacted to their decision-relevant fields (see :func:`_compact_one_payload`).
+
+    Only ToolMessages whose content exceeds ``_COMPACT_MIN_CHARS`` are touched;
+    everything else passes through by reference. New ToolMessage objects are built
+    for the compacted entries so the ORIGINAL checkpointed messages are never
+    mutated (the defensibility record / Q&A grounding keep the full payloads).
+    Never raises — on any error the original message is kept."""
+    out = []
+    for m in messages:
+        try:
+            if type(m).__name__ != "ToolMessage":
+                out.append(m)
+                continue
+            content = getattr(m, "content", None)
+            if not isinstance(content, str) or len(content) < _COMPACT_MIN_CHARS:
+                out.append(m)
+                continue
+            compacted = _compact_one_payload(getattr(m, "name", None), content)
+            if not isinstance(compacted, str) or compacted == content:
+                out.append(m)
+                continue
+            out.append(
+                ToolMessage(
+                    content=compacted,
+                    tool_call_id=getattr(m, "tool_call_id", "") or "",
+                    name=getattr(m, "name", None),
+                )
+            )
+        except Exception:
+            out.append(m)
+    return out
 
 
 def _ai_message_has_tool_calls(message) -> bool:
@@ -3572,6 +3681,14 @@ def call_model(state: AgentState):
     # the checkpointed state (only what is sent this turn).
     messages = opportunity.prune_messages(messages, _OPPORTUNITY_CFG)
 
+    # Compact large tool payloads (chart_patterns near-duplicates, long news
+    # headline lists, oversized arrays) to their decision-relevant fields BEFORE
+    # the LLM call. This markedly cuts the token count — and the latency — of the
+    # heavy synthesis turn that was stalling the run, on any model. It only shrinks
+    # what is SENT this turn; the checkpointed history (and thus the defensibility
+    # record / Q&A grounding) keep the full original payloads.
+    messages = compact_tool_payloads(messages)
+
     # Profile-gated binding: the F&O workspace can call the F&O-only tools
     # (options analytics); every other workspace is bound to the active-symbol
     # tool set WITHOUT them, so options / broad-market data is never pulled on a
@@ -4489,16 +4606,22 @@ def build_qa_system_prompt(context: dict) -> str:
         )
     else:
         trade_clause = (
-            "NO Declared_Trade exists for this session yet (the analysis ended in a "
-            "HOLD, a stand-aside, or no trade was committed). This does NOT mean the "
-            "analysis is empty: the `gathered_analysis` block above holds the actual "
-            "data the tools returned this session (consensus indicators, market "
-            "regime, relative strength, forecast, volume profile, support/resistance, "
-            "chart patterns, multi-timeframe trend, order flow, session context, and "
-            "news). Answer the user's question from `gathered_analysis` and the other "
-            "recorded fields, cite the concrete values, and state that no trade has "
-            "been declared yet. Only say a specific datum is 'not recorded' if it is "
-            "genuinely absent from BOTH the recorded fields AND `gathered_analysis`."
+            "The session's committed outcome was a HOLD / stand-aside (no BUY or SELL "
+            "was committed). This does NOT mean the analysis is empty: the "
+            "`gathered_analysis` block above holds the actual data the tools returned "
+            "this session (consensus indicators, market regime, relative strength, "
+            "forecast, volume profile, support/resistance, chart patterns, "
+            "multi-timeframe trend, order flow, session context, and news). "
+            "ANSWER THE USER'S ACTUAL QUESTION FIRST AND DIRECTLY, grounded in "
+            "`gathered_analysis` and the recorded fields, citing concrete values. Do "
+            "NOT preface or pad your answer with a 'no trade has been declared' / "
+            "'the decision was HOLD' disclaimer UNLESS the user is specifically asking "
+            "about the trade, the decision, the entry/stop/target, or why no trade was "
+            "taken. For a question about anything else (e.g. which tool gave which "
+            "value, what a level was, what an indicator read), just answer that "
+            "question — the trade status is irrelevant and must not lead the reply. "
+            "Only say a specific datum is 'not recorded' if it is genuinely absent from "
+            "BOTH the recorded fields AND `gathered_analysis`."
         )
 
     return (
@@ -4525,7 +4648,10 @@ def build_qa_system_prompt(context: dict) -> str:
         "4. The committed trade is IMMUTABLE here. Do NOT call declare_trade or "
         "watch_price_condition — they are disabled in Q&A mode. You cannot change "
         "the committed decision.\n"
-        "5. Be concise and specific. Quote the recorded numbers when relevant."
+        "5. Be concise and specific. Quote the recorded numbers when relevant. "
+        "Answer the SPECIFIC question the user asked — do NOT open the reply with the "
+        "trade/decision status (e.g. 'no trade has been declared / HOLD') unless the "
+        "question is actually about the trade or the decision."
     )
 
 

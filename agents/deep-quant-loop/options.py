@@ -1379,6 +1379,33 @@ def _build_chain_snapshot(
     )
 
 
+def resolve_active_expiry(underlying: str) -> Optional[str]:
+    """Resolve which expiry to analyze when the caller passes an EMPTY expiry.
+
+    The snapshot rows are keyed by a concrete expiry (e.g. ``"2026-07-15"``), so a
+    literal ``expiry=''`` filter matches nothing even when the chain is fully
+    populated — which surfaced as a false "no chain snapshot" for indices. This
+    resolves the expiry of the MOST RECENTLY captured snapshot for the underlying
+    (the chain actively being ingested — normally the front / nearest expiry),
+    avoiding any date-format / timezone comparison. Returns ``None`` when the
+    underlying has no snapshot rows. Read-only ``SELECT`` only; never raises."""
+    try:
+        u = _escape_sql_literal(underlying)
+        q = (
+            "SELECT expiry FROM option_chain_snapshots "
+            f"WHERE underlying='{u}' "
+            "ORDER BY snapshot_ts DESC LIMIT 1"
+        )
+        rows = _questdb_select(q)
+        if not rows or not isinstance(rows[0], (list, tuple)) or not rows[0]:
+            return None
+        exp = rows[0][0]
+        return exp.strip() if isinstance(exp, str) and exp.strip() else None
+    except Exception as exc:  # noqa: BLE001 — totality guarantee
+        print(f"[Options Warning] resolve_active_expiry failed: {exc}")
+        return None
+
+
 def read_latest_and_prior_snapshot(
     underlying: str, expiry: str
 ) -> tuple[Optional[ChainSnapshot], Optional[ChainSnapshot]]:
@@ -1805,36 +1832,71 @@ def assemble_result(
 # failure / empty dataset degrades to ``None`` (Requirements 5.2, 7.2).
 
 
+def _spot_symbol_candidates(underlying: str) -> list:
+    """Candidate ``live_ticks`` symbol names for an index underlying's spot.
+
+    The option chain is keyed by the NFO short name (``"NIFTY"``), but the tick
+    feed stores the index SPOT under its NSE tradingsymbol (``"NIFTY 50"``) or a
+    Kite-prefixed form (``"NSE:NIFTY 50"``). A literal ``symbol='NIFTY'`` lookup
+    therefore finds no spot and the whole options result degrades to
+    "spot price unavailable" even though the tick is present under "NIFTY 50".
+    Tries the raw name first, then index aliases. Mirrors the Rust subscriber's
+    ``spot_symbol_candidates`` so the options spot read matches how ticks are
+    written. A single-stock underlying is its own only candidate (unchanged)."""
+    out = [underlying]
+
+    def push(s: str) -> None:
+        if not any(e.strip().upper() == s.strip().upper() for e in out):
+            out.append(s)
+
+    key = underlying.strip().upper()
+    if key in ("NIFTY", "NIFTY 50", "NIFTY50", "NSE:NIFTY 50"):
+        push("NIFTY 50"); push("NIFTY"); push("NSE:NIFTY 50")
+    elif key in ("BANKNIFTY", "NIFTY BANK", "NSE:NIFTY BANK"):
+        push("NIFTY BANK"); push("BANKNIFTY"); push("NSE:NIFTY BANK")
+    elif key in ("FINNIFTY", "NIFTY FIN SERVICE", "NSE:NIFTY FIN SERVICE"):
+        push("NIFTY FIN SERVICE"); push("FINNIFTY"); push("NSE:NIFTY FIN SERVICE")
+    elif key in ("MIDCPNIFTY", "NIFTY MIDCAP SELECT"):
+        push("NIFTY MIDCAP SELECT"); push("MIDCPNIFTY")
+    return out
+
+
 def read_spot(underlying: str) -> Optional[float]:
     """Latest ``live_ticks.last_traded_price`` for the underlying (Requirements 5.2, 7.2).
 
-    Issues a single read-only ``SELECT ... ORDER BY timestamp DESC LIMIT 1``
-    against the ``live_ticks`` table (the same spot source ``tools.py`` reads),
-    escaping the ``underlying`` SQL string literal, and projects the most-recent
-    ``last_traded_price`` to a finite ``float`` via :func:`_coerce_optional_float`.
+    Issues read-only ``SELECT ... ORDER BY timestamp DESC LIMIT 1`` queries against
+    the ``live_ticks`` table (the same spot source ``tools.py`` reads), trying each
+    :func:`_spot_symbol_candidates` name so an index whose chain is keyed by the
+    NFO short name (``"NIFTY"``) still resolves its spot stored under the NSE
+    tradingsymbol (``"NIFTY 50"``). Projects the most-recent ``last_traded_price``
+    to a finite positive ``float`` via :func:`_coerce_optional_float`.
 
-    Returns ``None`` (never raises) on an unreachable server, query error,
-    malformed payload, empty dataset, or a non-finite / non-numeric price — the
-    orchestrator maps that ``None`` to an ``Unavailable_Marker`` rather than
-    computing spot-relative analytics from a fabricated spot (Requirement 7.2).
+    Returns ``None`` (never raises) when no candidate has a usable tick, on an
+    unreachable server, query error, malformed payload, or a non-finite / non-
+    positive price — the orchestrator maps that ``None`` to an
+    ``Unavailable_Marker`` rather than computing from a fabricated spot (R7.2).
 
-    Issues ONLY a read-only ``SELECT`` (Requirement 5.4) and NEVER raises into its
-    caller (Requirements 7.4, 9.1): every failure degrades to ``None``.
+    Issues ONLY read-only ``SELECT`` statements (Requirement 5.4) and NEVER raises
+    into its caller (Requirements 7.4, 9.1): every failure degrades to ``None``.
     """
     try:
-        u = _escape_sql_literal(underlying)
-        query = (
-            "SELECT last_traded_price FROM live_ticks "
-            f"WHERE symbol='{u}' "
-            "ORDER BY timestamp DESC LIMIT 1"
-        )
-        rows = _questdb_select(query)
-        if not rows:
-            return None
-        first = rows[0]
-        if not isinstance(first, (list, tuple)) or not first:
-            return None
-        return _coerce_optional_float(first[0])
+        for cand in _spot_symbol_candidates(underlying):
+            u = _escape_sql_literal(cand)
+            query = (
+                "SELECT last_traded_price FROM live_ticks "
+                f"WHERE symbol='{u}' "
+                "ORDER BY timestamp DESC LIMIT 1"
+            )
+            rows = _questdb_select(query)
+            if not rows:
+                continue
+            first = rows[0]
+            if not isinstance(first, (list, tuple)) or not first:
+                continue
+            price = _coerce_optional_float(first[0])
+            if price is not None and price > 0.0:
+                return price
+        return None
     except Exception as exc:  # noqa: BLE001 — totality guarantee (R7.4 / R9.1)
         print(f"[Options Warning] read_spot failed: {exc}")
         return None
@@ -1903,6 +1965,15 @@ def compute_options_analytics(
     try:
         # 1. Resolve configuration (injected wins; else resolve from the env once).
         resolved_config = config if config is not None else resolve_options_config()
+
+        # 1b. Resolve the expiry when the caller passed none. Snapshot rows are
+        #     keyed by a concrete expiry, so a literal expiry='' filter matches
+        #     nothing (the false "no chain snapshot" bug); pick the actively-
+        #     ingested (most-recent-snapshot) expiry instead.
+        if not (isinstance(expiry, str) and expiry.strip()):
+            resolved_expiry = resolve_active_expiry(underlying)
+            if resolved_expiry:
+                expiry = resolved_expiry
 
         # 2. Read the latest + prior chain snapshots (impure, isolated).
         latest, prior = read_latest_and_prior_snapshot(underlying, expiry)
