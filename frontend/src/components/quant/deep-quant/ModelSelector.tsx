@@ -25,7 +25,8 @@ interface ModelSelectorProps {
 export default function ModelSelector({ value, onChange, disabled = false }: ModelSelectorProps) {
   const [open, setOpen] = useState(false);
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
-  const [panelPos, setPanelPos] = useState<{ left: number; bottomOffset: number }>({ left: 0, bottomOffset: 0 });
+  const [panelPos, setPanelPos] = useState<{ left: number; top?: number; bottomOffset?: number }>({ left: 0 });
+  const [openDirection, setOpenDirection] = useState<'up' | 'down'>('up');
   const [flyoutPos, setFlyoutPos] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [mounted, setMounted] = useState(false);
@@ -66,7 +67,20 @@ export default function ModelSelector({ value, onChange, disabled = false }: Mod
   const toggle = () => {
     if (disabled) return;
     const r = triggerRef.current?.getBoundingClientRect();
-    if (r) setPanelPos({ left: r.left, bottomOffset: window.innerHeight - r.top + 6 });
+    if (r) {
+      const spaceBelow = window.innerHeight - r.bottom;
+      const spaceAbove = r.top;
+      const panelWidth = 210;
+      const panelHeight = Math.min(MODEL_PROVIDERS.length * 32 + 8, window.innerHeight * 0.6);
+      const clampedLeft = Math.min(r.left, window.innerWidth - panelWidth - 8);
+      if (spaceBelow >= panelHeight || spaceBelow >= spaceAbove) {
+        setOpenDirection('down');
+        setPanelPos({ left: clampedLeft, top: r.bottom + 6 });
+      } else {
+        setOpenDirection('up');
+        setPanelPos({ left: clampedLeft, bottomOffset: window.innerHeight - r.top + 6 });
+      }
+    }
     setActiveGroup(null);
     setOpen((o) => !o);
   };
@@ -75,9 +89,13 @@ export default function ModelSelector({ value, onChange, disabled = false }: Mod
     setActiveGroup(group.provider);
     if (group.models.length > 1) {
       const rect = e.currentTarget.getBoundingClientRect();
-      // Abut the flyout to the row's right edge; clamp vertically into view.
+      const flyoutWidth = 260;
+      const fitsRight = rect.right + flyoutWidth <= window.innerWidth - 8;
       const maxTop = window.innerHeight - 16 - 320;
-      setFlyoutPos({ left: rect.right - 1, top: Math.max(8, Math.min(rect.top, maxTop)) });
+      setFlyoutPos({
+        left: fitsRight ? rect.right - 1 : rect.left - flyoutWidth + 1,
+        top: Math.max(8, Math.min(rect.top, maxTop)),
+      });
     }
   };
 
@@ -108,7 +126,13 @@ export default function ModelSelector({ value, onChange, disabled = false }: Mod
               long provider label can never introduce a horizontal scrollbar. */}
           <div
             data-model-portal
-            style={{ position: 'fixed', left: panelPos.left, bottom: panelPos.bottomOffset }}
+            style={{
+              position: 'fixed',
+              left: panelPos.left,
+              ...(openDirection === 'down'
+                ? { top: panelPos.top }
+                : { bottom: panelPos.bottomOffset }),
+            }}
             className="z-[9999] w-[210px] max-h-[60vh] overflow-y-auto overflow-x-hidden bg-surface border border-border-default shadow-2xl scrollbar-thin py-1"
           >
             {MODEL_PROVIDERS.map((group) => {
