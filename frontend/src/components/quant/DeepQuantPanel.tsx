@@ -245,7 +245,7 @@ export default function DeepQuantPanel() {
     <div className="flex h-full flex-col text-sm select-none overflow-hidden">
       {/* ── Trigger Button ────────────────────────────────── */}
       <div className="shrink-0 p-3 border-b border-border-default relative">
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0">
           <button
             id="btn-run-deep-quant"
             type="button"
@@ -259,7 +259,7 @@ export default function DeepQuantPanel() {
             }}
             className={`
               relative flex-grow flex h-8 items-center justify-center gap-1.5
-              rounded-none px-3 text-[10px] font-bold uppercase tracking-wider
+              rounded-l px-3 text-[10px] font-bold uppercase tracking-wider
               transition-all duration-300 ease-out border border-r-0
               ${!dataReady
                 ? 'bg-elevated/40 text-text-muted/50 border-border-default opacity-50 cursor-not-allowed'
@@ -295,10 +295,10 @@ export default function DeepQuantPanel() {
             disabled={isAnalyzing}
             onClick={() => setIsDropdownOpen(!isDropdownOpen)}
             className={`
-              h-8 w-8 rounded-none border transition-all duration-300 flex items-center justify-center
+              h-8 w-8 rounded-r border transition-all duration-300 flex items-center justify-center
               ${isAnalyzing
                 ? 'bg-elevated/40 border-border-default text-text-muted/50 cursor-not-allowed'
-                : 'bg-text-primary text-surface border-text-primary hover:bg-text-secondary hover:border-text-secondary border-l-border-default/20'
+                : 'bg-text-primary text-surface border-text-primary hover:bg-text-secondary hover:border-text-secondary border-l-surface/20'
               }
             `}
           >
@@ -310,14 +310,14 @@ export default function DeepQuantPanel() {
         {isDropdownOpen && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setIsDropdownOpen(false)} />
-            <div className="absolute right-3 left-3 mt-1.5 z-50 rounded-none bg-surface/95 backdrop-blur-xl border border-border-default shadow-2xl p-1.5 flex flex-col gap-1">
+            <div className="absolute right-3 left-3 mt-1.5 z-50 rounded bg-surface/95 backdrop-blur-xl border border-border-default/60 shadow-2xl p-1.5 flex flex-col gap-1">
               <button
                 type="button"
                 onClick={() => {
                   setActiveMode('FIND');
                   setIsDropdownOpen(false);
                 }}
-                className={`w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-none text-left transition-all ${activeMode === 'FIND' ? 'bg-elevated text-text-primary' : 'text-text-secondary hover:bg-elevated hover:text-text-primary'}`}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-sm text-left transition-all ${activeMode === 'FIND' ? 'bg-elevated text-text-primary' : 'text-text-secondary hover:bg-elevated hover:text-text-primary'}`}
               >
                 <Zap size={13} className="text-text-secondary" />
                 <div className="flex flex-col">
@@ -332,7 +332,7 @@ export default function DeepQuantPanel() {
                   setActiveMode('VERIFY');
                   setIsDropdownOpen(false);
                 }}
-                className={`w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-none text-left transition-all ${activeMode === 'VERIFY' ? 'bg-elevated text-text-primary' : 'text-text-secondary hover:bg-elevated hover:text-text-primary'}`}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-sm text-left transition-all ${activeMode === 'VERIFY' ? 'bg-elevated text-text-primary' : 'text-text-secondary hover:bg-elevated hover:text-text-primary'}`}
               >
                 <Shield size={13} className="text-text-secondary" />
                 <div className="flex flex-col">
@@ -345,12 +345,11 @@ export default function DeepQuantPanel() {
         )}
 
         {/* ── Model Selector Row ── */}
-        <div className="flex items-center justify-between gap-2 mt-1.5">
-          <span className="text-[9px] font-bold uppercase tracking-wider text-text-muted select-none">Model</span>
+        <div className="mt-2.5 pt-2 border-t border-border-default/20">
           <ModelSelector value={selectedModel} onChange={setSelectedModel} disabled={isAnalyzing} />
         </div>
 
-        <p className="text-[9px] text-text-muted/50 text-center mt-1.5">
+        <p className="text-[9px] text-text-muted/50 text-center mt-2.5">
           {symbol} • {activeTimeframe} • {!dataReady
             ? 'Loading candle data from QuestDB…'
             : insufficientData
@@ -390,7 +389,7 @@ export default function DeepQuantPanel() {
           agent log. */}
       <div className="flex-grow flex-shrink min-h-0 flex flex-col overflow-hidden">
         {/* Scrollable agent / analysis region */}
-        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin">
+        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin flex flex-col">
           {reasoningSteps.length > 0 || sessionStatus !== 'idle' ? (
             <div className="h-full p-0 min-h-[380px]">
               <AgentTerminal />

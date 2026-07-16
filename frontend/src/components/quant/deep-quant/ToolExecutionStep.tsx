@@ -112,7 +112,7 @@ export default function ToolExecutionStep({
 
   return (
     <div className="flex justify-start animate-fade-in font-sans pl-1 w-full my-2 select-text">
-      <div className={`rounded px-3 py-2.5 text-[10px] leading-relaxed shadow-md w-full max-w-[95%] ${borderClass}`}>
+      <div className={`rounded px-3 py-2.5 text-[10px] leading-relaxed shadow-md w-full ${borderClass}`}>
         <div className="flex items-center justify-between gap-2 font-sans select-none text-text-primary w-full">
           <div className="flex items-center gap-1.5">
             {getToolIcon(step.toolName)}

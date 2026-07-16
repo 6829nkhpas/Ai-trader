@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Send, Loader2, Eye } from 'lucide-react';
+import { ArrowRight, Loader2, Eye, Plus, Mic } from 'lucide-react';
 import { useQuantStore } from '../../store/useQuantStore';
 import ModelSelector from './deep-quant/ModelSelector';
 
@@ -53,60 +53,69 @@ export default function TradeQaPanel() {
     : isWatching
       ? 'Ask while the AI watches for your price trigger…'
       : isComplete
-        ? 'Ask a follow-up about this analysis…'
+        ? 'Ask anything, @ to mention, / for actions'
         : sessionStatus === 'running'
           ? 'Agent is analyzing — chat unlocks once it starts watching…'
           : 'Run an analysis first…';
 
   return (
-    <div className="flex flex-col font-sans bg-surface">
-      {/* Composer — taller input, model selector, and a live status line. Merged
-          into the agent section by a single top divider (no separate panel). */}
-      <div className="shrink-0 border-t border-border-default bg-elevated/70 p-2.5 space-y-2">
-        {/* Row 1: model provider selector + watcher status */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-text-muted select-none">
-            <span>Model</span>
-            <ModelSelector value={selectedModel} onChange={setSelectedModel} />
+    <div className="flex flex-col font-sans bg-surface p-3 shrink-0 border-t border-border-default/40">
+      {/* Wrapper container with border and rounded corners */}
+      <div className="flex flex-col rounded-lg border border-border-default/60 bg-elevated/10 p-2 relative shadow-md">
+
+        {/* Text Area */}
+        <textarea
+          rows={2}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={handleKeyDown}
+          disabled={!canInteract || isStreaming}
+          placeholder={placeholder}
+          className="w-full resize-none bg-transparent border-0 px-2 py-1.5 min-h-[48px] text-[11px] font-sans leading-relaxed text-text-primary placeholder:text-text-muted/65 focus:outline-none focus:ring-0 disabled:opacity-50 disabled:cursor-not-allowed scrollbar-thin"
+        />
+
+        {/* Action Row */}
+        <div className="flex items-center justify-between mt-2 pt-1 border-t border-border-default/20 select-none">
+          {/* Left items: Plus + Model Selector */}
+          <div className="flex items-center gap-1.5">
+            <ModelSelector
+              value={selectedModel}
+              onChange={setSelectedModel}
+              variant="inline"
+              disabled={!canInteract}
+            />
+
+            {isWatching && (
+              <span className="flex items-center gap-1 text-[8px] font-mono font-bold uppercase tracking-wide text-amber-500 ml-2">
+                <Eye size={9} className="animate-pulse" />
+                Watching
+              </span>
+            )}
           </div>
 
-          {isWatching && (
-            <span className="flex items-center gap-1 text-[8.5px] font-mono font-bold uppercase tracking-wide text-amber-500">
-              <Eye size={10} className="animate-pulse" />
-              Watching — chat live
-            </span>
-          )}
+          {/* Right items: Mic + Purple Circle Send Button */}
+          <div className="flex items-center gap-2">
+
+
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={!canSend}
+              title="Send question"
+              className={`h-7 w-7 rounded-full flex items-center justify-center transition-all duration-300 ${canSend
+                ? 'bg-emerald-500 text-black hover:bg-emerald-400 active:scale-[0.93] shadow-md shadow-emerald-500/20'
+                : 'bg-elevated/40 text-text-muted/30 cursor-not-allowed opacity-50'
+                }`}
+            >
+              {isStreaming ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <ArrowRight size={13} />
+              )}
+            </button>
+          </div>
         </div>
 
-        {/* Row 2: taller textarea + send button */}
-        <div className="relative flex items-end w-full">
-          <textarea
-            rows={3}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={!canInteract || isStreaming}
-            placeholder={placeholder}
-            className="w-full resize-none rounded-lg bg-surface border border-border-default pl-3 pr-11 py-2.5 min-h-[76px] text-[11px] font-sans leading-relaxed text-text-primary placeholder:text-text-muted/65 focus:outline-none focus:border-text-primary/40 focus:ring-1 focus:ring-text-primary/20 disabled:opacity-50 disabled:cursor-not-allowed scrollbar-thin"
-          />
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={!canSend}
-            title="Send question"
-            className={`absolute right-2 bottom-2 h-8 w-8 rounded-full flex items-center justify-center transition-all duration-300 border ${
-              canSend
-                ? 'bg-text-primary text-surface border-text-primary hover:bg-text-secondary hover:border-text-secondary active:scale-[0.95]'
-                : 'bg-elevated/40 text-text-muted/30 border-transparent opacity-50 cursor-not-allowed'
-            }`}
-          >
-            {isStreaming ? (
-              <Loader2 size={13} className="animate-spin" />
-            ) : (
-              <Send size={13} />
-            )}
-          </button>
-        </div>
       </div>
     </div>
   );

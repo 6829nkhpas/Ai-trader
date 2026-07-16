@@ -9,6 +9,7 @@ interface ModelSelectorProps {
   value: string;
   onChange: (id: string) => void;
   disabled?: boolean;
+  variant?: 'default' | 'inline';
 }
 
 /**
@@ -22,7 +23,7 @@ interface ModelSelectorProps {
  * where the submenu was cut off and forced a horizontal scrollbar). The panel
  * opens upward because the composer sits at the bottom of the screen.
  */
-export default function ModelSelector({ value, onChange, disabled = false }: ModelSelectorProps) {
+export default function ModelSelector({ value, onChange, disabled = false, variant = 'default' }: ModelSelectorProps) {
   const [open, setOpen] = useState(false);
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
   const [panelPos, setPanelPos] = useState<{ left: number; top?: number; bottomOffset?: number }>({ left: 0 });
@@ -113,11 +114,26 @@ export default function ModelSelector({ value, onChange, disabled = false }: Mod
         onClick={toggle}
         disabled={disabled}
         title="Select the LLM provider / model"
-        className="flex items-center gap-1.5 rounded-none bg-surface border border-border-default px-2 py-1 text-[10px] font-sans font-semibold text-text-primary hover:border-text-primary/40 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+        className={variant === 'inline'
+          ? "flex items-center gap-1 bg-transparent px-1 py-0.5 text-[10px] font-sans font-semibold text-text-muted hover:text-text-primary focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+          : "flex w-full items-center justify-between rounded bg-elevated/35 border border-border-default/60 px-2.5 py-1.5 text-[10px] font-sans font-semibold text-text-primary hover:bg-elevated/65 hover:border-border-default/90 transition-all focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+        }
       >
-        <Cpu size={11} className="text-text-secondary" />
-        <span className="max-w-[150px] truncate">{selectedLabel}</span>
-        <ChevronDown size={11} className="text-text-muted" />
+        {variant === 'inline' ? (
+          <>
+            <span className="max-w-[150px] truncate">{selectedLabel}</span>
+            <ChevronDown size={11} className={`text-text-muted transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Cpu size={11} className="text-text-secondary shrink-0" />
+              <span className="text-text-muted select-none shrink-0">Model:</span>
+              <span className="truncate">{selectedLabel}</span>
+            </div>
+            <ChevronDown size={11} className={`text-text-muted shrink-0 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+          </>
+        )}
       </button>
 
       {open && mounted && createPortal(

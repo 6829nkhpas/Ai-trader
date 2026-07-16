@@ -56,7 +56,7 @@ export default function ActionableTradePlan({
 
   return (
     <div className="flex justify-start animate-fade-in font-sans w-full mt-2 mb-2 select-text">
-      <div className="w-full max-w-[95%] rounded border border-emerald-500/15 bg-gradient-to-r from-emerald-500/5 via-elevated/40 to-elevated/10 shadow-md">
+      <div className="w-full rounded border border-emerald-500/15 bg-gradient-to-r from-emerald-500/5 via-elevated/40 to-elevated/10 shadow-md">
         {/* Header */}
         <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border-default bg-surface/10 select-none">
           <Shield size={12} className="text-emerald-500" />

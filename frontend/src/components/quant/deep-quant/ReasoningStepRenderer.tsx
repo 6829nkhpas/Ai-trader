@@ -21,7 +21,7 @@ export default function ReasoningStepRenderer({ step }: ReasoningStepRendererPro
       if (conviction !== undefined || validation || plan) {
         return (
           <div className="flex justify-start animate-fade-in font-sans w-full select-text my-2">
-            <div className="max-w-[95%] bg-gradient-to-r from-emerald-500/5 via-elevated/40 to-elevated/10 text-text-primary border border-emerald-500/15 rounded px-3 py-2.5 text-[11px] leading-relaxed shadow-md w-full">
+            <div className="bg-gradient-to-r from-emerald-500/5 via-elevated/40 to-elevated/10 text-text-primary border border-emerald-500/15 rounded px-3 py-2.5 text-[11px] leading-relaxed shadow-md w-full">
               <div className="flex items-center gap-1.5 text-[9px] text-emerald-500 font-bold uppercase tracking-wider mb-2 select-none">
                 <Target size={11} className="text-emerald-500 shrink-0" />
                 <span>Final Trade Decision</span>

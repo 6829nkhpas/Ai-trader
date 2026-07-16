@@ -200,7 +200,7 @@ export default function AgentTerminal() {
         {/* Stand-Aside decision rendered INLINE in the terminal log */}
         {sessionStatus === 'complete' && finalTrade && !isActionableTrade(finalTrade) && (
           <div className="flex justify-start animate-fade-in font-sans w-full my-2 select-text">
-            <div className="max-w-[95%] w-full rounded border border-amber-500/15 bg-gradient-to-r from-amber-500/5 via-elevated/20 to-elevated/5 px-3 py-2.5 text-[11px] leading-relaxed shadow-sm">
+            <div className="w-full rounded border border-amber-500/15 bg-gradient-to-r from-amber-500/5 via-elevated/20 to-elevated/5 px-3 py-2.5 text-[11px] leading-relaxed shadow-sm">
               <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-text-muted mb-2 select-none">
                 <Shield size={11} className="text-text-muted shrink-0" />
                 <span>Stand Aside — No Trade</span>
