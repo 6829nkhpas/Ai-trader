@@ -183,8 +183,7 @@ interface TradeStore {
   connectOrderFlowWebSocket: (url: string) => void;
   /** Stop all WebSocket reconnect loops (call on app unmount). */
   destroyWebSockets: () => void;
-  executeTrade: (decision: AggregatedDecision, quantity: number) => void;
-  rejectTrade: (decision: AggregatedDecision) => void;
+
   resetSession: () => void;
   paperPortfolio: VirtualPortfolio | null;
   fetchPaperPortfolio: () => Promise<void>;
@@ -736,35 +735,7 @@ export const useTradeStore = create<TradeStore>((set) => {
       wsFlags.orderFlow = true;
     },
 
-    executeTrade: (decision: AggregatedDecision, quantity: number) => {
-      set((state) => {
-        const symbol = decision.symbol;
-        const price = decision.price || 0;
-        let newBalance = state.portfolioBalance;
-        const newPositions = { ...state.positions };
-        const currentQty = newPositions[symbol] || 0;
 
-        if (decision.action_type === 'BUY') {
-          newBalance -= price * quantity;
-          newPositions[symbol] = currentQty + quantity;
-        } else if (decision.action_type === 'SELL') {
-          newBalance += price * quantity;
-          newPositions[symbol] = currentQty - quantity;
-        }
-
-        return {
-          portfolioBalance: newBalance,
-          positions: newPositions,
-          executedTrades: [...state.executedTrades, { decision, quantity, executedAt: Date.now() }],
-          activeDecision: null,
-        };
-      });
-    },
-
-    rejectTrade: (decision: AggregatedDecision) => {
-      void decision;
-      set({ activeDecision: null });
-    },
 
     resetSession: () => {
       set({

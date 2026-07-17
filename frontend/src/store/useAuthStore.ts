@@ -3,141 +3,154 @@ import { create } from 'zustand';
 interface AuthState {
   isAuthenticated: boolean;
   token: string | null;
-  user: any | null;
+  user: {
+    id: string;
+    email: string;
+    name: string;
+    username: string;
+    role: string;
+  } | null;
   isBrokerConnected: boolean;
-  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  signup: (email: string, password: string, name?: string) => Promise<{ success: boolean; error?: string }>;
+  login: () => Promise<void>;
   logout: () => void;
   setBrokerConnected: (connected: boolean) => void;
   fetchProfile: () => Promise<void>;
   fetchUserProfile: () => Promise<void>;
 }
 
-/**
- * Decode the `exp` claim from a JWT without verifying its signature.
- * Returns true if the token has expired (or is malformed). Used at boot to
- * clear stale localStorage tokens so the user is sent to the login screen
- * instead of getting hammered with 401s on every protected fetch.
- */
-function isJwtExpired(token: string): boolean {
-  try {
-    const [, payload] = token.split('.');
-    if (!payload) return true;
-    // base64url → base64
-    const b64 = payload.replace(/-/g, '+').replace(/_/g, '/');
-    const json = typeof atob === 'function'
-      ? atob(b64)
-      : Buffer.from(b64, 'base64').toString('utf-8');
-    const claims = JSON.parse(json);
-    if (typeof claims.exp !== 'number') return false;
-    // exp is seconds since epoch; add 5s skew tolerance
-    return Date.now() / 1000 >= claims.exp - 5;
-  } catch {
-    return true;
-  }
-}
-
 export const useAuthStore = create<AuthState>((set) => {
-  // Safe initial values retrieval from local storage (safe for browser env check)
-  let token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-  let user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || 'null') : null;
-
-  // If the stored JWT is already expired, clear it now so protected fetches
-  // never even fire and the UI lands on the auth overlay cleanly.
-  if (token && isJwtExpired(token)) {
-    console.warn('[Auth Store] Stored JWT is expired, clearing session.');
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-    }
-    token = null;
-    user = null;
-  }
+  // Check localStorage for persisted session
+  const storedAuth = typeof window !== 'undefined' ? localStorage.getItem('strat_authenticated') : null;
+  const storedToken = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+  const storedUser = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || 'null') : null;
 
   return {
-    isAuthenticated: !!token,
-    token,
-    user,
-    isBrokerConnected: !!user?.brokerConnection,
+    isAuthenticated: storedAuth === 'true',
+    token: storedToken,
+    user: storedUser,
+    isBrokerConnected: true, // No broker gate needed
 
-    login: async (email, password) => {
-      try {
-        console.log('[Auth Store] Attempting login to http://localhost:3001...');
-        const response = await fetch('http://localhost:3001/api/auth/login', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ email, password }),
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          return { success: false, error: data.error || 'Failed to login' };
-        }
-
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('token', data.token);
-          localStorage.setItem('user', JSON.stringify(data.user));
-        }
-
-        set({
-          isAuthenticated: true,
-          token: data.token,
-          user: data.user,
-          isBrokerConnected: !!data.user?.brokerConnection
-        });
-
-        console.log('[Auth Store] Login successful, credentials updated.');
-        return { success: true };
-      } catch (err: any) {
-        console.error('[Auth Store] Login process failed:', err);
-        return { success: false, error: err.message || 'Auth service is currently unreachable' };
+    login: async () => {
+      // 1. Call desktopSession creation endpoint on backend
+      const response = await fetch('https://api-web.stratai.live/api/v1/auth/desktop/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) {
+        throw new Error('Failed to initiate desktop login session');
       }
-    },
 
-    signup: async (email, password, name) => {
+      const resJson = await response.json();
+      const { sessionId, loginUrl } = resJson.data;
+
+      // 2. Open login page in the browser
       try {
-        console.log('[Auth Store] Attempting signup to http://localhost:3001...');
-        const response = await fetch('http://localhost:3001/api/auth/signup', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ email, password, name, tier: 'FREE' }),
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          return { success: false, error: data.error || 'Failed to sign up' };
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('open_browser', { url: loginUrl });
+      } catch {
+        if (typeof window !== 'undefined') {
+          window.open(loginUrl, '_blank', 'noopener,noreferrer');
         }
+      }
+
+      // Helper function to handle exchange of loginToken for actual tokens
+      const exchangeToken = async (loginToken: string) => {
+        const exchangeRes = await fetch('https://api-web.stratai.live/api/v1/auth/desktop/exchange', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: loginToken }),
+        });
+        if (!exchangeRes.ok) {
+          throw new Error('Token exchange failed');
+        }
+        const dataJson = await exchangeRes.json();
+        const { accessToken, user } = dataJson.data;
 
         if (typeof window !== 'undefined') {
-          localStorage.setItem('token', data.token);
-          localStorage.setItem('user', JSON.stringify(data.user));
+          localStorage.setItem('strat_authenticated', 'true');
+          localStorage.setItem('token', accessToken);
+          localStorage.setItem('user', JSON.stringify(user));
         }
 
         set({
           isAuthenticated: true,
-          token: data.token,
-          user: data.user,
-          isBrokerConnected: !!data.user?.brokerConnection
+          token: accessToken,
+          user: user,
+          isBrokerConnected: true,
         });
+        console.log('[Auth Store] Desktop authentication completed successfully.');
+      };
 
-        console.log('[Auth Store] Signup successful, credentials updated.');
-        return { success: true };
-      } catch (err: any) {
-        console.error('[Auth Store] Signup process failed:', err);
-        return { success: false, error: err.message || 'Auth service is currently unreachable' };
+      // 3. Setup Tauri event listener for instant deep link callback
+      let unlistenSuccess: (() => void) | undefined;
+      const tauriPromise = new Promise<string>((resolve) => {
+        import('@tauri-apps/api/event').then(async ({ listen }) => {
+          try {
+            const unlisten = await listen<{ token: string }>('desktop-login-success', (event) => {
+              resolve(event.payload.token);
+            });
+            unlistenSuccess = unlisten;
+          } catch {
+            // Not in Tauri environment or error
+          }
+        });
+      });
+
+      // 4. Polling backup (if deep link is not clicked/supported)
+      let isCompleted = false;
+      const pollPromise = new Promise<string>((resolve, reject) => {
+        const interval = setInterval(async () => {
+          if (isCompleted) {
+            clearInterval(interval);
+            return;
+          }
+          try {
+            const statusRes = await fetch(`https://api-web.stratai.live/api/v1/auth/desktop/session/${sessionId}`);
+            if (!statusRes.ok) return;
+            const statusData = await statusRes.json();
+            const { status, token } = statusData.data;
+
+            if (status === 'authenticated' && token) {
+              isCompleted = true;
+              clearInterval(interval);
+              resolve(token);
+            } else if (status === 'expired') {
+              isCompleted = true;
+              clearInterval(interval);
+              reject(new Error('Login session expired. Please try again.'));
+            }
+          } catch (err) {
+            console.error('[Auth Store] Polling session status failed:', err);
+          }
+        }, 2000);
+
+        // Auto-cleanup after 5 minutes timeout
+        setTimeout(() => {
+          if (!isCompleted) {
+            isCompleted = true;
+            clearInterval(interval);
+            reject(new Error('Login timed out.'));
+          }
+        }, 5 * 60 * 1000);
+      });
+
+      try {
+        // Wait for first one (deep link callback OR polling completion)
+        const finalToken = await Promise.race([tauriPromise, pollPromise]);
+        isCompleted = true; // stop poll if deep-link succeeded
+        if (unlistenSuccess) unlistenSuccess();
+        await exchangeToken(finalToken);
+      } catch (err) {
+        if (unlistenSuccess) unlistenSuccess();
+        throw err;
       }
     },
 
     logout: () => {
       if (typeof window !== 'undefined') {
-        localStorage.removeItem('token');
+        localStorage.removeItem('strat_authenticated');
         localStorage.removeItem('user');
+        localStorage.removeItem('token');
       }
       set({
         isAuthenticated: false,
@@ -150,68 +163,36 @@ export const useAuthStore = create<AuthState>((set) => {
 
     setBrokerConnected: (connected) => {
       set({ isBrokerConnected: connected });
-      console.log(`[Auth Store] Broker connection status updated: ${connected}`);
     },
 
     fetchProfile: async () => {
       const token = useAuthStore.getState().token;
       if (!token) return;
+
       try {
-        const response = await fetch('http://localhost:3001/api/auth/me', {
-          method: 'GET',
+        const res = await fetch('https://api-web.stratai.live/api/v1/users/me', {
           headers: {
             'Authorization': `Bearer ${token}`
           }
         });
-        if (response.status === 401) {
-          console.warn('[Auth Store] /me returned 401 — session expired, logging out.');
-          useAuthStore.getState().logout();
-          return;
-        }
-        if (response.ok) {
-          const data = await response.json();
-          set({ 
-            user: data.profile,
-            isBrokerConnected: !!data.profile?.brokerConnection
-          });
+        if (res.ok) {
+          const resJson = await res.json();
+          const user = resJson.data;
           if (typeof window !== 'undefined') {
-            localStorage.setItem('user', JSON.stringify(data.profile));
+            localStorage.setItem('user', JSON.stringify(user));
           }
+          set({ user });
+        } else if (res.status === 401) {
+          // Token expired, log out
+          useAuthStore.getState().logout();
         }
       } catch (err) {
-        console.error('[Auth Store] Failed to fetch profile:', err);
+        console.error('[Auth Store] Fetch user profile failed:', err);
       }
     },
 
     fetchUserProfile: async () => {
-      const token = useAuthStore.getState().token;
-      if (!token) return;
-      try {
-        const response = await fetch('http://localhost:3001/api/auth/me', {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-        if (response.status === 401) {
-          console.warn('[Auth Store] /me returned 401 — session expired, logging out.');
-          useAuthStore.getState().logout();
-          return;
-        }
-        if (response.ok) {
-          const data = await response.json();
-          set({ 
-            user: data.profile,
-            isBrokerConnected: !!data.profile?.brokerConnection
-          });
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('user', JSON.stringify(data.profile));
-          }
-          console.log('[Auth Store] fetchUserProfile success:', data.profile?.tier);
-        }
-      } catch (err) {
-        console.error('[Auth Store] Failed to fetch user profile:', err);
-      }
+      await useAuthStore.getState().fetchProfile();
     },
   };
 });

@@ -45,20 +45,15 @@ interface SymbolQuote {
   volume: number;
 }
 
-// ── Format helpers ───────────────────────────────────────────────────────────
-function formatINR(value: number): string {
-  return '₹' + value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
 
 
 export default function OrderExecutionPanel() {
-  const { activeDecision, portfolioBalance, positions, executeTrade, rejectTrade } = useTradeStore();
+  const { activeDecision, portfolioBalance, positions } = useTradeStore();
   const ohlcCandles = useTradeStore((s) => s.ohlcCandles);
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
   const liveDecisions = useTradeStore((s) => s.liveDecisions);
 
-  const [quantity, setQuantity] = useState<number>(100);
+
   const [liveQuote, setLiveQuote] = useState<SymbolQuote | null>(null);
 
   // ── Derive symbol: selectedSymbol (watchlist) → active decision → fallback ──
@@ -223,49 +218,7 @@ export default function OrderExecutionPanel() {
         />
       </div>
 
-      {/* ── Bottom Row: Trade Controls (only when an AI decision matches selected symbol) ── */}
-      {hasDecision && (
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex flex-1 items-center gap-3">
-            <div className="min-w-35 flex-1">
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-text-secondary">Quantity</label>
-              <input
-                type="number"
-                value={quantity}
-                onChange={(e) => setQuantity(Number(e.target.value))}
-                className="w-full rounded-lg border border-border-default bg-surface px-2 py-1.5 font-mono text-sm text-text-primary transition-all focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                min="1"
-                disabled={isHold}
-              />
-            </div>
-            <div className="min-w-40 flex-1">
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
-                Est. Value (Price: {entryPrice ? formatINR(entryPrice) : '---'})
-              </label>
-              <div className="flex h-8 w-full items-center rounded-lg border border-border-default bg-surface px-2 font-mono text-sm text-text-secondary">
-                {entryPrice
-                  ? formatINR(entryPrice * quantity)
-                  : 'N/A'}
-              </div>
-            </div>
-          </div>
 
-          <div className="ml-auto flex items-center gap-3">
-            <button
-              onClick={() => rejectTrade(matchedDecision!)}
-              className="rounded-xl border border-border-default bg-card px-4 py-2 text-xs font-bold text-text-secondary transition-colors hover:bg-elevated"
-            >
-              REJECT
-            </button>
-            <button
-              onClick={() => executeTrade(matchedDecision!, quantity)}
-              className={`rounded-lg px-4 py-2 text-xs font-bold uppercase transition-colors text-white ${isBuy ? 'bg-[#16A34A] hover:bg-[#047857]' : isHold ? 'bg-primary hover:bg-primary-hover' : 'bg-[#DC2626] hover:bg-red-800'}`}
-            >
-              {isHold ? 'ACKNOWLEDGE HOLD' : `${matchedDecision!.action_type}`}
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
