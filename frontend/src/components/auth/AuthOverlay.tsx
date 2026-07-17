@@ -21,6 +21,19 @@ export default function AuthOverlay() {
     }
   };
 
+  const handleContactClick = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    const url = 'https://www.stratai.live/contact';
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('open_browser', { url });
+    } catch {
+      if (typeof window !== 'undefined') {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      }
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0a0e17] overflow-hidden">
       {/* Antigravity Background */}
@@ -100,10 +113,11 @@ export default function AuthOverlay() {
         <p className="text-xs text-[#475569] text-center">
           Having trouble?{' '}
           <a
-            href="https://stratai.com/support"
+            href="https://www.stratai.live/contact"
+            onClick={handleContactClick}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-[#64748b] underline underline-offset-2 hover:text-[#94a3b8] transition-colors"
+            className="text-[#64748b] underline underline-offset-2 hover:text-[#94a3b8] transition-colors cursor-pointer"
           >
             Let us know
           </a>

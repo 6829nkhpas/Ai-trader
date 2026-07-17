@@ -14,12 +14,15 @@ fn handle_deep_link(app: &tauri::AppHandle, url_str: &str) {
     info!("[deep link] Intercepted incoming URL: {}", url_str);
     if let Ok(parsed_url) = url::Url::parse(url_str) {
         // Match path or host structure
-        let is_callback = parsed_url.host_str() == Some("broker-callback") 
+        let is_callback = parsed_url.host_str() == Some("broker-callback")
             || parsed_url.path().contains("broker-callback");
-            
+
         let is_payment_success = parsed_url.host_str() == Some("payment-success")
             || parsed_url.path().contains("payment-success");
-            
+
+        let is_login = parsed_url.host_str() == Some("login")
+            || parsed_url.path().contains("login");
+
         if is_callback {
             let mut access_token = None;
             for (key, val) in parsed_url.query_pairs() {
@@ -53,6 +56,23 @@ fn handle_deep_link(app: &tauri::AppHandle, url_str: &str) {
                 error!("[deep link] Failed to emit payment-success: {:?}", e);
             } else {
                 info!("[deep link] Emitted payment-success event to UI.");
+            }
+        } else if is_login {
+            let mut login_token = None;
+            for (key, val) in parsed_url.query_pairs() {
+                if key == "t" {
+                    login_token = Some(val.into_owned());
+                    break;
+                }
+            }
+
+            if let Some(token) = login_token {
+                info!("[deep link] Parsed desktop login token. Emitting to UI...");
+                if let Err(e) = app.emit("desktop-login-success", serde_json::json!({ "token": token })) {
+                    error!("[deep link] Failed to emit desktop-login-success: {:?}", e);
+                } else {
+                    info!("[deep link] Emitted desktop-login-success event to UI.");
+                }
             }
         }
     } else {
