@@ -253,7 +253,7 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
           {/* User Profile Avatar Icon */}
           <button
             onClick={() => setProfileOpen(true)}
-            className="flex h-7 w-7 items-center justify-center rounded border border-border-default bg-surface/50 hover:bg-elevated/45 text-text-secondary hover:text-text-primary transition-all overflow-hidden"
+            className="flex h-7 w-7 items-center justify-center rounded-full border border-border-default bg-surface/50 hover:bg-elevated/45 text-text-secondary hover:text-text-primary transition-all overflow-hidden"
             title="Account Profile & Settings"
           >
             {broker?.avatarUrl ? (
