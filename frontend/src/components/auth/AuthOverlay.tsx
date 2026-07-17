@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { useAuthStore } from '../../store/useAuthStore';
 import { Loader2 } from 'lucide-react';
 import Antigravity from '../Antigravity';
+import { dashboardUrl, openExternalUrl } from '../../lib/redirect';
 
 export default function AuthOverlay() {
   const login = useAuthStore((s) => s.login);
@@ -23,15 +24,7 @@ export default function AuthOverlay() {
 
   const handleContactClick = async (e: React.MouseEvent) => {
     e.preventDefault();
-    const url = 'https://www.stratai.live/contact';
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('open_browser', { url });
-    } catch {
-      if (typeof window !== 'undefined') {
-        window.open(url, '_blank', 'noopener,noreferrer');
-      }
-    }
+    await openExternalUrl(dashboardUrl());
   };
 
   return (
@@ -113,7 +106,7 @@ export default function AuthOverlay() {
         <p className="text-xs text-[#475569] text-center">
           Having trouble?{' '}
           <a
-            href="https://www.stratai.live/contact"
+            href={dashboardUrl()}
             onClick={handleContactClick}
             target="_blank"
             rel="noopener noreferrer"
