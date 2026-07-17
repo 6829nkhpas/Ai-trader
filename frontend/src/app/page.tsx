@@ -29,7 +29,6 @@ import type { ConsensusReport } from '../store/useQuantStore';
 import type { DataRange } from '../utils/chartTypes';
 import { useAuthStore } from '../store/useAuthStore';
 import AuthOverlay from '../components/auth/AuthOverlay';
-import BrokerConnectCard from '../components/broker/BrokerConnectCard';
 import { useTauriLiveData } from '../hooks/useTauriLiveData';
 
 // ── Sidebar labels per profile ──────────────────────────────────────────
@@ -45,8 +44,6 @@ const SIDEBAR_CONFIG: Record<TradeProfile, { label: string; badge: string; badge
 export default function Home() {
   const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, connectOrderFlowWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, activeRange, setActiveRange, selectedSymbol, paperPortfolio } = useTradeStore();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const isBrokerConnected = useAuthStore((s) => s.isBrokerConnected);
-  const setBrokerConnected = useAuthStore((s) => s.setBrokerConnected);
   const fetchProfile = useAuthStore((s) => s.fetchProfile);
 
   // ── Premium Toast Notification State ────────────────────────────────
@@ -187,46 +184,7 @@ export default function Home() {
     };
   }, [setConsensusData]);
 
-  // Listen for Tauri deep-link events emitted by Rust
-  useEffect(() => {
-    let cancelled = false;
-    let unlistenBroker: (() => void) | undefined;
-    let unlistenPayment: (() => void) | undefined;
 
-    (async () => {
-      try {
-        const { listen } = await import('@tauri-apps/api/event');
-        if (cancelled) return;
-
-        // Listen for broker connection success
-        unlistenBroker = await listen('broker-connection-success', () => {
-          if (!cancelled) {
-            console.log('[App] Intercepted broker-connection-success deep link event! Enabling trading terminal.');
-            setBrokerConnected(true);
-            showToast("Zerodha Kite Connected Successfully.", "success");
-          }
-        });
-
-        // Listen for payment success
-        unlistenPayment = await listen('payment-success', async () => {
-          if (!cancelled) {
-            console.log('[App] Intercepted payment-success deep link event! Refreshing user profile.');
-            // Refresh user profile in Zustand (fetchUserProfile hits /api/auth/me)
-            await useAuthStore.getState().fetchUserProfile();
-            showToast("Payment Verified. Welcome to PRO.", "success");
-          }
-        });
-      } catch {
-        // Not in Tauri context (e.g. browser preview)
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      unlistenBroker?.();
-      unlistenPayment?.();
-    };
-  }, [setBrokerConnected, showToast]);
 
   // ── Real-time Kite quote for the active symbol ────────────────────
   interface SymbolQuote {
@@ -388,10 +346,6 @@ export default function Home() {
 
   if (!isAuthenticated) {
     return <AuthOverlay />;
-  }
-
-  if (!isBrokerConnected) {
-    return <BrokerConnectCard />;
   }
 
   return (
