@@ -103,3 +103,5 @@ ehthumbs.db
 bedrock-api-key.txt
 *.pem
 *.key
+# ----- Local Tools -----
+tools/cmake-3.30.0/
