@@ -89,6 +89,39 @@ function inferBarIntervalSec(bars: { time: number }[]): number {
   return diffs[Math.floor(diffs.length / 2)]; // median
 }
 
+/**
+ * Resolve the projection step interval (seconds) for a given display timeframe.
+ *
+ * The display timeframe map is authoritative: it is the grid the user sees on
+ * the chart, so the ghost line must step on that grid to land on displayed bar
+ * boundaries. The inferred bar gap is only a fallback for timeframes missing
+ * from the map, because stored bars are at the Kite *base* interval (e.g. `2m`
+ * stores 1-minute bars, `75m` stores 15-minute bars) — see the note in
+ * `computeGhostPoints` for why the inferred gap is wrong for aggregated
+ * timeframes.
+ *
+ * Exported (pure) so the resolution precedence is unit-testable without driving
+ * stores/IPC.
+ */
+export function resolveIntervalSec(
+  effectiveTimeframe: string,
+  lookback: { time: number }[],
+): number {
+  const mapInterval = Math.floor((TIMEFRAME_MS[effectiveTimeframe as Timeframe] ?? 0) / 1000);
+  if (mapInterval > 0) return mapInterval;
+  const barInterval = inferBarIntervalSec(lookback);
+  if (barInterval > 0) {
+    console.warn(
+      `[GhostLine] resolveIntervalSec — timeframe "${effectiveTimeframe}" missing from TIMEFRAME_MS map; falling back to inferred bar interval ${barInterval}s`,
+    );
+    return barInterval;
+  }
+  console.warn(
+    `[GhostLine] resolveIntervalSec — timeframe "${effectiveTimeframe}" missing from map and bar interval could not be inferred; using 60s default`,
+  );
+  return 60;
+}
+
 /** UNIX-second timestamp of the next weekday's 09:15 IST after `fromUtcSec`. */
 function nextTradingOpen(fromUtcSec: number): number {
   let candidate = fromUtcSec;
@@ -254,18 +287,28 @@ async function fetchLookbackCandles(symbol: string, timeframe: string): Promise<
 
 // ── OLS linear regression ──────────────────────────────────────────────────
 
+/** Exported for unit tests: the deterministic OLS slope fitted over the
+ *  given closes (anchored at the last close). Pure, no store/IPC. */
+export function olsSlope(closes: number[]): number {
+  const n = closes.length;
+  if (n < 5) return 0;
+  let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+  for (let i = 0; i < n; i++) { sumX += i; sumY += closes[i]; sumXY += i * closes[i]; sumX2 += i * i; }
+  const denom = n * sumX2 - sumX * sumX;
+  if (denom === 0) return 0;
+  return (n * sumXY - sumX * sumY) / denom;
+}
+
 function olsProjection(
   closes: number[], lastTime: number, intervalSec: number, projLen: number,
 ): { time: number; price: number }[] {
   const n = closes.length;
   if (n < 5) return [];
 
-  let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
-  for (let i = 0; i < n; i++) { sumX += i; sumY += closes[i]; sumXY += i * closes[i]; sumX2 += i * i; }
-  const denom = n * sumX2 - sumX * sumX;
-  if (denom === 0) return [];
-
-  const slope      = (n * sumXY - sumX * sumY) / denom;
+  const slope      = olsSlope(closes);
+  if (!Number.isFinite(slope)) return [];
+  const sumX = (n * (n - 1)) / 2;
+  const sumY = closes.reduce((a, b) => a + b, 0);
   const intercept  = (sumY - slope * sumX) / n;
   const correction = closes[n - 1] - (intercept + slope * (n - 1)); // anchor to last close
 
@@ -307,7 +350,7 @@ function vwlrProjection(
 
 // ── VWEPR curved projection ─────────────────────────────────────────────────
 
-function vweprProjection(
+export function vweprProjection(
   candles: { close: number; volume: number }[], lastTime: number, intervalSec: number, projLen: number,
 ): { time: number; price: number }[] {
   const n = candles.length;
@@ -450,7 +493,7 @@ function ewmaMean(values: number[]): number {
   return wsum === 0 ? values.reduce((a, b) => a + b, 0) / n : vsum / wsum;
 }
 
-function forecastProjection(
+export function forecastProjection(
   candles: LookbackCandle[], lastTime: number, intervalSec: number, projLen: number, driftLookback = 30,
 ): { time: number; price: number }[] {
   const valid = candles.filter((c) => Number.isFinite(c.close) && c.close > 0);
@@ -505,12 +548,24 @@ export async function computeGhostPoints(
   }
 
   const last = lookback[lookback.length - 1];
-  // Prefer the interval measured from the real bars; fall back to the
-  // timeframe map only when the spacing can't be inferred.
-  const mapInterval = Math.floor((TIMEFRAME_MS[effectiveTimeframe as Timeframe] ?? 60_000) / 1000);
-  const barInterval = inferBarIntervalSec(lookback);
-  const intervalSec = barInterval > 0 ? barInterval : mapInterval;
-  console.log(`[GhostLine] intervalSec=${intervalSec} (map=${mapInterval}, inferred=${barInterval})`);
+  // Resolution of the forward projection step.
+  //
+  // The display timeframe (e.g. `2m`, `75m`, `2h`) is the grid the user sees on
+  // the chart, and the ghost line must step on that same grid so it lands on
+  // displayed bar boundaries. The TIMEFRAME_MS map gives us exactly that.
+  //
+  // `inferBarIntervalSec` measures the median gap of the *stored* bars, but the
+  // stored bars are at the Kite *base* interval, NOT the display interval: a
+  // `2m` chart stores 1-minute bars, `75m` stores 15-minute bars, `2h` stores
+  // 1-hour bars, etc. For aggregated timeframes (`2m`/`4m`/`75m`/`125m`/`2h`/
+  // `3h`/`4h`/`1W`/`1M`) the inferred gap is the base interval, so the
+  // projection steps at the base interval → 2–5× too many points, off the
+  // displayed bar grid → visible jitter/"unstable" ghost line.
+  //
+  // Therefore the display-timeframe map wins; `barInterval` is kept only as a
+  // fallback when the map has no entry for this timeframe.
+  const intervalSec = resolveIntervalSec(effectiveTimeframe, lookback);
+  console.log(`[GhostLine] intervalSec=${intervalSec}`);
   if (!Number.isFinite(last.close) || last.close <= 0) return [];
 
   // Length scales with the current zoom (fraction of visible bars).
@@ -522,8 +577,13 @@ export async function computeGhostPoints(
   const window = lookback.slice(-REGRESSION_WINDOW);
   let points: { time: number; price: number }[] = [];
 
-  // ── Path 1: backend predictive signal (mode-agnostic ML close) ───────
-  if (predictiveSignals.length > 0) {
+  // ── Path 1: backend predictive signal (forecast-mode ML close) ──────
+  // The predictive signal is the ML/forward-looking engine, so it only drives
+  // the projection when the user selected `forecast`. The other modes
+  // (`linear` OLS / `volume` VWLR / `curved` VWEPR) must win via Path 2 (Rust)
+  // or Path 3 (pure-JS) so toggling the engine in GhostLineToggle actually
+  // changes which projection is drawn while a signal is live.
+  if (ghostLineMode === 'forecast' && predictiveSignals.length > 0) {
     const sigs = predictiveSignals.filter(s => s.symbol?.toUpperCase() === activeSymbol.toUpperCase());
     const sig  = sigs[sigs.length - 1] ?? null;
     if (sig) {
@@ -597,18 +657,33 @@ export async function computeGhostPoints(
   }
 
   // ── Bound the curve so it stays a smooth continuation (no cliff) ─────
-  // Only the CURVED engines ('curved'/'forecast') can produce a runaway cliff
-  // that needs clamping. The straight-line engines ('linear' OLS and 'volume'
-  // VWLR) must stay perfectly straight — a per-step clamp would bend them into
-  // a curve, violating the "rigid straight vector" definition — so skip it.
+  // Only the CURVED engines ('curved' VWEPR / 'forecast') can produce a runaway
+  // cliff that needs clamping. The straight-line engines ('linear' OLS and
+  // 'volume' VWLR) must stay perfectly straight — a per-step clamp would bend
+  // them into a curve, violating the "rigid straight vector" definition — so we
+  // skip the clamp entirely for them (isStraightLine).
+  //
+  // Tuning (loosened so genuine curvature survives):
+  //   · maxStep = avgStep * 12   — per-step cap kept ONLY as a guard against
+  //     truly pathological single-step spikes (a bad tick / NaN blow-up). It is
+  //     deliberately generous: a VWEPR parabola or a Forecast
+  //     anchor·exp(drift·i) on a volatile instrument legitimately produces steps
+  //     far larger than the trailing average as it accelerates.
+  //   · maxTotal = maxStep * (points.length - 1) * 2 — the total deviation
+  //     budget SCALES WITH PROJECTION LENGTH instead of a flat 5×. The old
+  //     `maxStep * (N-1) * 5` (= avgStep * 40 * (N-1)) bit for accelerating
+  //     curves, flattening the projection to anchorPrice ± maxTotal so the line
+  //     looked like it "gave up" / pointed the wrong way. Scaling at 2× the
+  //     per-step budget over the projection length lets a real curve reach its
+  //     natural apex while still rejecting a flat-out vertical blow-up.
   const isStraightLine = ghostLineMode === 'linear' || ghostLineMode === 'volume';
   if (points.length > 1 && !isStraightLine) {
     const recent = window.slice(-20).map((c) => c.close);
     let sumAbs = 0;
     for (let i = 1; i < recent.length; i++) sumAbs += Math.abs(recent[i] - recent[i - 1]);
     const avgStep  = (recent.length > 1 ? sumAbs / (recent.length - 1) : 0) || Math.max(0.01, last.close * 0.0005);
-    const maxStep  = avgStep * 8.0;
-    const maxTotal = maxStep * (points.length - 1) * 5.0;
+    const maxStep  = avgStep * 12.0;
+    const maxTotal = maxStep * (points.length - 1) * 2.0;
     const anchorPrice = points[0].price;
     let prev = anchorPrice;
     for (let i = 1; i < points.length; i++) {

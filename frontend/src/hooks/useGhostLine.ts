@@ -13,6 +13,12 @@ import { computeGhostPoints } from './ghostLineComputation';
  * which orphaned whole segment-sets on the chart — every subsequent redraw
  * then stacked a fresh projection on top, producing the ladder/fan of dashed
  * lines. Keeping the un-removed ids tracked makes clearing self-healing.
+ *
+ * Note: a returned "failed" id is NOT retried forever. The caller bounds
+ * retries via `pruneFailedIds` (see below) so that ids which are permanently
+ * invalid — e.g. ids that belonged to a previous widget that was torn down
+ * and recreated — are dropped after a few consecutive failures instead of
+ * accumulating in the ref and spamming warnings on every redraw.
  */
 function removeGhostSegments(chart: any, entityIds: string[]): string[] {
   const failed: string[] = [];
@@ -27,6 +33,112 @@ function removeGhostSegments(chart: any, entityIds: string[]): string[] {
     }
   }
   return failed;
+}
+
+/**
+ * Pure helper: decide which failed-to-remove ids are still worth retrying and
+ * update the per-id attempt counter accordingly.
+ *
+ * Background: `removeEntity` can throw transiently (e.g. a shape still being
+ * committed). Retrying on the next redraw self-heals those. But after a widget
+ * teardown/recreate, ids from the dead widget are permanently invalid on the
+ * new chart, so `removeEntity` throws on EVERY pass. Without bounding, those
+ * dead ids live in `entityIdsRef.current` forever, warn on every redraw, and
+ * can transiently let a new run clear a prior run's still-valid segments via
+ * the shared ref. We therefore drop an id after `maxAttempts` consecutive
+ * failures.
+ *
+ * Contract:
+ *   - `failed`    — ids returned by `removeGhostSegments` this pass (each is
+ *                   one more consecutive failure for that id).
+ *   - `attempts`  — running per-id consecutive-failure counts. MUTATED in
+ *                   place: incremented for every `failed` id, and entries are
+ *                   deleted for ids that are dropped or that are not failed
+ *                   this pass (a successful remove resets the counter).
+ *   - `allTracked`— the full set of ids currently tracked in the ref, so we
+ *                   can reset the attempt counter for ids that were NOT in
+ *                   `failed` (i.e. they removed successfully this pass). May be
+ *                   omitted when the caller handles resets itself.
+ *   - returns     — the subset of `failed` still worth retrying (attempt count
+ *                   < maxAttempts). An id that has failed `maxAttempts`
+ *                   consecutive times is dropped from `attempts` and NOT
+ *                   returned.
+ */
+export function pruneFailedIds(
+  failed: string[],
+  attempts: Map<string, number>,
+  maxAttempts = 2,
+  allTracked?: string[],
+): string[] {
+  // A successful remove resets (clears) that id's consecutive-failure counter.
+  // Any tracked id not present in `failed` this pass removed cleanly.
+  const failedSet = new Set(failed);
+  if (allTracked) {
+    for (const id of allTracked) {
+      if (!failedSet.has(id)) attempts.delete(id);
+    }
+  } else {
+    // Without the full tracked set we still drop counters for ids we know are
+    // no longer failing (keeps the map from growing across healthy runs).
+    for (const id of [...attempts.keys()]) {
+      if (!failedSet.has(id)) attempts.delete(id);
+    }
+  }
+
+  const retry: string[] = [];
+  for (const id of failed) {
+    const next = (attempts.get(id) ?? 0) + 1;
+    if (next >= maxAttempts) {
+      // Permanently invalid (e.g. belongs to a torn-down widget). The id has
+      // now failed `maxAttempts` consecutive times — stop tracking it so the
+      // ref can't accumulate dead ids forever. (An id that fails once is
+      // retained for one retry; an id that fails maxAttempts times is dropped.)
+      attempts.delete(id);
+      console.warn(
+        `[GhostLine] dropping id after ${maxAttempts} consecutive remove failures:`,
+        id,
+      );
+      continue;
+    }
+    attempts.set(id, next);
+    retry.push(id);
+  }
+  return retry;
+}
+
+/**
+ * Pure, unit-testable decision: should a `onVisibleRangeChanged` event re-fire
+ * the zoom pulse?
+ *
+ * TradingView auto-scrolls the right edge forward as live bars arrive, which
+ * ALSO fires `onVisibleRangeChanged`. A new bar already bumps `lastBarTime`
+ * (a redraw dep), so if we re-project on every range change we get 2–3
+ * concurrent redraws per new bar — the source of the "ghost line thrash".
+ *
+ * We therefore pulse ONLY on genuine user zoom, NOT on programmatic
+ * auto-scroll. TradingView's auto-scroll keeps the visible window's WIDTH
+ * constant and just slides both edges forward by one bar as new bars arrive,
+ * so the signature of "no user zoom" is: the range WIDTH (`to - from`) is
+ * unchanged:
+ *   · WIDTH (`to - from`) changed → user ZOOMED → pulse.
+ *   · width unchanged → auto-scroll / no-op → do NOT pulse (`lastBarTime`
+ *     already covers the new bar; a width-preserving move doesn't change the
+ *     projection length anyway).
+ * The first event (no `prev`) always pulses so we bootstrap on first range.
+ *
+ * Kept pure (no React, no widget) so it can be unit-tested directly.
+ */
+export function shouldPulseOnRangeChange(
+  prev: { from: number; to: number } | null,
+  next: { from: number; to: number },
+): boolean {
+  // First event — establish a baseline; pulse so the projection length tracks
+  // the initial visible range.
+  if (prev === null) return true;
+  // User zoomed (range width changed) → re-project. A constant-width move is
+  // either programmatic auto-scroll (new bar) or a width-preserving pan —
+  // neither changes the projection length, so we skip both.
+  return next.to - next.from !== prev.to - prev.from;
 }
 
 /**
@@ -117,6 +229,51 @@ async function drawGhostSegments(
   return entityIds;
 }
 
+// ── Draw-commit helper ──────────────────────────────────────────────────
+
+/**
+ * Decide the next `entityIdsRef` value and which ids to remove now, given the
+ * outcome of a double-buffered draw.
+ *
+ * Drawing is async and slow (one IPC round-trip into the TradingView iframe
+ * per segment). If we cleared the OLD line before drawing the NEW one, the
+ * chart would be empty for the whole draw window — the line visibly vanishes
+ * then reappears segment-by-segment = the "flicker / appears then disappears"
+ * artefact. Instead we draw the new line FIRST, then swap, then remove the old
+ * one, so there is never a frame where zero lines are on the chart.
+ *
+ * This helper is pure (no chart access) so it can be unit-tested without a
+ * TradingView widget mock. It is called from the production draw path so the
+ * unit tests guard the real id-lifecycle invariants, not a shadow copy.
+ *
+ * @param prevIds The ids that were on the chart BEFORE this draw started.
+ * @param newIds The ids this draw just created (may be empty if it aborted).
+ * @param stale  True if a newer run superseded this one while/after drawing.
+ * @returns
+ *   - `next`: the new value for `entityIdsRef.current` (who owns the chart now).
+ *   - `removeNow`: the ids the caller should remove from the chart immediately.
+ *     On success these are the prev ids; on a stale-after-draw these are the
+ *     newly-drawn ids (the stale run hands ownership back to the prior run).
+ *   The caller is responsible for folding any removeNow ids that FAIL to
+ *   remove back into `next` (the self-healing retry), since this helper has no
+ *   chart access.
+ */
+export function commitDraw(
+  prevIds: string[],
+  newIds: string[],
+  stale: boolean,
+): { next: string[]; removeNow: string[] } {
+  if (stale) {
+    // A newer run owns the chart. Throw away our just-drawn ids (the caller
+    // removes them) and leave the prior ids in place — those still represent
+    // the last good line and the newer run is responsible for replacing them.
+    return { next: prevIds, removeNow: newIds };
+  }
+  // Success: the new line is the source of truth. Remove the old line now that
+  // the new one is already on the chart (zero empty frames).
+  return { next: newIds, removeNow: prevIds };
+}
+
 // ── Main Hook ─────────────────────────────────────────────────────────────
 
 export function useGhostLine(
@@ -127,8 +284,15 @@ export function useGhostLine(
   const ghostLineMode = useChartUIStore((s) => s.ghostLineMode);
 
   // Redraw triggers (lightweight so we don't thrash the async shape API):
-  //   · lastBarTime   advances only when a NEW bar forms for this symbol.
-  //   · predictiveKey changes when a fresh backend predictive signal arrives.
+  //   · lastBarTime advances only when a NEW bar forms for this symbol.
+  //
+  // NOTE: predictive signals are intentionally NOT a reactive redraw trigger.
+  // They are read via `useTradeStore.getState().predictiveSignals` inside the
+  // main effect (a non-reactive read), so a streaming signal does NOT re-fire
+  // the effect. Previously a `predictiveKey` selector made every predictive
+  // tick re-fire the effect immediately, bypassing the 4s `pulse` throttle and
+  // causing a redraw storm. Signals are now consumed only on the throttled
+  // cadence (lastBarTime / pulse / zoomPulse / mode·symbol·timeframe changes).
   const lastBarTime = useTradeStore((s) => {
     const sym = activeSymbol.toUpperCase();
     let t = 0;
@@ -137,48 +301,95 @@ export function useGhostLine(
     }
     return t;
   });
-  const predictiveKey = useTradeStore((s) => {
-    const sym = activeSymbol.toUpperCase();
-    for (let i = s.predictiveSignals.length - 1; i >= 0; i--) {
-      const sig = s.predictiveSignals[i];
-      if (sig.symbol?.toUpperCase() === sym) {
-        return `${sig.target_timestamp_ms}:${sig.predicted_close_price}`;
-      }
-    }
-    return '';
-  });
 
-  // The single source of truth for what is currently on the chart. Every draw
-  // clears this list first, so at most ONE ghost line ever exists.
+  // The single source of truth for what is currently on the chart. Each draw
+  // is double-buffered: the NEW line is drawn first, then ownership swaps to
+  // it, then the OLD line is removed — so at most ONE ghost line ever exists
+  // and there is never an empty frame between draws.
   const entityIdsRef = useRef<string[]>([]);
+  // Per-id consecutive-remove-failure counts. Lets us bound retries: an id
+  // that fails to remove a few passes in a row is dropped from the ref (see
+  // `pruneFailedIds`) so dead ids — e.g. from a torn-down widget — can't pile
+  // up forever and warn on every redraw.
+  const failedAttemptsRef = useRef<Map<string, number>>(new Map());
   // Monotonic draw generation. Any run whose generation is no longer the latest
   // is "stale": it won't start a draw, and aborts (removing its own segments)
   // if it's already mid-draw.
   const genRef = useRef<number>(0);
 
   // ── Zoom pulse ───────────────────────────────────────────────────────
-  // Re-project when the user zooms/pans so the line length tracks the visible
-  // range (throttled so a drag doesn't thrash the async shape API).
+  // Re-project when the user zooms so the line length tracks the visible
+  // range. Throttled to 900ms so a drag doesn't thrash the async shape API.
+  //
+  // We IGNORE programmatic auto-scroll: TradingView slides the right edge
+  // forward as live bars arrive, which fires `onVisibleRangeChanged` too. A
+  // new bar already bumps `lastBarTime` (a redraw dep), so pulsing here on top
+  // of that caused 2–3 concurrent redraws per new bar — the "ghost line
+  // thrash". `shouldPulseOnRangeChange` pulses only when the visible range
+  // WIDTH changes (a real user zoom); constant-width slides (auto-scroll on
+  // a new bar, or a width-preserving pan that doesn't change the projection
+  // length) are skipped.
   const [zoomPulse, setZoomPulse] = useState(0);
   useEffect(() => {
     if (!widget) return;
     const token = {};            // unique owner for unsubscribeAll
     let lastZoom = 0;
+    let prevRange: { from: number; to: number } | null = null;
+    // `disposed` guards the race where this effect cleans up BEFORE
+    // `onChartReady` fires: if so, we never subscribe, and we never call
+    // `setZoomPulse` on an unmounted effect.
+    let disposed = false;
+    // The unsubscribe handler from `subscribe`. Kept outside the ready
+    // callback so cleanup can unsubscribe even if `onChartReady` ran AFTER
+    // cleanup began (otherwise the subscription leaks until the widget dies).
+    let unsub: (() => void) | null = null;
     let subscribed = false;
     widget.onChartReady(() => {
+      // Cleanup already ran — do NOT subscribe (would leak + setState on dead
+      // effect).
+      if (disposed) return;
       try {
-        widget.activeChart().onVisibleRangeChanged().subscribe(token, () => {
+        const stream = widget.activeChart().onVisibleRangeChanged();
+        stream.subscribe(token, () => {
+          let vr: { from: number; to: number } | null = null;
+          try {
+            const r = widget.activeChart().getVisibleRange();
+            if (r && Number.isFinite(r.from) && Number.isFinite(r.to)) {
+              vr = { from: r.from, to: r.to };
+            }
+          } catch { /* range not ready yet */ }
+          if (vr === null) return;
+          if (!shouldPulseOnRangeChange(prevRange, vr)) {
+            // Still remember the range so the next genuine change is detected
+            // against the latest position, not the stale baseline.
+            prevRange = vr;
+            return;
+          }
+          prevRange = vr;
           const now = Date.now();
-          if (now - lastZoom < 400) return;
+          if (now - lastZoom < 900) return;   // throttle to ≤ ~1.1 / s
           lastZoom = now;
           setZoomPulse((p) => p + 1);
         });
         subscribed = true;
+        unsub = () => {
+          try { stream.unsubscribeAll(token); } catch { /* torn down */ }
+        };
       } catch { /* ignore */ }
     });
     return () => {
-      if (!subscribed) return;
-      try { widget.activeChart().onVisibleRangeChanged().unsubscribeAll(token); } catch { /* torn down */ }
+      disposed = true;
+      // If `onChartReady` already subscribed, drop the subscription via the
+      // captured handler (the very same stream instance we subscribed to).
+      // If `onChartReady` hasn't fired yet, `disposed` stops it from
+      // subscribing later. `subscribed` is only ever set together with `unsub`
+      // (consecutive lines in the same try block), so the bare-`subscribed`
+      // branch is a defensive fallback in case a future edit splits them.
+      if (subscribed && unsub) {
+        unsub();
+      } else if (subscribed) {
+        try { widget.activeChart().onVisibleRangeChanged().unsubscribeAll(token); } catch { /* torn down */ }
+      }
     };
   }, [widget]);
 
@@ -258,29 +469,67 @@ export function useGhostLine(
       const isStraight = ghostLineMode === 'linear' || ghostLineMode === 'volume';
 
       try {
-        // ALWAYS clear the currently-displayed ghost before drawing a new one.
-        // Any ids that fail to remove stay tracked and are retried next time,
-        // so nothing can silently accumulate.
-        entityIdsRef.current = removeGhostSegments(chart, entityIdsRef.current);
+        // ── Double-buffered draw (no empty-frame flicker) ────────────────
+        // TradingView's shape API is an async IPC into the iframe and is slow
+        // (one round-trip per segment). If we CLEARED the old line BEFORE
+        // drawing the new one, the chart would be empty for the whole draw
+        // window → the line visibly vanishes then reappears segment-by-segment
+        // (the "flicker / appears then disappears" artefact). Instead we draw
+        // the NEW line first, then swap ownership, then remove the OLD line, so
+        // there is never a frame where zero lines are on the chart.
+        //
+        // `drawGhostSegments` polls `shouldAbort` (= isStale) between each
+        // segment and removes its own segments if aborted, so a stale run
+        // cleans up after itself and never leaves half a line behind.
 
         if (points.length < 2) {
           console.warn('[GhostLine] Not enough points:', points.length);
+          // Nothing new to draw — just clear the old line. (This is the one
+          // case where an empty frame is unavoidable and correct.)
+          const failedRemove = removeGhostSegments(chart, entityIdsRef.current);
+          entityIdsRef.current = pruneFailedIds(
+            failedRemove,
+            failedAttemptsRef.current,
+            2,
+            entityIdsRef.current,
+          );
           return;
         }
 
-        // Each draw tracks its own segment ids locally. If a newer run
-        // supersedes this one mid-draw, drawGhostSegments aborts and removes
-        // whatever it drew, so a stale run cleans up after itself.
-        const ids = await drawGhostSegments(chart, points, isStraight, isStale);
+        // Snapshot the previously-displayed ids BEFORE drawing, so we can
+        // remove them after the new line is on the chart.
+        const prevIds = entityIdsRef.current;
 
-        if (isStale()) {
-          const failed = removeGhostSegments(chart, ids);
-          entityIdsRef.current = [...entityIdsRef.current, ...failed];
-          return;
+        // Draw the new line first. If a newer run supersedes us mid-draw,
+        // drawGhostSegments aborts and removes whatever it already drew,
+        // returning [].
+        const newIds = await drawGhostSegments(chart, points, isStraight, isStale);
+
+        // Decide ownership via the pure `commitDraw` helper. Re-check isStale
+        // here — a newer run may have bumped genRef while we were awaiting the
+        // draw. `stale` is captured BEFORE we remove anything, so we don't
+        // race between the check and the removal/assignment below.
+        const stale = isStale();
+        const { next, removeNow } = commitDraw(prevIds, newIds, stale);
+
+        // Remove whichever ids the helper selected (the OLD line on success,
+        // or the just-drawn NEW line on a stale-after-draw). Any ids that FAIL
+        // to remove are folded back into `next` so they stay tracked and get
+        // retried next pass — this is the self-healing that keeps the chart
+        // from accumulating orphaned segments. `pruneFailedIds` bounds those
+        // retries so a permanently-invalid id (e.g. from a torn-down widget)
+        // is eventually dropped instead of warning forever.
+        const failed = removeGhostSegments(chart, removeNow);
+        const retry = pruneFailedIds(
+          failed,
+          failedAttemptsRef.current,
+          2,
+          next,
+        );
+        entityIdsRef.current = [...next, ...retry];
+        if (!stale) {
+          console.log('[GhostLine] Ghost line ready with', newIds.length, 'segments');
         }
-
-        entityIdsRef.current = [...entityIdsRef.current, ...ids];
-        console.log('[GhostLine] Ghost line ready with', ids.length, 'segments');
       } catch (err) {
         console.error('[GhostLine] draw failed:', err);
       }
@@ -292,8 +541,16 @@ export function useGhostLine(
       // Best-effort clear (on unmount the widget itself is usually torn down).
       try {
         const chart = widget.activeChart();
-        entityIdsRef.current = removeGhostSegments(chart, entityIdsRef.current);
+        removeGhostSegments(chart, entityIdsRef.current);
       } catch { /* widget may be removed */ }
+      // On teardown the widget (and all its entities) is going away. Any ids
+      // still in the ref are about to be invalid on the NEXT chart, so we must
+      // NOT retain them — otherwise removeEntity on the recreated widget
+      // throws on every redraw, ids accumulate unbounded, and a fresh run may
+      // transiently clear a prior run's still-valid segments via the shared
+      // ref. Drop the ref and the attempt counters for this dead widget.
+      entityIdsRef.current = [];
+      failedAttemptsRef.current.clear();
     };
-  }, [widget, activeSymbol, effectiveTimeframe, ghostLineMode, lastBarTime, predictiveKey, pulse, zoomPulse]);
+  }, [widget, activeSymbol, effectiveTimeframe, ghostLineMode, lastBarTime, pulse, zoomPulse]);
 }
