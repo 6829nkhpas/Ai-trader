@@ -782,6 +782,23 @@ body {
   display: none !important; /* Chrome, Safari and Opera */
 }
 
+/* ── Market Ticker marquee ───────────────────────────────────────────── */
+@keyframes marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.animate-marquee {
+  animation: marquee 200s linear infinite;
+}
+.animate-marquee:hover {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-marquee {
+    animation: none;
+  }
+}
+
 /* ================================================
    Butter Smooth Theme Switch Transitions (View Transitions API)
    ================================================ */

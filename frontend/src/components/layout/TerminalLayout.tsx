@@ -15,6 +15,7 @@ import {
   Search,
 } from 'lucide-react';
 import SymbolSearchModal from './SymbolSearchModal';
+import MarketTickerStrip from './MarketTickerStrip';
 import { useTradeStore, TradeProfile } from '../../store/useTradeStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
@@ -270,6 +271,9 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
           </button>
         </div>
       </header>
+
+      {/* ── Live Market Ticker Strip ──────────────────────── */}
+      <MarketTickerStrip />
 
       {/* Main Content */}
       <div className="flex flex-1 min-h-0 min-w-0 overflow-visible bg-background p-0 gap-0">
