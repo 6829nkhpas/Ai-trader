@@ -728,6 +728,22 @@ body {
   animation: slide-in 0.35s ease-out forwards;
 }
 
+/* ── Skeleton shimmer (auto-adapts to light/dark via theme vars) ───── */
+@keyframes skeleton-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--bg-elevated) 25%,
+    var(--bg-card) 50%,
+    var(--bg-elevated) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.8s ease-in-out infinite;
+}
+
 /* ── Thin scrollbar for insight feeds ────────────────────────────────── */
 .scrollbar-thin {
   scrollbar-width: thin;

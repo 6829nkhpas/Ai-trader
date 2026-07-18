@@ -1,7 +1,9 @@
 'use client';
 
 import React, { useEffect, useState, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useTradeStore } from '../store/useTradeStore';
+import { crossfade } from '../lib/motionVariants';
 
 import {
   type OrderBookLevel,
@@ -107,22 +109,30 @@ export default function OrderBook() {
         <span className="text-right">Total</span>
       </div>
 
-      {/* ── Awaiting Data State ───────────────────────────────── */}
-      {!isLive && book.asks.length === 0 && (
-        <div className="flex flex-1 items-center justify-center font-sans">
-          <div className="flex flex-col items-center gap-2 text-center px-4">
-            <div className="flex h-8 w-8 items-center justify-center rounded-none bg-elevated">
-              <span className="text-sm">📊</span>
+      {/* ── Awaiting Data State ───────────────────────────── */}
+      <AnimatePresence>
+        {!isLive && book.asks.length === 0 && (
+          <motion.div
+            variants={crossfade}
+            initial="hidden"
+            animate="show"
+            exit="exit"
+            className="flex flex-1 items-center justify-center font-sans"
+          >
+            <div className="flex flex-col items-center gap-2 text-center px-4">
+              <div className="flex h-8 w-8 items-center justify-center rounded-none bg-elevated">
+                <span className="text-sm">📊</span>
+              </div>
+              <p className="text-[12px] font-bold text-text-muted leading-snug">
+                Awaiting Market Depth Data...
+              </p>
+              <p className="text-[10px] text-text-muted/70">
+                Order book populates when live depth feed connects
+              </p>
             </div>
-            <p className="text-[12px] font-bold text-text-muted leading-snug">
-              Awaiting Market Depth Data...
-            </p>
-            <p className="text-[10px] text-text-muted/70">
-              Order book populates when live depth feed connects
-            </p>
-          </div>
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Ask Levels (Red) — Scrollable without scrollbar ─────────── */}
       {book.asks.length > 0 && (
@@ -207,14 +217,16 @@ export default function OrderBook() {
           </div>
           <div className="relative h-2 w-full rounded-full bg-border-default/40 flex overflow-hidden">
             {/* Bid Volume (Green) */}
-            <div 
-              className="h-full bg-emerald-500 transition-all duration-300 ease-out" 
-              style={{ width: `${bidVolPct}%` }}
+            <motion.div 
+              className="h-full bg-emerald-500" 
+              animate={{ width: `${bidVolPct}%` }}
+              transition={{ type: 'spring', stiffness: 120, damping: 18 }}
             />
             {/* Ask Volume (Red) */}
-            <div 
-              className="h-full bg-red-500 transition-all duration-300 ease-out" 
-              style={{ width: `${askVolPct}%` }}
+            <motion.div 
+              className="h-full bg-red-500" 
+              animate={{ width: `${askVolPct}%` }}
+              transition={{ type: 'spring', stiffness: 120, damping: 18 }}
             />
             {/* 50/50 Divider Mark */}
             <div className="absolute inset-y-0 left-1/2 w-[1px] bg-white/60 z-10" />
