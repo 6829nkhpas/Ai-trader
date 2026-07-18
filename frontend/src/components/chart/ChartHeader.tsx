@@ -2,6 +2,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { useTradeStore } from '../../store/useTradeStore';
+import { useFeature } from '../../store/useFeatureStore';
 import { ChevronDown } from 'lucide-react';
 import { SlChart } from 'react-icons/sl';
 
@@ -12,13 +13,16 @@ export interface ChartModeToggleProps {
 export default function ChartModeToggle({ noText = false }: ChartModeToggleProps) {
   const chartMode = useTradeStore((s) => s.chartMode);
   const setChartMode = useTradeStore((s) => s.setChartMode);
+  const footprintEnabled = useFeature('footprint');
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const modes = [
     { mode: 'STANDARD' as const, label: 'Standard', icon: SlChart },
     { mode: 'VOLUME_PROFILE' as const, label: 'Vol Profile', icon: SlChart },
-    { mode: 'FOOTPRINT' as const, label: 'Footprint', icon: SlChart },
+    ...(footprintEnabled
+      ? [{ mode: 'FOOTPRINT' as const, label: 'Footprint', icon: SlChart }]
+      : []),
   ];
 
   const currentMode = modes.find((m) => m.mode === chartMode) || modes[0];
