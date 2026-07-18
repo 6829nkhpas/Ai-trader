@@ -8,6 +8,7 @@ import { TradeProfile, MarketInsight, useTradeStore } from '../../store/useTrade
 import { useMultiTimeframeTrend } from '../../hooks/useMultiTimeframeTrend';
 import type { TrendBias } from '../../hooks/useMultiTimeframeTrend';
 import { useQuantStore } from '../../store/useQuantStore';
+import ClockIcon from './ClockIcon';
 
 interface SwingLayoutProps { activeProfile?: TradeProfile; timeframe?: string; isExpanded?: boolean; onToggleExpand?: () => void; }
 
@@ -309,18 +310,15 @@ export function SwingConfluencePanel() {
               />
             ))
           ) : (
-            <div className="flex h-full items-center justify-center">
-              <div className="flex flex-col items-center gap-3 text-center py-8">
-                <div className="relative">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-elevated border border-border-subtle">
-                    <span className="text-xl">🧠</span>
-                  </div>
-                  <div className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-amber-500/20 border border-amber-500/40 animate-pulse" />
+            <div className="flex h-full items-center justify-center p-6 text-center animate-in fade-in duration-200">
+              <div className="flex flex-col items-center gap-3 py-6">
+                <div className="w-32 h-28 flex items-center justify-center shrink-0">
+                  <ClockIcon className="w-full h-full object-contain" />
                 </div>
-                <div>
-                  <p className="text-[11px] text-text-muted font-medium leading-snug">Awaiting Market Anomalies...</p>
-                  <p className="text-[9px] text-text-muted/50 mt-1 leading-snug">
-                    Insights appear when a ≥2% price swing<br />triggers the AI engine
+                <div className="space-y-1">
+                  <p className="text-xs font-bold text-text-primary tracking-tight">Awaiting Market Anomalies...</p>
+                  <p className="text-[10px] text-text-secondary leading-relaxed max-w-[200px] mx-auto">
+                    Insights appear when a <span className="text-emerald-500 font-bold">≥2% price swing</span> triggers the AI engine
                   </p>
                 </div>
               </div>
