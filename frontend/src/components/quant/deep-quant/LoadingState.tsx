@@ -2,6 +2,8 @@
 
 import React from 'react';
 import { Loader2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { crossfade, scaleIn } from '../../../lib/motionVariants';
 
 const LOADING_PHASES = [
   'Aggregating 50+ Technical Indicators...',
@@ -38,9 +40,18 @@ export default function LoadingState({ agentStatus }: LoadingStateProps) {
       </div>
 
       <div className="text-center">
-        <p className="text-[11px] font-semibold text-emerald-300 animate-pulse transition-all duration-500">
-          {LOADING_PHASES[phaseIdx]}
-        </p>
+        <AnimatePresence mode="wait">
+          <motion.p
+            key={phaseIdx}
+            variants={crossfade}
+            initial="hidden"
+            animate="show"
+            exit="exit"
+            className="text-[11px] font-semibold text-emerald-300"
+          >
+            {LOADING_PHASES[phaseIdx]}
+          </motion.p>
+        </AnimatePresence>
         <p className="text-[9px] text-text-muted/50 mt-1.5">
           This may take 10–30 seconds
         </p>
@@ -55,9 +66,12 @@ export default function LoadingState({ agentStatus }: LoadingStateProps) {
       {/* Phase dots */}
       <div className="flex gap-1">
         {LOADING_PHASES.map((_, i) => (
-          <div
+          <motion.div
             key={i}
-            className={`h-1 w-1 rounded-full transition-all duration-300 ${
+            initial={{ scale: 0, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ delay: i * 0.05, duration: 0.2 }}
+            className={`h-1 w-1 rounded-full transition-colors duration-300 ${
               i <= phaseIdx ? 'bg-emerald-400' : 'bg-slate-700'
             }`}
           />
