@@ -5,6 +5,7 @@ import { Loader2, FileText, ArrowRight, Receipt } from 'lucide-react';
 import type { Payment } from '../../../lib/api/types';
 import { latestPaymentStatus } from '../../../lib/api/types';
 import { dashboardUrl, openExternalUrl } from '../../../lib/redirect';
+import BillingTabSkeleton from './BillingTabSkeleton';
 
 interface BillingTabProps {
   history: Payment[] | null;
@@ -67,9 +68,7 @@ export default function BillingTab({ history, loading, error, refetch }: Billing
           </button>
         </div>
       ) : loading && payments.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center p-8">
-          <Loader2 size={28} className="animate-spin text-text-muted" />
-        </div>
+        <BillingTabSkeleton />
       ) : payments.length === 0 ? (
         <div className="flex flex-col items-center justify-center p-8 text-center rounded-none border border-border-default bg-elevated/60">
           <Receipt size={40} className="text-text-secondary mb-3 opacity-40" />
