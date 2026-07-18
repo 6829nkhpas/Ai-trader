@@ -13,10 +13,12 @@
 // reads it to route the dataset returned by the Rust dual-engine projection.
 
 import React, { useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Lock } from 'lucide-react';
 import { SlGraph } from 'react-icons/sl';
 import { useOutsideClose } from '../../hooks/useOutsideClose';
 import { useChartUIStore, type GhostLineMode } from '../../store/useChartUIStore';
+import { useFeature } from '../../store/useFeatureStore';
+import { openExternalUrl, dashboardUrl } from '../../lib/redirect';
 
 const MODE_LABELS: Record<GhostLineMode, string> = {
   linear: 'OLS',
@@ -41,9 +43,29 @@ export interface GhostLineToggleProps {
 export default function GhostLineToggle({ noText = false }: GhostLineToggleProps) {
   const ghostLineMode = useChartUIStore((s) => s.ghostLineMode);
   const setGhostLineMode = useChartUIStore((s) => s.setGhostLineMode);
+  const ghostlineEnabled = useFeature('ghostline');
 
   const [open, setOpen] = useState(false);
   const ref = useOutsideClose<HTMLDivElement>(() => setOpen(false));
+
+  if (!ghostlineEnabled) {
+    return (
+      <button
+        type="button"
+        onClick={() => openExternalUrl(dashboardUrl())}
+        aria-label="Ghostline locked"
+        title="Ghostline requires a subscription. Click to view plans."
+        className={
+          noText
+            ? "flex h-7 w-7 items-center justify-center rounded-sm bg-transparent text-text-muted hover:bg-elevated hover:text-text-primary transition-colors"
+            : "flex h-full items-center gap-1.5 px-2.5 text-[11px] font-semibold text-text-muted border-r border-border-default bg-surface hover:bg-elevated hover:text-text-primary transition-colors"
+        }
+      >
+        <Lock size={noText ? 16 : 12} />
+        {!noText && <span>LOCKED</span>}
+      </button>
+    );
+  }
 
   return (
     <div className="relative flex items-center justify-center" ref={ref}>

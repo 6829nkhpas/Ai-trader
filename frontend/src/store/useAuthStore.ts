@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { API_BASE_URL, API_V1_PREFIX } from '../lib/env';
 import { usersApi } from '../lib/api/endpoints';
 import { REFRESH_TOKEN_KEY } from '../lib/api/client';
+import { useFeatureStore } from './useFeatureStore';
 
 interface AuthUser {
   id: string;
@@ -178,6 +179,9 @@ export const useAuthStore = create<AuthState>((set, get) => {
       removeLocalStorage(USER_KEY);
       removeLocalStorage(ACCESS_TOKEN_KEY);
       removeLocalStorage(REFRESH_TOKEN_KEY);
+      // Clear the feature-gate snapshot so a stale access map from the
+      // previous session can't leak into a fresh login.
+      useFeatureStore.getState().reset();
       set({
         isAuthenticated: false,
         token: null,

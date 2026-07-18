@@ -15,6 +15,7 @@ import {
   Search,
 } from 'lucide-react';
 import SymbolSearchModal from './SymbolSearchModal';
+import MarketTickerStrip from './MarketTickerStrip';
 import { useTradeStore, TradeProfile } from '../../store/useTradeStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
@@ -190,7 +191,7 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
       {/* Header */}
       <header className="z-30 flex h-12 shrink-0 items-center gap-4 border-b border-border-default bg-surface px-4 py-1.5">
         <div className="flex flex-1 items-center gap-2.5">
-          <img src="/strat.svg" alt="Strat Ai Logo" className="h-[18px] w-[18px] object-contain" />
+          <img src="/strat.svg" alt="Strat Ai Logo" className="h-4.5 w-4.5 object-contain" />
           <div className="flex items-baseline gap-1.5">
             <h1 className="text-sm font-bold tracking-tight text-text-primary">Strat AI</h1>
             <span className="text-[10px] text-text-muted border-l border-border-default pl-2">Terminal</span>
@@ -271,6 +272,9 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
         </div>
       </header>
 
+      {/* ── Live Market Ticker Strip ──────────────────────── */}
+      <MarketTickerStrip />
+
       {/* Main Content */}
       <div className="flex flex-1 min-h-0 min-w-0 overflow-visible bg-background p-0 gap-0">
         {/* Watchlist */}
@@ -341,7 +345,7 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
             <button
               onMouseDown={handleLeftButtonMouseDown}
               style={{ top: `${leftButtonTop}px` }}
-              className={`absolute left-0 z-[100] flex h-7 w-6 items-center justify-center rounded-r border border-l-0 border-emerald-500/20 bg-surface/90 text-emerald-500 dark:text-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-300 hover:bg-emerald-500/10 shadow-lg backdrop-blur-sm transition-all duration-200 ${
+              className={`absolute left-0 z-100 flex h-7 w-6 items-center justify-center rounded-r border border-l-0 border-emerald-500/20 bg-surface/90 text-emerald-500 dark:text-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-300 hover:bg-emerald-500/10 shadow-lg backdrop-blur-sm transition-all duration-200 ${
                 isDraggingLeft ? 'cursor-grabbing' : 'cursor-grab'
               }`}
               title="Expand left panel (Drag to move)"
@@ -367,10 +371,10 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
         initialQuery={initialQuery}
       />
       {isResizing && (
-        <div className="fixed inset-0 z-[9999] cursor-col-resize select-none pointer-events-auto bg-white/0" />
+        <div className="fixed inset-0 z-9999 cursor-col-resize select-none pointer-events-auto bg-white/0" />
       )}
       {isDraggingLeft && (
-        <div className="fixed inset-0 z-[9999] cursor-row-resize select-none pointer-events-auto bg-white/0" />
+        <div className="fixed inset-0 z-9999 cursor-row-resize select-none pointer-events-auto bg-white/0" />
       )}
     </div>
   );

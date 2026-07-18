@@ -29,17 +29,18 @@ import type { FnoChains } from './viewModel';
  *
  * Pure, total, deterministic.
  */
+const DEFAULT_UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY', 'MIDCPNIFTY', 'BANKEX'];
+
 export function deriveUnderlyingOptions(
   chains: FnoChains | null,
-  selectedUnderlying: string,
+  selectedUnderlying?: string,
 ): string[] {
-  const list = Array.isArray(chains?.underlyings) ? chains!.underlyings : [];
-  // Never introduce an unconfigured underlying from the data; only ensure the
-  // active selection remains selectable.
-  if (selectedUnderlying && !list.includes(selectedUnderlying)) {
-    return [selectedUnderlying, ...list];
+  const chainList = Array.isArray(chains?.underlyings) ? chains!.underlyings : [];
+  const combined = Array.from(new Set([...DEFAULT_UNDERLYINGS, ...chainList]));
+  if (selectedUnderlying && !combined.includes(selectedUnderlying)) {
+    return [selectedUnderlying, ...combined];
   }
-  return list;
+  return combined;
 }
 
 /**

@@ -25,6 +25,8 @@ import SplitViewToggle from '../components/chart/SplitViewToggle';
 import { useTradeStore, TradeProfile, hydratePaperPortfolio } from '../store/useTradeStore';
 import { useQuantStore } from '../store/useQuantStore';
 import { useChartUIStore } from '../store/useChartUIStore';
+import { useFeatureStore } from '../store/useFeatureStore';
+import { useCredit } from '../hooks/useApi';
 import type { ConsensusReport } from '../store/useQuantStore';
 import type { DataRange } from '../utils/chartTypes';
 import { useAuthStore } from '../store/useAuthStore';
@@ -45,6 +47,24 @@ export default function Home() {
   const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, connectOrderFlowWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, activeRange, setActiveRange, selectedSymbol, paperPortfolio } = useTradeStore();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const fetchProfile = useAuthStore((s) => s.fetchProfile);
+  const setFeatureAccessFlags = useFeatureStore((s) => s.setAccessFlags);
+  const resetFeatureAccess = useFeatureStore((s) => s.reset);
+  const { data: creditData } = useCredit();
+
+  // Hydrate the feature-gate store whenever the user's plan accessFlags change
+  // (initial load + after upgrade / plan switch). The Zustand `set` is a
+  // cheap external-system write — safe inside an effect.
+  useEffect(() => {
+    setFeatureAccessFlags(creditData?.accessFlags ?? null);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+  }, [creditData?.accessFlags, setFeatureAccessFlags]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      resetFeatureAccess();
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+  }, [isAuthenticated, resetFeatureAccess]);
 
   // ── Premium Toast Notification State ────────────────────────────────
   const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'info' }[]>([]);
@@ -454,7 +474,7 @@ export default function Home() {
             {/* ── Right: Collapsible Profile Sidebar ─────────── */}
             <div
               className={`
-                relative flex flex-col min-h-0 overflow-hidden border-l border-border-default bg-surface
+                relative flex flex-col shrink-0 min-h-0 overflow-hidden border-l border-border-default bg-surface
                 ${isResizingSidebar ? '' : 'transition-all duration-300 ease-out'}
                 ${sidebarOpen
                   ? 'opacity-100'

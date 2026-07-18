@@ -15,3 +15,7 @@ if (!DASHBOARD_URL) {
 export { API_BASE_URL, DASHBOARD_URL };
 
 export const API_V1_PREFIX = '/api/v1';
+
+// PROD controls whether premium features are gated by the user's plan.
+// In dev (false) every feature is unlocked so developers can test freely.
+export const IS_PROD = process.env.NEXT_PUBLIC_PROD === 'true';
