@@ -73,23 +73,9 @@ export function MacroSentimentPanel() {
 
   return (
     <div id="macro-sentiment-panel" className="flex h-full flex-col rounded-none border-0 bg-surface text-sm select-none overflow-hidden">
-      
+
       {/* ── Macro Indicators (Live) ──────────────────────────────── */}
       <div className="flex flex-col border-b border-border-default">
-        <div className="flex items-center justify-between px-3 pt-2 pb-1">
-          <h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Macro Indicators</h3>
-          <div className="flex items-center gap-1.5">
-            {error && (
-              <span className="text-[8px] text-red-400 font-medium">API Error</span>
-            )}
-            {lastUpdated && !loading && (
-              <span className="text-[8px] text-text-muted/60 tabular-nums">{timeAgo(lastUpdated)}</span>
-            )}
-            {loading && (
-              <Loader2 size={10} className="animate-spin text-text-muted" />
-            )}
-          </div>
-        </div>
 
         {loading && indicators.every((i) => i.raw === null) ? (
           <IndicatorSkeleton />
@@ -124,11 +110,10 @@ export function MacroSentimentPanel() {
           {portfolioMetrics.map((m) => (
             <div key={m.label} className="flex items-center justify-between" title={m.tooltip}>
               <span className="text-[10px] text-text-muted">{m.label}</span>
-              <span className={`text-[11px] font-semibold tabular-nums ${
-                m.value.startsWith('+') ? 'text-bull' :
-                m.value.startsWith('-') ? 'text-bear' :
-                'text-text-primary'
-              }`}>{m.value}</span>
+              <span className={`text-[11px] font-semibold tabular-nums ${m.value.startsWith('+') ? 'text-bull' :
+                  m.value.startsWith('-') ? 'text-bear' :
+                    'text-text-primary'
+                }`}>{m.value}</span>
             </div>
           ))}
         </div>
