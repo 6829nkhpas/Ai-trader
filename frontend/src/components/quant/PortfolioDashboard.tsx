@@ -8,6 +8,7 @@
 import React from 'react';
 import { useTradeStore } from '../../store/useTradeStore';
 import { Shield, TrendingUp, TrendingDown, Clock, BookOpen, AlertCircle, ChevronDown } from 'lucide-react';
+import PortfolioSkeleton from './PortfolioSkeleton';
 
 interface PortfolioDashboardProps {
   onCollapse?: () => void;
@@ -23,12 +24,7 @@ export default function PortfolioDashboard({ onCollapse }: PortfolioDashboardPro
   }, [fetchPaperPortfolio]);
 
   if (!paperPortfolio) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-3 p-8 border border-border-default/30 bg-black/40 rounded-none">
-        <Shield size={20} className="text-text-muted opacity-30 animate-pulse" />
-        <span className="text-xs font-semibold text-text-muted">Loading paper engine state...</span>
-      </div>
-    );
+    return <PortfolioSkeleton />;
   }
 
   const { balance, active_positions, trade_history } = paperPortfolio;
