@@ -43,6 +43,12 @@ export interface FnoChainRow {
   pe_oi: NaOr<number>;
   ce_price: NaOr<number>;
   pe_price: NaOr<number>;
+  ce_change?: NaOr<number>;
+  pe_change?: NaOr<number>;
+  ce_pchange?: NaOr<number>;
+  pe_pchange?: NaOr<number>;
+  ce_volume?: NaOr<number>;
+  pe_volume?: NaOr<number>;
   iv: NaOr<number>;
 }
 
@@ -122,6 +128,15 @@ export interface OiProfilePoint {
   strike: number;
   callOi: NaOr<number>;
   putOi: NaOr<number>;
+  callPrice?: NaOr<number>;
+  putPrice?: NaOr<number>;
+  callChange?: NaOr<number>;
+  putChange?: NaOr<number>;
+  callPChange?: NaOr<number>;
+  putPChange?: NaOr<number>;
+  callVolume?: NaOr<number>;
+  putVolume?: NaOr<number>;
+  iv?: NaOr<number>;
 }
 
 export interface OiProfileModel {
@@ -221,6 +236,15 @@ export function buildOiProfile(payload: FnoPayload): OiProfileModel {
       strike: row.strike,
       callOi: finiteOrNull(row.ce_oi),
       putOi: finiteOrNull(row.pe_oi),
+      callPrice: finiteOrNull(row.ce_price),
+      putPrice: finiteOrNull(row.pe_price),
+      callChange: finiteOrNull(row.ce_change),
+      putChange: finiteOrNull(row.pe_change),
+      callPChange: finiteOrNull(row.ce_pchange),
+      putPChange: finiteOrNull(row.pe_pchange),
+      callVolume: finiteOrNull(row.ce_volume),
+      putVolume: finiteOrNull(row.pe_volume),
+      iv: finiteOrNull(row.iv),
     }))
     .sort((a, b) => a.strike - b.strike);
 
