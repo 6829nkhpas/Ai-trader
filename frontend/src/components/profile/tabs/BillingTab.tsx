@@ -78,7 +78,7 @@ export default function BillingTab({ history, loading, error, refetch }: Billing
         </div>
       ) : (
         <div className="rounded-none border border-border-default overflow-hidden flex flex-col">
-          <div className="flex-1 overflow-auto max-h-[480px] scrollbar-none">
+          <div className="flex-1 overflow-auto max-h-120 scrollbar-none">
             <table className="w-full text-left border-collapse">
               <thead className="sticky top-0 z-10 bg-elevated border-b border-border-default">
                 <tr>

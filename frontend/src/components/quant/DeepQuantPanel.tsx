@@ -21,30 +21,15 @@ import PremiumPaywall from './deep-quant/PremiumPaywall';
 import ErrorState from './deep-quant/ErrorState';
 import EmptyState from './deep-quant/EmptyState';
 import { useVerificationForm } from './deep-quant/useVerificationForm';
+import { useFeature } from '../../store/useFeatureStore';
+import { dashboardUrl, openExternalUrl } from '../../lib/redirect';
 
 export default function DeepQuantPanel() {
   const user = useAuthStore((s) => s.user);
+  const deepseekGlmEnabled = useFeature('deepseekGlm');
 
   const handleUpgrade = async () => {
-    const token = useAuthStore.getState().token;
-    try {
-      const res = await fetch('http://localhost:3002/api/payments/phonepe/checkout', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ amount: 599, tier: 'PRO' })
-      });
-      if (!res.ok) throw new Error('Failed to initiate checkout session');
-      const data = await res.json();
-      if (data.redirectUrl) {
-        console.log('[Paywall] Redirecting to PhonePe checkout:', data.redirectUrl);
-        await invoke('open_browser', { url: data.redirectUrl });
-      }
-    } catch (err) {
-      console.error('[Paywall] Checkout initiation failed:', err);
-    }
+    await openExternalUrl(dashboardUrl());
   };
 
   const {
@@ -90,7 +75,7 @@ export default function DeepQuantPanel() {
     };
   }, []);
 
-  if (!user || user.tier === 'FREE') {
+  if (!user || !deepseekGlmEnabled) {
     return <PremiumPaywall onUpgradeClick={handleUpgrade} />;
   }
 
