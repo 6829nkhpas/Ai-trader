@@ -6,6 +6,7 @@ import MainTerminalChart from '../MainTerminalChart';
 import type { Timeframe } from '../../utils/chartTypes';
 import { TradeProfile, MarketInsight, useTradeStore } from '../../store/useTradeStore';
 import { useMacroIndicators } from '../../hooks/useMacroIndicators';
+import ClockIcon from './ClockIcon';
 
 interface InvestorLayoutProps { activeProfile?: TradeProfile; timeframe?: string; isExpanded?: boolean; onToggleExpand?: () => void; }
 
@@ -154,7 +155,19 @@ export function MacroSentimentPanel() {
               <div className="rounded-none border-b border-t-0 border-x-0 border-border-subtle bg-elevated/50 p-3"><p className="text-[11px] leading-relaxed text-text-secondary whitespace-pre-line">{activeInsight.analysis_text}</p></div>
             </div>
           ) : (
-            <div className="flex h-full items-center justify-center"><div className="flex flex-col items-center gap-2 text-center"><div className="flex h-8 w-8 items-center justify-center rounded-none bg-elevated"><span className="text-sm">🧠</span></div><p className="text-[11px] text-text-muted leading-snug">Awaiting Market Anomalies...</p><p className="text-[9px] text-text-muted/60">AI outlook appears when a ≥2% price swing is detected</p></div></div>
+            <div className="flex h-full items-center justify-center p-6 text-center animate-in fade-in duration-200">
+              <div className="flex flex-col items-center gap-3 py-6">
+                <div className="w-32 h-28 flex items-center justify-center shrink-0">
+                  <ClockIcon className="w-full h-full object-contain" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs font-bold text-text-primary tracking-tight">Awaiting Market Anomalies...</p>
+                  <p className="text-[10px] text-text-secondary leading-relaxed max-w-[200px] mx-auto">
+                    AI outlook appears when a <span className="text-emerald-500 font-bold">≥2% price swing</span> is detected
+                  </p>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       </div>

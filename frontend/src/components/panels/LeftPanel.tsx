@@ -11,6 +11,7 @@ import SentimentBlock from './left-panel/SentimentBlock';
 import WatchlistBlock from './left-panel/WatchlistBlock';
 import SymbolSearchBlock from './left-panel/SymbolSearchBlock';
 import MultiTfPatternsView from '../quant/deep-quant/MultiTfPatternsView';
+import WaitIcon from './WaitIcon';
 
 export default function LeftPanel() {
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
@@ -77,16 +78,17 @@ export default function LeftPanel() {
 
           if (!consensusData || !symbolMatch) {
             return (
-              <div className="flex flex-col items-center justify-center gap-3 p-4 py-6">
-                <div className="relative">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-elevated border border-border-subtle">
-                    <Activity size={16} className="text-text-muted animate-pulse" />
-                  </div>
-                  <div className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-amber-500/30 border border-amber-500/50 animate-ping" />
+              <div className="flex flex-col items-center justify-center gap-3 p-6 text-center animate-in fade-in duration-200">
+                <div className="w-44 h-24 flex items-center justify-center shrink-0">
+                  <WaitIcon className="w-full h-full object-contain" />
                 </div>
-                <div className="text-center">
-                  <p className="text-[9px] font-semibold text-text-muted">No Technical Data for {selectedSymbol || 'symbol'}</p>
-                  <p className="text-[8px] text-text-muted/50 mt-0.5">Run Deep Quant Analysis to<br />compute technical consensus</p>
+                <div className="space-y-1">
+                  <p className="text-xs font-bold text-text-primary tracking-tight">
+                    No Technical Data for <span className="text-emerald-500 font-extrabold">{selectedSymbol || 'symbol'}</span>
+                  </p>
+                  <p className="text-[10px] text-text-secondary leading-relaxed max-w-[220px] mx-auto">
+                    Run Deep Quant Analysis to compute technical consensus
+                  </p>
                 </div>
               </div>
             );
