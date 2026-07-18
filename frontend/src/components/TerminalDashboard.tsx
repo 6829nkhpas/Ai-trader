@@ -14,6 +14,7 @@ import {
   HelpCircle,
   Clock
 } from 'lucide-react';
+import { RiskMarginsSkeleton, PositionsSkeleton, OrdersSkeleton } from './skeletons/DashboardSkeletons';
 
 export default function TerminalDashboard() {
   const [activeTab, setActiveTab] = useState<'risk' | 'positions' | 'orders'>('risk');
@@ -154,10 +155,7 @@ export default function TerminalDashboard() {
             )}
 
             {marginsLoading && !marginsData && (
-              <div className="flex h-24 items-center justify-center text-xs text-text-muted">
-                <RefreshCw size={14} className="animate-spin mr-2 text-emerald-400" />
-                Loading risk limits and margins...
-              </div>
+              <RiskMarginsSkeleton />
             )}
 
             {marginsData && (
@@ -238,10 +236,7 @@ export default function TerminalDashboard() {
             )}
 
             {positionsLoading && !positionsData && (
-              <div className="flex h-24 items-center justify-center text-xs text-text-muted">
-                <RefreshCw size={14} className="animate-spin mr-2 text-emerald-400" />
-                Loading portfolio positions...
-              </div>
+              <PositionsSkeleton />
             )}
 
             {positionsData && (
@@ -340,10 +335,7 @@ export default function TerminalDashboard() {
             )}
 
             {ordersLoading && !ordersData.length && (
-              <div className="flex h-24 items-center justify-center text-xs text-text-muted">
-                <RefreshCw size={14} className="animate-spin mr-2 text-emerald-400" />
-                Loading orders...
-              </div>
+              <OrdersSkeleton />
             )}
 
             {ordersData && ordersData.length > 0 ? (

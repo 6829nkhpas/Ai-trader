@@ -4,6 +4,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { ChevronUp, ChevronDown, GripVertical, Trash2, ArrowUpRight, ArrowDownRight, Loader2 } from 'lucide-react';
 import { useTradeStore, hydrateWatchlist } from '../../../store/useTradeStore';
 import { useChartUIStore } from '../../../store/useChartUIStore';
+import WatchlistSkeleton from './WatchlistSkeleton';
 
 const SECTOR_COLORS: Record<string, string> = {
   Energy: 'bg-amber-500/10 text-amber-400',
@@ -134,10 +135,7 @@ export default function WatchlistBlock() {
       {!watchlistCollapsed && (
         <div className="shrink-0 max-h-[240px] overflow-y-auto scrollbar-thin border-b border-border-default">
           {quotesLoading ? (
-            <div className="flex items-center justify-center gap-2 py-4">
-              <Loader2 size={14} className="animate-spin text-primary" />
-              <span className="text-[10px] text-text-secondary">Loading...</span>
-            </div>
+            <WatchlistSkeleton rows={5} />
           ) : watchlist.length === 0 ? (
             <div className="flex items-center justify-center py-6">
               <p className="text-[10px] text-text-muted/60 italic">Search and add symbols to your watchlist</p>

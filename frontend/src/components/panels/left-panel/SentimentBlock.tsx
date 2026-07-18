@@ -2,7 +2,10 @@
 
 import React, { useState } from 'react';
 import { Newspaper, Loader2, ChevronUp, ChevronDown } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import type { SentimentPayload } from '../../../store/useQuantStore';
+import { collapseVariants, fadeInUp } from '../../../lib/motionVariants';
+import SentimentSkeleton from './SentimentSkeleton';
 
 interface SentimentBlockProps {
   sentiment: SentimentPayload | null;
@@ -39,10 +42,7 @@ export default function SentimentBlock({
       </div>
 
       {isLoading ? (
-        <div className="flex items-center gap-2 rounded-none px-3 py-2 bg-elevated/40 border-y border-x-0 border-border-default">
-          <div className="h-1.5 w-1.5 rounded-none bg-text-muted animate-pulse" />
-          <p className="text-[9px] text-text-muted font-medium">Analyzing latest news...</p>
-        </div>
+        <SentimentSkeleton />
       ) : error ? (
         <div className="flex items-center gap-2 rounded-none px-3 py-2 bg-rose-500/5 border-y border-x-0 border-rose-500/20">
           <div className="h-1.5 w-1.5 rounded-none bg-rose-400" />
@@ -51,7 +51,8 @@ export default function SentimentBlock({
       ) : sentiment ? (
         <div className="flex flex-col gap-2">
           {/* ── Summary Score ─────────────────────────────────── */}
-          <div
+          <motion.div
+            initial="hidden" animate="show" variants={fadeInUp}
             className="rounded-none px-3 py-2 border-y border-x-0 border-border-default bg-elevated/40"
           >
             <div className="flex items-center justify-between mb-1">
@@ -73,7 +74,7 @@ export default function SentimentBlock({
             >
               {sentiment.top_headline}
             </p>
-          </div>
+          </motion.div>
 
           {/* ── Headlines Toggle + Scrollable List ────────────── */}
           {sentiment.headlines.length > 0 && (
@@ -87,23 +88,33 @@ export default function SentimentBlock({
                 {headlinesExpanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
               </button>
 
-              {headlinesExpanded && (
-                <div className="flex flex-col gap-0 max-h-[240px] overflow-y-auto scrollbar-thin mt-0.5">
-                  {sentiment.headlines.map((headline, i) => (
-                    <div
-                      key={i}
-                      className="group flex items-start gap-1.5 rounded-none px-3 py-1.5 border-b border-x-0 border-border-default/40 bg-elevated/10 hover:bg-elevated/20 transition-colors"
-                    >
-                      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-none bg-elevated border border-border-default text-[7px] font-bold text-text-muted mt-px">
-                        {i + 1}
-                      </span>
-                      <p className="text-[9px] leading-snug text-text-secondary group-hover:text-text-primary transition-colors">
-                        {headline}
-                      </p>
+              <AnimatePresence initial={false}>
+                {headlinesExpanded && (
+                  <motion.div
+                    variants={collapseVariants}
+                    initial="collapsed"
+                    animate="expanded"
+                    exit="collapsed"
+                    className="overflow-hidden"
+                  >
+                    <div className="flex flex-col gap-0 max-h-[240px] overflow-y-auto scrollbar-thin mt-0.5">
+                      {sentiment.headlines.map((headline, i) => (
+                        <div
+                          key={i}
+                          className="group flex items-start gap-1.5 rounded-none px-3 py-1.5 border-b border-x-0 border-border-default/40 bg-elevated/10 hover:bg-elevated/20 transition-colors"
+                        >
+                          <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-none bg-elevated border border-border-default text-[7px] font-bold text-text-muted mt-px">
+                            {i + 1}
+                          </span>
+                          <p className="text-[9px] leading-snug text-text-secondary group-hover:text-text-primary transition-colors">
+                            {headline}
+                          </p>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           )}
         </div>

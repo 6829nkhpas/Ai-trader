@@ -4,6 +4,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import FnoSkeleton from './FnoSkeleton';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
 import { useTradeStore } from '../../store/useTradeStore';
@@ -182,14 +183,7 @@ export default function FnoSection() {
   // ready/partial snapshot renders the analytics + contract chart.
   const renderBody = () => {
     if (loading && !effectiveView) {
-      return (
-        <div className="flex h-full w-full items-center justify-center gap-2 text-text-muted">
-          <Loader2 size={14} className="animate-spin" />
-          <span className="text-[11px] font-semibold uppercase tracking-widest">
-            Loading F&amp;O analytics…
-          </span>
-        </div>
-      );
+      return <FnoSkeleton rows={12} />;
     }
 
     if (!effectiveView) {

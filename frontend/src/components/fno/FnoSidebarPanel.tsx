@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Loader2, Activity, RefreshCw, ChevronDown } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import FnoSkeleton from './FnoSkeleton';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useTradeStore } from '../../store/useTradeStore';
 import {
@@ -255,10 +256,7 @@ export default function FnoSidebarPanel() {
           <span className="text-[11px] font-semibold uppercase tracking-wider">Select a symbol…</span>
         </div>
       ) : loading && viewState === null ? (
-        <div className="flex h-40 items-center justify-center gap-2 text-text-secondary bg-surface/20">
-          <Loader2 size={14} className="animate-spin" />
-          <span className="text-[11px] font-semibold uppercase tracking-wider">Loading F&amp;O…</span>
-        </div>
+        <FnoSkeleton />
       ) : !viewState || viewState.kind === 'unavailable' || viewState.kind === 'service-error' ? (
         <div className="flex flex-col gap-3 p-4 bg-surface/20">
           <div className="flex items-center gap-2 rounded border border-amber-500/20 bg-amber-500/5 px-3 py-2">

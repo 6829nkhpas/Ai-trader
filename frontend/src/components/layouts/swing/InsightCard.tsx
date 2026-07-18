@@ -2,7 +2,9 @@
 
 import React, { useState } from 'react';
 import { ChevronDown, Zap, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { MarketInsight } from '../../../store/useTradeStore';
+import { fadeInUp, collapseVariants } from '../../../lib/motionVariants';
 
 interface InsightCardProps {
   insight: MarketInsight;
@@ -29,17 +31,19 @@ export default function InsightCard({ insight, isNew, index }: InsightCardProps)
   const isError = insight.headline === 'LLM API Failure';
 
   return (
-    <div
+    <motion.div
+      variants={fadeInUp}
+      initial="hidden"
+      animate="show"
       onClick={() => setExpanded(!expanded)}
       className={`
         group relative rounded-xl border border-border-default/45 p-3 mb-2 transition-all duration-200 cursor-pointer
-        ${isNew ? 'animate-slide-in shadow-[0_0_12px_rgba(16,185,129,0.08)]' : 'shadow-sm'}
+        ${isNew ? 'shadow-[0_0_12px_rgba(16,185,129,0.08)]' : 'shadow-sm'}
         ${isError
           ? 'bg-rose-500/5 hover:bg-rose-500/10 hover:border-rose-500/20'
           : 'bg-[#0d0f12]/30 hover:bg-[#161920]/25 hover:border-emerald-500/10'
         }
       `}
-      style={{ animationDelay: `${index * 50}ms` }}
     >
       {/* Pulse effect for live WebSocket ticks */}
       {isNew && !isError && (
@@ -87,13 +91,23 @@ export default function InsightCard({ insight, isNew, index }: InsightCardProps)
         </div>
 
         {/* Dynamic expandable details */}
-        {expanded && (
-          <div className="mt-2 pt-2.5 border-t border-border-default/45 text-[11px] leading-relaxed text-text-secondary/90 whitespace-pre-line animate-in fade-in duration-200">
-            <p className="text-[9.5px] font-black text-text-muted/80 uppercase tracking-widest mb-1.5">AI Confluence Analysis</p>
-            {insight.analysis_text}
-          </div>
-        )}
+        <AnimatePresence initial={false}>
+          {expanded && (
+            <motion.div
+              variants={collapseVariants}
+              initial="collapsed"
+              animate="expanded"
+              exit="collapsed"
+              className="overflow-hidden"
+            >
+              <div className="mt-2 pt-2.5 border-t border-border-default/45 text-[11px] leading-relaxed text-text-secondary/90 whitespace-pre-line">
+                <p className="text-[9.5px] font-black text-text-muted/80 uppercase tracking-widest mb-1.5">AI Confluence Analysis</p>
+                {insight.analysis_text}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
-    </div>
+    </motion.div>
   );
 }

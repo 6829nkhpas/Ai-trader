@@ -2,11 +2,13 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
 import { Loader2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import MainTerminalChart from '../MainTerminalChart';
 import type { Timeframe } from '../../utils/chartTypes';
 import { TradeProfile, MarketInsight, useTradeStore } from '../../store/useTradeStore';
 import { useMacroIndicators } from '../../hooks/useMacroIndicators';
 import ClockIcon from './ClockIcon';
+import { staggerContainer, fadeInUp, crossfade, scaleIn } from '../../lib/motionVariants';
 
 interface InvestorLayoutProps { activeProfile?: TradeProfile; timeframe?: string; isExpanded?: boolean; onToggleExpand?: () => void; }
 
@@ -39,10 +41,10 @@ function IndicatorSkeleton() {
     <div className="flex flex-col gap-0 px-3 pb-2">
       {[...Array(5)].map((_, i) => (
         <div key={i} className="flex items-center justify-between py-1.5 border-b border-border-subtle last:border-0">
-          <div className="h-3 w-20 rounded bg-elevated/80 animate-pulse" />
+          <div className="h-3 w-20 rounded skeleton-shimmer" />
           <div className="flex items-center gap-2">
-            <div className="h-3 w-16 rounded bg-elevated/80 animate-pulse" />
-            <div className="h-3 w-10 rounded bg-elevated/60 animate-pulse" />
+            <div className="h-3 w-16 rounded skeleton-shimmer" />
+            <div className="h-3 w-10 rounded skeleton-shimmer" />
           </div>
         </div>
       ))}
@@ -80,9 +82,9 @@ export function MacroSentimentPanel() {
         {loading && indicators.every((i) => i.raw === null) ? (
           <IndicatorSkeleton />
         ) : (
-          <div className="flex flex-col gap-0 px-3 pb-2">
+          <motion.div variants={staggerContainer} initial="hidden" animate="show" className="flex flex-col gap-0 px-3 pb-2">
             {indicators.map((ind) => (
-              <div key={ind.label} className="flex items-center justify-between py-1.5 border-b border-border-subtle last:border-0 transition-colors hover:bg-elevated/30">
+              <motion.div key={ind.label} variants={fadeInUp} className="flex items-center justify-between py-1.5 border-b border-border-subtle last:border-0 transition-colors hover:bg-elevated/30">
                 <div className="flex items-center gap-1.5">
                   <span className="text-[11px] text-text-secondary">{ind.label}</span>
                   <span className={`rounded-none px-1 py-px text-[7px] font-semibold uppercase tracking-wider ${categoryColor(ind.category)}`}>
@@ -97,9 +99,9 @@ export function MacroSentimentPanel() {
                     </span>
                   )}
                 </div>
-              </div>
+              </motion.div>
             ))}
-          </div>
+          </motion.div>
         )}
       </div>
 

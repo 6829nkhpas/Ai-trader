@@ -11,7 +11,9 @@ import {
   Waves,
   BarChart3,
 } from 'lucide-react';
+import { motion } from 'framer-motion';
 import type { ConsensusReport } from '../../../store/useQuantStore';
+import { staggerContainer, fadeInUp } from '../../../lib/motionVariants';
 
 interface LiveAssetHUDProps {
   data: ConsensusReport;
@@ -71,9 +73,14 @@ export default function LiveAssetHUD({ data }: LiveAssetHUDProps) {
   ];
 
   return (
-    <div className="flex flex-col text-sm">
+    <motion.div
+      variants={staggerContainer}
+      initial="hidden"
+      animate="show"
+      className="flex flex-col text-sm"
+    >
       {/* ── Section 1: Technical Consensus ──────────────────── */}
-      <div className="border-b border-border-default px-3 py-2.5">
+      <motion.div variants={fadeInUp} className="border-b border-border-default px-3 py-2.5">
         <div className="flex items-center gap-1.5 mb-2">
           <TrendingUp size={10} className="text-text-muted" />
           <h3 className="text-[9px] font-bold text-text-secondary uppercase tracking-wider">
@@ -108,9 +115,11 @@ export default function LiveAssetHUD({ data }: LiveAssetHUDProps) {
               <span className="text-[8px] text-text-muted tabular-nums">{gaugePercent}%</span>
             </div>
             <div className="relative h-1.5 w-full rounded-full bg-elevated overflow-hidden">
-              <div
-                className={`h-1.5 rounded-full transition-all duration-700 ease-out ${trendBg(trend_score)}`}
-                style={{ width: `${gaugePercent}%` }}
+              <motion.div
+                className={`h-1.5 rounded-full ${trendBg(trend_score)}`}
+                initial={{ width: 0 }}
+                animate={{ width: `${gaugePercent}%` }}
+                transition={{ type: 'spring', stiffness: 80, damping: 15, delay: 0.2 }}
               />
               <div className="absolute top-0 left-1/2 -translate-x-px w-0.5 h-1.5 bg-text-muted/30" />
             </div>
@@ -131,10 +140,10 @@ export default function LiveAssetHUD({ data }: LiveAssetHUDProps) {
             </div>
           ))}
         </div>
-      </div>
+      </motion.div>
 
       {/* ── Section 2: Active Patterns ──────────────────────── */}
-      <div className="border-b border-border-default px-3 py-2">
+      <motion.div variants={fadeInUp} className="border-b border-border-default px-3 py-2">
         <div className="flex items-center gap-1.5 mb-1.5">
           <Hexagon size={10} className="text-text-muted" />
           <h3 className="text-[9px] font-bold text-text-secondary uppercase tracking-wider">Patterns</h3>
@@ -165,10 +174,10 @@ export default function LiveAssetHUD({ data }: LiveAssetHUDProps) {
         ) : (
           <p className="text-[9px] text-text-muted/50 italic">No patterns detected</p>
         )}
-      </div>
+      </motion.div>
 
       {/* ── Section 3: Active Strategies ───────────────────── */}
-      <div className="border-b border-border-default px-3 py-2">
+      <motion.div variants={fadeInUp} className="border-b border-border-default px-3 py-2">
         <div className="flex items-center gap-1.5 mb-1.5">
           <Target size={10} className="text-blue-400" />
           <h3 className="text-[9px] font-bold text-blue-400 uppercase tracking-wider">Strategies</h3>
@@ -199,7 +208,7 @@ export default function LiveAssetHUD({ data }: LiveAssetHUDProps) {
         ) : (
           <p className="text-[9px] text-text-muted/50 italic">No strategies active</p>
         )}
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }

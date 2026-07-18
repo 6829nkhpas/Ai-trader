@@ -2,8 +2,11 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Search, Loader2, X, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
 import { useTradeStore } from '../../store/useTradeStore';
+import { staggerContainer, fadeInUp, crossfade } from '../../lib/motionVariants';
+import WatchlistSkeleton from './left-panel/WatchlistSkeleton';
 
 // ── Static Top-10 Watchlist Symbols (NIFTY 50 Blue Chips) ──────────────
 const TOP_WATCHLIST = [
@@ -202,60 +205,69 @@ export default function WatchlistPanel() {
           )}
 
           {/* ── Search Dropdown ──────────────────────────────── */}
-          {showDropdown && (
-            <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-y-auto scrollbar-none rounded-lg border border-border-default bg-surface shadow-lg panel-shadow">
-              {isSearching ? (
-                <div className="flex items-center justify-center gap-2 px-3 py-4">
-                  <Loader2 size={14} className="animate-spin text-primary" />
-                  <span className="text-xs text-text-secondary">Searching...</span>
-                </div>
-              ) : searchResults.length === 0 ? (
-                <div className="px-3 py-4 text-center text-xs text-text-muted">
-                  No instruments found
-                </div>
-              ) : (
-                searchResults.map((inst) => (
-                  <button
-                    key={inst.instrument_token}
-                    type="button"
-                    onClick={() => {
-                      setSelectedSymbol(inst.tradingsymbol);
-                      setShowDropdown(false);
-                      setQuery('');
-                      setSearchResults([]);
-                    }}
-                    className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors hover:bg-elevated/70"
-                  >
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-xs font-semibold text-text-primary truncate">
-                        {inst.tradingsymbol}
-                      </span>
-                      <span className="text-[10px] text-text-muted truncate">
-                        {inst.name}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <span className="rounded px-1 py-px text-[8px] font-semibold uppercase tracking-wider bg-elevated text-text-muted">
-                        {inst.instrument_type || 'EQ'}
-                      </span>
-                      <span className="text-[9px] text-text-muted">{inst.exchange}</span>
-                    </div>
-                  </button>
-                ))
-              )}
-            </div>
-          )}
+          <AnimatePresence>
+            {showDropdown && (
+              <motion.div
+                variants={crossfade}
+                initial="hidden"
+                animate="show"
+                exit="exit"
+                className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-y-auto scrollbar-none rounded-lg border border-border-default bg-surface shadow-lg panel-shadow"
+              >
+                {isSearching ? (
+                  <div className="flex items-center justify-center gap-2 px-3 py-4">
+                    <Loader2 size={14} className="animate-spin text-primary" />
+                    <span className="text-xs text-text-secondary">Searching...</span>
+                  </div>
+                ) : searchResults.length === 0 ? (
+                  <div className="px-3 py-4 text-center text-xs text-text-muted">
+                    No instruments found
+                  </div>
+                ) : (
+                  searchResults.map((inst) => (
+                    <motion.button
+                      key={inst.instrument_token}
+                      variants={fadeInUp}
+                      initial="hidden"
+                      animate="show"
+                      type="button"
+                      onClick={() => {
+                        setSelectedSymbol(inst.tradingsymbol);
+                        setShowDropdown(false);
+                        setQuery('');
+                        setSearchResults([]);
+                      }}
+                      className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors hover:bg-elevated/70"
+                    >
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-xs font-semibold text-text-primary truncate">
+                          {inst.tradingsymbol}
+                        </span>
+                        <span className="text-[10px] text-text-muted truncate">
+                          {inst.name}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="rounded px-1 py-px text-[8px] font-semibold uppercase tracking-wider bg-elevated text-text-muted">
+                          {inst.instrument_type || 'EQ'}
+                        </span>
+                        <span className="text-[9px] text-text-muted">{inst.exchange}</span>
+                      </div>
+                    </motion.button>
+                  ))
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
 
       {/* ── Watchlist Content ───────────────────────────────── */}
       <div className="flex flex-1 flex-col gap-0 overflow-y-auto">
         {quotesLoading ? (
-          <div className="flex items-center justify-center gap-2 py-8">
-            <Loader2 size={16} className="animate-spin text-primary" />
-            <span className="text-xs text-text-secondary">Loading quotes...</span>
-          </div>
+          <WatchlistSkeleton rows={10} />
         ) : (
+          <motion.div variants={staggerContainer} initial="hidden" animate="show">
           TOP_WATCHLIST.map((stock) => {
             const quote = quotes[stock.symbol];
             const sectorColor = SECTOR_COLORS[stock.sector] ?? 'bg-elevated text-text-muted';
@@ -263,8 +275,9 @@ export default function WatchlistPanel() {
             const isActive = selectedSymbol === stock.symbol;
 
             return (
-              <button
+              <motion.button
                 key={stock.symbol}
+                variants={fadeInUp}
                 type="button"
                 onClick={() => setSelectedSymbol(stock.symbol)}
                 className={`group flex w-full items-center justify-between gap-1 px-3 py-2 text-xs text-left transition-colors cursor-pointer border-l-2 ${
@@ -306,9 +319,10 @@ export default function WatchlistPanel() {
                     <span className="text-[10px] text-text-muted/50">—</span>
                   )}
                 </div>
-              </button>
+              </motion.button>
             );
           })
+          </motion.div>
         )}
       </div>
     </div>

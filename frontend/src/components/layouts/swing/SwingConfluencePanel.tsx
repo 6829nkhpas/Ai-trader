@@ -2,11 +2,13 @@
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { Loader2, TrendingUp, TrendingDown, Minus, Sparkles, Activity, Newspaper } from 'lucide-react';
+import { motion } from 'framer-motion';
 import { MarketInsight, useTradeStore } from '../../../store/useTradeStore';
 import { useMultiTimeframeTrend, TrendBias } from '../../../hooks/useMultiTimeframeTrend';
 import { useQuantStore } from '../../../store/useQuantStore';
 import ClockIcon from '../ClockIcon';
 import InsightCard from './InsightCard';
+import { staggerContainer, fadeInUp } from '../../../lib/motionVariants';
 
 function getBiasTheme(bias: TrendBias) {
   switch (bias) {
@@ -113,12 +115,13 @@ export default function SwingConfluencePanel() {
           </h3>
         </div>
         
-        <div className="flex flex-col gap-1.5 px-3">
+        <motion.div variants={staggerContainer} initial="hidden" animate="show" className="flex flex-col gap-1.5 px-3">
           {timeframeTrends.map((t) => {
             const theme = getBiasTheme(t.bias);
             return (
-              <div 
-                key={t.timeframe} 
+              <motion.div 
+                key={t.timeframe}
+                variants={fadeInUp}
                 className="flex items-center justify-between py-1 px-1.5 rounded border border-border-default/20 bg-[#0d0f12]/20"
               >
                 <div className="flex items-center gap-2.5 min-w-[32px]">
@@ -127,9 +130,11 @@ export default function SwingConfluencePanel() {
                 
                 {/* Compact progress bar */}
                 <div className="flex-1 max-w-[140px] mx-2 h-1 rounded-full bg-elevated overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ease-out ${theme.bar}`}
-                    style={{ width: `${t.strength}%` }}
+                  <motion.div
+                    className={`h-full rounded-full ${theme.bar}`}
+                    initial={{ width: 0 }}
+                    animate={{ width: `${t.strength}%` }}
+                    transition={{ type: 'spring', stiffness: 100, damping: 15, delay: 0.1 }}
                   />
                 </div>
                 
@@ -138,10 +143,10 @@ export default function SwingConfluencePanel() {
                   {t.bias === 'BULLISH' ? <TrendingUp size={8} /> : t.bias === 'BEARISH' ? <TrendingDown size={8} /> : <Minus size={8} />}
                   {t.bias}
                 </span>
-              </div>
+              </motion.div>
             );
           })}
-        </div>
+        </motion.div>
       </div>
 
       {/* ── AI News Sentiment ────────────────────────────────── */}
