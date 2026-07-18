@@ -114,37 +114,33 @@ struct KiteQuoteData {
 pub fn resolve_nearest_expiry(db_state: &DbState, underlying: &str) -> Option<String> {
     let conn = db_state.conn.lock().ok()?;
     let nfo_name = crate::services::option_chain_subscriber::resolve_nfo_underlying_name(underlying);
-    
+
     let mut stmt = conn.prepare(
         "SELECT DISTINCT expiry FROM nfo_instruments \
          WHERE underlying = ?1 AND instrument_type IN ('CE', 'PE') \
          ORDER BY expiry ASC"
     ).ok()?;
-    
+
     let rows = stmt.query_map([nfo_name.as_str()], |row| row.get::<_, String>(0)).ok()?;
     let today = chrono::Local::now().date_naive().format("%Y-%m-%d").to_string();
-    
-    let mut expiries = Vec::new();
+
+    let mut futures: Vec<String> = Vec::new();
+    let mut all: Vec<String> = Vec::new();
     for expiry in rows.flatten() {
         let trimmed = expiry.trim().to_string();
+        if trimmed.is_empty() {
+            continue;
+        }
+        all.push(trimmed.clone());
         if trimmed >= today {
-            expiries.push(trimmed);
+            futures.push(trimmed);
         }
     }
-    
-    if expiries.is_empty() {
-        // Fallback: search all expiries
-        let mut stmt = conn.prepare(
-            "SELECT DISTINCT expiry FROM nfo_instruments \
-             WHERE underlying = ?1 AND instrument_type IN ('CE', 'PE') \
-             ORDER BY expiry ASC"
-        ).ok()?;
-        let rows = stmt.query_map([nfo_name.as_str()], |row| row.get::<_, String>(0)).ok()?;
-        let all: Vec<String> = rows.flatten().map(|s| s.trim().to_string()).collect();
-        return all.last().cloned();
+
+    if !futures.is_empty() {
+        return futures.first().cloned();
     }
-    
-    expiries.first().cloned()
+    all.last().cloned()
 }
 
 pub fn load_instruments_for_expiry(
@@ -296,8 +292,34 @@ pub async fn build_fno_snapshot(
     expiry_opt: &str,
 ) -> Result<serde_json::Value, String> {
     let expiry = if expiry_opt.trim().is_empty() {
-        resolve_nearest_expiry(db_state, underlying)
-            .ok_or_else(|| format!("No expiry found for underlying: {}", underlying))?
+        match resolve_nearest_expiry(db_state, underlying) {
+            Some(e) => e,
+            None => match resolve_latest_expiry_from_questdb(pool, underlying).await {
+                Some(e) => {
+                    info!(
+                        "[fno_service] SQLite nfo_instruments had no expiry for {}; \
+                         falling back to latest QuestDB expiry {}.",
+                        underlying, e
+                    );
+                    e
+                }
+                None => {
+                    let marker = FnoUnavailableMarker {
+                        underlying: underlying.to_string(),
+                        expiry: String::new(),
+                        unavailable: true,
+                        reason: format!(
+                            "No expiry found for underlying: {}. Run `run_nfo_sync` or wait for \
+                             the NFO instrument master to populate, then retry.",
+                            underlying
+                        ),
+                        reason_code: "no_expiry".to_string(),
+                        last_snapshot_ts: None,
+                    };
+                    return Ok(serde_json::to_value(marker).unwrap());
+                }
+            },
+        }
     } else {
         expiry_opt.trim().to_string()
     };
