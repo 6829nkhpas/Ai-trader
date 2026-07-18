@@ -281,7 +281,7 @@ export default function FnoSidebarPanel() {
           </button>
         </div>
       ) : (
-        <div className="flex flex-col">
+        <div className="flex flex-col pl-px">
           <FnoOptionChainTable
             viewState={viewState as FnoViewState & { kind: 'ready' | 'partial' }}
             highlightedStrike={highlightedStrike}
