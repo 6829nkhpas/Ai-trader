@@ -1,6 +1,8 @@
 'use client';
 
 import React from 'react';
+import { motion } from 'framer-motion';
+import { staggerContainerSlow, fadeInUp } from '../../../lib/motionVariants';
 
 interface EmptyStateProps {
   symbol: string;
@@ -8,9 +10,14 @@ interface EmptyStateProps {
 
 export default function EmptyState({ symbol }: EmptyStateProps) {
   return (
-    <div className="flex-grow flex flex-col items-center justify-center gap-5 p-6 w-full h-full min-h-[350px]">
+    <motion.div
+      variants={staggerContainerSlow}
+      initial="hidden"
+      animate="show"
+      className="flex-grow flex flex-col items-center justify-center gap-5 p-6 w-full h-full min-h-[350px]"
+    >
       {/* Large themed SVG illustration */}
-      <div className="w-72 h-40 flex items-center justify-center shrink-0 mb-2.5">
+      <motion.div variants={fadeInUp} className="w-72 h-40 flex items-center justify-center shrink-0 mb-2.5">
         <svg
           xmlns="http://www.w3.org/2000/svg"
           xmlnsXlink="http://www.w3.org/1999/xlink"
@@ -106,17 +113,17 @@ export default function EmptyState({ symbol }: EmptyStateProps) {
             </g>
           </g>
         </svg>
-      </div>
+      </motion.div>
 
       {/* Title & Description */}
-      <div className="text-center">
+      <motion.div variants={fadeInUp} className="text-center">
         <p className="text-[11px] font-bold text-text-primary tracking-wider">Deep Quant Engine Ready</p>
         <p className="text-[9.5px] text-text-secondary mt-1.5 leading-relaxed max-w-[200px] mx-auto select-none">
           Press the button above to run<br />
           the full AI analysis pipeline<br />
           for <span className="text-emerald-500 font-bold">{symbol}</span>
         </p>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }
