@@ -3,145 +3,14 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useTradeStore } from '../store/useTradeStore';
 
-// ── Types ──────────────────────────────────────────────────────────────
-interface OrderBookLevel {
-  price: number;
-  size: number;
-  total: number;
-  /** True for extrapolated padding levels that fill the panel beyond the
-   *  real feed depth (rendered dimmed so they aren't read as real liquidity). */
-  synthetic?: boolean;
-}
-
-interface OrderBookState {
-  asks: OrderBookLevel[];
-  bids: OrderBookLevel[];
-  spread: number;
-  spreadPct: string;
-  midPrice: number;
-}
-
-// ── Constants ──────────────────────────────────────────────────────────
-const LEVEL_COUNT = 10;
-/** Extend each side of the ladder up to this many rows so the tall panel
- *  doesn't leave large blank gaps at the outer edges (Order book depth fill). */
-const PADDED_LEVEL_COUNT = 14;
-
-// ── Empty initial book (no mock data) ──────────────────────────────────
-function createEmptyBook(): OrderBookState {
-  return {
-    asks: [],
-    bids: [],
-    spread: 0,
-    spreadPct: '0.000',
-    midPrice: 0,
-  };
-}
-
-// ── Depth Bar (visual liquidity gauge) ─────────────────────────────────
-function depthPercent(size: number, maxSize: number): number {
-  return Math.min((size / maxSize) * 100, 100);
-}
-
-// ── Format size for NSE stocks (integer lots, comma separated) ─────────
-function formatSize(size: number): string {
-  if (size >= 1000) {
-    return size.toLocaleString('en-IN', { maximumFractionDigits: 0 });
-  }
-  return size >= 100 ? Math.round(size).toString() : size.toFixed(1);
-}
-
-// ── Tick step inference ────────────────────────────────────────────────
-// Infer the price increment between adjacent levels from the real feed so any
-// synthetic padding rows continue the ladder on the correct grid.
-function inferStep(prices: number[]): number {
-  const diffs: number[] = [];
-  for (let i = 1; i < prices.length; i++) {
-    const d = Math.abs(prices[i] - prices[i - 1]);
-    if (d > 1e-9) diffs.push(d);
-  }
-  if (diffs.length === 0) return 0.05;
-  diffs.sort((a, b) => a - b);
-  return diffs[Math.floor(diffs.length / 2)]; // median step
-}
-
-// ── Ladder extrapolation ───────────────────────────────────────────────
-// Continue the price ladder outward (away from the spread) with a few
-// synthetic levels so the panel fills instead of showing blank gaps. Sizes
-// continue the observed deepening trend; totals keep accumulating. Levels are
-// flagged `synthetic` so the UI can dim them. `dir` is +1 for asks (prices
-// rise away from spread) and -1 for bids (prices fall away from spread).
-function extendLadder(
-  levels: OrderBookLevel[],
-  step: number,
-  dir: 1 | -1,
-  target: number,
-): OrderBookLevel[] {
-  if (levels.length === 0 || levels.length >= target) return levels;
-  const out = [...levels];
-  let last = out[out.length - 1];
-  let runningTotal = last.total;
-  let size = Math.max(1, last.size);
-  for (let i = out.length; i < target; i++) {
-    const price = parseFloat((last.price + dir * step).toFixed(2));
-    // Deeper book levels typically hold more resting size; grow gently.
-    size = Math.max(1, Math.round(size * 1.1));
-    runningTotal = parseFloat((runningTotal + size).toFixed(2));
-    const level: OrderBookLevel = { price, size, total: runningTotal, synthetic: true };
-    out.push(level);
-    last = level;
-  }
-  return out;
-}
-
-// ── Build order book from market depth data ────────────────────────────
-// This function constructs book state from real market depth arrays
-// received via IPC/WebSocket from the backend.
-function buildBookFromDepth(
-  bidPrices: number[],
-  bidSizes: number[],
-  askPrices: number[],
-  askSizes: number[],
-): OrderBookState {
-  const asks: OrderBookLevel[] = [];
-  const bids: OrderBookLevel[] = [];
-
-  // Build ask levels (ascending, then reversed for display: highest at top)
-  let askRunningTotal = 0;
-  const askCount = Math.min(askPrices.length, LEVEL_COUNT);
-  for (let i = 0; i < askCount; i++) {
-    const price = askPrices[i];
-    const size = askSizes[i] || 0;
-    askRunningTotal += size;
-    asks.push({ price, size, total: parseFloat(askRunningTotal.toFixed(2)) });
-  }
-
-  // Build bid levels (descending: highest first, closest to spread at top)
-  let bidRunningTotal = 0;
-  const bidCount = Math.min(bidPrices.length, LEVEL_COUNT);
-  for (let i = 0; i < bidCount; i++) {
-    const price = bidPrices[i];
-    const size = bidSizes[i] || 0;
-    bidRunningTotal += size;
-    bids.push({ price, size, total: parseFloat(bidRunningTotal.toFixed(2)) });
-  }
-
-  // Spread/mid are derived from the real best bid/ask only (before synthetic
-  // padding) so the headline numbers reflect genuine top-of-book liquidity.
-  const bestAsk = asks.length > 0 ? asks[0].price : 0;
-  const bestBid = bids.length > 0 ? bids[0].price : 0;
-  const spread = bestAsk > 0 && bestBid > 0 ? parseFloat((bestAsk - bestBid).toFixed(2)) : 0;
-  const spreadPct = bestAsk > 0 ? ((spread / bestAsk) * 100).toFixed(3) : '0.000';
-  const midPrice = bestAsk > 0 && bestBid > 0 ? parseFloat(((bestAsk + bestBid) / 2).toFixed(2)) : 0;
-
-  // Extend each side outward with a few synthetic levels to fill the panel.
-  const askLadder = extendLadder(asks, inferStep(askPrices), 1, PADDED_LEVEL_COUNT);
-  const bidLadder = extendLadder(bids, inferStep(bidPrices), -1, PADDED_LEVEL_COUNT);
-
-  askLadder.reverse(); // highest at top, lowest near spread
-
-  return { asks: askLadder, bids: bidLadder, spread, spreadPct, midPrice };
-}
+import {
+  type OrderBookLevel,
+  type OrderBookState,
+  createEmptyBook,
+  depthPercent,
+  formatSize,
+  buildBookFromDepth,
+} from './orderbook/orderBookHelpers';
 
 // ── Component ──────────────────────────────────────────────────────────
 export default function OrderBook() {
@@ -228,11 +97,11 @@ export default function OrderBook() {
   return (
     <div
       id="order-book-dom"
-      className="flex h-full flex-col rounded-none border-0 bg-surface font-mono text-[11px] select-none overflow-hidden"
+      className="flex h-full flex-col rounded-none border-0 bg-surface font-sans text-[12.5px] select-none overflow-hidden"
     >
 
       {/* ── Column Headers ──────────────────────────────────── */}
-      <div className="grid shrink-0 grid-cols-3 gap-0 border-b border-border-default bg-elevated/30 px-3 py-1.5 text-[10px] font-semibold text-text-muted uppercase tracking-wider">
+      <div className="grid shrink-0 grid-cols-3 gap-0 border-b border-border-default bg-elevated/30 px-3.5 py-2 text-[11px] font-extrabold text-text-muted uppercase tracking-wider font-sans">
         <span>Price</span>
         <span className="text-right">Size</span>
         <span className="text-right">Total</span>
@@ -240,41 +109,41 @@ export default function OrderBook() {
 
       {/* ── Awaiting Data State ───────────────────────────────── */}
       {!isLive && book.asks.length === 0 && (
-        <div className="flex flex-1 items-center justify-center">
+        <div className="flex flex-1 items-center justify-center font-sans">
           <div className="flex flex-col items-center gap-2 text-center px-4">
             <div className="flex h-8 w-8 items-center justify-center rounded-none bg-elevated">
               <span className="text-sm">📊</span>
             </div>
-            <p className="text-[11px] text-text-muted leading-snug">
+            <p className="text-[12px] font-bold text-text-muted leading-snug">
               Awaiting Market Depth Data...
             </p>
-            <p className="text-[9px] text-text-muted/60">
+            <p className="text-[10px] text-text-muted/70">
               Order book populates when live depth feed connects
             </p>
           </div>
         </div>
       )}
 
-      {/* ── Ask Levels (Red) — compact, no flex-grow ─────────── */}
+      {/* ── Ask Levels (Red) — Scrollable without scrollbar ─────────── */}
       {book.asks.length > 0 && (
-        <div className="flex flex-col justify-end flex-1 min-h-0 overflow-hidden">
+        <div className="flex flex-col justify-end flex-1 min-h-0 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] font-sans">
           {book.asks.map((level, i) => (
             <div
               key={`ask-${i}`}
-              className={`group relative grid grid-cols-3 gap-0 px-3 py-[2px] hover:bg-red-500/5 ${level.synthetic ? 'opacity-40' : ''}`}
+              className={`group relative grid grid-cols-3 gap-0 px-3.5 py-[3px] hover:bg-red-500/10 ${level.synthetic ? 'opacity-75' : ''}`}
             >
               {/* Depth bar background */}
               <div
-                className="pointer-events-none absolute inset-y-0 right-0 bg-red-500/8"
+                className="pointer-events-none absolute inset-y-0 right-0 bg-red-500/12"
                 style={{ width: `${depthPercent(level.size, globalMaxSize)}%` }}
               />
-              <span className="relative z-10 tabular-nums text-[#ef4444]">
+              <span className="relative z-10 tabular-nums font-extrabold text-[#ef4444]">
                 {level.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
-              <span className="relative z-10 tabular-nums text-right text-red-400/80">
+              <span className="relative z-10 tabular-nums text-right font-bold text-red-400/90">
                 {formatSize(level.size)}
               </span>
-              <span className="relative z-10 tabular-nums text-right text-slate-500">
+              <span className="relative z-10 tabular-nums text-right font-bold text-zinc-400">
                 {formatSize(level.total)}
               </span>
             </div>
@@ -282,46 +151,46 @@ export default function OrderBook() {
         </div>
       )}
 
-      {/* ── Spread Bar ──────────────────────────────────────── */}
+      {/* ── Mid Price / Spread Floating Pill Row (FNO Spot Style) ── */}
       {book.asks.length > 0 && book.bids.length > 0 && (
-        <div className="flex shrink-0 items-center justify-between border-y border-border-default bg-elevated/20 px-3 py-1.5">
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] font-bold tabular-nums text-text-primary">
+        <div className="relative shrink-0 w-full text-center py-2.5 z-20 pointer-events-none font-sans">
+          {/* Horizontal dividing line spanning full width */}
+          <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-[1px] bg-border-default dark:bg-zinc-700/80 z-0" />
+          
+          {/* Centered Theme-Adaptive Pill Badge */}
+          <div className="relative z-10 inline-flex items-center gap-1.5 rounded-full bg-card dark:bg-[#373e4d] text-text-primary dark:text-white px-3.5 py-0.5 shadow-xl border border-border-default dark:border-slate-500/60 pointer-events-auto">
+            <span className="text-[12px] font-black font-sans tracking-tight text-text-primary dark:text-white">
               {book.midPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
-            <span className="text-[9px] text-slate-500 font-medium">MID</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] tabular-nums text-amber-400/90 font-semibold">
-              {book.spread.toFixed(2)}
-            </span>
-            <span className="rounded bg-amber-500/10 px-1 py-px text-[9px] font-bold text-amber-500/70 tabular-nums">
-              {book.spreadPct}%
+            <span className="text-[9.5px] font-extrabold text-text-muted dark:text-zinc-400 uppercase">MID</span>
+            <span className="text-[10px] text-text-muted dark:text-zinc-400 font-light">|</span>
+            <span className="text-[11px] font-extrabold text-amber-500 dark:text-amber-400 font-sans tracking-tight">
+              {book.spread.toFixed(2)} ({book.spreadPct}%)
             </span>
           </div>
         </div>
       )}
 
-      {/* ── Bid Levels (Green) — compact, no flex-grow ────────── */}
+      {/* ── Bid Levels (Green) — Scrollable without scrollbar ────────── */}
       {book.bids.length > 0 && (
-        <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+        <div className="flex flex-col flex-1 min-h-0 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] font-sans">
           {book.bids.map((level, i) => (
             <div
               key={`bid-${i}`}
-              className={`group relative grid grid-cols-3 gap-0 px-3 py-[2px] hover:bg-emerald-500/5 ${level.synthetic ? 'opacity-40' : ''}`}
+              className={`group relative grid grid-cols-3 gap-0 px-3.5 py-[3px] hover:bg-emerald-500/10 ${level.synthetic ? 'opacity-75' : ''}`}
             >
               {/* Depth bar background */}
               <div
-                className="pointer-events-none absolute inset-y-0 right-0 bg-emerald-500/8"
+                className="pointer-events-none absolute inset-y-0 right-0 bg-emerald-500/12"
                 style={{ width: `${depthPercent(level.size, globalMaxSize)}%` }}
               />
-              <span className="relative z-10 tabular-nums text-bull">
+              <span className="relative z-10 tabular-nums font-extrabold text-bull">
                 {level.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
-              <span className="relative z-10 tabular-nums text-right text-emerald-400/80">
+              <span className="relative z-10 tabular-nums text-right font-bold text-emerald-400/90">
                 {formatSize(level.size)}
               </span>
-              <span className="relative z-10 tabular-nums text-right text-slate-500">
+              <span className="relative z-10 tabular-nums text-right font-bold text-zinc-400">
                 {formatSize(level.total)}
               </span>
             </div>
@@ -331,12 +200,12 @@ export default function OrderBook() {
 
       {/* ── Ask/Bid Volume Ratio Bar ────────────────────────── */}
       {book.asks.length > 0 && book.bids.length > 0 && (
-        <div className="px-3 py-1.5 border-t border-border-default bg-elevated/10">
-          <div className="flex justify-between text-[9px] font-bold mb-1 tracking-wider">
+        <div className="px-3.5 py-2 border-t border-border-default bg-elevated/20 font-sans">
+          <div className="flex justify-between text-[10px] font-black mb-1.5 tracking-wider font-sans">
             <span className="text-emerald-400">{bidVolPct.toFixed(1)}% BIDS</span>
             <span className="text-red-400">{askVolPct.toFixed(1)}% ASKS</span>
           </div>
-          <div className="relative h-1.5 w-full rounded-none bg-border-default/30 flex overflow-hidden">
+          <div className="relative h-2 w-full rounded-full bg-border-default/40 flex overflow-hidden">
             {/* Bid Volume (Green) */}
             <div 
               className="h-full bg-emerald-500 transition-all duration-300 ease-out" 
@@ -348,7 +217,7 @@ export default function OrderBook() {
               style={{ width: `${askVolPct}%` }}
             />
             {/* 50/50 Divider Mark */}
-            <div className="absolute inset-y-0 left-1/2 w-[1px] bg-white/45 z-10" />
+            <div className="absolute inset-y-0 left-1/2 w-[1px] bg-white/60 z-10" />
           </div>
         </div>
       )}
