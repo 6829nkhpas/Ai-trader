@@ -291,19 +291,26 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
 
       {/* Main Content */}
       <div className="flex flex-1 min-h-0 min-w-0 overflow-visible bg-background p-0 gap-0">
-        {/* Watchlist */}
+        {/* Watchlist / Left Panel */}
         <aside 
           className={`
-            relative flex shrink-0 min-h-0 flex-col border-r border-border-default rounded-none bg-surface
-            ${isResizing ? '' : 'transition-all duration-300 ease-in-out'}
+            relative flex shrink-0 min-h-0 flex-col border-r border-border-default rounded-none bg-surface overflow-hidden
+            ${isResizing ? '' : 'transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]'}
             ${leftPanelOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}
           `}
           style={{ width: leftPanelOpen ? `${leftPanelWidth}px` : '0px' }}
         >
-          {/* Section Header */}
-          {leftPanelOpen && (
+          {/* Fixed-width inner container with sliding translate effect */}
+          <div 
+            className={`flex flex-col h-full shrink-0 ${isResizing ? '' : 'transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]'}`}
+            style={{ 
+              width: `${leftPanelWidth}px`,
+              transform: leftPanelOpen ? 'translateX(0)' : 'translateX(-100%)',
+            }}
+          >
+            {/* Section Header */}
             <div className="flex h-8 shrink-0 items-center justify-between border-b border-border-default bg-elevated/10 px-3 select-none">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted">Market Watch</span>
+              <span className="text-xs font-black uppercase tracking-wider text-text-primary/90">Market Watch</span>
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => setIsSearchOpen(true)}
@@ -321,10 +328,10 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
                 </button>
               </div>
             </div>
-          )}
 
-          <div className="flex-1 min-h-0 w-full overflow-hidden">
-            {leftPanel}
+            <div className="flex-1 min-h-0 w-full overflow-hidden">
+              {leftPanel}
+            </div>
           </div>
 
           {/* Resize Handle */}
@@ -347,26 +354,18 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
           )}
         </aside>
 
-        {/* Drawing tools are now provided natively by the TradingView
-            Advanced Charts widget's left sidebar. */}
-
-        {/* Central Area — `min-w-0` lets this flex slot actually shrink back to
-            its `flex-1` allocation after fullscreen exit. Without it, the chart
-            canvas's intrinsic width (set while fullscreen) becomes the column's
-            min-content and pushes the whole row past the viewport. */}
+        {/* Central Area */}
         <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-visible">
-          {!leftPanelOpen && (
-            <button
-              onMouseDown={handleLeftButtonMouseDown}
-              style={{ top: `${leftButtonTop}px` }}
-              className={`absolute left-0 z-100 flex h-7 w-6 items-center justify-center rounded-r border border-l-0 border-emerald-500/20 bg-surface/90 text-emerald-500 dark:text-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-300 hover:bg-emerald-500/10 shadow-lg backdrop-blur-sm transition-all duration-200 ${
-                isDraggingLeft ? 'cursor-grabbing' : 'cursor-grab'
-              }`}
-              title="Expand left panel (Drag to move)"
-            >
-              <span dangerouslySetInnerHTML={{ __html: SVGS.sidebarOpen }} className="flex items-center justify-center pointer-events-none" />
-            </button>
-          )}
+          <button
+            onMouseDown={handleLeftButtonMouseDown}
+            style={{ top: `${leftButtonTop}px` }}
+            className={`absolute left-0 z-100 flex h-7 w-6 items-center justify-center rounded-r border border-l-0 border-emerald-500/20 bg-surface/90 text-emerald-500 dark:text-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-300 hover:bg-emerald-500/10 shadow-lg backdrop-blur-sm transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${
+              leftPanelOpen ? 'opacity-0 scale-95 pointer-events-none' : 'opacity-100 scale-100'
+            } ${isDraggingLeft ? 'cursor-grabbing' : 'cursor-grab'}`}
+            title="Expand left panel (Drag to move)"
+          >
+            <span dangerouslySetInnerHTML={{ __html: SVGS.sidebarOpen }} className="flex items-center justify-center pointer-events-none" />
+          </button>
           {children}
         </main>
 

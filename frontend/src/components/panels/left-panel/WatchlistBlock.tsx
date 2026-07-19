@@ -171,27 +171,32 @@ export default function WatchlistBlock() {
   return (
     <div className="shrink-0 flex flex-col gap-0 border-b border-border-default">
       {/* Watchlist toggle header */}
-      <div className="flex items-center justify-between px-3 py-1 bg-surface/50 border-b border-border-subtle">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-surface/50 border-b border-border-subtle">
         <button
           type="button"
           onClick={() => setWatchlistCollapsed(!watchlistCollapsed)}
-          className="flex w-full items-center justify-between px-3 py-1 text-[9px] font-bold uppercase tracking-widest text-text-muted/60 hover:text-text-muted transition-colors"
+          className="flex w-full items-center justify-between px-1 py-0.5 text-[10px] font-bold uppercase tracking-widest text-text-muted/70 hover:text-text-primary transition-colors"
         >
           <span>Watchlist</span>
-          {watchlistCollapsed ? <ChevronDown size={10} /> : <ChevronUp size={10} />}
+          <ChevronDown size={12} className={`transition-transform duration-300 ${watchlistCollapsed ? '' : 'rotate-180'}`} />
         </button>
       </div>
 
-      {/* Watchlist content */}
-      {!watchlistCollapsed && (
-        <div className="shrink-0 max-h-[240px] overflow-y-auto scrollbar-thin border-b border-border-default">
-          {quotesLoading ? (
-            <WatchlistSkeleton rows={5} />
-          ) : watchlist.length === 0 ? (
-            <div className="flex items-center justify-center py-6">
-              <p className="text-[10px] text-text-muted/60 italic">Search and add symbols to your watchlist</p>
-            </div>
-          ) : (
+      {/* Watchlist content with smooth CSS Grid expand/collapse animation */}
+      <div
+        className={`grid transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] border-b border-border-default ${
+          watchlistCollapsed ? 'grid-rows-[0fr] opacity-0 pointer-events-none' : 'grid-rows-[1fr] opacity-100'
+        }`}
+      >
+        <div className="overflow-hidden min-h-0">
+          <div className="shrink-0 max-h-[300px] overflow-y-auto scrollbar-thin">
+            {quotesLoading ? (
+              <WatchlistSkeleton rows={5} />
+            ) : watchlist.length === 0 ? (
+              <div className="flex items-center justify-center py-6">
+                <p className="text-xs text-text-muted/60 italic">Search and add symbols to your watchlist</p>
+              </div>
+            ) : (
             watchlist.map((item, idx) => {
               const chartedSymbol = splitView
                 ? panes.find((p) => p.id === activePaneId)?.symbol
@@ -243,7 +248,8 @@ export default function WatchlistBlock() {
                     setDragIndex(null);
                     setDragOverIndex(null);
                   }}
-                  className={`group flex w-full items-center gap-1 px-1.5 py-1 text-[11px] text-left transition-all border-l-2 ${
+                  onClick={() => routeSymbolToChart(item.symbol)}
+                  className={`group flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left cursor-pointer transition-all border-l-2 ${
                     isDragging ? 'opacity-40 scale-95' : ''
                   } ${isDragOver ? 'bg-primary/5 border-t-2 border-t-primary/40' : ''} ${
                     isActive
@@ -251,8 +257,9 @@ export default function WatchlistBlock() {
                       : 'hover:bg-elevated/70 border-transparent hover:border-primary/50'
                   }`}
                 >
-                  <div className="shrink-0 cursor-grab opacity-30 group-hover:opacity-75 transition-opacity active:cursor-grabbing p-1">
-                    <GripVertical size={10} className="text-text-muted" />
+                  {/* Reorder Grip Handle — hidden by default, expands on hover without overlapping text */}
+                  <div className="w-0 group-hover:w-4 opacity-0 group-hover:opacity-75 transition-all overflow-hidden shrink-0 flex items-center justify-center cursor-grab active:cursor-grabbing -ml-1 group-hover:mr-1">
+                    <GripVertical size={13} className="text-text-muted" />
                   </div>
 
                   {(() => {
@@ -261,64 +268,64 @@ export default function WatchlistBlock() {
                     const subtitle = isFnoItem ? null : (item.name !== item.symbol ? item.name.replace(/"/g, '') : null);
 
                     return (
-                      <button
-                        type="button"
-                        onClick={() => routeSymbolToChart(item.symbol)}
-                        className="flex flex-col items-start text-left min-w-0 flex-1 cursor-pointer w-full"
-                        draggable={false}
-                      >
+                      <div className="flex flex-col items-start text-left min-w-0 flex-1 w-full select-none">
                         <div className="flex items-center gap-1.5 w-full min-w-0">
-                          <span className="font-semibold text-text-primary truncate">{displayName}</span>
-                          <span className={`rounded px-1 py-px text-[6px] font-semibold uppercase tracking-wider ${sectorColor} shrink-0`}>
+                          <span className="font-extrabold text-[13px] text-text-primary truncate">{displayName}</span>
+                          <span className={`rounded-sm px-1.5 py-0.5 text-[8px] font-extrabold uppercase tracking-wider ${sectorColor} shrink-0`}>
                             {item.sector}
                           </span>
                         </div>
                         {subtitle && (
-                          <span className="text-[9px] text-text-muted truncate mt-0.5 w-full">
+                          <span className="text-[10px] font-medium text-text-muted/80 truncate mt-0.5 w-full">
                             {subtitle}
                           </span>
                         )}
-                      </button>
+                      </div>
                     );
                   })()}
 
-                  <div className="flex flex-col items-end justify-center gap-0.5 shrink-0 min-w-[75px]">
+                  {/* Price & Change % — visible by default, hidden on hover */}
+                  <div className="flex flex-col items-end justify-center gap-0.5 shrink-0 min-w-[75px] group-hover:hidden transition-all">
                     {quote ? (
                       <>
-                        <span className="font-bold text-text-primary tabular-nums text-[11px]">{formatPrice(quote.last_price)}</span>
-                        <span className={`flex items-center gap-px text-[9px] font-semibold tabular-nums ${isPositive ? 'text-bull' : 'text-bear'}`}>
-                          {isPositive ? <ArrowUpRight size={8} /> : <ArrowDownRight size={8} />}
+                        <span className="font-extrabold text-text-primary tabular-nums text-[13px]">{formatPrice(quote.last_price)}</span>
+                        <span className={`flex items-center gap-0.5 text-[10px] font-bold tabular-nums ${isPositive ? 'text-bull' : 'text-bear'}`}>
+                          {isPositive ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />}
                           {formatChange(quote.change)}
                         </span>
                       </>
                     ) : item.lastPrice > 0 ? (
                       <>
-                        <span className="font-bold text-text-primary tabular-nums text-[11px]">{formatPrice(item.lastPrice)}</span>
-                        <span className={`flex items-center gap-px text-[9px] font-semibold tabular-nums ${isPositive ? 'text-bull' : 'text-bear'}`}>
-                          {isPositive ? <ArrowUpRight size={8} /> : <ArrowDownRight size={8} />}
+                        <span className="font-extrabold text-text-primary tabular-nums text-[13px]">{formatPrice(item.lastPrice)}</span>
+                        <span className={`flex items-center gap-0.5 text-[10px] font-bold tabular-nums ${isPositive ? 'text-bull' : 'text-bear'}`}>
+                          {isPositive ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />}
                           {formatChange(item.change)}
                         </span>
                       </>
                     ) : (
-                      <span className="text-[10px] text-text-muted/50 font-medium">—</span>
+                      <span className="text-xs text-text-muted/50 font-medium">—</span>
                     )}
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); removeFromWatchlist(item.symbol); }}
-                    className="opacity-0 group-hover:opacity-100 ml-0.5 p-0.5 rounded text-text-muted hover:text-rose-400 hover:bg-rose-500/10 transition-all"
-                    aria-label={`Remove ${item.symbol} from watchlist`}
-                    draggable={false}
-                  >
-                    <Trash2 size={9} />
-                  </button>
+                  {/* Trash Delete Button — hidden by default, replaces price on hover */}
+                  <div className="hidden group-hover:flex items-center justify-end shrink-0 min-w-[75px] transition-all">
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); removeFromWatchlist(item.symbol); }}
+                      className="p-1.5 rounded-md text-text-muted hover:text-rose-500 hover:bg-rose-500/10 transition-colors flex items-center justify-center"
+                      title={`Remove ${item.symbol} from watchlist`}
+                      draggable={false}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
                 </div>
               );
             })
           )}
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
