@@ -297,7 +297,7 @@ export async function analyzeStrategicSentiment(symbol, ctx = {}) {
 
   // No fresh catalysts → deterministic neutral verdict, no LLM spend.
   if (!Array.isArray(categorizedNews) || categorizedNews.length === 0) {
-    console.log(`[analyzer] symbol=${symbol}: no categorized news — neutral verdict.`);
+    console.log(`\x1b[33m[analyzer]\x1b[0m symbol=\x1b[1m${symbol}\x1b[0m: \x1b[90mno categorized news — neutral verdict.\x1b[0m`);
     return neutralVerdict(symbol);
   }
 
@@ -310,7 +310,7 @@ export async function analyzeStrategicSentiment(symbol, ctx = {}) {
     `${renderNews(categorizedNews)}`;
 
   console.log(
-    `[analyzer] Calling LLM (${cfg.model}) for STRATEGIC verdict symbol=${symbol} ` +
+    `\x1b[33m[analyzer]\x1b[0m Calling LLM (\x1b[36m${cfg.model}\x1b[0m) for STRATEGIC verdict symbol=\x1b[1m${symbol}\x1b[0m ` +
     `with ${categorizedNews.length} categorized article(s)...`
   );
 
@@ -354,7 +354,7 @@ export async function analyzeStrategicSentiment(symbol, ctx = {}) {
   const verdict = { conviction_score: score, label, thesis, drivers, risks, horizon, confidence };
 
   console.log(
-    `[analyzer] symbol=${symbol}  conviction_score=${score}  label=${label}  ` +
+    `\x1b[33m[analyzer]\x1b[0m symbol=\x1b[1m${symbol}\x1b[0m  conviction_score=\x1b[36m${score}\x1b[0m  label=\x1b[32m${label}\x1b[0m  ` +
     `drivers=${drivers.length}  confidence=${confidence}`
   );
 

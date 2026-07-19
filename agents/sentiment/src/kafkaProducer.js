@@ -133,14 +133,14 @@ export async function publishSentiment(symbol, claudeJson, protoMessage) {
 
     const meta = result[0];
     console.log(
-      `[kafkaProducer] Published: symbol=${symbol}  ` +
-      `score=${payload.claude_conviction_score}  ` +
-      `topic=${topic}  partition=${meta.partition}  offset=${meta.baseOffset}`
+      `\x1b[32m[kafkaProducer]\x1b[0m \x1b[32mPublished:\x1b[0m symbol=\x1b[1m${symbol}\x1b[0m  ` +
+      `score=\x1b[33m${payload.claude_conviction_score}\x1b[0m  ` +
+      `topic=\x1b[36m${topic}\x1b[0m  partition=${meta.partition}  offset=${meta.baseOffset}`
     );
   } catch (err) {
     // Non-fatal — log and continue; individual publish failures don't stop the loop.
     console.error(
-      `[kafkaProducer] Failed to publish for symbol='${symbol}': ${err.message}`
+      `\x1b[31m[kafkaProducer] Failed to publish for symbol='${symbol}': ${err.message}\x1b[0m`
     );
   }
 }

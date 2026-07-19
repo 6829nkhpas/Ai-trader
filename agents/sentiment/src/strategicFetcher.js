@@ -160,7 +160,7 @@ export async function fetchStrategicNews(symbol, seed, count) {
     const safeUrl =
       `${NEWSDATA_BASE_URL}?q=${encodeURIComponent(q)}` +
       `&language=${DEFAULT_LANGUAGE}&category=business&country=in&size=${PER_BUCKET_SIZE}`;
-    console.log(`[strategicFetcher] ${symbol} bucket=${bucket.category} GET ${safeUrl}`);
+    console.log(`\x1b[35m[strategicFetcher]\x1b[0m \x1b[1m${symbol}\x1b[0m bucket=\x1b[33m${bucket.category}\x1b[0m GET ${safeUrl}`);
 
     let articles;
     try {
@@ -173,7 +173,7 @@ export async function fetchStrategicNews(symbol, seed, count) {
       const status = err.response?.status ?? 'network error';
       const errorMsg = err.response?.data?.results?.message ?? err.message;
       console.error(
-        `[strategicFetcher] ${symbol} bucket=${bucket.category} failed: HTTP ${status} — ${errorMsg}`
+        `\x1b[31m[strategicFetcher] ${symbol} bucket=${bucket.category} failed: HTTP ${status} — ${errorMsg}\x1b[0m`
       );
       continue; // One bad bucket shouldn't abort the rest.
     }
@@ -203,12 +203,12 @@ export async function fetchStrategicNews(symbol, seed, count) {
         alreadyProcessed = await isArticleProcessed(cacheKey);
       } catch (err) {
         // Treat cache failure as "not processed" so infra blips don't drop news.
-        console.error(`[strategicFetcher] dedup check error: ${err.message}`);
+        console.error(`\x1b[31m[strategicFetcher] dedup check error: ${err.message}\x1b[0m`);
       }
 
       if (alreadyProcessed) {
         console.log(
-          `[strategicFetcher] SKIP (cached): "${normalized.title.slice(0, 60)}"`
+          `\x1b[35m[strategicFetcher]\x1b[0m \x1b[90mSKIP (cached):\x1b[0m "${normalized.title.slice(0, 60)}"`
         );
         continue;
       }
@@ -220,13 +220,13 @@ export async function fetchStrategicNews(symbol, seed, count) {
       try {
         await markArticleProcessed(cacheKey);
       } catch (err) {
-        console.error(`[strategicFetcher] markArticleProcessed error: ${err.message}`);
+        console.error(`\x1b[31m[strategicFetcher] markArticleProcessed error: ${err.message}\x1b[0m`);
       }
     }
   }
 
   console.log(
-    `[strategicFetcher] symbol=${symbol}  new_articles=${collected.length}  ` +
+    `\x1b[35m[strategicFetcher]\x1b[0m symbol=\x1b[1m${symbol}\x1b[0m  new_articles=\x1b[32m${collected.length}\x1b[0m  ` +
     `buckets_run=${buckets.length}`
   );
 

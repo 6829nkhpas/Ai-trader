@@ -171,7 +171,7 @@ async function getProfileContext(symbol, seed) {
  * @returns {Promise<void>}
  */
 async function processTicker(symbol, NewsSentiment) {
-  console.log(`\n[index] ── Processing symbol: ${symbol} ──`);
+  console.log(`\n\x1b[36m[index]\x1b[0m ── Processing symbol: \x1b[1m\x1b[33m${symbol}\x1b[0m ──`);
 
   // ── Step 1: Resolve profile seed ───────────────────────────────────────────
   const seed = resolveProfileSeed(symbol);
@@ -184,12 +184,12 @@ async function processTicker(symbol, NewsSentiment) {
   try {
     categorizedNews = await fetchStrategicNews(symbol, seed);
   } catch (err) {
-    console.error(`[index] fetchStrategicNews failed for ${symbol}: ${err.message}`);
+    console.error(`\x1b[31m[index] fetchStrategicNews failed for ${symbol}: ${err.message}\x1b[0m`);
     categorizedNews = [];
   }
 
   console.log(
-    `[index] ${symbol}: ${categorizedNews.length} new categorized article(s); ` +
+    `\x1b[36m[index]\x1b[0m \x1b[1m${symbol}\x1b[0m: ${categorizedNews.length} new categorized article(s); ` +
     `profile=${profile ? 'yes' : 'no'} financials=${financials ? 'yes' : 'no'}.`
   );
 
@@ -245,7 +245,7 @@ async function processTicker(symbol, NewsSentiment) {
     console.error(`[index] publishSentiment failed for ${symbol}: ${err.message}`);
   }
 
-  console.log(`[index] ✅ Cycle complete for ${symbol}. label=${verdict.label} score=${verdict.conviction_score}`);
+  console.log(`\x1b[36m[index]\x1b[0m \x1b[32m✅ Cycle complete for \x1b[1m${symbol}\x1b[0m. label=\x1b[33m${verdict.label}\x1b[0m score=\x1b[36m${verdict.conviction_score}\x1b[0m\x1b[32m\x1b[0m`);
 }
 
 // ── HTTP API server ─────────────────────────────────────────────────────────
@@ -427,11 +427,11 @@ async function run() {
    * continues regardless.
    */
   const pollCycle = async () => {
-    console.log(`\n[index] ══ Poll cycle started at ${new Date().toISOString()} ══`);
+    console.log(`\n\x1b[36m[index]\x1b[0m \x1b[32m══ Poll cycle started at ${new Date().toISOString()} ══\x1b[0m`);
     for (const symbol of SYMBOLS) {
       await processTicker(symbol, NewsSentiment);
     }
-    console.log(`[index] ══ Poll cycle complete. Next run in ${POLL_INTERVAL_MS / 1000}s ══\n`);
+    console.log(`\x1b[36m[index]\x1b[0m \x1b[32m══ Poll cycle complete. Next run in ${POLL_INTERVAL_MS / 1000}s ══\x1b[0m\n`);
   };
 
   // Run immediately on startup, then on every interval.
