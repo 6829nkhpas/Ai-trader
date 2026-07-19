@@ -358,6 +358,7 @@ pub fn run() {
         commands::fno::fno_request_underlying,
         commands::fno::fno_subscribe,
         commands::fno::fno_unsubscribe,
+        commands::fno::fno_resolve_nearest_contract,
         commands::security::save_api_key,
         commands::security::check_api_key_exists,
         commands::security::hydrate_key_cache,

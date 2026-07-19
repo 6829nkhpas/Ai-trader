@@ -29,6 +29,13 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::services::fno_config::resolve_fno_config;
+use crate::services::fno_service::{
+    fetch_snapshots_from_questdb, load_instruments_for_expiry, resolve_nearest_expiry,
+};
+use crate::services::option_chain::select_atm;
+use crate::services::option_chain_subscriber::{
+    read_spot, resolve_nfo_underlying_name,
+};
 
 /// Resolve the base URL of the F&O analytics service (the deep-quant FastAPI
 /// app). Reads `FNO_SERVICE_URL`, falling back to `http://localhost:8086`.
@@ -182,6 +189,174 @@ pub async fn fno_request_underlying(app: AppHandle, underlying: String) -> Resul
             Ok(false)
         }
     }
+}
+
+/// The resolved nearest F&O contract for an underlying — returned by
+/// `fno_resolve_nearest_contract` so the frontend can chart a concrete tradingsymbol
+/// the moment the user enters F&O mode or clicks an underlying while in F&O mode.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ResolvedContract {
+    pub tradingsymbol: String,
+    pub underlying: String,
+    pub expiry: String,
+    pub strike: f64,
+    pub option_type: String, // "CE" | "PE"
+}
+
+/// Tauri command: resolve the nearest F&O option contract for `underlying`.
+///
+/// Picks the nearest non-expired expiry, the at-the-money strike for that
+/// expiry (from the NFO instrument master + the latest spot), and the CE side
+/// at that strike. Falls back to PE at the ATM strike when CE has no open
+/// interest in the latest QuestDB snapshot. Widens up to two strikes each side
+/// of ATM if neither CE nor PE is listed at the exact ATM strike.
+///
+/// Returns `Ok(None)` when no expiry, no instruments, or no contract can be
+/// resolved — the frontend then falls back to charting the underlying equity
+/// rather than crashing or fabricating a contract. Never panics.
+#[tauri::command]
+pub async fn fno_resolve_nearest_contract(
+    app: AppHandle,
+    underlying: String,
+) -> Result<Option<ResolvedContract>, String> {
+    let u = underlying.trim().to_string();
+    if u.is_empty() {
+        return Ok(None);
+    }
+
+    let db_state = match app.try_state::<crate::db::DbState>() {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+    let pool = app.try_state::<sqlx::PgPool>();
+
+    let nfo_name = resolve_nfo_underlying_name(&u);
+
+    // 1. Nearest expiry.
+    let expiry = match resolve_nearest_expiry(&db_state, &nfo_name) {
+        Some(e) => e,
+        None => {
+            info!(
+                "[fno] resolve_nearest_contract: no expiry in nfo_instruments for '{}' (nfo='{}').",
+                u, nfo_name
+            );
+            return Ok(None);
+        }
+    };
+
+    // 2. Listed CE/PE contracts for that expiry.
+    let instruments = load_instruments_for_expiry(&db_state, &nfo_name, &expiry);
+    if instruments.is_empty() {
+        info!(
+            "[fno] resolve_nearest_contract: no CE/PE rows for {} / {}.",
+            nfo_name, expiry
+        );
+        return Ok(None);
+    }
+
+    // Distinct sorted strike ladder.
+    let mut strikes: Vec<f64> = instruments
+        .iter()
+        .map(|(_, _, _, s)| *s)
+        .filter(|s| s.is_finite())
+        .collect();
+    strikes.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    strikes.dedup_by(|a, b| a == b);
+    if strikes.is_empty() {
+        return Ok(None);
+    }
+
+    // 3. Spot → ATM strike. Fall back to the median listed strike when no spot
+    //    is available (market closed, no tick yet) so we still return a contract.
+    let spot = match &pool {
+        Some(p) => read_spot(p, &u).await,
+        None => None,
+    };
+    let atm = match spot {
+        Some(s) if s.is_finite() => select_atm(&strikes, s).unwrap_or_else(|| {
+            strikes[strikes.len() / 2]
+        }),
+        _ => strikes[strikes.len() / 2],
+    };
+
+    // 4. Build a (strike, type) → tradingsymbol lookup. f64 is not Ord, so use a
+    //    HashMap keyed on the bit representation of the strike + option type.
+    let mut by_strike_type: std::collections::HashMap<(u64, String), String> =
+        std::collections::HashMap::new();
+    for (_, sym, inst_type, strike) in &instruments {
+        by_strike_type.insert((strike.to_bits(), inst_type.clone()), sym.clone());
+    }
+
+    // 5. Walk out from ATM (ATM, ±1, ±2 strikes) looking for a listed contract.
+    //    CE preferred. If both CE and PE exist at the candidate strike, decide
+    //    by open interest in the latest QuestDB snapshot.
+    let atm_index = strikes
+        .iter()
+        .position(|s| (*s - atm).abs() < f64::EPSILON)
+        .unwrap_or(strikes.len() / 2);
+
+    let mut candidate_indices: Vec<usize> = vec![atm_index];
+    for offset in 1..=2 {
+        if atm_index + offset < strikes.len() {
+            candidate_indices.push(atm_index + offset);
+        }
+        if atm_index >= offset {
+            candidate_indices.push(atm_index - offset);
+        }
+    }
+
+    // Latest snapshot rows for OI tie-break (one read; reused across candidates).
+    let snapshot_rows = match &pool {
+        Some(p) => fetch_snapshots_from_questdb(p, &nfo_name, &expiry).await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let oi_for: std::collections::HashMap<(u64, String), i64> = snapshot_rows
+        .iter()
+        .filter_map(|r| {
+            let oi = r.open_interest.unwrap_or(0);
+            Some(((r.strike.to_bits(), r.option_type.clone()), oi))
+        })
+        .collect();
+
+    for &idx in &candidate_indices {
+        let strike = strikes[idx];
+        let ce_sym = by_strike_type.get(&(strike.to_bits(), "CE".to_string())).cloned();
+        let pe_sym = by_strike_type.get(&(strike.to_bits(), "PE".to_string())).cloned();
+
+        let (tradingsymbol, option_type) = match (ce_sym.clone(), pe_sym.clone()) {
+            (Some(ce), Some(pe)) => {
+                // Both listed → decide by OI. CE preferred on tie.
+                let ce_oi = *oi_for.get(&(strike.to_bits(), "CE".to_string())).unwrap_or(&0);
+                let pe_oi = *oi_for.get(&(strike.to_bits(), "PE".to_string())).unwrap_or(&0);
+                if ce_oi > 0 || pe_oi == 0 {
+                    (ce, "CE".to_string())
+                } else {
+                    (pe, "PE".to_string())
+                }
+            }
+            (Some(ce), None) => (ce, "CE".to_string()),
+            (None, Some(pe)) => (pe, "PE".to_string()),
+            (None, None) => continue,
+        };
+
+        info!(
+            "[fno] resolve_nearest_contract: {} → {} {} (strike {}, expiry {}, spot={:?})",
+            u, tradingsymbol, option_type, strike, expiry, spot
+        );
+        return Ok(Some(ResolvedContract {
+            tradingsymbol,
+            underlying: u.clone(),
+            expiry,
+            strike,
+            option_type,
+        }));
+    }
+
+    info!(
+        "[fno] resolve_nearest_contract: no CE/PE contract near ATM {:.2} for {} / {}.",
+        atm, nfo_name, expiry
+    );
+    Ok(None)
 }
 
 /// Whether `nfo_instruments` or QuestDB `option_chain_snapshots` has any CE/PE contract for `underlying`.

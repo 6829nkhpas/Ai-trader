@@ -570,7 +570,7 @@ async fn fetch_kite_quotes_api(
     Ok(all_quotes)
 }
 
-async fn fetch_snapshots_from_questdb(
+pub async fn fetch_snapshots_from_questdb(
     pool: &PgPool,
     underlying: &str,
     expiry: &str,
