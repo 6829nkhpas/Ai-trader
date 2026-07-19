@@ -497,6 +497,48 @@ function startLiveSubscription(
   });
 }
 
+// ── REST fallback for symbol search (used outside Tauri or when the local
+//    `search_instruments` invoke fails). Mirrors the old REST proxy behaviour:
+//    GET /kite/instruments?q=<query>&exchange=<ex> → equity + index rows only.
+async function fallbackRestSearch(
+  userInput: string,
+  exchange: string,
+  onResult: SearchSymbolsCallback,
+): Promise<void> {
+  if (!userInput || userInput.length < 1) {
+    onResult([]);
+    return;
+  }
+
+  const ex = exchange || 'NSE';
+  try {
+    const res = await fetch(`/kite/instruments?q=${encodeURIComponent(userInput)}&exchange=${encodeURIComponent(ex)}`);
+    if (!res.ok) {
+      onResult([]);
+      return;
+    }
+    const data = await res.json();
+    const results = (data.results || []) as {
+      tradingsymbol: string;
+      name: string;
+      exchange: string;
+      instrument_type: string;
+    }[];
+    onResult(
+      results.map((inst) => ({
+        symbol: inst.tradingsymbol,
+        full_name: `${inst.exchange}:${inst.tradingsymbol}`,
+        description: inst.name,
+        exchange: inst.exchange,
+        ticker: `${inst.exchange}:${inst.tradingsymbol}`,
+        type: inst.instrument_type === 'INDEX' ? 'index' : 'stock',
+      })),
+    );
+  } catch {
+    onResult([]);
+  }
+}
+
 // ── Datafeed Implementation ───────────────────────────────────────────────
 
 export function createDatafeed(): IBasicDatafeed {
@@ -505,13 +547,16 @@ export function createDatafeed(): IBasicDatafeed {
       // TV requires async callback
       setTimeout(() => {
         const config: DatafeedConfiguration = {
+          // Single "ALL" exchange entry so TradingView's exchange filter does
+          // NOT pre-filter the results — the user picks any symbol across
+          // NSE / BSE / NFO from one flat, global result list.
           exchanges: [
-            { value: 'NSE', name: 'NSE', desc: 'National Stock Exchange' },
-            { value: 'BSE', name: 'BSE', desc: 'Bombay Stock Exchange' },
+            { value: 'ALL', name: 'All', desc: 'All Exchanges (NSE / BSE / NFO)' },
           ],
+          // Single "All" symbol type so the type filter doesn't narrow by
+          // stock / index / fno either — one global search across everything.
           symbols_types: [
-            { name: 'Stock', value: 'stock' },
-            { name: 'Index', value: 'index' },
+            { name: 'All', value: 'all' },
           ],
           supported_resolutions: SUPPORTED_RESOLUTIONS,
           supports_marks: false,
@@ -524,7 +569,7 @@ export function createDatafeed(): IBasicDatafeed {
 
     searchSymbols(
       userInput: string,
-      exchange: string,
+      _exchange: string,
       _symbolType: string,
       onResult: SearchSymbolsCallback,
     ): void {
@@ -533,28 +578,77 @@ export function createDatafeed(): IBasicDatafeed {
         return;
       }
 
-      const ex = exchange || 'NSE';
-      fetch(`/kite/instruments?q=${encodeURIComponent(userInput)}&exchange=${encodeURIComponent(ex)}`)
-        .then((res) => (res.ok ? res.json() : { results: [] }))
-        .then((data) => {
-          const results = (data.results || []) as {
-            tradingsymbol: string;
-            name: string;
-            exchange: string;
-            instrument_type: string;
-          }[];
-          onResult(
-            results.map((inst) => ({
-              symbol: inst.tradingsymbol,
-              full_name: `${inst.exchange}:${inst.tradingsymbol}`,
-              description: inst.name,
-              exchange: inst.exchange,
-              ticker: `${inst.exchange}:${inst.tradingsymbol}`,
-              type: inst.instrument_type === 'INDEX' ? 'index' : 'stock',
-            })),
-          );
-        })
-        .catch(() => onResult([]));
+      const query = userInput.trim();
+
+      // ── Global search across NSE / BSE / NFO via the existing
+      // `search_instruments` command. It already returns EQ + Index + FNO
+      // (CE/PE/FUT) rows from the SQLite `instruments` + `nfo_instruments`
+      // tables, so one invoke returns the full global result set. We map every
+      // row into TV's `SearchSymbolResultItem` shape without filtering by
+      // exchange or type — the user sees equities, indexes, and F&O contracts
+      // in one flat list and can pick any of them.
+      if (isTauri()) {
+        import('@tauri-apps/api/core')
+          .then((tauri) =>
+            tauri.invoke<
+              Array<
+                | { kind: 'EQ'; symbol: string; name: string; exchange: string }
+                | {
+                    kind: 'FNO';
+                    tradingsymbol: string;
+                    underlying: string;
+                    expiry: string;
+                    strike: number | null;
+                    optionType: string;
+                  }
+              >
+            >('search_instruments', { query }),
+          )
+          .then((results) => {
+            const items = (results || []).map((r) => {
+              if (r.kind === 'EQ') {
+                const upper = r.symbol.toUpperCase();
+                const isIndex =
+                  upper === 'NIFTY' ||
+                  upper === 'NIFTY 50' ||
+                  upper === 'BANKNIFTY' ||
+                  upper === 'NIFTY BANK' ||
+                  upper === 'FINNIFTY' ||
+                  upper === 'MIDCPNIFTY' ||
+                  upper === 'SENSEX';
+                return {
+                  symbol: r.symbol,
+                  full_name: `${r.exchange}:${r.symbol}`,
+                  description: r.name,
+                  exchange: r.exchange,
+                  ticker: `${r.exchange}:${r.symbol}`,
+                  type: isIndex ? 'index' : 'stock',
+                };
+              }
+              const desc =
+                r.optionType === 'FUT'
+                  ? `${r.underlying} FUT (${r.expiry})`
+                  : `${r.underlying} ${r.strike ?? ''} ${r.optionType} (${r.expiry})`;
+              return {
+                symbol: r.tradingsymbol,
+                full_name: `NFO:${r.tradingsymbol}`,
+                description: desc,
+                exchange: 'NFO',
+                ticker: `NFO:${r.tradingsymbol}`,
+                type: 'fno',
+              };
+            });
+            onResult(items);
+          })
+          .catch((err) => {
+            console.warn('[Datafeed] search_instruments failed:', err);
+            fallbackRestSearch(userInput, '', onResult);
+          });
+        return;
+      }
+
+      // ── REST fallback (non-Tauri / browser dev) ──────────────────────────
+      fallbackRestSearch(userInput, '', onResult);
     },
 
     resolveSymbol(

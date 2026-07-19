@@ -36,7 +36,7 @@ export function isIndex(r: SearchResult): boolean {
   ].includes(upperName);
 }
 
-export type SearchTab = 'Stock' | 'Index' | 'F&O';
+export type SearchTab = 'ALL' | 'Stock' | 'Index' | 'F&O';
 
 interface UseSymbolSearchOptions {
   onClose: () => void;
@@ -45,11 +45,11 @@ interface UseSymbolSearchOptions {
 export function useSymbolSearch({ onClose }: UseSymbolSearchOptions) {
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
-  const [activeTab, setActiveTab] = useState<SearchTab>('Stock');
+  const [activeTab, setActiveTab] = useState<SearchTab>('ALL');
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(-1);
-  const [selectedExchange, setSelectedExchange] = useState<'NSE' | 'BSE' | 'ALL'>('NSE');
+  const [selectedExchange, setSelectedExchange] = useState<'NSE' | 'BSE' | 'ALL'>('ALL');
   const [showExchangeMenu, setShowExchangeMenu] = useState(false);
 
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -178,17 +178,18 @@ export function useSymbolSearch({ onClose }: UseSymbolSearchOptions) {
 
   // Filter results by active tab and selected exchange
   const filteredResults = searchResults.filter((r) => {
-    // F&O tab: show only FNO results (no exchange filter — all NFO)
-    if (activeTab === 'F&O') {
-      return r.kind === 'FNO';
+    // 1. Tab filter
+    if (activeTab === 'Stock') {
+      if (r.kind === 'FNO' || isIndex(r)) return false;
+    } else if (activeTab === 'Index') {
+      if (r.kind === 'FNO' || !isIndex(r)) return false;
+    } else if (activeTab === 'F&O') {
+      if (r.kind !== 'FNO') return false;
     }
-    // Stock/Index tabs: only show equities
-    if (r.kind === 'FNO') return false;
-    const isIdx = isIndex(r);
-    const tabMatch = activeTab === 'Index' ? isIdx : !isIdx;
-    if (!tabMatch) return false;
 
+    // 2. Exchange filter
     if (selectedExchange === 'ALL') return true;
+    if (r.kind === 'FNO') return true;
     return r.exchange.toUpperCase() === selectedExchange;
   });
 

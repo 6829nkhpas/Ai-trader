@@ -23,10 +23,10 @@ interface FnoResultRowProps {
 export default function FnoResultRow({ result, isSelected, query, onClick, onMouseEnter }: FnoResultRowProps) {
   const badgeColor =
     result.optionType === 'CE'
-      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+      ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
       : result.optionType === 'PE'
-        ? 'bg-rose-500/20 text-rose-400 border-rose-500/30'
-        : 'bg-sky-500/20 text-sky-400 border-sky-500/30';
+        ? 'bg-rose-500/20 text-rose-600 dark:text-rose-400 border-rose-500/30'
+        : 'bg-sky-500/20 text-sky-600 dark:text-sky-400 border-sky-500/30';
 
   const label = [
     result.underlying,
@@ -42,12 +42,12 @@ export default function FnoResultRow({ result, isSelected, query, onClick, onMou
       onClick={onClick}
       onMouseEnter={onMouseEnter}
       className={`flex justify-between items-center px-4 py-2.5 cursor-pointer transition-colors ${
-        isSelected ? 'bg-elevated/40 text-text-primary' : 'hover:bg-elevated/20 text-text-secondary'
+        isSelected ? 'bg-emerald-500/10 dark:bg-emerald-500/15 text-text-primary font-medium' : 'hover:bg-elevated/40 text-text-secondary'
       }`}
     >
       <div className="flex items-center gap-3 min-w-0">
         {/* CE/PE/FUT badge */}
-        <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded border text-[9px] font-black uppercase tracking-wider ${badgeColor}`}>
+        <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md border text-[9px] font-black uppercase tracking-wider ${badgeColor}`}>
           {result.optionType}
         </span>
         <div className="flex flex-col min-w-0">
@@ -59,7 +59,7 @@ export default function FnoResultRow({ result, isSelected, query, onClick, onMou
           </span>
         </div>
       </div>
-      <span className="shrink-0 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-400">
+      <span className="text-[9px] uppercase font-bold tracking-wider shrink-0 text-text-primary/70">
         NFO
       </span>
     </div>

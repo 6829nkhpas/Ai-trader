@@ -40,7 +40,7 @@ export default function PremiumPaywall({ onUpgradeClick }: PremiumPaywallProps) 
       {/* Header Info */}
       <motion.div variants={fadeInUp} className="space-y-1.5 max-w-sm">
         <span className="text-[10px] font-black tracking-widest uppercase text-emerald-500 dark:text-emerald-400">
-          Strat AI Pro
+          Strat Ai
         </span>
         <h2 className="text-xl font-extrabold tracking-tight text-text-primary">
           Subscription Access Required

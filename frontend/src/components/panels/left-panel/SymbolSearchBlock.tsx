@@ -298,6 +298,11 @@ export default function SymbolSearchBlock() {
     [fnoResults],
   );
 
+  // ── Global merged results ─────────────────────────────────────────────
+  // One flat list across NSE, BSE, and NFO. No tab/section filtering — the
+  // user types anything (equity, index, FUT, CE, PE) and sees every match in
+  // a single ranking. The F&O chip filters above still refine the F&O rows
+  // when present; equities and indexes always pass through unchanged.
   const filteredResults = useMemo(() => {
     return searchResults.filter((r) => {
       if (r.kind === 'EQ') return true;
@@ -358,8 +363,8 @@ export default function SymbolSearchBlock() {
     );
   };
 
-  const eqRows = filteredResults.filter((r): r is Extract<SearchResult, { kind: 'EQ' }> => r.kind === 'EQ');
-  const fnoRows = filteredResults.filter((r): r is Extract<SearchResult, { kind: 'FNO' }> => r.kind === 'FNO');
+  // `eqRows` / `fnoRows` kept around for the section-based layout we removed.
+  // The merged global list now renders straight from `filteredResults`.
 
   return (
     <div className="hidden px-3 pt-2 pb-1.5">
@@ -369,7 +374,7 @@ export default function SymbolSearchBlock() {
           value={query}
           onChange={(e) => handleInputChange(e.target.value)}
           onFocus={() => { if (searchResults.length > 0) setShowDropdown(true); }}
-          placeholder="Search NSE symbol..."
+          placeholder="Search any symbol (NSE / BSE / F&O)..."
           aria-label="Search symbols"
           className="h-8 w-full rounded-none border border-border-default bg-surface pl-8 pr-8 text-[11px] text-text-primary placeholder:text-text-muted transition-colors focus:border-text-primary focus:outline-none focus:ring-1 focus:ring-text-primary"
         />
@@ -437,23 +442,13 @@ export default function SymbolSearchBlock() {
             ) : filteredResults.length === 0 ? (
               <div className="px-3 py-4 text-center text-[11px] text-text-muted">No instruments found</div>
             ) : (
+              // ── Merged global list ────────────────────────────────────
+              // Equities, indexes, and F&O contracts all flow into ONE flat
+              // list (no "Stocks" / "F&O" section headers). The result row's
+              // exchange chip (NSE / BSE / NFO) and the type chip (EQ / CE /
+              // PE / FUT) carry the distinction visually — no separate tabs.
               <>
-                {eqRows.length > 0 && (
-                  <>
-                    <div className="sticky top-0 z-[5] bg-surface px-3 py-1 text-[8px] font-bold uppercase tracking-widest text-text-muted/70 border-b border-border-default/50">
-                      Stocks
-                    </div>
-                    {eqRows.map(renderResultRow)}
-                  </>
-                )}
-                {fnoRows.length > 0 && (
-                  <>
-                    <div className="bg-surface px-3 py-1 text-[8px] font-bold uppercase tracking-widest text-primary/80 border-y border-border-default/50">
-                      F&amp;O · Futures &amp; Options
-                    </div>
-                    {fnoRows.map(renderResultRow)}
-                  </>
-                )}
+                {filteredResults.map(renderResultRow)}
               </>
             )}
           </div>
@@ -462,3 +457,4 @@ export default function SymbolSearchBlock() {
     </div>
   );
 }
+

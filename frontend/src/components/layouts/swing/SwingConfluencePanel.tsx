@@ -124,12 +124,12 @@ export default function SwingConfluencePanel() {
                 variants={fadeInUp}
                 className="flex items-center justify-between py-1 px-2 rounded-lg border border-border-default/60 bg-card/70 shadow-xs"
               >
-                <div className="flex items-center gap-2.5 min-w-[32px]">
+                <div className="flex items-center gap-2.5 min-w-8">
                   <span className="text-[11px] font-extrabold text-text-secondary leading-none">{t.timeframe}</span>
                 </div>
                 
                 {/* Compact progress bar */}
-                <div className="flex-1 max-w-[140px] mx-2 h-1.5 rounded-full bg-elevated/80 overflow-hidden">
+                <div className="flex-1 max-w-35 mx-2 h-1.5 rounded-full bg-elevated/80 overflow-hidden">
                   <motion.div
                     className={`h-full rounded-full ${theme.bar}`}
                     initial={{ width: 0 }}
@@ -246,7 +246,7 @@ export default function SwingConfluencePanel() {
           ) : (
             <div className="flex flex-col items-center gap-1.5 py-4 px-3 border border-dashed border-border-default/70 rounded-xl bg-card/50 text-center animate-in fade-in duration-200">
               <p className="text-[11px] font-black text-text-secondary tracking-tight">Awaiting Anomalies...</p>
-              <p className="text-[9px] text-text-muted/80 leading-relaxed max-w-[210px]">
+              <p className="text-[9px] text-text-muted/80 leading-relaxed max-w-52.5">
                 Quantitative insights trigger when a <span className="text-emerald-600 dark:text-emerald-400 font-bold">≥2% price swing</span> is detected.
               </p>
             </div>

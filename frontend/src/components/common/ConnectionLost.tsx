@@ -41,7 +41,7 @@ export default function ConnectionLost() {
   };
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-background/95 backdrop-blur-md select-none transition-all duration-300">
+    <div className="fixed inset-0 z-9999 flex items-center justify-center p-4 bg-background/95 backdrop-blur-md select-none transition-all duration-300">
       {/* Background gradients */}
       <div className="absolute top-1/4 left-1/4 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full bg-emerald-500/5 blur-[120px] pointer-events-none" />
       <div className="absolute bottom-1/4 right-1/4 translate-x-1/2 translate-y-1/2 w-96 h-96 rounded-full bg-[#6c63ff]/5 blur-[120px] pointer-events-none" />
@@ -54,7 +54,7 @@ export default function ConnectionLost() {
         className="relative overflow-hidden w-full max-w-xl rounded-2xl border border-border-default/80 bg-card/65 p-8 md:p-10 shadow-2xl flex flex-col items-center text-center"
       >
         {/* SVG Illustration */}
-        <div className="w-full max-w-[340px] h-auto mb-8 relative">
+        <div className="w-full max-w-85 h-auto mb-8 relative">
           <img
             src="/connection-lost.svg"
             alt="Connection Lost"

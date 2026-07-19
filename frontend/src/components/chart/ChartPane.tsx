@@ -237,7 +237,7 @@ export default function ChartPane({ pane }: ChartPaneProps) {
       data-active={isActive}
       onMouseDownCapture={handleActivate}
       onClick={handleActivate}
-      className={`flex h-full w-full flex-col overflow-hidden bg-surface transition-[box-shadow] ${
+      className={`flex h-full w-full flex-col overflow-hidden bg-surface transition-shadow ${
         isActive ? 'ring-2 ring-inset ring-emerald-500/70' : 'ring-1 ring-inset ring-border-default'
       }`}
     >

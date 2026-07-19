@@ -45,11 +45,46 @@ interface QuoteData {
 }
 
 interface SearchInstrument {
-  instrument_token: number;
+  instrument_token?: number;
   tradingsymbol: string;
   name: string;
-  instrument_type: string;
+  instrument_type?: string;
   exchange: string;
+}
+
+// Tauri `search_instruments` returns a tagged union (EQ | FNO). We accept
+// either that shape or the legacy flat `SearchInstrument` shape so the panel
+// keeps working no matter which backend is reachable.
+type TauriSearchResult =
+  | { kind: 'EQ'; symbol: string; name: string; exchange: string }
+  | {
+      kind: 'FNO';
+      tradingsymbol: string;
+      underlying: string;
+      expiry: string;
+      strike: number | null;
+      optionType: 'CE' | 'PE' | 'FUT';
+    };
+
+function toSearchInstrument(r: TauriSearchResult): SearchInstrument {
+  if (r.kind === 'EQ') {
+    return {
+      tradingsymbol: r.symbol,
+      name: r.name,
+      instrument_type: 'EQ',
+      exchange: r.exchange || 'NSE',
+    };
+  }
+  const desc =
+    r.optionType === 'FUT'
+      ? `${r.underlying} FUT (${r.expiry})`
+      : `${r.underlying} ${r.strike ?? ''} ${r.optionType} (${r.expiry})`;
+  return {
+    tradingsymbol: r.tradingsymbol,
+    name: desc,
+    instrument_type: r.optionType,
+    exchange: 'NFO',
+  };
 }
 
 export default function WatchlistPanel() {
@@ -119,8 +154,11 @@ export default function WatchlistPanel() {
     setShowDropdown(true);
 
     try {
-      const results = await invoke<SearchInstrument[]>('search_instruments', { query: normalized });
-      setSearchResults(results || []);
+      const results = await invoke<TauriSearchResult[]>('search_instruments', { query: normalized });
+      // The command returns EQ + Index + FNO rows in a single flat list — one
+      // global search across NSE / BSE / NFO. Map each row to the flat
+      // `SearchInstrument` shape this panel already renders.
+      setSearchResults((results || []).map(toSearchInstrument));
     } catch (err) {
       console.error('[Watchlist] search_instruments failed:', err);
       setSearchResults([]);
@@ -190,7 +228,7 @@ export default function WatchlistPanel() {
             value={query}
             onChange={(e) => handleInputChange(e.target.value)}
             onFocus={() => { if (searchResults.length > 0) setShowDropdown(true); }}
-            placeholder="Search any NSE symbol..."
+            placeholder="Search any symbol (NSE / BSE / F&O)..."
             aria-label="Search symbols"
             className="h-9 w-full rounded-md border border-border-default bg-surface pl-8 pr-8 text-xs text-text-primary placeholder:text-text-muted transition-colors focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
           />
@@ -224,9 +262,9 @@ export default function WatchlistPanel() {
                     No instruments found
                   </div>
                 ) : (
-                  searchResults.map((inst) => (
+                  searchResults.map((inst, idx) => (
                     <motion.button
-                      key={inst.instrument_token}
+                      key={`${inst.exchange}:${inst.tradingsymbol}:${idx}`}
                       variants={fadeInUp}
                       initial="hidden"
                       animate="show"
@@ -268,7 +306,7 @@ export default function WatchlistPanel() {
           <WatchlistSkeleton rows={10} />
         ) : (
           <motion.div variants={staggerContainer} initial="hidden" animate="show">
-          TOP_WATCHLIST.map((stock) => {
+          {TOP_WATCHLIST.map((stock) => {
             const quote = quotes[stock.symbol];
             const sectorColor = SECTOR_COLORS[stock.sector] ?? 'bg-elevated text-text-muted';
             const isPositive = quote ? quote.change >= 0 : false;
@@ -321,7 +359,7 @@ export default function WatchlistPanel() {
                 </div>
               </motion.button>
             );
-          })
+          })}
           </motion.div>
         )}
       </div>

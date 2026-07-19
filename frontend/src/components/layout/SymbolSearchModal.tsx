@@ -82,33 +82,32 @@ export default function SymbolSearchModal({ isOpen, onClose, initialQuery }: Sym
 
   if (!isOpen) return null;
 
-  const TABS: SearchTab[] = ['Stock', 'Index', 'F&O'];
+  const TABS: SearchTab[] = ['ALL', 'Stock', 'Index', 'F&O'];
 
   const placeholder =
-    activeTab === 'F&O'
-      ? 'Search options & futures (e.g. NIFTY 24000 CE)...'
-      : activeTab === 'Index'
-        ? 'Search indices...'
-        : 'Search NSE stocks...';
+    activeTab === 'ALL' 
+      ? 'Search globally across stocks, indices, F&O'
+      : activeTab === 'F&O'
+        ? 'Filter options & futures'
+        : activeTab === 'Index'
+          ? 'Filter indices...'
+          : 'Filter stocks...';
 
-  const emptyHint =
-    activeTab === 'F&O'
-      ? 'Type to search for options & futures'
-      : 'Type to search for NSE stocks or indices';
+  const emptyHint = 'Type any symbol, stock, index or option contract to search globally';
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-background/80 backdrop-blur-sm select-none p-4">
+    <div className="fixed inset-0 z-9999 flex items-center justify-center bg-black/40 dark:bg-black/60 backdrop-blur-md select-none p-4">
       {/* Backdrop click close */}
       <div className="absolute inset-0" onClick={onClose} />
 
       <div
-        className="relative w-full max-w-[640px] rounded-lg border border-border-default bg-surface shadow-2xl overflow-hidden flex flex-col max-h-[85vh] z-10"
+        className="relative w-full max-w-160 rounded-xl border border-border-default/80 bg-surface/85 dark:bg-[#12141a]/90 backdrop-blur-xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] z-10"
         onKeyDown={handleKeyDown}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border-default/50">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border-default/40 bg-surface/50 dark:bg-black/20">
           <span className="text-sm font-semibold text-text-primary tracking-wide">Symbol Search</span>
-          <button onClick={onClose} className="rounded p-1 text-text-muted hover:bg-elevated hover:text-text-primary transition-colors flex items-center justify-center" title="Close">
+          <button onClick={onClose} className="rounded-lg p-1 text-text-muted hover:bg-elevated/80 hover:text-text-primary transition-colors flex items-center justify-center" title="Close">
             <X size={16} />
           </button>
         </div>
@@ -122,7 +121,7 @@ export default function SymbolSearchModal({ isOpen, onClose, initialQuery }: Sym
               value={query}
               onChange={(e) => handleInputChange(e.target.value)}
               placeholder={placeholder}
-              className="h-9 w-full rounded border border-border-default bg-surface pl-10 pr-10 text-[13px] text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-0 uppercase"
+              className="h-9.5 w-full rounded-lg border border-border-default/60 bg-card/60 dark:bg-black/30 pl-10 pr-10 text-[13px] text-text-primary placeholder:text-text-muted focus:outline-none focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/30 transition-all uppercase font-medium"
             />
             {query && (
               <button onClick={() => handleInputChange('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary transition-colors" title="Clear">
@@ -133,17 +132,15 @@ export default function SymbolSearchModal({ isOpen, onClose, initialQuery }: Sym
         </div>
 
         {/* Tabs */}
-        <div className="px-4 pb-2 flex gap-1.5 border-b border-border-default/30">
+        <div className="px-4 pb-2.5 flex gap-1.5 border-b border-border-default/30">
           {TABS.map((tab) => (
             <button
               key={tab}
               onClick={() => { setActiveTab(tab); setSelectedIndex(0); }}
-              className={`rounded px-3 py-1 text-xs font-semibold uppercase tracking-wider transition-colors ${
+              className={`rounded-lg px-3.5 py-1 text-xs font-bold uppercase tracking-wider transition-all ${
                 activeTab === tab
-                  ? tab === 'F&O'
-                    ? 'bg-amber-500 text-black border border-amber-500'
-                    : 'bg-white text-black border border-white'
-                  : 'bg-elevated/45 text-text-muted hover:text-text-primary border border-border-default/30'
+                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/40 shadow-xs'
+                  : 'bg-elevated/40 text-text-muted hover:text-text-primary hover:bg-elevated/70 border border-border-default/30'
               }`}
             >
               {tab}
@@ -163,7 +160,7 @@ export default function SymbolSearchModal({ isOpen, onClose, initialQuery }: Sym
         />
 
         {/* Results List */}
-        <div ref={listRef} className="flex-1 overflow-y-auto max-h-[350px] divide-y divide-border-default/10 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+        <div ref={listRef} className="flex-1 overflow-y-auto max-h-87.5 divide-y divide-border-default/10 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
           {isSearching && (
             <div className="flex items-center justify-center py-8 text-xs text-text-muted gap-2">
               <span className="animate-spin text-text-primary">⚡</span>
@@ -172,7 +169,7 @@ export default function SymbolSearchModal({ isOpen, onClose, initialQuery }: Sym
           )}
 
           {!isSearching && searchError && (
-            <div className="text-center py-8 text-xs text-red-400 font-semibold">{searchError}</div>
+            <div className="text-center py-8 text-xs text-rose-600 dark:text-rose-400 font-semibold">{searchError}</div>
           )}
 
           {!isSearching && !searchError && filteredResults.length === 0 && (
@@ -204,14 +201,14 @@ export default function SymbolSearchModal({ isOpen, onClose, initialQuery }: Sym
                 onClick={() => handleSelectResult(r)}
                 onMouseEnter={() => setSelectedIndex(index)}
                 className={`flex justify-between items-center px-4 py-2.5 cursor-pointer transition-colors ${
-                  isSelected ? 'bg-elevated/40 text-text-primary' : 'hover:bg-elevated/20 text-text-secondary'
+                  isSelected ? 'bg-emerald-500/10 dark:bg-emerald-500/15 text-text-primary font-medium' : 'hover:bg-elevated/40 text-text-secondary'
                 }`}
               >
                 <div className="flex items-baseline gap-4 min-w-0">
                   <span className="w-20 font-bold text-xs truncate text-text-primary">
                     {highlightText(sym, query)}
                   </span>
-                  <span className="text-[11px] truncate max-w-[280px]">
+                  <span className="text-[11px] truncate max-w-70">
                     {highlightText(r.name, query)}
                   </span>
                 </div>
@@ -224,7 +221,7 @@ export default function SymbolSearchModal({ isOpen, onClose, initialQuery }: Sym
         </div>
 
         {/* Footer Help */}
-        <div className="text-[10px] text-text-muted/60 text-center py-2.5 bg-elevated/10 border-t border-border-default/30">
+        <div className="text-[10px] text-text-muted text-center py-2.5 bg-surface/40 dark:bg-black/20 border-t border-border-default/30">
           Simply start typing while on the chart to pull up this search box
         </div>
       </div>
@@ -244,7 +241,7 @@ interface ColumnHeadersProps {
 
 function ColumnHeaders({ activeTab, selectedExchange, showExchangeMenu, setShowExchangeMenu, setSelectedExchange, setSelectedIndex, exchangeMenuRef }: ColumnHeadersProps) {
   return (
-    <div className="flex justify-between items-center px-4 py-1.5 border-b border-border-default/30 text-[10px] font-bold text-text-muted tracking-wider bg-elevated/5">
+    <div className="flex justify-between items-center px-4 py-1.5 border-b border-border-default/30 text-[10px] font-bold text-text-muted tracking-wider bg-surface/30 dark:bg-black/20">
       <div className="flex gap-4">
         {activeTab === 'F&O' ? (
           <>
@@ -268,13 +265,13 @@ function ColumnHeaders({ activeTab, selectedExchange, showExchangeMenu, setShowE
             <ChevronDownIcon />
           </button>
           {showExchangeMenu && (
-            <div className="absolute right-0 top-full mt-1 z-50 w-20 rounded border border-border-default bg-surface shadow-xl py-1 text-center">
+            <div className="absolute right-0 top-full mt-1 z-50 w-24 rounded-lg border border-border-default/80 bg-surface/95 dark:bg-[#181a20]/95 backdrop-blur-xl shadow-xl py-1 text-center">
               {(['NSE', 'BSE', 'ALL'] as const).map((ex) => (
                 <button
                   key={ex}
                   onClick={() => { setSelectedExchange(ex); setShowExchangeMenu(false); setSelectedIndex(0); }}
                   className={`w-full text-center px-2 py-1.5 text-[9px] font-bold uppercase tracking-wider hover:bg-elevated/40 transition-colors ${
-                    selectedExchange === ex ? 'text-white bg-elevated/20' : 'text-text-muted'
+                    selectedExchange === ex ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10' : 'text-text-muted'
                   }`}
                 >
                   {ex}
@@ -284,7 +281,7 @@ function ColumnHeaders({ activeTab, selectedExchange, showExchangeMenu, setShowE
           )}
         </div>
       ) : (
-        <span className="text-amber-400/80">NFO</span>
+        <span className="text-text-primary/70 font-bold uppercase text-[9px] tracking-wider">NFO</span>
       )}
     </div>
   );
