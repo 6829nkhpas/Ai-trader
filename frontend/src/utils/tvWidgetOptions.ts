@@ -45,7 +45,7 @@ export function getTvWidgetOptions({
       backgroundColor: theme === 'light' ? '#f9fafb' : '#000000',
       foregroundColor: '#10b981',
     },
-    disabled_features: ['use_localstorage_for_settings', 'header_compare', 'display_market_status', 'popup_hints'],
+    disabled_features: ['use_localstorage_for_settings', 'header_compare', 'display_market_status', 'popup_hints', 'load_last_chart'],
     enabled_features: [
       'study_templates',
       'side_toolbar_in_fullscreen_mode',
