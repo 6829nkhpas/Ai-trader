@@ -150,10 +150,12 @@ export default function SymbolSearchBlock() {
 
   const routeSymbolToChart = useCallback(
     async (symbol: string) => {
-      // In F&O mode, when the user selects an underlying/equity that is NOT
-      // already a tradable option contract, resolve the nearest CE/PE contract
-      // (nearest expiry, ATM strike) and chart THAT. Falls back to routing the
-      // symbol verbatim when resolution fails so the chart still updates.
+      // Read the LIVE active pane id at call time. The hook closure may have
+      // captured a stale `activePaneId` from an earlier render (e.g. when the
+      // user clicked the other pane after the hook subscribed); routing a
+      // symbol to the stale pane would update the wrong chart. Always read
+      // the current value from the store before dispatching.
+      const currentActivePaneId = useChartUIStore.getState().activePaneId;
       const profile = useTradeStore.getState().activeProfile;
       if (profile === 'FNO' && !isFnoSymbol(symbol)) {
         try {
@@ -163,7 +165,7 @@ export default function SymbolSearchBlock() {
           );
           if (resolved?.tradingsymbol) {
             if (splitView) {
-              setPaneSymbol(activePaneId, resolved.tradingsymbol);
+              setPaneSymbol(currentActivePaneId, resolved.tradingsymbol);
             } else {
               setSelectedSymbol(resolved.tradingsymbol);
             }
@@ -174,12 +176,12 @@ export default function SymbolSearchBlock() {
         }
       }
       if (splitView) {
-        setPaneSymbol(activePaneId, symbol);
+        setPaneSymbol(currentActivePaneId, symbol);
       } else {
         setSelectedSymbol(symbol);
       }
     },
-    [splitView, setPaneSymbol, activePaneId, setSelectedSymbol],
+    [splitView, setPaneSymbol, setSelectedSymbol],
   );
 
   const handleSelectResult = useCallback(async (r: SearchResult) => {

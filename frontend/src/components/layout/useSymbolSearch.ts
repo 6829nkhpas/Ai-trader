@@ -98,12 +98,17 @@ export function useSymbolSearch({ onClose }: UseSymbolSearchOptions) {
   }, [handleSearch]);
 
   const routeSymbolToChart = useCallback((symbol: string) => {
+    // Read the LIVE active pane id at call time. The hook closure can capture
+    // a stale `activePaneId` (e.g. the user clicks the other pane after this
+    // callback was created); routing with the stale id would update the wrong
+    // chart. Always read the current value from the store before dispatching.
+    const currentActivePaneId = useChartUIStore.getState().activePaneId;
     if (splitView) {
-      setPaneSymbol(activePaneId, symbol);
+      setPaneSymbol(currentActivePaneId, symbol);
     } else {
       setSelectedSymbol(symbol);
     }
-  }, [splitView, setPaneSymbol, activePaneId, setSelectedSymbol]);
+  }, [splitView, setPaneSymbol, setSelectedSymbol]);
 
   const handleSelectResult = useCallback(async (r: SearchResult) => {
     const symbol = resultSymbol(r);

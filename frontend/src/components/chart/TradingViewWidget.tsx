@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { useTradeStore } from '../../store/useTradeStore';
-import { useChartUIStore } from '../../store/useChartUIStore';
+import { useChartUIStore, type PaneId } from '../../store/useChartUIStore';
 import { createDatafeed, invalidateScrollBackCache } from '../../charting/datafeed';
 import { useGhostLine } from '../../hooks/useGhostLine';
 import type { IChartingLibraryWidget } from '../../charting/datafeedTypes';
@@ -91,9 +91,75 @@ export default function TradingViewWidget({
   const resolution = TIMEFRAME_TO_RESOLUTION[effectiveTimeframe] ?? '15';
   const scriptReady = useTradingViewScript();
 
+  // ── Iframe Focus & Mouse Activation for Split Pane Selection ──────────
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handlePaneActivate = () => {
+      const paneEl = container.closest('[data-pane-id]');
+      if (paneEl) {
+        const paneId = paneEl.getAttribute('data-pane-id') as PaneId;
+        if (paneId && useChartUIStore.getState().activePaneId !== paneId) {
+          useChartUIStore.getState().setActivePane(paneId);
+        }
+      }
+    };
+
+    container.addEventListener('mousedown', handlePaneActivate, true);
+    container.addEventListener('pointerdown', handlePaneActivate, true);
+    container.addEventListener('click', handlePaneActivate, true);
+
+    const attachIframeListeners = () => {
+      const iframe = container.querySelector('iframe');
+      if (!iframe) return;
+      try {
+        const doc = iframe.contentDocument;
+        if (doc) {
+          doc.addEventListener('mousedown', handlePaneActivate, true);
+          doc.addEventListener('pointerdown', handlePaneActivate, true);
+          doc.addEventListener('click', handlePaneActivate, true);
+          if (doc.defaultView) {
+            doc.defaultView.addEventListener('focus', handlePaneActivate, true);
+          }
+        }
+      } catch {}
+    };
+
+    attachIframeListeners();
+
+    const iframe = container.querySelector('iframe');
+    if (iframe) {
+      iframe.addEventListener('load', attachIframeListeners);
+    }
+
+    const intervalId = setInterval(attachIframeListeners, 500);
+
+    return () => {
+      clearInterval(intervalId);
+      container.removeEventListener('mousedown', handlePaneActivate, true);
+      container.removeEventListener('pointerdown', handlePaneActivate, true);
+      container.removeEventListener('click', handlePaneActivate, true);
+      if (iframe) {
+        iframe.removeEventListener('load', attachIframeListeners);
+        try {
+          const doc = iframe.contentDocument;
+          if (doc) {
+            doc.removeEventListener('mousedown', handlePaneActivate, true);
+            doc.removeEventListener('pointerdown', handlePaneActivate, true);
+            doc.removeEventListener('click', handlePaneActivate, true);
+          }
+        } catch {}
+      }
+    };
+  }, [scriptReady]);
+
   // ── Widget Initialization & Button Injection ─────────────────────────
   useEffect(() => {
     if (!scriptReady || !containerRef.current || !window.TradingView) return;
+    // Don't mount the widget until we have a real symbol to chart; otherwise
+    // the widget boots with an empty ticker and shows a loading state.
+    if (!activeSymbol) return;
 
     const widgetOptions = getTvWidgetOptions({
       container: containerRef.current,
@@ -116,9 +182,18 @@ export default function TradingViewWidget({
             const fullSymbol = chartApi.symbol();
             if (fullSymbol && fullSymbol !== '---') {
               const cleanSymbol = fullSymbol.includes(':') ? fullSymbol.split(':')[1] : fullSymbol;
-              const currentSymbol = useTradeStore.getState().selectedSymbol;
-              if (currentSymbol !== cleanSymbol) {
-                useTradeStore.getState().setSelectedSymbol(cleanSymbol);
+              const paneEl = containerRef.current?.closest('[data-pane-id]');
+              if (paneEl) {
+                const paneId = paneEl.getAttribute('data-pane-id') as PaneId;
+                if (paneId) {
+                  useChartUIStore.getState().setActivePane(paneId);
+                  useChartUIStore.getState().setPaneSymbol(paneId, cleanSymbol);
+                }
+              } else {
+                const currentSymbol = useTradeStore.getState().selectedSymbol;
+                if (currentSymbol !== cleanSymbol) {
+                  useTradeStore.getState().setSelectedSymbol(cleanSymbol);
+                }
               }
             }
           });
@@ -206,11 +281,12 @@ export default function TradingViewWidget({
         setButtonsCreated(false);
       }
     };
-  }, [scriptReady]);
+  }, [scriptReady, activeSymbol]);
 
   // Sync symbol changes
   const prevSymbolRef = useRef(activeSymbol);
   useEffect(() => {
+    if (!activeSymbol) return;
     if (prevSymbolRef.current === activeSymbol) return;
     prevSymbolRef.current = activeSymbol;
     // Drop the per-symbol scroll-back cache so the new symbol starts fresh

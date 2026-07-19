@@ -438,7 +438,18 @@ export function useGhostLine(
       // here before touching the chart, so two runs never both render.
       if (isStale()) return;
 
-      const chart = widget.activeChart();
+      // The widget can be torn down between the time `onChartReady` was
+      // scheduled and now. Guard against a nulled-out `widget._tradingViewApi`
+      // (and other internal tear-down state) before touching the chart.
+      if (!widget || !(widget as any).activeChart) return;
+      let chart: any;
+      try {
+        chart = widget.activeChart();
+      } catch (err) {
+        console.warn('[GhostLine] activeChart() threw — widget torn down:', err);
+        return;
+      }
+      if (!chart) return;
 
       // Read the CURRENT zoom window so the projection length can scale to it.
       // `from` is a UNIX-second timestamp of the left edge of the view.

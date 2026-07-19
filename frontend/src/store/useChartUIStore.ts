@@ -47,9 +47,12 @@ function isSplitAllowed(): boolean {
   return (SPLIT_ENABLED_PROFILES as readonly string[]).includes(profile);
 }
 
-/** Seed a fresh pane with the default symbol/timeframe/chart type. */
+/** Seed a fresh pane. The symbol is left empty — the store-level
+ *  `setSplitView(true)` initializer hydrates panes from the active
+ *  `selectedSymbol` so the split view always opens with the symbol the user
+ *  was just looking at, never a hard-coded placeholder. */
 function defaultPane(id: PaneId): ChartPaneState {
-  return { id, symbol: 'RELIANCE', timeframe: '10m', chartType: 'candlestick' };
+  return { id, symbol: '', timeframe: '10m', chartType: 'candlestick' };
 }
 
 export type Point = { time: number; price: number };
@@ -453,11 +456,29 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
    * workspace profile is not INTRADAY or FNO, `setSplitView(true)` is a no-op
    * and the view stays single (Requirement 4.7). Disabling is always allowed
    * (returning to single view is valid in any mode).
+   *
+   * On enable, panes are seeded from the currently active symbol so the split
+   * view opens showing the same instrument the user was just viewing, rather
+   * than a hard-coded placeholder. The active pane keeps the symbol verbatim;
+   * the sibling pane also starts with it (the user can then pick a different
+   * symbol per pane via search / watchlist routing).
    */
   setSplitView: (on) =>
     set((state) => {
       if (on && !isSplitAllowed()) return state;
-      return { splitView: on };
+      if (!on) return { splitView: on };
+
+      // Enabling: seed panes from the active selection so split view never
+      // falls back to a placeholder symbol.
+      const activeSymbol = useTradeStore.getState().selectedSymbol || '';
+      const seed = activeSymbol || state.panes[0]?.symbol || state.panes[1]?.symbol || '';
+      return {
+        splitView: on,
+        panes: [
+          { ...state.panes[0], symbol: state.panes[0].symbol || seed },
+          { ...state.panes[1], symbol: state.panes[1].symbol || seed },
+        ] as [ChartPaneState, ChartPaneState],
+      };
     }),
 
   /** Designate the Active_Pane that search/global controls target (R4.4). */

@@ -66,6 +66,11 @@ export default function WatchlistBlock() {
 
   const routeSymbolToChart = useCallback(
     async (symbol: string) => {
+      // Read the LIVE active pane id at call time. The hook closure can
+      // capture a stale `activePaneId` (e.g. the user clicks the other pane
+      // after this callback was created); routing with the stale id would
+      // update the wrong chart. Always read the current value from the store.
+      const currentActivePaneId = useChartUIStore.getState().activePaneId;
       // In F&O mode, when the user clicks an underlying/equity that is NOT
       // already a tradable option contract, resolve the nearest CE/PE contract
       // (nearest expiry, ATM strike) and chart THAT. If resolution fails we
@@ -80,7 +85,7 @@ export default function WatchlistBlock() {
           if (resolved?.tradingsymbol) {
             setFnoUnderlying(symbol);
             if (splitView) {
-              setPaneSymbol(activePaneId, resolved.tradingsymbol);
+              setPaneSymbol(currentActivePaneId, resolved.tradingsymbol);
             } else {
               setSelectedSymbol(resolved.tradingsymbol);
             }
@@ -92,7 +97,7 @@ export default function WatchlistBlock() {
       }
 
       if (splitView) {
-        setPaneSymbol(activePaneId, symbol);
+        setPaneSymbol(currentActivePaneId, symbol);
       } else {
         setSelectedSymbol(symbol);
       }
@@ -101,7 +106,6 @@ export default function WatchlistBlock() {
       activeProfile,
       splitView,
       setPaneSymbol,
-      activePaneId,
       setSelectedSymbol,
       setFnoUnderlying,
     ],

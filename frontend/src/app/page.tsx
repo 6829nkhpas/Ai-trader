@@ -63,7 +63,7 @@ export default function Home() {
 
   // ── Derived symbol ────────────────────────────────────────────────
   const latestDecision = activeDecision ?? liveDecisions[liveDecisions.length - 1] ?? null;
-  const symbol = selectedSymbol || latestDecision?.symbol || 'RELIANCE';
+  const symbol = selectedSymbol || latestDecision?.symbol || '';
   useSymbolQuote(symbol);
 
   // ── Feature-access hydration ──────────────────────────────────────

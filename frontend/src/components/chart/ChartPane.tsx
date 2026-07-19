@@ -30,7 +30,7 @@ import { CHART_TYPE_LABELS } from './ChartTypeSelector';
 import { CHART_TYPES, type ChartType } from '../../charting/engines';
 import { TIMEFRAME_GROUPS, type Timeframe } from '../../utils/chartTypes';
 import { useOutsideClose } from '../../hooks/useOutsideClose';
-import { type ChartTimeframe } from '../../store/useTradeStore';
+import { type ChartTimeframe, useTradeStore } from '../../store/useTradeStore';
 import {
   useChartUIStore,
   type ChartPaneState,
@@ -216,41 +216,36 @@ function PaneChartTypeSelect({ paneId, value }: { paneId: PaneId; value: ChartTy
 export default function ChartPane({ pane }: ChartPaneProps) {
   const activePaneId = useChartUIStore((s) => s.activePaneId);
   const setActivePane = useChartUIStore((s) => s.setActivePane);
+  const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
 
   const isActive = activePaneId === pane.id;
+  const paneSymbol = pane.symbol || selectedSymbol || '';
+
+  // Use onMouseDownCapture instead of onClick so the pane becomes active BEFORE
+  // the TradingView iframe swallows the interaction. `onClick` on the wrapper
+  // fires only for clicks that bubble out of the iframe's document — clicks on
+  // candles / price scale / time scale are handled inside the iframe and never
+  // reach this handler, so the active pane never updates when the user actually
+  // interacts with the chart. Mouse-down capture fires on the wrapper for every
+  // pointer press inside the pane (including over the iframe) because the
+  // capture phase runs before the iframe's content receives the event.
+  const handleActivate = () => setActivePane(pane.id);
 
   return (
     <div
       data-pane-id={pane.id}
       data-active={isActive}
-      onClick={() => setActivePane(pane.id)}
+      onMouseDownCapture={handleActivate}
+      onClick={handleActivate}
       className={`flex h-full w-full flex-col overflow-hidden bg-surface transition-[box-shadow] ${
         isActive ? 'ring-2 ring-inset ring-emerald-500/70' : 'ring-1 ring-inset ring-border-default'
       }`}
     >
-      {/* Pane header — surfaces this pane's own independent state + controls (R4.3). */}
-      <div className="flex shrink-0 items-center gap-2 border-b border-border-default bg-surface/80 px-2 py-1">
-        <span
-          className={`text-[9px] font-black uppercase tracking-wider ${
-            isActive ? 'text-emerald-400' : 'text-text-muted'
-          }`}
-        >
-          {pane.id}
-        </span>
-        <span className="truncate text-[11px] font-bold text-text-primary">{pane.symbol}</span>
-
-        {/* Per-pane controls — independent timeframe + chart type. */}
-        <div className="ml-auto flex shrink-0 items-center gap-1">
-          <PaneTimeframeSelect paneId={pane.id} value={pane.timeframe} />
-          <PaneChartTypeSelect paneId={pane.id} value={pane.chartType} />
-        </div>
-      </div>
-
       {/* The independent chart instance for this pane. */}
       <div className="relative min-h-0 flex-1">
         <PaneErrorBoundary paneId={pane.id}>
           <MainTerminalChart
-            symbolOverride={pane.symbol}
+            symbolOverride={paneSymbol || undefined}
             timeframeOverride={pane.timeframe as Timeframe}
             chartTypeOverride={pane.chartType}
           />
