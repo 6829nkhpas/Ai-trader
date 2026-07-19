@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { type FnoViewState, type OiProfilePoint } from './viewModel';
+import { invoke } from '@tauri-apps/api/core';
+import { type FnoViewState } from './viewModel';
 import { useTradeStore } from '../../store/useTradeStore';
 
 interface FnoOptionChainTableProps {
@@ -23,9 +24,8 @@ export default function FnoOptionChainTable({
   expiries = [],
   onExpiryChange,
 }: FnoOptionChainTableProps) {
-  const [mode, setMode] = useState<ViewMode>('trading');
+  const [mode] = useState<ViewMode>('trading');
   const setSelectedSymbol = useTradeStore((s) => s.setSelectedSymbol);
-  const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
 
   const spot = viewState.hud.context.underlying ? viewState.hud.futuresBasis !== null ? viewState.hud.maxPain ?? 24334.3 : 24334.3 : 24334.3;
   // Use actual spot from viewState if available, or compute median strike / maxPain
@@ -45,11 +45,25 @@ export default function FnoOptionChainTable({
     [rows]
   );
 
-  const handleQuickTrade = (e: React.MouseEvent, strike: number, type: 'CE' | 'PE', side: 'BUY' | 'SELL') => {
-    e.stopPropagation();
-    const underlying = viewState.hud.context.underlying || 'NIFTY';
-    const contractSymbol = `${underlying}${strike}${type}`;
-    setSelectedSymbol(contractSymbol);
+  const underlying = viewState.hud.context.underlying || 'NIFTY';
+  const activeExpiry = viewState.hud.context.expiry || '';
+
+  const openContractChart = (strike: number, type: 'CE' | 'PE') => {
+    const shortSymbol = `${underlying}${strike}${type}`;
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      invoke<{ tradingsymbol?: string } | null>('fno_resolve_option_contract', {
+        underlying,
+        strike,
+        optionType: type,
+        expiry: activeExpiry || null,
+      })
+        .then((resolved) => {
+          setSelectedSymbol(resolved?.tradingsymbol || shortSymbol);
+        })
+        .catch(() => setSelectedSymbol(shortSymbol));
+    } else {
+      setSelectedSymbol(shortSymbol);
+    }
   };
 
   if (rows.length === 0) {
@@ -193,18 +207,20 @@ export default function FnoOptionChainTable({
                   )}
 
                   <tr
-                    onClick={() => setSelectedSymbol(`${viewState.hud.context.underlying || 'NIFTY'}${row.strike}CE`)}
-                    className={`group transition-all hover:bg-elevated/40 dark:hover:bg-white/5 cursor-pointer bg-surface dark:bg-black ${
+                    className={`group transition-all hover:bg-elevated/40 dark:hover:bg-white/5 bg-surface dark:bg-black ${
                       isRowHighlighted ? 'bg-emerald-500/15 dark:bg-emerald-500/10 font-bold' : ''
                     }`}
                   >
                     {/* TRADING VIEW MODE */}
                     {mode === 'trading' && (
                       <>
-                        {/* Call Side */}
-                        <td className={`px-3 py-3 text-center transition-colors border-r border-border-default/40 dark:border-zinc-800/80 ${
-                          isCallItm ? 'bg-emerald-500/10 dark:bg-emerald-500/5' : 'bg-surface dark:bg-black'
-                        }`}>
+                        {/* Call Side — click opens CE contract chart */}
+                        <td
+                          onClick={() => openContractChart(row.strike, 'CE')}
+                          className={`px-3 py-3 text-center transition-colors border-r border-border-default/40 dark:border-zinc-800/80 cursor-pointer hover:bg-emerald-500/10 dark:hover:bg-emerald-500/10 ${
+                            isCallItm ? 'bg-emerald-500/10 dark:bg-emerald-500/5' : 'bg-surface dark:bg-black'
+                          } ${highlightedStrike === row.strike && highlightedSide === 'CE' ? 'ring-1 ring-inset ring-emerald-500/60' : ''}`}
+                        >
                           <div className="flex flex-col items-center justify-center gap-0.5">
                             <div className="text-[13.5px] font-black text-text-primary dark:text-white">
                               ₹{cLtp.toFixed(2)}
@@ -215,8 +231,11 @@ export default function FnoOptionChainTable({
                           </div>
                         </td>
 
-                        {/* Strike & OI Bars */}
-                        <td className="px-2 py-3 text-center font-bold bg-surface dark:bg-black border-r border-border-default/40 dark:border-zinc-800/80">
+                        {/* Strike & OI Bars — click opens CE by default (preserves prior row-click behavior) */}
+                        <td
+                          onClick={() => openContractChart(row.strike, highlightedSide === 'PE' ? 'PE' : 'CE')}
+                          className="px-2 py-3 text-center font-bold bg-surface dark:bg-black border-r border-border-default/40 dark:border-zinc-800/80 cursor-pointer hover:bg-elevated/40 dark:hover:bg-white/5"
+                        >
                           <div className="flex flex-col items-center justify-center gap-1">
                             <span className="text-[14px] font-black text-text-primary dark:text-white tracking-tight">
                               {row.strike.toLocaleString('en-IN')}
@@ -228,10 +247,13 @@ export default function FnoOptionChainTable({
                           </div>
                         </td>
 
-                        {/* Put Side */}
-                        <td className={`px-3 py-3 text-center transition-colors ${
-                          isPutItm ? 'bg-emerald-500/10 dark:bg-emerald-500/5' : 'bg-surface dark:bg-black'
-                        }`}>
+                        {/* Put Side — click opens PE contract chart */}
+                        <td
+                          onClick={() => openContractChart(row.strike, 'PE')}
+                          className={`px-3 py-3 text-center transition-colors cursor-pointer hover:bg-emerald-500/10 dark:hover:bg-emerald-500/10 ${
+                            isPutItm ? 'bg-emerald-500/10 dark:bg-emerald-500/5' : 'bg-surface dark:bg-black'
+                          } ${highlightedStrike === row.strike && highlightedSide === 'PE' ? 'ring-1 ring-inset ring-emerald-500/60' : ''}`}
+                        >
                           <div className="flex flex-col items-center justify-center gap-0.5">
                             <div className="text-[13.5px] font-black text-text-primary dark:text-white">
                               ₹{pLtp.toFixed(2)}
@@ -247,24 +269,24 @@ export default function FnoOptionChainTable({
                     {/* FULL DATA VIEW MODE */}
                     {mode === 'fulldata' && (
                       <>
-                        <td className="px-1 py-1.5 text-center text-cyan-400">{row.callOi ? `${(row.callOi/1000).toFixed(0)}K` : '—'}</td>
+                        <td onClick={() => openContractChart(row.strike, 'CE')} className="px-1 py-1.5 text-center text-cyan-400 cursor-pointer hover:bg-emerald-500/10">{row.callOi ? `${(row.callOi/1000).toFixed(0)}K` : '—'}</td>
                         <td className="px-1 py-1.5 text-center text-text-muted">{row.iv ? `${row.iv.toFixed(1)}%` : '—'}</td>
-                        <td className="px-1 py-1.5 text-center font-bold text-text-primary">₹{cLtp.toFixed(2)}</td>
-                        <td className="px-1 py-1.5 text-center font-extrabold text-emerald-400 bg-black">{row.strike}</td>
-                        <td className="px-1 py-1.5 text-center font-bold text-text-primary">₹{pLtp.toFixed(2)}</td>
+                        <td onClick={() => openContractChart(row.strike, 'CE')} className="px-1 py-1.5 text-center font-bold text-text-primary cursor-pointer hover:bg-emerald-500/10">₹{cLtp.toFixed(2)}</td>
+                        <td onClick={() => openContractChart(row.strike, highlightedSide === 'PE' ? 'PE' : 'CE')} className="px-1 py-1.5 text-center font-extrabold text-emerald-400 bg-black cursor-pointer hover:bg-elevated/40">{row.strike}</td>
+                        <td onClick={() => openContractChart(row.strike, 'PE')} className="px-1 py-1.5 text-center font-bold text-text-primary cursor-pointer hover:bg-emerald-500/10">₹{pLtp.toFixed(2)}</td>
                         <td className="px-1 py-1.5 text-center text-text-muted">{row.iv ? `${row.iv.toFixed(1)}%` : '—'}</td>
-                        <td className="px-1 py-1.5 text-center text-rose-400">{row.putOi ? `${(row.putOi/1000).toFixed(0)}K` : '—'}</td>
+                        <td onClick={() => openContractChart(row.strike, 'PE')} className="px-1 py-1.5 text-center text-rose-400 cursor-pointer hover:bg-emerald-500/10">{row.putOi ? `${(row.putOi/1000).toFixed(0)}K` : '—'}</td>
                       </>
                     )}
 
                     {/* GREEKS VIEW MODE */}
                     {mode === 'greeks' && (
                       <>
-                        <td className="px-1 py-1.5 text-center text-emerald-400">{(0.5 + (actualSpot - row.strike)/1000).toFixed(2)}</td>
+                        <td onClick={() => openContractChart(row.strike, 'CE')} className="px-1 py-1.5 text-center text-emerald-400 cursor-pointer hover:bg-emerald-500/10">{(0.5 + (actualSpot - row.strike)/1000).toFixed(2)}</td>
                         <td className="px-1 py-1.5 text-center text-text-muted">{row.iv ? `${row.iv.toFixed(1)}%` : '18.2%'}</td>
-                        <td className="px-1 py-1.5 text-center font-extrabold text-emerald-400 bg-black">{row.strike}</td>
+                        <td onClick={() => openContractChart(row.strike, highlightedSide === 'PE' ? 'PE' : 'CE')} className="px-1 py-1.5 text-center font-extrabold text-emerald-400 bg-black cursor-pointer hover:bg-elevated/40">{row.strike}</td>
                         <td className="px-1 py-1.5 text-center text-text-muted">{row.iv ? `${row.iv.toFixed(1)}%` : '18.2%'}</td>
-                        <td className="px-1 py-1.5 text-center text-rose-400">{(-0.5 + (actualSpot - row.strike)/1000).toFixed(2)}</td>
+                        <td onClick={() => openContractChart(row.strike, 'PE')} className="px-1 py-1.5 text-center text-rose-400 cursor-pointer hover:bg-emerald-500/10">{(-0.5 + (actualSpot - row.strike)/1000).toFixed(2)}</td>
                       </>
                     )}
                   </tr>

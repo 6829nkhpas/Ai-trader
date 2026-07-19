@@ -1,5 +1,6 @@
 import type { ChartingLibraryWidgetOptions } from '../charting/datafeedTypes';
 import { getThemeOverrides } from './tvThemeOverrides';
+import { tvSaveLoadAdapter } from './tvSaveLoadAdapter';
 
 interface WidgetOptionsInput {
   container: HTMLDivElement;
@@ -45,7 +46,7 @@ export function getTvWidgetOptions({
       backgroundColor: theme === 'light' ? '#f9fafb' : '#000000',
       foregroundColor: '#10b981',
     },
-    disabled_features: ['use_localstorage_for_settings', 'header_compare', 'display_market_status', 'popup_hints', 'load_last_chart'],
+    disabled_features: ['use_localstorage_for_settings', 'header_compare', 'popup_hints', 'load_last_chart'],
     enabled_features: [
       'study_templates',
       'side_toolbar_in_fullscreen_mode',
@@ -61,8 +62,13 @@ export function getTvWidgetOptions({
       'chart_style_tpo',
       'chart_style_svp',
       'chart_style_vol_candle',
+      'display_market_status',
     ],
     debug: false,
     auto_save_delay: 5,
+    save_load_adapter: tvSaveLoadAdapter,
+    charts_storage_api_version: '1.1',
+    client_id: 'ai-trader',
+    user_id: 'local_user',
   };
 }

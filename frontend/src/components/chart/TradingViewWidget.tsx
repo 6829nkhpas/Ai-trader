@@ -9,7 +9,7 @@ import type { IChartingLibraryWidget } from '../../charting/datafeedTypes';
 import { TIMEFRAME_TO_RESOLUTION, getThemeOverrides } from '../../utils/tvThemeOverrides';
 import { useTradingViewScript } from '../../hooks/useTradingViewScript';
 import { getTvWidgetOptions } from '../../utils/tvWidgetOptions';
-import { showIframeDropdown } from '../../utils/iframeDropdown';
+import { showIframeDropdown, injectIframeDropdownStyles } from '../../utils/iframeDropdown';
 import { SVGS } from './toolbarIcons';
 
 export interface TradingViewWidgetProps {
@@ -19,6 +19,9 @@ export interface TradingViewWidgetProps {
 }
 
 function syncButtonStates(doc: Document) {
+  const theme = useChartUIStore.getState().theme;
+  injectIframeDropdownStyles(doc, theme);
+
   const chartMode = useTradeStore.getState().chartMode;
   const ghostLineMode = useChartUIStore.getState().ghostLineMode;
   const splitView = useChartUIStore.getState().splitView;
@@ -237,6 +240,10 @@ export default function TradingViewWidget({
 
   // Sync theme changes
   useEffect(() => {
+    const doc = containerRef.current?.querySelector('iframe')?.contentDocument;
+    if (doc) {
+      injectIframeDropdownStyles(doc, theme);
+    }
     if (!widgetRef.current) return;
     try {
       widgetRef.current.changeTheme(theme === 'light' ? 'light' : 'dark');

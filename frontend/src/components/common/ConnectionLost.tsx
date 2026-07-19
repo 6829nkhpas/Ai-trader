@@ -73,26 +73,26 @@ export default function ConnectionLost() {
         {/* Status Indicators List */}
         <div className="w-full max-w-xs grid grid-cols-2 gap-3 mb-8">
           {/* Internet Connectivity Status */}
-          <div className="flex flex-col items-center p-3 rounded-xl border border-border-default/50 bg-[#0d0f12]/30 dark:bg-[#000000]/20">
+          <div className="flex flex-col items-center p-3 rounded-xl border border-border-default/60 bg-card">
             <div className="flex items-center gap-1.5 mb-1 text-[10px] text-text-muted font-bold uppercase tracking-wider">
-              {isOnline ? <Wifi size={11} className="text-emerald-400" /> : <WifiOff size={11} className="text-rose-400" />}
+              {isOnline ? <Wifi size={11} className="text-emerald-600 dark:text-emerald-400" /> : <WifiOff size={11} className="text-rose-600 dark:text-rose-400" />}
               Internet
             </div>
-            <span className={`text-xs font-extrabold ${isOnline ? 'text-emerald-400' : 'text-rose-400 animate-pulse'}`}>
+            <span className={`text-xs font-extrabold ${isOnline ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400 animate-pulse'}`}>
               {isOnline ? 'ONLINE' : 'OFFLINE'}
             </span>
           </div>
 
           {/* Server Connection Status */}
-          <div className="flex flex-col items-center p-3 rounded-xl border border-border-default/50 bg-[#0d0f12]/30 dark:bg-[#000000]/20">
+          <div className="flex flex-col items-center p-3 rounded-xl border border-border-default/60 bg-card">
             <div className="flex items-center gap-1.5 mb-1 text-[10px] text-text-muted font-bold uppercase tracking-wider">
-              <Server size={11} className={wsStatus === 'connected' ? 'text-emerald-400' : wsStatus === 'connecting' ? 'text-amber-400 animate-pulse' : 'text-rose-400'} />
+              <Server size={11} className={wsStatus === 'connected' ? 'text-emerald-600 dark:text-emerald-400' : wsStatus === 'connecting' ? 'text-amber-600 dark:text-amber-400 animate-pulse' : 'text-rose-600 dark:text-rose-400'} />
               Trading Server
             </div>
             <span className={`text-xs font-extrabold ${
-              wsStatus === 'connected' ? 'text-emerald-400' :
-              wsStatus === 'connecting' ? 'text-amber-400 animate-pulse' :
-              'text-rose-400'
+              wsStatus === 'connected' ? 'text-emerald-600 dark:text-emerald-400' :
+              wsStatus === 'connecting' ? 'text-amber-600 dark:text-amber-400 animate-pulse' :
+              'text-rose-600 dark:text-rose-400'
             }`}>
               {wsStatus === 'connected' ? 'CONNECTED' :
                wsStatus === 'connecting' ? 'CONNECTING...' :

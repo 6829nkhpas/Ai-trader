@@ -233,8 +233,8 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
                   type="button"
                   onClick={() => setActiveProfile(key)}
                   className={`
-                    profile-tab-btn relative z-10 flex items-center gap-1.5 rounded-none px-3 py-1 text-xs font-semibold
-                    select-none focus-visible:outline-none
+                    profile-tab-btn relative z-10 flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold
+                    select-none focus-visible:outline-none transition-all duration-150
                     ${isActive
                       ? 'text-text-primary'
                       : 'text-text-secondary hover:bg-elevated/20 hover:text-text-primary border border-transparent'
@@ -243,9 +243,9 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
                 >
                   <span>{label}</span>
                   <span
-                    className={`rounded-none px-1 py-px text-[9px] font-medium leading-none ${isActive
-                        ? 'profile-badge-active bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                        : 'bg-elevated text-text-secondary'
+                    className={`rounded-full px-2 py-0.5 text-[9px] font-extrabold leading-none tracking-wide transition-colors ${isActive
+                        ? 'profile-badge-active bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                        : 'bg-elevated/80 text-text-muted border border-border-default/60'
                       }`}
                   >
                     {shortcut}

@@ -14,27 +14,27 @@ function getBiasTheme(bias: TrendBias) {
   switch (bias) {
     case 'BULLISH':
       return {
-        text: 'text-emerald-400',
-        bg: 'bg-emerald-500/10 border-emerald-500/20',
-        bar: 'bg-emerald-400'
+        text: 'text-emerald-600 dark:text-emerald-400',
+        bg: 'bg-emerald-500/10 dark:bg-emerald-500/10 border-emerald-500/30 dark:border-emerald-500/20',
+        bar: 'bg-emerald-500 dark:bg-emerald-400'
       };
     case 'BEARISH':
       return {
-        text: 'text-rose-400',
-        bg: 'bg-rose-500/10 border-rose-500/20',
-        bar: 'bg-rose-400'
+        text: 'text-rose-600 dark:text-rose-400',
+        bg: 'bg-rose-500/10 dark:bg-rose-500/10 border-rose-500/30 dark:border-rose-500/20',
+        bar: 'bg-rose-500 dark:bg-rose-400'
       };
     default:
       return {
-        text: 'text-amber-400',
-        bg: 'bg-amber-500/10 border-amber-500/20',
-        bar: 'bg-amber-400'
+        text: 'text-amber-600 dark:text-amber-400',
+        bg: 'bg-amber-500/10 dark:bg-amber-500/10 border-amber-500/30 dark:border-amber-500/20',
+        bar: 'bg-amber-500 dark:bg-amber-400'
       };
   }
 }
 
 function sentimentColor(s: number) {
-  return s >= 65 ? 'text-emerald-400' : s >= 40 ? 'text-amber-400' : 'text-rose-400';
+  return s >= 65 ? 'text-emerald-600 dark:text-emerald-400' : s >= 40 ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400';
 }
 
 function sentimentBarColor(s: number) {
@@ -110,7 +110,7 @@ export default function SwingConfluencePanel() {
       <div className="shrink-0 flex flex-col border-b border-border-default/80 pb-2">
         <div className="px-3 pt-2.5 pb-1.5 flex items-center justify-between">
           <h3 className="text-[10px] font-black text-text-muted/90 uppercase tracking-widest flex items-center gap-1.5">
-            <Activity size={10} className="text-cyan-400" />
+            <Activity size={10} className="text-cyan-600 dark:text-cyan-400" />
             Multi-Timeframe Trend
           </h3>
         </div>
@@ -122,14 +122,14 @@ export default function SwingConfluencePanel() {
               <motion.div 
                 key={t.timeframe}
                 variants={fadeInUp}
-                className="flex items-center justify-between py-1 px-1.5 rounded border border-border-default/20 bg-[#0d0f12]/20"
+                className="flex items-center justify-between py-1 px-2 rounded-lg border border-border-default/60 bg-card/70 shadow-xs"
               >
                 <div className="flex items-center gap-2.5 min-w-[32px]">
                   <span className="text-[11px] font-extrabold text-text-secondary leading-none">{t.timeframe}</span>
                 </div>
                 
                 {/* Compact progress bar */}
-                <div className="flex-1 max-w-[140px] mx-2 h-1 rounded-full bg-elevated overflow-hidden">
+                <div className="flex-1 max-w-[140px] mx-2 h-1.5 rounded-full bg-elevated/80 overflow-hidden">
                   <motion.div
                     className={`h-full rounded-full ${theme.bar}`}
                     initial={{ width: 0 }}
@@ -153,7 +153,7 @@ export default function SwingConfluencePanel() {
       <div className="shrink-0 flex flex-col border-b border-border-default/80 pb-2">
         <div className="flex items-center justify-between px-3 pt-2 pb-1.5">
           <h3 className="text-[10px] font-black text-text-muted/90 uppercase tracking-widest flex items-center gap-1.5">
-            <Newspaper size={10} className="text-emerald-400" />
+            <Newspaper size={10} className="text-emerald-600 dark:text-emerald-400" />
             AI News Sentiment
           </h3>
           <div className="flex items-center gap-1">
@@ -170,7 +170,7 @@ export default function SwingConfluencePanel() {
 
         {/* Sentiment Gauge Bar */}
         <div className="px-3 mb-1.5">
-          <div className="h-1.5 w-full rounded-full bg-elevated overflow-hidden relative">
+          <div className="h-1.5 w-full rounded-full bg-elevated/80 overflow-hidden relative">
             {score !== null ? (
               <div
                 className={`h-full rounded-full transition-all duration-500 ease-out ${sentimentBarColor(score)}`}
@@ -181,24 +181,24 @@ export default function SwingConfluencePanel() {
             )}
           </div>
           <div className="flex justify-between mt-1 text-[8px] font-bold tracking-wider leading-none">
-            <span className="text-rose-500/70 uppercase">Fear</span>
+            <span className="text-rose-600/80 dark:text-rose-500/70 uppercase">Fear</span>
             {score !== null && (
               <span className={`uppercase font-extrabold ${sentimentColor(score)}`}>{sentimentLabel(score)}</span>
             )}
-            <span className="text-emerald-500/70 uppercase">Greed</span>
+            <span className="text-emerald-600/80 dark:text-emerald-500/70 uppercase">Greed</span>
           </div>
         </div>
 
         {/* Active Sentiment News Card */}
         <div className="px-3">
           {sentimentPayload ? (
-            <div className="rounded-lg border border-border-default/45 bg-[#0d0f12]/30 p-2 text-left">
+            <div className="rounded-lg border border-border-default/60 bg-card p-2 text-left shadow-xs">
               <div className="flex items-center gap-1 mb-1">
                 <span className="relative flex h-1.5 w-1.5">
-                  <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-cyan-400/60"></span>
-                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-400"></span>
+                  <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-cyan-500/60"></span>
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-500"></span>
                 </span>
-                <span className="text-[8px] font-extrabold text-cyan-400 uppercase tracking-widest leading-none">Latest Catalyst</span>
+                <span className="text-[8px] font-extrabold text-cyan-600 dark:text-cyan-400 uppercase tracking-widest leading-none">Latest Catalyst</span>
               </div>
               <p className="text-[10px] font-bold text-text-primary leading-snug line-clamp-1">
                 {sentimentPayload.top_headline}
@@ -207,7 +207,7 @@ export default function SwingConfluencePanel() {
                 <div className="mt-1 pt-1 border-t border-border-default/30 space-y-0.5">
                   {sentimentPayload.headlines.slice(1, 3).map((headline, idx) => (
                     <div key={idx} className="text-[9px] text-text-muted/90 flex items-start gap-1">
-                      <span className="text-cyan-400/50 leading-none">•</span>
+                      <span className="text-cyan-600/60 dark:text-cyan-400/50 leading-none">•</span>
                       <span className="line-clamp-1 leading-none">{headline}</span>
                     </div>
                   ))}
@@ -215,7 +215,7 @@ export default function SwingConfluencePanel() {
               )}
             </div>
           ) : (
-            <div className="rounded-lg border border-dashed border-border-default bg-[#0d0f12]/15 p-2.5 text-center">
+            <div className="rounded-lg border border-dashed border-border-default/70 bg-card/50 p-2.5 text-center">
               <p className="text-[9.5px] text-text-muted/80 leading-normal">
                 Awaiting market sentiment signals...
               </p>
@@ -228,7 +228,7 @@ export default function SwingConfluencePanel() {
       <div className="flex flex-1 min-h-0 flex-col">
         <div className="px-3 pt-2 pb-1.5 shrink-0 flex items-center justify-between">
           <h3 className="text-[10px] font-black text-text-muted/90 uppercase tracking-widest flex items-center gap-1.5">
-            <Sparkles size={10} className="text-purple-400" />
+            <Sparkles size={10} className="text-purple-600 dark:text-purple-400" />
             Quant Anomalies
           </h3>
         </div>
@@ -244,10 +244,10 @@ export default function SwingConfluencePanel() {
               />
             ))
           ) : (
-            <div className="flex flex-col items-center gap-1.5 py-4 px-3 border border-dashed border-border-default/60 rounded-xl bg-[#0d0f12]/15 text-center animate-in fade-in duration-200">
+            <div className="flex flex-col items-center gap-1.5 py-4 px-3 border border-dashed border-border-default/70 rounded-xl bg-card/50 text-center animate-in fade-in duration-200">
               <p className="text-[11px] font-black text-text-secondary tracking-tight">Awaiting Anomalies...</p>
               <p className="text-[9px] text-text-muted/80 leading-relaxed max-w-[210px]">
-                Quantitative insights trigger when a <span className="text-emerald-400 font-bold">≥2% price swing</span> is detected.
+                Quantitative insights trigger when a <span className="text-emerald-600 dark:text-emerald-400 font-bold">≥2% price swing</span> is detected.
               </p>
             </div>
           )}

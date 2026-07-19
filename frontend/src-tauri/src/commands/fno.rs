@@ -359,6 +359,103 @@ pub async fn fno_resolve_nearest_contract(
     Ok(None)
 }
 
+/// Tauri command: resolve a specific option contract tradingsymbol for an
+/// (underlying, strike, option_type) triple, picking the nearest non-expired
+/// expiry when none is supplied.
+///
+/// Used by the option-chain table click handlers: when the user clicks a CE/PE
+/// cell, the frontend builds a short symbol like `NIFTY24500CE` (no expiry
+/// encoded) and asks the backend to expand it into the full NFO tradingsymbol
+/// (e.g. `NIFTY24JUL24500CE` or `NIFTY2471824500CE`) so the chart loads a
+/// real listed contract instead of a guessed one.
+///
+/// Returns `Ok(None)` when no matching contract exists in the local NFO
+/// instrument master — the frontend then falls back to the raw short symbol.
+/// Never panics.
+#[tauri::command]
+pub async fn fno_resolve_option_contract(
+    app: AppHandle,
+    underlying: String,
+    strike: f64,
+    option_type: String,
+    expiry: Option<String>,
+) -> Result<Option<ResolvedContract>, String> {
+    let u = underlying.trim().to_string();
+    let ot = option_type.trim().to_uppercase();
+    if u.is_empty() || (ot != "CE" && ot != "PE") || !strike.is_finite() {
+        return Ok(None);
+    }
+
+    let db_state = match app.try_state::<crate::db::DbState>() {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+
+    let nfo_name = resolve_nfo_underlying_name(&u);
+
+    // Pick the expiry: explicit, else nearest non-expired for this underlying.
+    let expiry = match expiry {
+        Some(e) if !e.trim().is_empty() => e.trim().to_string(),
+        _ => match resolve_nearest_expiry(&db_state, &nfo_name) {
+            Some(e) => e,
+            None => {
+                info!(
+                    "[fno] resolve_option_contract: no expiry in nfo_instruments for '{}' (nfo='{}').",
+                    u, nfo_name
+                );
+                return Ok(None);
+            }
+        },
+    };
+
+    let instruments = load_instruments_for_expiry(&db_state, &nfo_name, &expiry);
+    if instruments.is_empty() {
+        return Ok(None);
+    }
+
+    // Find the listed contract whose strike is closest to the requested one and
+    // whose instrument_type matches. f64 is not Ord, so compare by bit-repr.
+    let target_bits = strike.to_bits();
+    let mut best: Option<(String, f64)> = None;
+    let mut best_diff = f64::INFINITY;
+    for (_token, sym, inst_type, inst_strike) in &instruments {
+        if inst_type.trim().to_uppercase() != ot {
+            continue;
+        }
+        if !inst_strike.is_finite() {
+            continue;
+        }
+        let diff = (inst_strike.to_bits() as i64 - target_bits as i64).unsigned_abs() as f64;
+        if diff < best_diff {
+            best_diff = diff;
+            best = Some((sym.clone(), *inst_strike));
+        }
+    }
+
+    match best {
+        Some((tradingsymbol, resolved_strike)) => {
+            info!(
+                "[fno] resolve_option_contract: {} {} strike={} -> {} (strike={}, expiry={})",
+                u, ot, strike, tradingsymbol, resolved_strike, expiry
+            );
+            Ok(Some(ResolvedContract {
+                tradingsymbol,
+                underlying: u.clone(),
+                expiry,
+                strike: resolved_strike,
+                option_type: ot,
+            }))
+        }
+        None => {
+            info!(
+                "[fno] resolve_option_contract: no {} contract near strike {} for {} / {}.",
+                ot, strike, nfo_name, expiry
+            );
+            Ok(None)
+        }
+    }
+}
+
 /// Whether `nfo_instruments` or QuestDB `option_chain_snapshots` has any CE/PE contract for `underlying`.
 async fn nfo_underlying_exists(
     db_state: &crate::db::DbState,

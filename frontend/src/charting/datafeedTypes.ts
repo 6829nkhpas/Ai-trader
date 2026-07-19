@@ -115,6 +115,49 @@ export interface IBasicDatafeed {
   unsubscribeBars: (listenerGuid: string) => void;
 }
 
+// ── Save / Load adapter types (subset of IExternalSaveLoadAdapter) ─────────
+export interface StudyTemplateData {
+  name: string;
+  content: string;
+}
+export interface StudyTemplateMetaInfo {
+  name: string;
+}
+export interface ChartMetaInfo {
+  id: string | number;
+  name: string;
+  symbol: string;
+  resolution: ResolutionString;
+  timestamp: number;
+}
+export interface ChartData {
+  id?: string | number;
+  name: string;
+  symbol: string;
+  resolution: ResolutionString;
+  content: string;
+}
+export interface SaveLoadAdapter {
+  getAllCharts(): Promise<ChartMetaInfo[]>;
+  removeChart(id: string | number): Promise<void>;
+  saveChart(chartData: ChartData): Promise<string | number>;
+  getChartContent(chartId: string | number): Promise<string>;
+  getAllStudyTemplates(): Promise<StudyTemplateMetaInfo[]>;
+  removeStudyTemplate(studyTemplateInfo: StudyTemplateMetaInfo): Promise<void>;
+  saveStudyTemplate(studyTemplateData: StudyTemplateData): Promise<void>;
+  getStudyTemplateContent(studyTemplateInfo: StudyTemplateMetaInfo): Promise<string>;
+  getDrawingTemplates?(toolName: string): Promise<string[]>;
+  loadDrawingTemplate?(toolName: string, templateName: string): Promise<string>;
+  removeDrawingTemplate?(toolName: string, templateName: string): Promise<void>;
+  saveDrawingTemplate?(toolName: string, templateName: string, content: string): Promise<void>;
+  getAllChartTemplates?(): Promise<string[]>;
+  saveChartTemplate?(name: string, content: unknown): Promise<void>;
+  removeChartTemplate?(name: string): Promise<void>;
+  getChartTemplateContent?(name: string): Promise<unknown>;
+  saveLineToolsAndGroups?(...args: unknown[]): Promise<void>;
+  loadLineToolsAndGroups?(...args: unknown[]): Promise<unknown>;
+}
+
 // ── Widget Constructor Options (subset) ──────────────────────────────────
 export interface ChartingLibraryWidgetOptions {
   container: HTMLElement;
@@ -137,6 +180,11 @@ export interface ChartingLibraryWidgetOptions {
   debug?: boolean;
   auto_save_delay?: number;
   loading_screen?: { backgroundColor?: string; foregroundColor?: string };
+  save_load_adapter?: SaveLoadAdapter;
+  charts_storage_url?: string;
+  charts_storage_api_version?: '1.0' | '1.1';
+  client_id?: string;
+  user_id?: string;
 }
 
 // ── IChartingLibraryWidget (subset of widget API) ────────────────────────

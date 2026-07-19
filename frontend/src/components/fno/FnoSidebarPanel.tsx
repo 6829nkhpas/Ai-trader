@@ -144,17 +144,17 @@ export default function FnoSidebarPanel() {
       {/* ── Selectors + status bar: Custom Popover Theme Adaptive ── */}
       <div className="flex flex-col gap-3.5 px-4 py-3.5 bg-surface dark:bg-black border-b border-border-default/40 dark:border-zinc-800/80 font-sans">
         {/* Tracking indicator */}
-        <div className="flex items-center justify-between font-sans">
+        {/* <div className="flex items-center justify-between font-sans">
           <span className="text-[11px] font-black uppercase tracking-widest text-text-muted dark:text-zinc-300 font-sans">TRACKING</span>
           <span className="text-[13px] font-sans font-black text-cyan-600 dark:text-cyan-400 truncate max-w-56">
             {selectedSymbol || '—'}
           </span>
-        </div>
+        </div> */}
 
         <div className="grid grid-cols-2 gap-3">
           {/* Custom Underlying Dropdown */}
           <div className="flex flex-col gap-1.5 relative" ref={underlyingRef}>
-            <span className="text-[11px] font-black uppercase tracking-widest text-text-muted dark:text-zinc-300 font-sans">UNDERLYING</span>
+            {/* <span className="text-[11px] font-black uppercase tracking-widest text-text-muted dark:text-zinc-300 font-sans">UNDERLYING</span> */}
             <button
               type="button"
               onClick={() => setIsUnderlyingOpen(!isUnderlyingOpen)}
@@ -201,7 +201,7 @@ export default function FnoSidebarPanel() {
 
           {/* Custom Expiry Dropdown */}
           <div className="flex flex-col gap-1.5 relative" ref={expiryRef}>
-            <span className="text-[11px] font-black uppercase tracking-widest text-text-muted dark:text-zinc-300 font-sans">EXPIRY</span>
+            {/* <span className="text-[11px] font-black uppercase tracking-widest text-text-muted dark:text-zinc-300 font-sans">EXPIRY</span> */}
             <button
               type="button"
               onClick={() => setIsExpiryOpen(!isExpiryOpen)}

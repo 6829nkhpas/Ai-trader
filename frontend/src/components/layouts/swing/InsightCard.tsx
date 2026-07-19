@@ -37,11 +37,11 @@ export default function InsightCard({ insight, isNew, index }: InsightCardProps)
       animate="show"
       onClick={() => setExpanded(!expanded)}
       className={`
-        group relative rounded-xl border border-border-default/45 p-3 mb-2 transition-all duration-200 cursor-pointer
-        ${isNew ? 'shadow-[0_0_12px_rgba(16,185,129,0.08)]' : 'shadow-sm'}
+        group relative rounded-xl border border-border-default/60 p-3 mb-2 transition-all duration-200 cursor-pointer
+        ${isNew ? 'shadow-[0_0_12px_rgba(16,185,129,0.12)]' : 'shadow-xs'}
         ${isError
           ? 'bg-rose-500/5 hover:bg-rose-500/10 hover:border-rose-500/20'
-          : 'bg-[#0d0f12]/30 hover:bg-[#161920]/25 hover:border-emerald-500/10'
+          : 'bg-card hover:bg-elevated/50 hover:border-emerald-500/30'
         }
       `}
     >
@@ -57,7 +57,7 @@ export default function InsightCard({ insight, isNew, index }: InsightCardProps)
             {/* Status dot */}
             <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${sentimentDotColor(insight.sentiment_score)} ${isNew ? 'animate-pulse' : ''}`} />
             
-            <p className={`text-[11.5px] font-bold leading-relaxed ${isError ? 'text-rose-400' : 'text-text-primary group-hover:text-white transition-colors'}`}>
+            <p className={`text-[11.5px] font-bold leading-relaxed ${isError ? 'text-rose-600 dark:text-rose-400' : 'text-text-primary group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors'}`}>
               {insight.headline}
             </p>
           </div>
@@ -70,19 +70,19 @@ export default function InsightCard({ insight, isNew, index }: InsightCardProps)
 
         {/* Metadata pill badges */}
         <div className="flex items-center gap-1.5 flex-wrap text-[9px]">
-          <span className="inline-flex items-center gap-1 rounded bg-[#181512]/50 px-1.5 py-0.5 font-bold text-cyan-400 border border-cyan-500/10">
-            <Zap size={8} className="text-cyan-400" />
+          <span className="inline-flex items-center gap-1 rounded bg-cyan-500/10 dark:bg-cyan-500/10 px-1.5 py-0.5 font-bold text-cyan-600 dark:text-cyan-400 border border-cyan-500/20">
+            <Zap size={8} className="text-cyan-600 dark:text-cyan-400" />
             {insight.symbol}
           </span>
           <span className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 font-bold tabular-nums ${
-            insight.anomaly_pct >= 3 ? 'bg-rose-500/10 text-rose-400 border border-rose-500/15' : 'bg-amber-500/10 text-amber-400 border border-amber-500/15'
+            insight.anomaly_pct >= 3 ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'
           }`}>
             {insight.anomaly_pct >= 0 ? '+' : ''}{insight.anomaly_pct.toFixed(1)}% Anomaly
           </span>
-          <span className="inline-flex items-center gap-1 rounded bg-surface px-1.5 py-0.5 font-bold text-text-muted/80 border border-border-default/80">
-            {insight.sentiment_score >= 65 ? <TrendingUp size={9} className="text-emerald-400" /> : 
-             insight.sentiment_score >= 40 ? <Minus size={9} className="text-amber-400" /> : 
-             <TrendingDown size={9} className="text-rose-400" />}
+          <span className="inline-flex items-center gap-1 rounded bg-surface px-1.5 py-0.5 font-bold text-text-muted border border-border-default">
+            {insight.sentiment_score >= 65 ? <TrendingUp size={9} className="text-emerald-600 dark:text-emerald-400" /> : 
+             insight.sentiment_score >= 40 ? <Minus size={9} className="text-amber-600 dark:text-amber-400" /> : 
+             <TrendingDown size={9} className="text-rose-600 dark:text-rose-400" />}
             {insight.sentiment_score}/100
           </span>
           <span className="text-[8.5px] text-text-muted/60 ml-auto tabular-nums font-medium">

@@ -133,9 +133,15 @@ export function invalidateScrollBackCache(symbol: string): void {
   for (const key of scrollBackCache.keys()) {
     if (key.startsWith(prefix)) scrollBackCache.delete(key);
   }
-  // Also clear exhaustion markers so the new symbol gets a fresh start.
   for (const key of exhaustedWindows.keys()) {
     if (key.startsWith(prefix)) exhaustedWindows.delete(key);
+  }
+  // Also drop the Tauri IPC cache so the next load re-fetches fresh data.
+  for (const key of tauriBarCache.keys()) {
+    if (key.startsWith(prefix)) tauriBarCache.delete(key);
+  }
+  for (const key of tauriBarInflight.keys()) {
+    if (key.startsWith(prefix)) tauriBarInflight.delete(key);
   }
 }
 
@@ -203,6 +209,15 @@ async function resolveInstrumentToken(symbol: string, exchange: string = 'NSE'):
   }
 }
 
+// ── FNO symbol detection ──────────────────────────────────────────────────
+function isFnoSymbol(symbol: string): boolean {
+  const s = symbol?.trim()?.toUpperCase();
+  if (!s) return false;
+  if (s.endsWith('FUT')) return true;
+  if ((s.endsWith('CE') || s.endsWith('PE')) && /\d/.test(s)) return true;
+  return false;
+}
+
 // ── Kite Batch Fetch ──────────────────────────────────────────────────────
 
 interface KiteCandleRaw {
@@ -235,11 +250,6 @@ async function fetchKiteBatch(
       }))
       .filter((c) => c.time > 0 && c.open > 0);
 
-  // Kite caps each `/instruments/historical` request at `KITE_INTERVAL_MAX_DAYS`
-  // for the interval. A wider request returns `[]` with no error — which is
-  // exactly what stops scroll-back dead. Slice the requested [from, to] into
-  // Kite-sized pages and fetch each page so scroll-back can keep walking back
-  // until the upstream source truly runs out.
   const maxDays = KITE_INTERVAL_MAX_DAYS[interval] ?? 60;
   const dayMs = 24 * 60 * 60 * 1000;
   const pages: { from: Date; to: Date }[] = [];
@@ -251,31 +261,35 @@ async function fetchKiteBatch(
     pageEnd = new Date(pageStart.getTime() - dayMs);
   }
 
-  // Reverse so we fetch oldest first — keeps the merged array ascending.
   pages.reverse();
 
-  // ── Tauri IPC `get_historical_view` (QuestDB-backed, merged with REST) ──
-  // Seed the result with any QuestDB-cached bars that fall within the window,
-  // but ALWAYS fall through to the REST pages below so scroll-back past the
-  // QuestDB cache edge keeps working. Previously this short-circuited with
-  // `return inRange` which blocked REST and limited scroll-back to QuestDB's
-  // cache depth.
-  const tauriBars: Bar[] = [];
+  // ── Tauri IPC path (single call, cached) ────────────────────────────────
+  // For FNO symbols the Tauri backend (QuestDB + Kite intraday loader) is the
+  // SOLE data source — the REST `/kite/historical` proxy cannot resolve FNO
+  // instrument tokens and always returns 0 candles. For equity symbols, Tauri
+  // seeds the result and REST extends beyond the QuestDB cache edge.
+  const symbolIsFno = isFnoSymbol(symbol);
+  let tauriBars: Bar[] = [];
+
   if (isTauri() && timeframe) {
     try {
       const allBars = await fetchTauriBars(symbol, timeframe);
       if (allBars.length > 0) {
         const fromMs = from.getTime();
         const toMs = to.getTime();
-        const inRange = allBars.filter((b) => b.time >= fromMs && b.time <= toMs);
-        tauriBars.push(...inRange);
+        tauriBars = allBars.filter((b) => b.time >= fromMs && b.time <= toMs);
       }
     } catch (err) {
       console.warn('[Datafeed] Tauri IPC get_historical_view failed:', err);
     }
   }
 
-  // ── Kite Historical REST pages ─────────────────────────────────────────
+  // For FNO symbols, skip REST entirely — Tauri is the only source that works.
+  if (symbolIsFno) {
+    return tauriBars;
+  }
+
+  // ── Kite Historical REST pages (equity symbols only) ────────────────────
   const all: Bar[] = [...tauriBars];
   for (const page of pages) {
     const dateParams = `&from=${fmt(page.from)}&to=${fmt(page.to)}`;
@@ -283,7 +297,6 @@ async function fetchKiteBatch(
     try {
       let candles: Bar[] = [];
 
-      // Attempt 1: symbol name
       const url = `/kite/historical?symbol=${encodeURIComponent(symbol)}&interval=${interval}${dateParams}`;
       const response = await fetch(url);
       if (response.ok) {
@@ -291,7 +304,6 @@ async function fetchKiteBatch(
         candles = parseCandles(data);
       }
 
-      // Attempt 2: instrument_token (when symbol-name fetch returned nothing)
       if (candles.length === 0) {
         const token = await resolveInstrumentToken(symbol, exchange);
         if (!token) break;
@@ -302,11 +314,9 @@ async function fetchKiteBatch(
         candles = parseCandles(tokenData);
       }
 
-      if (candles.length === 0) break; // truly no more data for this page — stop
+      if (candles.length === 0) break;
       all.push(...candles);
     } catch (err) {
-      // A transient error on ONE page must not throw away bars already pulled
-      // from other pages — accumulate what we have and stop paginating further.
       console.warn('[Datafeed] Kite page fetch failed:', err);
       break;
     }
@@ -315,47 +325,73 @@ async function fetchKiteBatch(
   return all;
 }
 
-// ── Tauri IPC Historical Fetch ────────────────────────────────────────────
+// ── Tauri IPC Historical Fetch (cached, deduplicated) ─────────────────────
 //
-// Waits for the QuestDB PgPool to come up (registered asynchronously in
-// lib.rs), then invokes `get_historical_view` to read the cached QuestDB
-// window for this symbol/timeframe. The caller filters the result to the
-// scroll-back range and falls through to the REST proxy when the requested
-// window extends past the cache edge.
+// The Tauri `get_historical_view` command returns ALL bars in QuestDB for a
+// (symbol, timeframe) pair — typically the full 30-day intraday lookback.
+// Calling it on every `getBars` is expensive because the backend re-runs the
+// Kite intraday loader each time (~1.4s). We cache the result per
+// (symbol, timeframe) and deduplicate concurrent calls via an inflight map.
+
+const tauriBarCache = new Map<string, { bars: Bar[]; fetchedAt: number }>();
+const tauriBarInflight = new Map<string, Promise<Bar[]>>();
+
+let tauriPoolReady = false;
 
 async function fetchTauriBars(
   symbol: string,
   timeframe: string,
 ): Promise<Bar[]> {
   if (!isTauri()) return [];
-  try {
-    const tauri = await import('@tauri-apps/api/core');
 
-    // Wait for QuestDB pool
-    let poolReady = false;
-    const start = Date.now();
-    while (Date.now() - start < 8000) {
-      try {
-        poolReady = await tauri.invoke<boolean>('get_pool_status');
-        if (poolReady) break;
-      } catch { /* pool not ready yet */ }
-      await new Promise((r) => setTimeout(r, 500));
-    }
+  const cacheKey = scrollBackKey(symbol, timeframe);
 
-    if (!poolReady) return [];
-
-    const response = await tauri.invoke<number[] | Uint8Array>(
-      'get_historical_view',
-      { symbol, timeframe },
-    );
-    const buffer =
-      response instanceof Uint8Array ? response : new Uint8Array(response);
-
-    return parseBincodeCandles(buffer);
-  } catch (err) {
-    console.warn('[Datafeed] Tauri IPC fetch failed:', err);
-    return [];
+  // Serve from cache if fetched within the last 60 seconds.
+  const cached = tauriBarCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < 60_000) {
+    return cached.bars;
   }
+
+  // Deduplicate: if a fetch for this key is already in flight, await it.
+  const inflight = tauriBarInflight.get(cacheKey);
+  if (inflight) return inflight;
+
+  const promise = (async (): Promise<Bar[]> => {
+    try {
+      const tauri = await import('@tauri-apps/api/core');
+
+      if (!tauriPoolReady) {
+        const start = Date.now();
+        while (Date.now() - start < 8000) {
+          try {
+            tauriPoolReady = await tauri.invoke<boolean>('get_pool_status');
+            if (tauriPoolReady) break;
+          } catch { /* pool not ready yet */ }
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        if (!tauriPoolReady) return [];
+      }
+
+      const response = await tauri.invoke<number[] | Uint8Array>(
+        'get_historical_view',
+        { symbol, timeframe },
+      );
+      const buffer =
+        response instanceof Uint8Array ? response : new Uint8Array(response);
+
+      const bars = parseBincodeCandles(buffer);
+      tauriBarCache.set(cacheKey, { bars, fetchedAt: Date.now() });
+      return bars;
+    } catch (err) {
+      console.warn('[Datafeed] Tauri IPC fetch failed:', err);
+      return [];
+    } finally {
+      tauriBarInflight.delete(cacheKey);
+    }
+  })();
+
+  tauriBarInflight.set(cacheKey, promise);
+  return promise;
 }
 
 /** Parse bincode-serialized BinaryCandle structs (48 bytes each). */
@@ -643,29 +679,46 @@ export function createDatafeed(): IBasicDatafeed {
         //    regardless of where the freshly-fetched slice landed.
         let bars = readScrollBackCache(symbol, timeframe, fromMs, toMs);
 
+        // ── FNO-specific: detect if the symbol is an F&O contract ──────
+        const symbolIsFno = isFnoSymbol(symbol);
+
         if (bars.length === 0) {
-          // Only declare true exhaustion when:
-          //  a) the fetch succeeded (no network error — we reached this point), AND
-          //  b) we already confirmed this exact window is empty (double-checked).
-          // On the FIRST empty response, record the window and tell TV `noData: false`
-          // so it retries. On the SECOND empty hit for the same window, return
-          // `noData: true` with a `nextTime` hint so TV jumps to where data exists.
+          const earliest = earliestKnownBar(symbol, timeframe);
+
+          // For FNO symbols, the Tauri/QuestDB cache is the SOLE data source.
+          // If the requested window is entirely before the earliest bar, there
+          // is genuinely no older data — stop immediately with a nextTime hint.
+          if (symbolIsFno && earliest !== undefined && toMs < earliest) {
+            onResult([], { noData: true, nextTime: Math.floor(earliest / 1000) });
+            return;
+          }
+
+          // For all symbols: double-check pattern. First empty hit returns
+          // noData: false so TV retries. Second empty hit for the same window
+          // returns noData: true to stop pagination.
           const exKey = exhaustionKey(symbol, timeframe, periodParams.from);
           if (exhaustedWindows.has(exKey)) {
-            // Genuinely exhausted — provide nextTime hint if possible.
-            const earliest = earliestKnownBar(symbol, timeframe);
             const meta: { noData: boolean; nextTime?: number } = { noData: true };
             if (earliest !== undefined) {
-              // TV expects nextTime in seconds
               meta.nextTime = Math.floor(earliest / 1000);
             }
             onResult([], meta);
           } else {
-            // First empty hit — mark and let TV retry on next scroll.
             exhaustedWindows.add(exKey);
             onResult([], { noData: false });
           }
           return;
+        }
+
+        // For FNO symbols only: if the fetch returned zero NEW bars and we're
+        // past the cache edge, mark exhaustion so TV stops on the next page.
+        // Don't do this for equity — REST scroll-back would be blocked.
+        if (symbolIsFno && fetched.length === 0 && cached.length > 0) {
+          const earliest = earliestKnownBar(symbol, timeframe);
+          if (earliest !== undefined && fromMs < earliest) {
+            const exKey = exhaustionKey(symbol, timeframe, periodParams.from);
+            exhaustedWindows.add(exKey);
+          }
         }
 
         // Sort ascending by time (TV requirement) — readScrollBackCache already
