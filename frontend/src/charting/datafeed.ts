@@ -52,6 +52,22 @@ const RESOLUTION_TO_KITE_INTERVAL: Record<string, string> = {
   'M':    'day',
 };
 
+/**
+ * Kite's per-interval day cap for a single `/instruments/historical` request.
+ * Asking for a window wider than this returns `[]` with no error, which is
+ * exactly what stops scroll-back dead. Source: Kite Historical API docs.
+ */
+const KITE_INTERVAL_MAX_DAYS: Record<string, number> = {
+  minute: 7,
+  '3minute': 30,
+  '5minute': 30,
+  '10minute': 30,
+  '15minute': 60,
+  '30minute': 60,
+  '60minute': 60,
+  day: 2000,
+};
+
 /** Convert TV resolution to a UI timeframe string for the Tauri IPC. */
 export const RESOLUTION_TO_TIMEFRAME: Record<string, string> = {
   '1':   '1m',  '2':   '2m',  '3':   '3m',  '4':   '4m',
@@ -70,12 +86,81 @@ const SUPPORTED_RESOLUTIONS: ResolutionString[] = [
   '1D', '1W', '1M',
 ];
 
-/** How many days of intraday data Kite serves (hard limit). */
-const KITE_INTRADAY_MAX_DAYS = 60;
-
 // ── Tauri Detection ───────────────────────────────────────────────────────
 const isTauri = () =>
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
+// ── In-memory scroll-back cache (per symbol + timeframe) ───────────────────
+//
+// TradingView calls `getBars` once per scroll-back page with the [from, to]
+// window it wants. Without persistence, each call returns ONLY the bars fetched
+// that turn — so when TV asks for a window that overlaps a slice we already
+// pulled, we hit the network again and TV shows whatever Kite happened to
+// return this time (often nothing on a cold page). By merging every fetched
+// bar into this map keyed by `SYMBOL::TIMEFRAME`, we can serve any overlapping
+// window from memory instantly, and only fetch the missing older slice.
+const scrollBackCache = new Map<string, Map<number, Bar>>();
+
+function scrollBackKey(symbol: string, timeframe: string): string {
+  return `${symbol.toUpperCase()}::${timeframe}`;
+}
+
+function readScrollBackCache(symbol: string, timeframe: string, fromMs: number, toMs: number): Bar[] {
+  const store = scrollBackCache.get(scrollBackKey(symbol, timeframe));
+  if (!store) return [];
+  const out: Bar[] = [];
+  for (const bar of store.values()) {
+    if (bar.time >= fromMs && bar.time <= toMs) out.push(bar);
+  }
+  out.sort((a, b) => a.time - b.time);
+  return out;
+}
+
+function mergeScrollBackCache(symbol: string, timeframe: string, bars: Bar[]): void {
+  if (bars.length === 0) return;
+  const key = scrollBackKey(symbol, timeframe);
+  let store = scrollBackCache.get(key);
+  if (!store) {
+    store = new Map<number, Bar>();
+    scrollBackCache.set(key, store);
+  }
+  for (const b of bars) store.set(b.time, b);
+}
+
+/** Drop every scroll-back cache entry for a symbol (called on symbol change). */
+export function invalidateScrollBackCache(symbol: string): void {
+  const prefix = `${symbol.toUpperCase()}::`;
+  for (const key of scrollBackCache.keys()) {
+    if (key.startsWith(prefix)) scrollBackCache.delete(key);
+  }
+  // Also clear exhaustion markers so the new symbol gets a fresh start.
+  for (const key of exhaustedWindows.keys()) {
+    if (key.startsWith(prefix)) exhaustedWindows.delete(key);
+  }
+}
+
+// ── Exhaustion tracking ────────────────────────────────────────────────────
+// Tracks `SYMBOL::TIMEFRAME::fromSec` windows where Kite genuinely returned
+// zero candles (confirmed empty, NOT a transient network failure). Only when
+// a window is in this set do we tell TradingView `noData: true` — which makes
+// TV stop paginating further. Without this, a single network glitch would
+// permanently kill scroll-back for the session.
+const exhaustedWindows = new Set<string>();
+
+function exhaustionKey(symbol: string, timeframe: string, fromSec: number): string {
+  return `${symbol.toUpperCase()}::${timeframe}::${fromSec}`;
+}
+
+/** Get the earliest bar time (ms) we've ever seen for a symbol+timeframe. */
+function earliestKnownBar(symbol: string, timeframe: string): number | undefined {
+  const store = scrollBackCache.get(scrollBackKey(symbol, timeframe));
+  if (!store || store.size === 0) return undefined;
+  let min = Infinity;
+  for (const t of store.keys()) {
+    if (t < min) min = t;
+  }
+  return min === Infinity ? undefined : min;
+}
 
 // ── Instrument Token Cache ────────────────────────────────────────────────
 const tokenCache = new Map<string, number>();
@@ -135,10 +220,9 @@ async function fetchKiteBatch(
   from: Date,
   to: Date,
   exchange: string = 'NSE',
+  timeframe?: string,
 ): Promise<Bar[]> {
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
-  const dateParams = `&from=${fmt(from)}&to=${fmt(to)}`;
-
   const parseCandles = (data: { candles?: KiteCandleRaw[] }): Bar[] =>
     (data.candles || [])
       .map((c) => ({
@@ -151,30 +235,93 @@ async function fetchKiteBatch(
       }))
       .filter((c) => c.time > 0 && c.open > 0);
 
-  try {
-    // Attempt 1: symbol name
-    const url = `/kite/historical?symbol=${encodeURIComponent(symbol)}&interval=${interval}${dateParams}`;
-    const response = await fetch(url);
-    if (response.ok) {
-      const data = await response.json();
-      const candles = parseCandles(data);
-      if (candles.length > 0) return candles;
-    }
-
-    // Attempt 2: instrument_token
-    const token = await resolveInstrumentToken(symbol, exchange);
-    if (!token) return [];
-    const tokenUrl = `/kite/historical?instrument_token=${token}&interval=${interval}${dateParams}`;
-    const tokenResponse = await fetch(tokenUrl);
-    if (!tokenResponse.ok) return [];
-    const tokenData = await tokenResponse.json();
-    return parseCandles(tokenData);
-  } catch {
-    return [];
+  // Kite caps each `/instruments/historical` request at `KITE_INTERVAL_MAX_DAYS`
+  // for the interval. A wider request returns `[]` with no error — which is
+  // exactly what stops scroll-back dead. Slice the requested [from, to] into
+  // Kite-sized pages and fetch each page so scroll-back can keep walking back
+  // until the upstream source truly runs out.
+  const maxDays = KITE_INTERVAL_MAX_DAYS[interval] ?? 60;
+  const dayMs = 24 * 60 * 60 * 1000;
+  const pages: { from: Date; to: Date }[] = [];
+  let pageEnd = new Date(to);
+  while (pageEnd.getTime() >= from.getTime()) {
+    const pageStart = new Date(Math.max(from.getTime(), pageEnd.getTime() - (maxDays - 1) * dayMs));
+    pages.push({ from: pageStart, to: pageEnd });
+    if (pageStart.getTime() <= from.getTime()) break;
+    pageEnd = new Date(pageStart.getTime() - dayMs);
   }
+
+  // Reverse so we fetch oldest first — keeps the merged array ascending.
+  pages.reverse();
+
+  // ── Tauri IPC `get_historical_view` (QuestDB-backed, merged with REST) ──
+  // Seed the result with any QuestDB-cached bars that fall within the window,
+  // but ALWAYS fall through to the REST pages below so scroll-back past the
+  // QuestDB cache edge keeps working. Previously this short-circuited with
+  // `return inRange` which blocked REST and limited scroll-back to QuestDB's
+  // cache depth.
+  const tauriBars: Bar[] = [];
+  if (isTauri() && timeframe) {
+    try {
+      const allBars = await fetchTauriBars(symbol, timeframe);
+      if (allBars.length > 0) {
+        const fromMs = from.getTime();
+        const toMs = to.getTime();
+        const inRange = allBars.filter((b) => b.time >= fromMs && b.time <= toMs);
+        tauriBars.push(...inRange);
+      }
+    } catch (err) {
+      console.warn('[Datafeed] Tauri IPC get_historical_view failed:', err);
+    }
+  }
+
+  // ── Kite Historical REST pages ─────────────────────────────────────────
+  const all: Bar[] = [...tauriBars];
+  for (const page of pages) {
+    const dateParams = `&from=${fmt(page.from)}&to=${fmt(page.to)}`;
+
+    try {
+      let candles: Bar[] = [];
+
+      // Attempt 1: symbol name
+      const url = `/kite/historical?symbol=${encodeURIComponent(symbol)}&interval=${interval}${dateParams}`;
+      const response = await fetch(url);
+      if (response.ok) {
+        const data = await response.json();
+        candles = parseCandles(data);
+      }
+
+      // Attempt 2: instrument_token (when symbol-name fetch returned nothing)
+      if (candles.length === 0) {
+        const token = await resolveInstrumentToken(symbol, exchange);
+        if (!token) break;
+        const tokenUrl = `/kite/historical?instrument_token=${token}&interval=${interval}${dateParams}`;
+        const tokenResponse = await fetch(tokenUrl);
+        if (!tokenResponse.ok) break;
+        const tokenData = await tokenResponse.json();
+        candles = parseCandles(tokenData);
+      }
+
+      if (candles.length === 0) break; // truly no more data for this page — stop
+      all.push(...candles);
+    } catch (err) {
+      // A transient error on ONE page must not throw away bars already pulled
+      // from other pages — accumulate what we have and stop paginating further.
+      console.warn('[Datafeed] Kite page fetch failed:', err);
+      break;
+    }
+  }
+
+  return all;
 }
 
 // ── Tauri IPC Historical Fetch ────────────────────────────────────────────
+//
+// Waits for the QuestDB PgPool to come up (registered asynchronously in
+// lib.rs), then invokes `get_historical_view` to read the cached QuestDB
+// window for this symbol/timeframe. The caller filters the result to the
+// scroll-back range and falls through to the REST proxy when the requested
+// window extends past the cache edge.
 
 async function fetchTauriBars(
   symbol: string,
@@ -444,69 +591,88 @@ export function createDatafeed(): IBasicDatafeed {
       const exchange = symbolInfo.exchange || 'NSE';
       const kiteInterval = RESOLUTION_TO_KITE_INTERVAL[resolution] ?? 'minute';
       const timeframe = RESOLUTION_TO_TIMEFRAME[resolution] ?? '1m';
-      const isDailyOrAbove = kiteInterval === 'day';
 
+      // The exact [from, to] window TradingView is asking for. TV walks this
+      // window backward one page at a time as the user scrolls the chart left.
       const from = new Date(periodParams.from * 1000);
       const to = new Date(periodParams.to * 1000);
+      const fromMs = from.getTime();
+      const toMs = to.getTime();
 
       try {
-        let bars: Bar[] = [];
+        // 1. Pull any bars we already fetched for this symbol/timeframe that
+        //    overlap the requested window. If the cache already fully covers
+        //    the window, we don't hit the network at all — TV re-renders from
+        //    memory and scroll-back is instant.
+        const cached = readScrollBackCache(symbol, timeframe, fromMs, toMs);
 
-        // ── Tauri IPC path (fastest, authoritative) ───────────────────
-        if (isTauri()) {
-          const allTauriBars = await fetchTauriBars(symbol, timeframe);
-          if (allTauriBars.length > 0) {
-            // Filter to requested range
-            const fromMs = periodParams.from * 1000;
-            const toMs = periodParams.to * 1000;
-            bars = allTauriBars.filter((b) => b.time >= fromMs && b.time <= toMs);
+        // 2. Find the oldest cached bar inside the requested window. If we have
+        //    a continuous run covering [oldestCachedAt, to], we only need to
+        //    fetch the missing slice [from, oldestCachedAt). Otherwise fetch
+        //    the full window.
+        let fetchFrom = from;
+        if (cached.length > 0) {
+          const oldestCached = cached[0].time;
+          if (oldestCached <= fromMs) {
+            // Cache fully covers the window — no network roundtrip.
+            onResult(cached, { noData: false });
+            return;
+          }
+          fetchFrom = new Date(oldestCached - 1);
+          // Re-filter cached bars to the actual gap we're filling.
+        }
 
-            // If the filtered range is empty but we DO have data, the user
-            // is PAGINATING (scrolling) beyond our data range — signal
-            // noData so TV stops requesting further scroll-back. This guard
-            // only applies to follow-up requests: on the FIRST data request
-            // an empty overlap must NOT short-circuit, otherwise a cold
-            // QuestDB cache (or a symbol whose local range doesn't line up
-            // with TV's initial window) would leave the chart blank. In that
-            // case we fall through to the Kite REST fallback below to seed
-            // the chart, exactly like the legacy useHistoricalData path did.
-            if (bars.length === 0 && !periodParams.firstDataRequest) {
-              console.log(`[Datafeed] getBars: Tauri has ${allTauriBars.length} bars but none in range ${from.toISOString().slice(0,10)} → ${to.toISOString().slice(0,10)} (pagination) — signalling noData`);
-              onResult([], { noData: true });
-              return;
+        // 3. Fetch the missing slice (or the whole window on a cold cache).
+        let fetched = await fetchKiteBatch(
+          symbol,
+          kiteInterval,
+          fetchFrom,
+          new Date(toMs),
+          exchange,
+          timeframe,
+        );
+
+        // 4. Merge the freshly fetched bars into the persistent cache so the
+        //    next scroll-back call can serve them from memory.
+        if (fetched.length > 0) {
+          mergeScrollBackCache(symbol, timeframe, fetched);
+        }
+
+        // 5. Read the FULL [from, to] window back out of the merged cache so
+        //    TV gets a continuous bar set spanning exactly what it asked for,
+        //    regardless of where the freshly-fetched slice landed.
+        let bars = readScrollBackCache(symbol, timeframe, fromMs, toMs);
+
+        if (bars.length === 0) {
+          // Only declare true exhaustion when:
+          //  a) the fetch succeeded (no network error — we reached this point), AND
+          //  b) we already confirmed this exact window is empty (double-checked).
+          // On the FIRST empty response, record the window and tell TV `noData: false`
+          // so it retries. On the SECOND empty hit for the same window, return
+          // `noData: true` with a `nextTime` hint so TV jumps to where data exists.
+          const exKey = exhaustionKey(symbol, timeframe, periodParams.from);
+          if (exhaustedWindows.has(exKey)) {
+            // Genuinely exhausted — provide nextTime hint if possible.
+            const earliest = earliestKnownBar(symbol, timeframe);
+            const meta: { noData: boolean; nextTime?: number } = { noData: true };
+            if (earliest !== undefined) {
+              // TV expects nextTime in seconds
+              meta.nextTime = Math.floor(earliest / 1000);
             }
-          }
-        }
-
-        // ── Kite Historical API fallback (browser AND Tauri) ──────────
-        // Runs whenever the Tauri/QuestDB path produced nothing (cold cache,
-        // unresolved instrument token, or a failed proactive intraday fetch).
-        // Restoring this tier for Tauri fixes the "candles won't load" desktop
-        // regression — the legacy chart always had this REST safety net.
-        if (bars.length === 0) {
-          if (!isDailyOrAbove) {
-            // Kite limits intraday to ~60 days
-            const daysDiff = Math.ceil(
-              (to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000),
-            );
-            const clampedFrom = daysDiff > KITE_INTRADAY_MAX_DAYS
-              ? new Date(to.getTime() - KITE_INTRADAY_MAX_DAYS * 24 * 60 * 60 * 1000)
-              : from;
-            bars = await fetchKiteBatch(symbol, kiteInterval, clampedFrom, to, exchange);
+            onResult([], meta);
           } else {
-            bars = await fetchKiteBatch(symbol, kiteInterval, from, to, exchange);
+            // First empty hit — mark and let TV retry on next scroll.
+            exhaustedWindows.add(exKey);
+            onResult([], { noData: false });
           }
-        }
-
-        if (bars.length === 0) {
-          onResult([], { noData: true });
           return;
         }
 
-        // Sort ascending by time (TV requirement)
+        // Sort ascending by time (TV requirement) — readScrollBackCache already
+        // sorts, but be defensive in case of a future change.
         bars.sort((a, b) => a.time - b.time);
 
-        // Deduplicate by time
+        // Deduplicate by time (safety net; the cache already dedups by key).
         const seen = new Set<number>();
         bars = bars.filter((b) => {
           if (seen.has(b.time)) return false;
@@ -517,13 +683,8 @@ export function createDatafeed(): IBasicDatafeed {
         // ── Mirror bars into the Zustand historicalCache ──────────────
         // The Deep Quant / Consensus pipeline gates on
         // `useTradeStore.historicalCache` (via symbolCandleCount) to know a
-        // symbol has data — the legacy useHistoricalData hook used to
-        // populate it. The TradingView datafeed replaced that hook for the
-        // chart, so without this write the quant agents sit at
-        // "AWAITING DATA" forever. Use the SAME composite key format the
-        // legacy hook used ("SYMBOL::timeframe::kiteInterval") and MERGE with
-        // any existing cached bars so scroll-back pages accumulate rather
-        // than overwrite.
+        // symbol has data. Each scroll-back page is MERGED with the existing
+        // cache so pages accumulate rather than overwrite.
         try {
           const cacheKey = `${symbol.toUpperCase()}::${timeframe}::${kiteInterval}`;
           const store = useTradeStore.getState();

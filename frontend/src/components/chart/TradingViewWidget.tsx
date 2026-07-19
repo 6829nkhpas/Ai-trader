@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { useTradeStore } from '../../store/useTradeStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
-import { createDatafeed } from '../../charting/datafeed';
+import { createDatafeed, invalidateScrollBackCache } from '../../charting/datafeed';
 import { useGhostLine } from '../../hooks/useGhostLine';
 import type { IChartingLibraryWidget } from '../../charting/datafeedTypes';
 import { TIMEFRAME_TO_RESOLUTION, getThemeOverrides } from '../../utils/tvThemeOverrides';
@@ -210,6 +210,9 @@ export default function TradingViewWidget({
   useEffect(() => {
     if (prevSymbolRef.current === activeSymbol) return;
     prevSymbolRef.current = activeSymbol;
+    // Drop the per-symbol scroll-back cache so the new symbol starts fresh
+    // (TV will call getBars with its initial window immediately).
+    invalidateScrollBackCache(activeSymbol);
     if (widgetRef.current) {
       try {
         const sym = activeSymbol.toUpperCase();
