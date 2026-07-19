@@ -23,6 +23,7 @@ build/
 .yarn/unplugged
 .yarn/install-state.gz
 .pnp.*
+.claude/
 
 # ----- Go -----
 bin/
