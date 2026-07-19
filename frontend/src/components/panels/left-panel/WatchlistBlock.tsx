@@ -2,9 +2,19 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { ChevronUp, ChevronDown, GripVertical, Trash2, ArrowUpRight, ArrowDownRight, Loader2 } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import { useTradeStore, hydrateWatchlist } from '../../../store/useTradeStore';
 import { useChartUIStore } from '../../../store/useChartUIStore';
+import { isFnoSymbol } from '../../../charting/symbolUtils';
 import WatchlistSkeleton from './WatchlistSkeleton';
+
+interface ResolvedContract {
+  tradingsymbol: string;
+  underlying: string;
+  expiry: string;
+  strike: number;
+  option_type: string;
+}
 
 const SECTOR_COLORS: Record<string, string> = {
   Energy: 'bg-amber-500/10 text-amber-400',
@@ -43,6 +53,8 @@ export default function WatchlistBlock() {
 
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
   const setSelectedSymbol = useTradeStore((s) => s.setSelectedSymbol);
+  const activeProfile = useTradeStore((s) => s.activeProfile);
+  const setFnoUnderlying = useTradeStore((s) => s.setFnoUnderlying);
   const watchlist = useTradeStore((s) => s.watchlist);
   const removeFromWatchlist = useTradeStore((s) => s.removeFromWatchlist);
   const reorderWatchlist = useTradeStore((s) => s.reorderWatchlist);
@@ -52,13 +64,48 @@ export default function WatchlistBlock() {
   const setPaneSymbol = useChartUIStore((s) => s.setPaneSymbol);
   const panes = useChartUIStore((s) => s.panes);
 
-  const routeSymbolToChart = useCallback((symbol: string) => {
-    if (splitView) {
-      setPaneSymbol(activePaneId, symbol);
-    } else {
-      setSelectedSymbol(symbol);
-    }
-  }, [splitView, setPaneSymbol, activePaneId, setSelectedSymbol]);
+  const routeSymbolToChart = useCallback(
+    async (symbol: string) => {
+      // In F&O mode, when the user clicks an underlying/equity that is NOT
+      // already a tradable option contract, resolve the nearest CE/PE contract
+      // (nearest expiry, ATM strike) and chart THAT. If resolution fails we
+      // fall back to charting the symbol verbatim — better a real chart than
+      // an empty placeholder.
+      if (activeProfile === 'FNO' && !isFnoSymbol(symbol)) {
+        try {
+          const resolved = await invoke<ResolvedContract | null>(
+            'fno_resolve_nearest_contract',
+            { underlying: symbol },
+          );
+          if (resolved?.tradingsymbol) {
+            setFnoUnderlying(symbol);
+            if (splitView) {
+              setPaneSymbol(activePaneId, resolved.tradingsymbol);
+            } else {
+              setSelectedSymbol(resolved.tradingsymbol);
+            }
+            return;
+          }
+        } catch (err) {
+          console.warn('[WatchlistBlock] fno_resolve_nearest_contract failed:', err);
+        }
+      }
+
+      if (splitView) {
+        setPaneSymbol(activePaneId, symbol);
+      } else {
+        setSelectedSymbol(symbol);
+      }
+    },
+    [
+      activeProfile,
+      splitView,
+      setPaneSymbol,
+      activePaneId,
+      setSelectedSymbol,
+      setFnoUnderlying,
+    ],
+  );
 
   // ── Fetch quotes for all watchlist symbols ─────────────────────
   const fetchQuotes = useCallback(async () => {

@@ -5,6 +5,15 @@ import { Search, Loader2, X, Plus } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTradeStore } from '../../../store/useTradeStore';
 import { useChartUIStore } from '../../../store/useChartUIStore';
+import { isFnoSymbol } from '../../../charting/symbolUtils';
+
+interface ResolvedContract {
+  tradingsymbol: string;
+  underlying: string;
+  expiry: string;
+  strike: number;
+  option_type: string;
+}
 
 const SECTOR_COLORS: Record<string, string> = {
   Energy: 'bg-amber-500/10 text-amber-400',
@@ -139,13 +148,39 @@ export default function SymbolSearchBlock() {
     setFnoUnderlyingFilter(null); setFnoExpiryFilter(null); setFnoTypeFilter(null);
   };
 
-  const routeSymbolToChart = useCallback((symbol: string) => {
-    if (splitView) {
-      setPaneSymbol(activePaneId, symbol);
-    } else {
-      setSelectedSymbol(symbol);
-    }
-  }, [splitView, setPaneSymbol, activePaneId, setSelectedSymbol]);
+  const routeSymbolToChart = useCallback(
+    async (symbol: string) => {
+      // In F&O mode, when the user selects an underlying/equity that is NOT
+      // already a tradable option contract, resolve the nearest CE/PE contract
+      // (nearest expiry, ATM strike) and chart THAT. Falls back to routing the
+      // symbol verbatim when resolution fails so the chart still updates.
+      const profile = useTradeStore.getState().activeProfile;
+      if (profile === 'FNO' && !isFnoSymbol(symbol)) {
+        try {
+          const resolved = await invoke<ResolvedContract | null>(
+            'fno_resolve_nearest_contract',
+            { underlying: symbol },
+          );
+          if (resolved?.tradingsymbol) {
+            if (splitView) {
+              setPaneSymbol(activePaneId, resolved.tradingsymbol);
+            } else {
+              setSelectedSymbol(resolved.tradingsymbol);
+            }
+            return;
+          }
+        } catch (err) {
+          console.warn('[SymbolSearchBlock] fno_resolve_nearest_contract failed:', err);
+        }
+      }
+      if (splitView) {
+        setPaneSymbol(activePaneId, symbol);
+      } else {
+        setSelectedSymbol(symbol);
+      }
+    },
+    [splitView, setPaneSymbol, activePaneId, setSelectedSymbol],
+  );
 
   const handleSelectResult = useCallback(async (r: SearchResult) => {
     const symbol = resultSymbol(r);
@@ -200,9 +235,12 @@ export default function SymbolSearchBlock() {
       if (matchedConfig) {
         // Configured index underlying (e.g. NIFTY 50 / BANKNIFTY) → open the
         // F&O workspace directly; setFnoUnderlying resets fnoExpiry to ''.
+        // Also resolve the nearest CE/PE contract and route it to the chart
+        // so the F&O chart loads a tradable contract instead of a blank panel.
         setActiveProfile('FNO');
         setFnoUnderlying(matchedConfig);
         closeDropdown();
+        await routeSymbolToChart(matchedConfig);
         return;
       }
 
@@ -216,6 +254,7 @@ export default function SymbolSearchBlock() {
         if (accepted) {
           setActiveProfile('FNO');
           setFnoUnderlying(underlying);
+          await routeSymbolToChart(underlying);
           return;
         }
       } catch (err) {
