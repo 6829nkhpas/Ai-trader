@@ -1,6 +1,15 @@
 # Ensure cargo and cmake are on PATH for this session
 $env:PATH = "$env:USERPROFILE\.cargo\bin;C:\Program Files\CMake\bin;" + $env:PATH
 
+# ── Force vibrant ANSI colors for terminal logging across all microservices ──
+$env:RUST_LOG_STYLE = "always"
+$env:CARGO_TERM_COLOR = "always"
+$env:FORCE_COLOR = "1"
+$env:CLICOLOR_FORCE = "1"
+$env:COLORTERM = "truecolor"
+$env:PYTHONUNBUFFERED = "1"
+$env:PYTHONIOENCODING = "utf-8"
+
 # Anchor to the repository root regardless of where this script is launched from.
 # This script lives at <repo>/scripts/powershell/start_system.ps1, so the repo
 # root is two directories up. Every relative path below (docker-compose, .env,
@@ -212,14 +221,14 @@ try {
 
     Write-Host "Starting Rust Ingestion Service (Kite -> Kafka)..." -ForegroundColor Cyan
     Push-Location ingestion
-    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --release"
+    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --color=always --release"
     Pop-Location
 
     Start-Sleep -Seconds 5
 
     Write-Host "Starting Rust Technical Agent (Kafka ticks -> signals)..." -ForegroundColor Cyan
     Push-Location agents/technical
-    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --release"
+    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --color=always --release"
     Pop-Location
 
     Write-Host "Starting Node Sentiment Agent (News -> Kafka signals)..." -ForegroundColor Cyan
@@ -231,19 +240,19 @@ try {
 
     Write-Host "Starting Rust Aggregator (signals -> WS 8080 + OHLC -> WS 8081)..." -ForegroundColor Cyan
     Push-Location aggregator
-    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --release"
+    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --color=always --release"
     Pop-Location
 
     Start-Sleep -Seconds 3
 
     Write-Host "Starting Predictive Agent (OHLC -> LinReg -> WS 8082)..." -ForegroundColor Cyan
     Push-Location agents/predictive
-    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --release"
+    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --color=always --release"
     Pop-Location
 
     Write-Host "Starting Quant-RAG Agent (anomalies -> DeepSeek -> WS 8083)..." -ForegroundColor Cyan
     Push-Location agents/quant-rag
-    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --release"
+    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cargo" -ArgumentList "run --color=always --release"
     Pop-Location
 
     Start-Sleep -Seconds 3
