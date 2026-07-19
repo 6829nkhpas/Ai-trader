@@ -6,25 +6,22 @@
  * Reads `selectedSymbol` from the trade store (set when the user clicks an
  * F&O instrument in the search modal) and renders a ChartSurface for it.
  * Shows a placeholder when no F&O contract is selected.
+ *
+ * Uses `useFnoAutoContract` so that when the user enters F&O mode with a
+ * non-contract symbol selected (e.g. `RELIANCE` equity, `NIFTY 50` index), the
+ * panel auto-resolves the nearest CE/PE contract for that underlying and
+ * replaces `selectedSymbol` with it — so the chart loads a tradable contract
+ * instead of the empty placeholder below.
  */
 
 import React from 'react';
 import { useTradeStore } from '../../store/useTradeStore';
+import { isFnoSymbol } from '../../charting/symbolUtils';
+import { useFnoAutoContract } from './useFnoAutoContract';
 import ChartSurface from '../chart/ChartSurface';
 
-/** Detect whether a symbol looks like an F&O tradingsymbol (contains CE/PE/FUT). */
-function isFnoSymbol(symbol: string): boolean {
-  const upper = symbol.toUpperCase();
-  if (upper.endsWith('FUT')) {
-    return true;
-  }
-  if (upper.endsWith('CE') || upper.endsWith('PE')) {
-    return /\d/.test(upper);
-  }
-  return false;
-}
-
 export default function FnoChartPanel() {
+  useFnoAutoContract();
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
   const showChart = selectedSymbol && isFnoSymbol(selectedSymbol);
 

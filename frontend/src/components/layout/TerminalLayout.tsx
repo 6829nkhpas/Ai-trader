@@ -1,22 +1,17 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import dynamic from 'next/dynamic';
 import {
   Bell,
-  ChevronDown,
-  Settings,
-  X as XIcon,
-  Shield,
-  User,
   Sun,
   Moon,
   Search,
 } from 'lucide-react';
 import SymbolSearchModal from './SymbolSearchModal';
 import MarketTickerStrip from './MarketTickerStrip';
-import { useTradeStore, TradeProfile } from '../../store/useTradeStore';
+import { useTradeStore } from '../../store/useTradeStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
 import QuantRadar from '../quant/QuantRadar';
@@ -47,16 +42,38 @@ interface TerminalLayoutProps {
 }
 
 export default function TerminalLayout({ children, leftPanel }: TerminalLayoutProps) {
-  const { activeProfile, setActiveProfile, resetSession } = useTradeStore();
+  const { activeProfile, setActiveProfile } = useTradeStore();
   const { user } = useAuthStore();
-  const isFullscreen = useChartUIStore((s) => s.isFullscreen);
   const theme = useChartUIStore((s) => s.theme);
   const toggleTheme = useChartUIStore((s) => s.toggleTheme);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // ── Sliding indicator measurement ──────────────────────────────────
+  const profileBtnRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const indicatorRef = useRef<HTMLDivElement>(null);
+  const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0, opacity: 0 });
+
+  const measureIndicator = useCallback(() => {
+    const btn = profileBtnRefs.current[activeProfile];
+    const container = btn?.parentElement;
+    if (!btn || !container) return;
+    const cRect = container.getBoundingClientRect();
+    const bRect = btn.getBoundingClientRect();
+    setIndicatorStyle({
+      left: bRect.left - cRect.left,
+      width: bRect.width,
+      opacity: 1,
+    });
+  }, [activeProfile]);
+
+  useEffect(() => {
+    // Measure after paint so refs are populated
+    requestAnimationFrame(measureIndicator);
+    window.addEventListener('resize', measureIndicator);
+    return () => window.removeEventListener('resize', measureIndicator);
+  }, [measureIndicator]);
 
   const handleThemeToggle = (event: React.MouseEvent<HTMLButtonElement>) => {
-    const nextTheme = theme === 'dark' ? 'light' : 'dark';
-    const doc = document as any;
+    const doc = document as Document & { startViewTransition?: (cb: () => void) => { finished: Promise<void> } };
 
     if (!doc.startViewTransition) {
       toggleTheme();
@@ -117,7 +134,6 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
     document.addEventListener('mouseup', stopDrag);
   };
 
-  const broker = user?.brokerConnection;
 
   const [leftButtonTop, setLeftButtonTop] = useState(8);
   const [isDraggingLeft, setIsDraggingLeft] = useState(false);
@@ -200,21 +216,27 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
 
         {/* ── Segmented Profile Control ──────────────────────── */}
         <div className="flex shrink-0 items-center justify-center">
-          <div className="flex items-center gap-0.5 rounded-none border border-border-default bg-card p-0.5 shadow-sm">
+          <div className="relative flex items-center gap-0.5 rounded-full border border-border-default bg-card p-0.5 shadow-sm">
+            {/* Sliding active indicator */}
+            <div
+              ref={indicatorRef}
+              className="profile-indicator absolute top-0.5 bottom-0.5 rounded-full border border-emerald-500/30 bg-elevated pointer-events-none z-0"
+              style={{ left: indicatorStyle.left, width: indicatorStyle.width, opacity: indicatorStyle.opacity }}
+            />
             {PROFILES.map(({ key, label, shortcut }) => {
               const isActive = activeProfile === key;
               return (
                 <button
                   key={key}
+                  ref={(el) => { profileBtnRefs.current[key] = el; }}
                   id={`profile-btn-${key.toLowerCase()}`}
                   type="button"
                   onClick={() => setActiveProfile(key)}
                   className={`
-                    relative flex items-center gap-1.5 rounded-none px-3 py-1 text-xs font-semibold
-                    transition-all duration-200 ease-out select-none
-                    focus-visible:outline-none
+                    profile-tab-btn relative z-10 flex items-center gap-1.5 rounded-none px-3 py-1 text-xs font-semibold
+                    select-none focus-visible:outline-none
                     ${isActive
-                      ? 'bg-elevated text-text-primary border border-border-default'
+                      ? 'text-text-primary'
                       : 'text-text-secondary hover:bg-elevated/20 hover:text-text-primary border border-transparent'
                     }
                   `}
@@ -222,7 +244,7 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
                   <span>{label}</span>
                   <span
                     className={`rounded-none px-1 py-px text-[9px] font-medium leading-none ${isActive
-                        ? 'bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                        ? 'profile-badge-active bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
                         : 'bg-elevated text-text-secondary'
                       }`}
                   >
@@ -257,17 +279,9 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
             className="flex h-7 w-7 items-center justify-center rounded-full border border-border-default bg-surface/50 hover:bg-elevated/45 text-text-secondary hover:text-text-primary transition-all overflow-hidden"
             title="Account Profile & Settings"
           >
-            {broker?.avatarUrl ? (
-              <img 
-                src={broker.avatarUrl} 
-                alt={user?.name || 'Profile Avatar'} 
-                className="h-full w-full object-cover"
-              />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center bg-emerald-500/10 text-emerald-400 font-bold text-[10px] tracking-wider">
-                {getInitials(user?.name)}
-              </div>
-            )}
+            <div className="flex h-full w-full items-center justify-center bg-emerald-500/10 text-emerald-400 font-bold text-[10px] tracking-wider">
+              {getInitials(user?.name)}
+            </div>
           </button>
         </div>
       </header>
