@@ -40,7 +40,7 @@ export default function Home() {
   const { data: creditData } = useCredit();
 
   // ── Store selectors ───────────────────────────────────────────────
-  const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, connectOrderFlowWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, selectedSymbol, paperPortfolio } = useTradeStore();
+  const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, selectedSymbol, paperPortfolio } = useTradeStore();
   const isFullscreen = useChartUIStore((s) => s.isFullscreen);
   const setIsFullscreen = useChartUIStore((s) => s.setIsFullscreen);
   const splitView = useChartUIStore((s) => s.splitView);
@@ -92,8 +92,7 @@ export default function Home() {
     connectAlphaWebSocket('ws://127.0.0.1:8081');
     connectPredictiveWebSocket('ws://127.0.0.1:8082');
     connectInsightWebSocket('ws://127.0.0.1:8083');
-    connectOrderFlowWebSocket('ws://127.0.0.1:8089');
-  }, [isTauriEnv, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, connectOrderFlowWebSocket]);
+  }, [isTauriEnv, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket]);
 
   // ── Quant consensus listener ──────────────────────────────────────
   useEffect(() => {
