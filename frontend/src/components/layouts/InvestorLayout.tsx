@@ -149,7 +149,7 @@ export function MacroSentimentPanel() {
                 </div>
                 <div className="space-y-1">
                   <p className="text-xs font-bold text-text-primary tracking-tight">Awaiting Market Anomalies...</p>
-                  <p className="text-[10px] text-text-secondary leading-relaxed max-w-[200px] mx-auto">
+                  <p className="text-[10px] text-text-secondary leading-relaxed max-w-50 mx-auto">
                     AI outlook appears when a <span className="text-emerald-500 font-bold">≥2% price swing</span> is detected
                   </p>
                 </div>

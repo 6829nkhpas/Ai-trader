@@ -30,7 +30,7 @@ export default function PremiumPaywall({ onUpgradeClick }: PremiumPaywallProps) 
       variants={staggerContainerSlow}
       initial="hidden"
       animate="show"
-      className="flex-grow flex flex-col items-center justify-center gap-6 p-6 w-full h-full min-h-[450px] max-w-md mx-auto text-center"
+      className="grow flex flex-col items-center justify-center gap-6 p-6 w-full h-full min-h-112.5 max-w-md mx-auto text-center"
     >
       {/* Large SVG Illustration */}
       <motion.div variants={fadeInUp} className="w-72 h-40 flex items-center justify-center shrink-0">

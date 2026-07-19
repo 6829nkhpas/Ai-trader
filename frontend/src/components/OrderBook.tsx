@@ -140,7 +140,7 @@ export default function OrderBook() {
           {book.asks.map((level, i) => (
             <div
               key={`ask-${i}`}
-              className={`group relative grid grid-cols-3 gap-0 px-3.5 py-[3px] hover:bg-red-500/10 ${level.synthetic ? 'opacity-75' : ''}`}
+              className={`group relative grid grid-cols-3 gap-0 px-3.5 py-0.75 hover:bg-red-500/10 ${level.synthetic ? 'opacity-75' : ''}`}
             >
               {/* Depth bar background */}
               <div
@@ -165,7 +165,7 @@ export default function OrderBook() {
       {book.asks.length > 0 && book.bids.length > 0 && (
         <div className="relative shrink-0 w-full text-center py-2.5 z-20 pointer-events-none font-sans">
           {/* Horizontal dividing line spanning full width */}
-          <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-[1px] bg-border-default dark:bg-zinc-700/80 z-0" />
+          <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-border-default dark:bg-zinc-700/80 z-0" />
           
           {/* Centered Theme-Adaptive Pill Badge */}
           <div className="relative z-10 inline-flex items-center gap-1.5 rounded-full bg-card dark:bg-[#373e4d] text-text-primary dark:text-white px-3.5 py-0.5 shadow-xl border border-border-default dark:border-slate-500/60 pointer-events-auto">
@@ -187,7 +187,7 @@ export default function OrderBook() {
           {book.bids.map((level, i) => (
             <div
               key={`bid-${i}`}
-              className={`group relative grid grid-cols-3 gap-0 px-3.5 py-[3px] hover:bg-emerald-500/10 ${level.synthetic ? 'opacity-75' : ''}`}
+              className={`group relative grid grid-cols-3 gap-0 px-3.5 py-0.75 hover:bg-emerald-500/10 ${level.synthetic ? 'opacity-75' : ''}`}
             >
               {/* Depth bar background */}
               <div
@@ -229,7 +229,7 @@ export default function OrderBook() {
               transition={{ type: 'spring', stiffness: 120, damping: 18 }}
             />
             {/* 50/50 Divider Mark */}
-            <div className="absolute inset-y-0 left-1/2 w-[1px] bg-white/60 z-10" />
+            <div className="absolute inset-y-0 left-1/2 w-px bg-white/60 z-10" />
           </div>
         </div>
       )}

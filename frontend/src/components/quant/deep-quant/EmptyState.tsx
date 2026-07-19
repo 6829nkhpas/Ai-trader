@@ -14,7 +14,7 @@ export default function EmptyState({ symbol }: EmptyStateProps) {
       variants={staggerContainerSlow}
       initial="hidden"
       animate="show"
-      className="flex-grow flex flex-col items-center justify-center gap-5 p-6 w-full h-full min-h-[350px]"
+      className="grow flex flex-col items-center justify-center gap-5 p-6 w-full h-full min-h-87.5"
     >
       {/* Large themed SVG illustration */}
       <motion.div variants={fadeInUp} className="w-72 h-40 flex items-center justify-center shrink-0 mb-2.5">
@@ -118,7 +118,7 @@ export default function EmptyState({ symbol }: EmptyStateProps) {
       {/* Title & Description */}
       <motion.div variants={fadeInUp} className="text-center">
         <p className="text-[11px] font-bold text-text-primary tracking-wider">Deep Quant Engine Ready</p>
-        <p className="text-[9.5px] text-text-secondary mt-1.5 leading-relaxed max-w-[200px] mx-auto select-none">
+        <p className="text-[9.5px] text-text-secondary mt-1.5 leading-relaxed max-w-50 mx-auto select-none">
           Press the button above to run<br />
           the full AI analysis pipeline<br />
           for <span className="text-emerald-500 font-bold">{symbol}</span>
