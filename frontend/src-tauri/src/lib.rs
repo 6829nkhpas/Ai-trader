@@ -355,6 +355,7 @@ pub fn run() {
         commands::radar::get_radar_symbols,
         commands::fno::get_fno_analytics,
         commands::fno::fno_list_chains,
+        commands::fno::fno_list_expiries,
         commands::fno::fno_request_underlying,
         commands::fno::fno_subscribe,
         commands::fno::fno_unsubscribe,
