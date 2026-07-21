@@ -1,5 +1,31 @@
 {
   "worktree": {
     "bgIsolation": "none"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat >/dev/null || true; CRG_BIN=code-review-graph; [ -f .venv/Scripts/code-review-graph ] && CRG_BIN=.venv/Scripts/code-review-graph; git rev-parse --git-dir >/dev/null 2>&1 && \"$CRG_BIN\" update --skip-flows --repo \"$(git rev-parse --show-toplevel 2>/dev/null)\" || true",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat >/dev/null || true; CRG_BIN=code-review-graph; [ -f .venv/Scripts/code-review-graph ] && CRG_BIN=.venv/Scripts/code-review-graph; git rev-parse --git-dir >/dev/null 2>&1 && \"$CRG_BIN\" status --repo \"$(git rev-parse --show-toplevel 2>/dev/null)\" || echo 'Not a git repo, skipping'",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   }
 }

@@ -106,3 +106,5 @@ bedrock-api-key.txt
 *.key
 # ----- Local Tools -----
 tools/cmake-3.30.0/
+# Added by code-review-graph
+.code-review-graph/

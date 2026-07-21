@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "code-review-graph": {
+      "command": "D:\\Strat Ai\\Ai-trader\\.venv\\Scripts\\code-review-graph.exe",
+      "args": [
+        "serve",
+        "--repo",
+        "D:\\Strat Ai\\Ai-trader"
+      ],
+      "env": {
+        "PYTHONUTF8": "1"
+      },
+      "type": "stdio"
+    }
+  }
+}
