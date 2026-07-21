@@ -29,7 +29,7 @@
 // Graceful shutdown:
 //   SIGINT → disconnectProducer() + redis.quit() + process.exit(0)
 
-import 'dotenv/config';
+import './loadEnv.js';  // MUST be first: loads the repo-root .env (LLM_*, NEWSDATA, etc.)
 import { loadNewsSentimentType }                   from './protoLoader.js';
 import { resolveProfileSeed }                      from './companyProfiles.js';
 import { fetchCompanyProfile, fetchBasicFinancials } from './profile.js';

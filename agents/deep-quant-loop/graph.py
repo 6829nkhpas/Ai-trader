@@ -5185,7 +5185,7 @@ def run_verify_devils_advocate(state: AgentState, messages=None) -> Optional[AIM
     stance = parse_stance("bear", payload)
     stance_dict = stance_to_dict(stance)
     print(
-        f"[Deep Quant Verify] devil's-advocate stance — lean={stance.lean} "
+        f"[Deep Quant Verify] devil's-advocate stance - lean={stance.lean} "
         f"strength={stance.strength} available={stance.available}."
     )
 
@@ -5195,7 +5195,7 @@ def run_verify_devils_advocate(state: AgentState, messages=None) -> Optional[AIM
     # plain AIMessage with NO tool calls, so it never executes/commits anything.
     devils_msg = AIMessage(
         content=(
-            "DEVIL'S ADVOCATE (Bear) — the strongest evidence-grounded case AGAINST "
+            "DEVIL'S ADVOCATE (Bear) - the strongest evidence-grounded case AGAINST "
             "the proposed trade, for you to weigh in your verification verdict. This "
             "stance does NOT itself approve, block, or commit the trade.\n"
             f"{json.dumps(stance_dict)}"
