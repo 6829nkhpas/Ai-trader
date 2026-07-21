@@ -129,6 +129,46 @@ pub async fn fno_list_chains(app: AppHandle) -> Result<FnoChains, String> {
     })
 }
 
+/// Tauri command: list the available expiries for a single underlying.
+///
+/// Unlike `fno_list_chains` (which only maps expiries for the configured index
+/// underlyings plus already-registered requested ones), this resolves expiries
+/// for ANY underlying on demand — so a stock selected from search shows its real
+/// expiry dates immediately, without waiting for the subscriber registry.
+///
+/// Merges the local NFO instrument master (`load_expiries`) with any QuestDB
+/// snapshot expiries (`fetch_expiries_from_questdb`), sorted ascending and
+/// de-duplicated. An unknown symbol / missing DB yields an empty list rather
+/// than an error. Total; never panics.
+#[tauri::command]
+pub async fn fno_list_expiries(app: AppHandle, underlying: String) -> Result<Vec<String>, String> {
+    let u = underlying.trim().to_string();
+    if u.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut expiries = match app.try_state::<crate::db::DbState>() {
+        Some(state) => load_expiries(&state, &u),
+        None => Vec::new(),
+    };
+
+    if let Some(p) = app.try_state::<sqlx::PgPool>() {
+        if let Ok(db_expiries) =
+            crate::services::fno_service::fetch_expiries_from_questdb(&p, &u).await
+        {
+            for de in db_expiries {
+                if !expiries.contains(&de) {
+                    expiries.push(de);
+                }
+            }
+        }
+    }
+
+    expiries.sort();
+    expiries.dedup();
+    Ok(expiries)
+}
+
 /// Tauri command: request that the F&O chain for `underlying` be ingested.
 ///
 /// Opens F&O for any NFO underlying the user selects from search (e.g. a stock
@@ -205,7 +245,8 @@ pub struct ResolvedContract {
 
 /// Tauri command: resolve the nearest F&O option contract for `underlying`.
 ///
-/// Picks the nearest non-expired expiry, the at-the-money strike for that
+/// Uses `expiry` when supplied (non-empty), else picks the nearest non-expired
+/// expiry; then the at-the-money strike for that
 /// expiry (from the NFO instrument master + the latest spot), and the CE side
 /// at that strike. Falls back to PE at the ATM strike when CE has no open
 /// interest in the latest QuestDB snapshot. Widens up to two strikes each side
@@ -218,6 +259,7 @@ pub struct ResolvedContract {
 pub async fn fno_resolve_nearest_contract(
     app: AppHandle,
     underlying: String,
+    expiry: Option<String>,
 ) -> Result<Option<ResolvedContract>, String> {
     let u = underlying.trim().to_string();
     if u.is_empty() {
@@ -232,16 +274,19 @@ pub async fn fno_resolve_nearest_contract(
 
     let nfo_name = resolve_nfo_underlying_name(&u);
 
-    // 1. Nearest expiry.
-    let expiry = match resolve_nearest_expiry(&db_state, &nfo_name) {
-        Some(e) => e,
-        None => {
-            info!(
-                "[fno] resolve_nearest_contract: no expiry in nfo_instruments for '{}' (nfo='{}').",
-                u, nfo_name
-            );
-            return Ok(None);
-        }
+    // 1. Expiry: explicit when supplied, else nearest non-expired.
+    let expiry = match expiry {
+        Some(e) if !e.trim().is_empty() => e.trim().to_string(),
+        _ => match resolve_nearest_expiry(&db_state, &nfo_name) {
+            Some(e) => e,
+            None => {
+                info!(
+                    "[fno] resolve_nearest_contract: no expiry in nfo_instruments for '{}' (nfo='{}').",
+                    u, nfo_name
+                );
+                return Ok(None);
+            }
+        },
     };
 
     // 2. Listed CE/PE contracts for that expiry.

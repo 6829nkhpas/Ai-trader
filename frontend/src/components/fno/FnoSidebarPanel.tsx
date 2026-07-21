@@ -13,7 +13,7 @@ import {
   type FnoUnavailableMarker,
   type FnoViewState,
 } from './viewModel';
-import { deriveUnderlyingOptions, deriveExpiryOptions } from './selectors';
+import { deriveUnderlyingOptions } from './selectors';
 import {
   getUnderlyingFromSymbol,
   matchExpiryFromSymbol,
@@ -21,6 +21,7 @@ import {
   getOptionTypeFromSymbol,
 } from './symbolParser';
 import FnoOptionChainTable from './FnoOptionChainTable';
+import { useFnoExpiryChange } from './useFnoExpiryChange';
 
 type FnoSnapshot = FnoPayload | FnoUnavailableMarker;
 
@@ -29,6 +30,9 @@ export default function FnoSidebarPanel() {
   const fnoExpiry = useTradeStore((s) => s.fnoExpiry);
   const setFnoUnderlying = useTradeStore((s) => s.setFnoUnderlying);
   const setFnoExpiry = useTradeStore((s) => s.setFnoExpiry);
+
+  // Selecting an expiry re-charts the same strike+side contract of the new expiry.
+  const handleExpiryChange = useFnoExpiryChange();
 
   const [chains, setChains] = useState<FnoChains | null>(null);
   const [viewState, setViewState] = useState<FnoViewState | null>(null);
@@ -43,7 +47,22 @@ export default function FnoSidebarPanel() {
 
   // Derive dropdown options
   const underlyings = useMemo(() => deriveUnderlyingOptions(chains), [chains]);
-  const expiries = useMemo(() => deriveExpiryOptions(chains, fnoUnderlying), [chains, fnoUnderlying]);
+
+  // Expiries are fetched per-underlying on demand so a stock selected from
+  // search shows its real expiry dates immediately (fno_list_chains only maps
+  // the configured indexes + already-registered underlyings).
+  const [expiries, setExpiries] = useState<string[]>([]);
+  useEffect(() => {
+    if (!fnoUnderlying) {
+      setExpiries([]);
+      return;
+    }
+    let cancelled = false;
+    invoke<string[]>('fno_list_expiries', { underlying: fnoUnderlying })
+      .then((e) => { if (!cancelled) setExpiries(Array.isArray(e) ? e : []); })
+      .catch(() => { if (!cancelled) setExpiries([]); });
+    return () => { cancelled = true; };
+  }, [fnoUnderlying]);
 
   // Auto-sync underlying & expiry when user selects an option contract in the app
   useEffect(() => {
@@ -223,7 +242,7 @@ export default function FnoSidebarPanel() {
                         key={e}
                         type="button"
                         onClick={() => {
-                          setFnoExpiry(value);
+                          handleExpiryChange(value);
                           setIsExpiryOpen(false);
                         }}
                         className={`flex items-center gap-3.5 w-full px-3.5 py-3 text-left transition-colors border-b border-border-default/20 dark:border-zinc-800/40 last:border-none hover:bg-elevated/60 dark:hover:bg-white/5 rounded-lg ${
@@ -286,7 +305,7 @@ export default function FnoSidebarPanel() {
             highlightedSide={highlightedSide}
             fnoExpiry={fnoExpiry}
             expiries={expiries}
-            onExpiryChange={setFnoExpiry}
+            onExpiryChange={handleExpiryChange}
           />
         </div>
       )}

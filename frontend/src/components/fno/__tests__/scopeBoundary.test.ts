@@ -214,6 +214,13 @@ describe('F4 scope boundary — invokes no trade-execution command (R9.2)', () =
     // above it is a transport/data command — it computes no analytic and places
     // no trade, so it is within the consumption-only F&O boundary (R9.2).
     'fno_request_underlying',
+    // Read-only expiry lookup for the selected underlying (no analytic, no trade).
+    'fno_list_expiries',
+    // Contract-resolution reads: expand a (strike, side[, expiry]) or underlying
+    // into a listed NFO tradingsymbol so the chart can load a real contract. Pure
+    // DB reads — they place no trade, so they stay within the F&O boundary (R9.2).
+    'fno_resolve_option_contract',
+    'fno_resolve_nearest_contract',
   ]);
 
   // Matches `invoke('cmd'`, `invoke("cmd"`, and `invoke<T>('cmd'` (Tauri's
