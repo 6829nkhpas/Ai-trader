@@ -677,7 +677,7 @@ INDEX_OPTIONS_ADDENDUM = (
     "SYMBOL CLASS: INDEX (spot underlying such as NIFTY 50 / BANKNIFTY). A spot index has NO traded "
     "volume, so the usual volume-derived confirmations are structurally unusable for THIS instrument. "
     "You MUST adapt your confirmation set accordingly.\n"
-    "REQUIRED STEP — OVERRIDES step 2e's default 'skip options' behaviour: because this symbol is an INDEX, "
+    "REQUIRED STEP — OVERRIDES the default 'skip options' behaviour of step 2e (FIND) AND step 2g (VERIFY): because this symbol is an INDEX, "
     "you MUST call `get_options_analytics` (with the index symbol and your proposed_direction) as part of "
     "your data gathering, in the SAME batch as your other analysis tools — do NOT skip it, and do NOT treat "
     "the INTRADAY/SWING/INVESTOR workspace as a reason to omit it. Omitting the options call for an index is "
@@ -1151,7 +1151,7 @@ import math
 
 # Trade_Validator (Python mirror, task 5.2) — reused to derive the
 # Risk_Reward_Ratio and to report per-check outcomes in VERIFY mode (R7.4).
-from validator import Action
+from validator import Action, min_risk_reward_for_profile, MIN_RISK_REWARD
 
 # ── Structured Tool-Call Extraction ──────────────────────────────────────────
 # The registered Analysis_Tool set. A tool name discovered in model output that
@@ -2108,13 +2108,26 @@ def _predictive_direction(results):
     return None, None
 
 
-def _verify_mode_validator_checks(action, levels, atr_14):
+def _verify_mode_validator_checks(action, levels, atr_14, min_risk_reward=None):
     """Report the outcome of EVERY Trade_Validator check independently (R7.4).
 
     The Trade_Validator short-circuits on the first failure, but VERIFY mode must
     state pass/fail for each check on the user-proposed trade. This evaluates the
     four checks independently so each receives an explicit outcome.
+
+    ``min_risk_reward`` is the profile-aware Risk_Reward_Ratio floor (1.3 intraday,
+    2.0 otherwise). It defaults to ``MIN_RISK_REWARD`` (2.0) for back-compat so the
+    reported risk-reward outcome matches the SAME floor the FIND path and the Rust
+    validator enforce — a valid intraday bracket (RR 1.3-2.0) must not be
+    misreported as a "risk-reward: FAIL" in VERIFY.
     """
+    min_rr = (
+        min_risk_reward
+        if isinstance(min_risk_reward, (int, float))
+        and not isinstance(min_risk_reward, bool)
+        and min_risk_reward > 0.0
+        else MIN_RISK_REWARD
+    )
     act = _normalize_action(action)
     if act not in ("BUY", "SELL"):
         return [{"check": "direction", "outcome": "n/a — HOLD/abstain bypasses level checks"}]
@@ -2158,8 +2171,8 @@ def _verify_mode_validator_checks(action, levels, atr_14):
         rr = abs(tp - entry) / risk
         checks.append({
             "check": "risk-reward",
-            "outcome": "pass" if rr >= 2.0 else "fail",
-            "detail": f"RR={rr:.4f}",
+            "outcome": "pass" if rr >= min_rr else "fail",
+            "detail": f"RR={rr:.4f}, min={min_rr:.4f}",
         })
     else:
         checks.append({"check": "risk-reward", "outcome": "not-evaluable — zero risk"})
@@ -2832,7 +2845,7 @@ def _debate_entry(decision, mode, action):
     return entry
 
 
-def build_defensibility_record(messages, decision, mode=None, manual_trade=None) -> dict:
+def build_defensibility_record(messages, decision, mode=None, manual_trade=None, profile=None) -> dict:
     """Assemble the trade defensibility record from tool results in history (R7).
 
     Gathers the evidence behind a committed decision from the Analysis_Tool
@@ -3164,9 +3177,14 @@ def build_defensibility_record(messages, decision, mode=None, manual_trade=None)
     if debate is not None:
         record["debate"] = debate
 
-    # VERIFY mode must report every Trade_Validator check outcome (R7.4).
+    # VERIFY mode must report every Trade_Validator check outcome (R7.4). The
+    # risk-reward check uses the profile-aware floor (1.3 intraday / 2.0 else) so
+    # VERIFY agrees with FIND and the Rust validator instead of misreporting a
+    # valid intraday bracket as a risk-reward failure.
     if mode == "VERIFY":
-        record["validator_checks"] = _verify_mode_validator_checks(action, levels, atr)
+        record["validator_checks"] = _verify_mode_validator_checks(
+            action, levels, atr, min_risk_reward=min_risk_reward_for_profile(profile)
+        )
 
     # Mirror the committed Opportunity_Tier into the defensibility record so the
     # trade carries its tier alongside the other evidence entries, and so
@@ -3587,6 +3605,7 @@ def _finalize_decision(state: AgentState, decision: dict, thread_id: Optional[st
         decision,
         mode=state.get("mode"),
         manual_trade=state.get("manual_trade"),
+        profile=state.get("profile"),
     )
     # Degraded-data label (R6.3, Property 15). Every terminal decision funnels
     # through this chokepoint, so this is the single place to detect a commit made

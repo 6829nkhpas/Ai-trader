@@ -989,7 +989,7 @@ def get_chart_patterns(symbol: str, timeframe: str, limit: int = 200) -> dict:
         patterns = res.get("patterns", [])
         print(f"[Tool Success] <<< get_chart_patterns: symbol={symbol}, timeframe={timeframe}, detected {len(patterns)} patterns")
         for p in patterns:
-            print(f"  → {p.get('pattern_type')} ({p.get('sentiment')}, confidence={p.get('confidence', 0):.2f})")
+            print(f"  -> {p.get('pattern_type')} ({p.get('sentiment')}, confidence={p.get('confidence', 0):.2f})")
         return validate_contract("get_chart_patterns", res)
     except Exception as e:
         print(f"[Tool Error] <<< get_chart_patterns FAIL: {str(e)}")

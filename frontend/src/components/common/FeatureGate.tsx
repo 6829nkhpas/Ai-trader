@@ -2,7 +2,8 @@
 
 import React from 'react';
 import { useFeature } from '../../store/useFeatureStore';
-import type { FeatureId, FEATURE_LABELS } from '../../lib/featureFlags';
+import type { FeatureId } from '../../lib/featureFlags';
+import { FEATURE_LABELS } from '../../lib/featureFlags';
 import { IS_PROD } from '../../lib/env';
 import { dashboardUrl, openExternalUrl } from '../../lib/redirect';
 import { Lock, ArrowRight } from 'lucide-react';
