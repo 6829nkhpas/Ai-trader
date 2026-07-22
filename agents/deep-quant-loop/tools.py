@@ -86,7 +86,7 @@ import opportunity
 # dates from the operator-configured Event_Source) and re-validates the contract.
 import events
 
-RUST_SERVER_URL = "http://localhost:8084"
+RUST_SERVER_URL = os.getenv("RUST_TOOL_SERVER_URL", "http://localhost:8084")
 
 # ── Price-watch registration retry policy (Requirement 14.3) ─────────────────
 # How many times watch_price_condition attempts to register a watcher with the

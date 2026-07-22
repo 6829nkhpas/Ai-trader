@@ -2227,7 +2227,9 @@ pub async fn run_deep_quant_agent(
     // Spawn the streaming reqwest client in the background
     tokio::spawn(async move {
         let client = reqwest::Client::new();
-        let url = "http://localhost:8086/run";
+        let base = std::env::var("DEEP_QUANT_URL")
+            .unwrap_or_else(|_| "http://localhost:8086".to_string());
+        let url = format!("{}/run", base.trim_end_matches('/'));
         let mut saw_run_finished = false;
         let mut saw_error = false;
         
@@ -2363,7 +2365,9 @@ pub async fn ask_trade_question(
     // immediately just like run_deep_quant_agent.
     tokio::spawn(async move {
         let client = reqwest::Client::new();
-        let url = "http://localhost:8086/qa";
+        let base = std::env::var("DEEP_QUANT_URL")
+            .unwrap_or_else(|_| "http://localhost:8086".to_string());
+        let url = format!("{}/qa", base.trim_end_matches('/'));
         let mut saw_run_finished = false;
 
         match client.post(url).json(&payload).send().await {

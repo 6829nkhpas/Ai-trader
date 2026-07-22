@@ -541,8 +541,14 @@ async fn post_resume_and_stream(
         "[watcher] Making handoff resume POST to port 8086 for thread_id={} (trigger_kind={})",
         thread_id, response_payload["trigger_kind"]
     );
+    let resume_url = format!(
+        "{}/resume",
+        std::env::var("DEEP_QUANT_URL")
+            .unwrap_or_else(|_| "http://localhost:8086".to_string())
+            .trim_end_matches('/')
+    );
     match client
-        .post("http://localhost:8086/resume")
+        .post(&resume_url)
         .json(&response_payload)
         .send()
         .await
@@ -920,8 +926,14 @@ async fn watch_condition(
                     });
 
                     info!("[watcher] Making handoff resume POST to port 8086 for thread_id={}", watcher.thread_id);
+                    let resume_url = format!(
+                        "{}/resume",
+                        std::env::var("DEEP_QUANT_URL")
+                            .unwrap_or_else(|_| "http://localhost:8086".to_string())
+                            .trim_end_matches('/')
+                    );
                     match client
-                        .post("http://localhost:8086/resume")
+                        .post(&resume_url)
                         .json(&response_payload)
                         .send()
                         .await
@@ -1940,10 +1952,13 @@ pub async fn run_tool_server(app: AppHandle) {
         .route("/tools/get_news_context", post(get_news_context))
         .with_state(state);
 
-    let addr = "127.0.0.1:8084";
+    let addr = std::env::var("QUANT_TOOL_SERVER_ADDR").unwrap_or_else(|_| {
+        let port = std::env::var("QUANT_TOOL_SERVER_PORT").unwrap_or_else(|_| "8084".to_string());
+        format!("127.0.0.1:{}", port)
+    });
     info!("Starting hybrid agent tool server on {}", addr);
 
-    match tokio::net::TcpListener::bind(addr).await {
+    match tokio::net::TcpListener::bind(&addr).await {
         Ok(listener) => {
             if let Err(e) = axum::serve(listener, router).await {
                 error!("Tool server crash: {}", e);

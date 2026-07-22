@@ -47,7 +47,7 @@ import trade_manager
 # per-tier win-rate and expectancy become measurable (R9.2). Pure module.
 import opportunity
 
-RUST_SERVER_URL = "http://localhost:8084"
+RUST_SERVER_URL = os.getenv("RUST_TOOL_SERVER_URL", "http://localhost:8084")
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 _DEFAULT_DB = os.path.join(os.path.abspath(os.path.dirname(__file__)), "trade_journal.db")

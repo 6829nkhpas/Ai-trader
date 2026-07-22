@@ -50,7 +50,7 @@ import trade_manager
 # match what the live agent and the UI compute.
 from tools import _compute_volume_profile, calculate_ema
 
-RUST_SERVER_URL = "http://localhost:8084"
+RUST_SERVER_URL = os.getenv("RUST_TOOL_SERVER_URL", "http://localhost:8084")
 # QuestDB HTTP query endpoint — the historical archive. Reading candles here lets
 # the seeder pull real history WITHOUT the Tauri desktop app / Rust tool server
 # running; only QuestDB (docker-compose) needs to be up.

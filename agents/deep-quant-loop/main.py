@@ -1,4 +1,5 @@
 import uvicorn
+import os
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -513,4 +514,6 @@ def options_snapshot(underlying: str, expiry: str = ""):
 # ── Entrypoint ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8086, reload=True)
+    host = os.getenv("DEEP_QUANT_HOST", "0.0.0.0")
+    port = int(os.getenv("DEEP_QUANT_PORT", "8086"))
+    uvicorn.run("main:app", host=host, port=port, reload=True)

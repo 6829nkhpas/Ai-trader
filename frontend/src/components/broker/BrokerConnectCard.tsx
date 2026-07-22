@@ -19,7 +19,8 @@ export default function BrokerConnectCard() {
   const handleConnect = async () => {
     setLoading(true);
     const userId = user?.id || '';
-    const connectUrl = `http://localhost:3001/api/broker/zerodha/connect?userId=${userId}`;
+    const authBase = process.env.NEXT_PUBLIC_AUTH_SERVICE_URL || 'http://localhost:3001';
+    const connectUrl = `${authBase}/api/broker/zerodha/connect?userId=${userId}`;
 
     console.log(`[BrokerConnect] Redirecting to: ${connectUrl}`);
 

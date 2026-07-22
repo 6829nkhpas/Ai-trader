@@ -89,9 +89,9 @@ export default function Home() {
 
   useEffect(() => {
     if (isTauriEnv) return;
-    connectAlphaWebSocket('ws://127.0.0.1:8081');
-    connectPredictiveWebSocket('ws://127.0.0.1:8082');
-    connectInsightWebSocket('ws://127.0.0.1:8083');
+    connectAlphaWebSocket(process.env.NEXT_PUBLIC_ALPHA_WS_URL || 'ws://127.0.0.1:8081');
+    connectPredictiveWebSocket(process.env.NEXT_PUBLIC_PREDICTIVE_WS_URL || 'ws://127.0.0.1:8082');
+    connectInsightWebSocket(process.env.NEXT_PUBLIC_INSIGHT_WS_URL || 'ws://127.0.0.1:8083');
   }, [isTauriEnv, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket]);
 
   // ── Quant consensus listener ──────────────────────────────────────
