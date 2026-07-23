@@ -18,6 +18,13 @@ use crate::quant::{
 };
 use crate::services::llm;
 
+// ── In-flight agent-run registry (for cancellation) ───────────────────────────
+use std::sync::Mutex as StdMutex;
+use tokio::task::AbortHandle;
+
+static AGENT_TASKS: Lazy<StdMutex<HashMap<String, AbortHandle>>> =
+    Lazy::new(|| StdMutex::new(HashMap::new()));
+
 pub fn get_kite_credentials() -> (String, String) {
     let mut api_key = std::env::var("KITE_API_KEY").unwrap_or_default();
     let mut access_token = std::env::var("KITE_ACCESS_TOKEN").unwrap_or_default();
@@ -2175,7 +2182,7 @@ pub async fn run_deep_quant_agent(
     fno_expiry: Option<String>,
     model: Option<String>,
     manual_trade: Option<ManualTradeInfo>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let mode_str = mode.unwrap_or_else(|| "FIND".to_string());
     // Workspace profile (INTRADAY / SWING / INVESTOR / FNO) selected in the
     // terminal. Threaded to the Python agent so it adapts its data gathering and
@@ -2224,8 +2231,10 @@ pub async fn run_deep_quant_agent(
         "manual_trade": manual_trade
     });
     
-    // Spawn the streaming reqwest client in the background
-    tokio::spawn(async move {
+    let thread_id_for_registry = thread_id.clone();
+    let thread_id_for_cleanup = thread_id.clone();
+    let thread_id_to_return = thread_id.clone();
+    let handle = tokio::spawn(async move {
         let client = reqwest::Client::new();
         let base = std::env::var("DEEP_QUANT_URL")
             .unwrap_or_else(|_| "http://localhost:8086".to_string());
@@ -2326,8 +2335,44 @@ pub async fn run_deep_quant_agent(
         }
         
         info!("[deep_quant_agent] Stream proxy finished for thread={}", thread_id);
+        // Self-clean from registry on normal completion.
+        AGENT_TASKS.lock().unwrap().remove(&thread_id_for_cleanup);
     });
-    
+
+    // Register abort handle AFTER spawn so we have the handle.
+    AGENT_TASKS.lock().unwrap().insert(thread_id_for_registry, handle.abort_handle());
+
+    Ok(thread_id_to_return)
+}
+
+/// Cancel a running deep-quant agent task by thread_id.
+/// Aborts the Tokio proxy task (drops the HTTP connection) and best-effort
+/// POSTs /cancel to the Python agent so the astream loop stops cleanly.
+#[tauri::command]
+pub async fn cancel_deep_quant_agent(thread_id: String) -> Result<(), String> {
+    // Abort the Rust proxy task.
+    if let Some(handle) = AGENT_TASKS.lock().unwrap().remove(&thread_id) {
+        handle.abort();
+        info!("[cancel_deep_quant_agent] Aborted task for thread={}", thread_id);
+    } else {
+        warn!("[cancel_deep_quant_agent] No active task found for thread={}", thread_id);
+    }
+
+    // Best-effort: tell Python to break out of astream at the next step boundary.
+    let tid = thread_id.clone();
+    tokio::spawn(async move {
+        let base = std::env::var("DEEP_QUANT_URL")
+            .unwrap_or_else(|_| "http://localhost:8086".to_string());
+        let url = format!("{}/cancel", base.trim_end_matches('/'));
+        let client = reqwest::Client::new();
+        let _ = client
+            .post(&url)
+            .json(&serde_json::json!({ "thread_id": tid }))
+            .timeout(std::time::Duration::from_secs(3))
+            .send()
+            .await;
+    });
+
     Ok(())
 }
 

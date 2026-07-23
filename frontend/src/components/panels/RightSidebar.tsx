@@ -94,7 +94,7 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
         <div className="flex border-t border-border-default bg-muted/20">
           {([
             { key: 'profile' as SidebarTab, label: sidebarCfg.badge },
-            { key: 'deepquant' as SidebarTab, label: 'AI QUANT' },
+            { key: 'deepquant' as SidebarTab, label: 'AI Agent' },
           ]).map(({ key, label }, idx) => (
             <button
               key={key}

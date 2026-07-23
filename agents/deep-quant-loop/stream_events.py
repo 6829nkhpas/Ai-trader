@@ -83,6 +83,8 @@ BEST_CURRENT_READ = "BEST_CURRENT_READ"
 # Terminal outcomes of a run (the ``RUN_FINISHED`` status set, R17.2/R17.6).
 RUN_COMPLETED = "completed"
 RUN_PAUSED = "paused"
+# User-requested stop: the run was cancelled mid-flight before a DECISION.
+RUN_CANCELLED = "cancelled"
 # Internal-only sentinel: the LLM stream failed (drives the ERROR path, R17.5).
 RUN_ERROR = "error"
 
@@ -1095,11 +1097,12 @@ def build_run_started_event(thread_id: Any) -> dict:
 def build_run_finished_event(thread_id: Any, status: str) -> dict:
     """Build the terminal ``RUN_FINISHED`` payload (R17.2, R17.6).
 
-    ``status`` is normalized to the documented set ``{"completed", "paused"}`` so
-    the user interface can always distinguish a paused run from a completed one
-    (R17.6); any unexpected value is treated as ``"completed"``.
+    ``status`` is normalized to the documented set ``{"completed", "paused",
+    "cancelled"}`` so the user interface can always distinguish a paused run from
+    a completed or user-cancelled one (R17.6); any unexpected value is treated as
+    ``"completed"``.
     """
-    normalized = status if status in (RUN_COMPLETED, RUN_PAUSED) else RUN_COMPLETED
+    normalized = status if status in (RUN_COMPLETED, RUN_PAUSED, RUN_CANCELLED) else RUN_COMPLETED
     return {"thread_id": thread_id, "status": normalized}
 
 

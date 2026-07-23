@@ -111,6 +111,21 @@ class QARequest(BaseModel):
     # Optional LLM model override for this Q&A turn ('' / None => default).
     model: Optional[str] = None
 
+class CancelRequest(BaseModel):
+    # User-requested cancellation of an in-flight /run for this thread_id. The
+    # Rust proxy also aborts its own streaming task (dropping the HTTP
+    # connection); this flag is the belt-and-suspenders path that breaks the
+    # graph.astream loop at the next step boundary even before the disconnect is
+    # detected server-side.
+    thread_id: str
+
+# ── Cancellation registry ─────────────────────────────────────────────────────
+# thread_ids requested to stop. `event_generator` checks membership each step and
+# breaks out; the id is always discarded in the generator's `finally` so the set
+# never leaks. A plain set is sufficient — writes are single statements and the
+# server is single-process asyncio.
+_CANCELLED: set[str] = set()
+
 # ── SSE Generator ────────────────────────────────────────────────────────────
 
 async def event_generator(thread_id: str, graph_input=None, resume_command=None):
@@ -159,9 +174,15 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None)
 
     target_input = resume_command if resume_command is not None else graph_input
 
+    cancelled = False
     try:
         # Iterate over the async updates generator, preserving step order (R17.4).
         async for event in graph.astream(target_input, config, stream_mode="updates"):
+            # Check cancel flag at each step boundary — breaks the loop without
+            # waiting for the next LLM/tool round-trip to complete.
+            if thread_id in _CANCELLED:
+                cancelled = True
+                break
             for node_name, node_data in event.items():
                 # node_update_events emits REASONING/TOOL_CALL_* before any
                 # DECISION for the update, keeping TOOL_CALL_START ahead of its
@@ -177,11 +198,16 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None)
                         payload = {**payload, "thread_id": thread_id}
                     yield format_sse(name, payload)
 
-        # R17.2/R17.6: a completed or paused run ends with a single terminal
-        # RUN_FINISHED event stating which it was.
-        state = graph.get_state(config)
-        status = "paused" if state.next else "completed"
-        yield format_sse(RUN_FINISHED, build_run_finished_event(thread_id, status))
+        if cancelled:
+            # User-requested stop: emit a clean terminal event so the frontend
+            # always transitions out of 'running'. No DECISION is emitted.
+            yield format_sse(RUN_FINISHED, build_run_finished_event(thread_id, "cancelled"))
+        else:
+            # R17.2/R17.6: a completed or paused run ends with a single terminal
+            # RUN_FINISHED event stating which it was.
+            state = graph.get_state(config)
+            status = "paused" if state.next else "completed"
+            yield format_sse(RUN_FINISHED, build_run_finished_event(thread_id, status))
 
     except Exception as e:
         err_msg = str(e)
@@ -191,6 +217,9 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None)
         # DECISION (and no RUN_FINISHED) for the run. We rely exclusively on the
         # live LLM analysis backed by real market data — never a fabricated plan.
         yield format_sse(ERROR, build_error_event(err_msg))
+    finally:
+        # Always discard the cancel flag so the set never leaks across runs.
+        _CANCELLED.discard(thread_id)
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
@@ -283,6 +312,23 @@ async def qa_agent(payload: QARequest):
         event_generator(payload.thread_id, graph_input=qa_input),
         media_type="text/event-stream"
     )
+
+@app.post("/cancel")
+async def cancel_agent(payload: CancelRequest):
+    """
+    Request cancellation of an in-flight /run for ``thread_id``.
+
+    Marks the thread cancelled so the live ``event_generator`` breaks out of the
+    ``graph.astream`` loop at its next step boundary and emits a terminal
+    RUN_FINISHED(status="cancelled"). This is idempotent and safe to call for an
+    unknown/already-finished thread_id (the flag is simply discarded when no run
+    consumes it — the set is cleared in the generator's ``finally``; a stale flag
+    for a thread that never runs is harmless). The Rust proxy also aborts its own
+    streaming task, so this endpoint is the cooperative half of a two-sided stop.
+    """
+    _CANCELLED.add(payload.thread_id)
+    print(f"[cancel] Cancellation requested for thread={payload.thread_id}")
+    return {"status": "cancelling", "thread_id": payload.thread_id}
 
 # ── F&O snapshot endpoint (F4 transport seam — composition only) ──────────────
 # The frontend F&O section consumes F1/F2/F3 through this single thin, read-only

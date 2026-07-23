@@ -333,7 +333,14 @@ interface QuantStore {
   openPosition: (symbol: string, plan: AiExecutionPlan) => void;
   closePosition: (id: string, exitPrice: number) => void;
   handleStreamEvent: (payload: StreamEventPayload) => void;
+  /** (internal) Arm/re-arm the activity-based stall watchdog for a run key.
+   *  Called on run start and on every stream event; only fires after a full
+   *  idle window with no events. */
+  _armStreamWatchdog: (runKey: string) => void;
   resetTerminal: () => void;
+  /** Cancel the active deep-quant run. Aborts the Rust proxy task, signals
+   *  the Python agent to stop, and resets the session to idle immediately. */
+  cancelAnalysis: () => Promise<void>;
 
   // ── Trade Q&A actions ───────────────────────────────────────────────
   /** Ask a follow-up question about the completed analysis. Streams the
@@ -366,6 +373,29 @@ const SENTIMENT_429_COOL = 5 * 60 * 1000;  // 5 minutes cooldown after 429
 const multiTfInFlight = new Set<string>();
 const multiTfCache = new Map<string, { data: MultiTfChartPatterns[]; fetchedAt: number }>();
 const MULTI_TF_TTL_MS = 2 * 60 * 1000;  // 2 minutes
+
+// ── Deep-quant stream watchdog (activity-based, not run-total) ────────────
+// A long-but-healthy agent run can legitimately exceed 2 minutes end-to-end
+// while it streams reasoning/tool events the whole time. A fixed
+// 120s-from-start timeout falsely errored those runs even though the backend
+// was actively working. Instead we arm a per-run watchdog that is RESET on
+// every stream event: it only fires when NO event has arrived for the idle
+// window — i.e. the SSE stream is genuinely stalled/dead, not merely slow.
+const STREAM_IDLE_TIMEOUT_MS = 120_000;  // fire only after this much silence
+const streamWatchdogs = new Map<string, ReturnType<typeof setTimeout>>();
+
+const clearStreamWatchdog = (runKey: string) => {
+  const t = streamWatchdogs.get(runKey);
+  if (t !== undefined) {
+    clearTimeout(t);
+    streamWatchdogs.delete(runKey);
+  }
+};
+
+// ── Cancelled thread guard ────────────────────────────────────────────────
+// Thread IDs that have been cancelled. handleStreamEvent ignores events for
+// these threads; the id is dropped on RUN_FINISHED/ERROR so the set stays small.
+const cancelledThreads = new Set<string>();
 
 // ── Tauri invoke helper ─────────────────────────────────────────────────
 
@@ -1081,7 +1111,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       console.log(`[QuantStore] → invoking 'run_deep_quant_agent' (Tauri IPC)…`);
       const tInvoke = (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
-      await tauriInvoke<void>(
+      const threadId = await tauriInvoke<string>(
         'run_deep_quant_agent',
         {
           symbol,
@@ -1100,35 +1130,31 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
         }
       );
 
+      // Write the thread_id onto the session immediately so cancelAnalysis works
+      // even before the first RUN_STARTED SSE event arrives.
+      set((s) => {
+        const sess = s.sessionsByKey[runKey] ?? blankSession();
+        const updated = { ...sess, currentThreadId: threadId };
+        return {
+          sessionsByKey: { ...s.sessionsByKey, [runKey]: updated },
+          ...(s.activeViewKey === runKey ? { currentThreadId: threadId } : {}),
+        };
+      });
+
       const tDone = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       console.log(
         `[QuantStore] ✔ Deep analysis triggered symbol=${symbol} ` +
         `ipc_ms=${Math.round(tDone - tInvoke)} total_ms=${Math.round(tDone - t0)}`
       );
 
-      // Bug 2 fix: Safety timeout — if THIS run's session is still 'running'
-      // after 120s, the SSE stream silently failed. Auto-reset ONLY this run's
-      // session (by key), never whichever session happens to be on screen, so
-      // switching symbols/modes cannot trip another session's timeout and a
-      // healthy background run is never touched.
-      setTimeout(() => {
-        const state = get();
-        const sess = state.sessionsByKey[runKey];
-        if (sess && sess.isAnalyzing && sess.sessionStatus === 'running') {
-          console.warn(`[QuantStore] ⚠ Safety timeout: session ${runKey} stuck for 120s. Auto-resetting.`);
-          const timedOut: QuantSession = {
-            ...sess,
-            isAnalyzing: false,
-            sessionStatus: 'error',
-            analysisError: 'Analysis timed out after 120 seconds. The Python agent server may be unreachable or the LLM request stalled. Please retry.',
-            updatedAt: Date.now(),
-          };
-          set((s) => ({
-            sessionsByKey: { ...s.sessionsByKey, [runKey]: timedOut },
-            ...(s.activeViewKey === runKey ? projectSession(timedOut) : {}),
-          }));
-        }
-      }, 120_000);
+      // Bug 2 fix: Activity-based safety watchdog. Rather than a fixed
+      // 120s-from-start timeout (which falsely errored long-but-healthy runs
+      // that were still streaming), arm a watchdog that is re-armed on every
+      // stream event via `_armStreamWatchdog`. It only fires when the stream
+      // has been SILENT for the idle window — a genuinely stalled/unreachable
+      // agent — and only touches THIS run's session (by key), never whichever
+      // session happens to be on screen.
+      get()._armStreamWatchdog(runKey);
     } catch (err) {
       const tDone = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       const message = err instanceof Error ? err.message : String(err);
@@ -1199,11 +1225,47 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     });
   },
 
+  _armStreamWatchdog: (runKey: string) => {
+    // Reset any pending watchdog for this run, then start a fresh idle timer.
+    clearStreamWatchdog(runKey);
+    const timer = setTimeout(() => {
+      streamWatchdogs.delete(runKey);
+      const state = get();
+      const sess = state.sessionsByKey[runKey];
+      // Only trip if the run is STILL running and no event re-armed us — i.e.
+      // the SSE stream has been silent for the whole idle window.
+      if (sess && sess.isAnalyzing && sess.sessionStatus === 'running') {
+        console.warn(`[QuantStore] ⚠ Stream stalled: no events for ${Math.round(STREAM_IDLE_TIMEOUT_MS / 1000)}s on ${runKey}. Auto-resetting.`);
+        const timedOut: QuantSession = {
+          ...sess,
+          isAnalyzing: false,
+          sessionStatus: 'error',
+          analysisError: `The agent stream stalled — no activity for ${Math.round(STREAM_IDLE_TIMEOUT_MS / 1000)}s. The Python agent server may be unreachable or the LLM request stalled. Please retry.`,
+          updatedAt: Date.now(),
+        };
+        set((s) => ({
+          sessionsByKey: { ...s.sessionsByKey, [runKey]: timedOut },
+          ...(s.activeViewKey === runKey ? projectSession(timedOut) : {}),
+        }));
+      }
+    }, STREAM_IDLE_TIMEOUT_MS);
+    streamWatchdogs.set(runKey, timer);
+  },
+
   handleStreamEvent: (payload: StreamEventPayload) => {
     if (!payload || !payload.event) return;
 
     const event = payload.event;
     const data = payload.data;
+
+    // Drop events for cancelled runs; clean up the guard on terminal events.
+    const incomingThreadId = data?.thread_id;
+    if (incomingThreadId && cancelledThreads.has(incomingThreadId)) {
+      if (event === 'RUN_FINISHED' || event === 'ERROR') {
+        cancelledThreads.delete(incomingThreadId);
+      }
+      return;
+    }
 
     console.log(`[QuantStore] 📥 Stream event: ${event}`, data);
 
@@ -1235,6 +1297,15 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       ? { [threadId]: runKey }
       : {};
 
+    // Watchdog: an event = the stream is alive. Clear it once the run reaches a
+    // terminal state; otherwise re-arm the idle timer so a long-but-active run
+    // is never falsely timed out.
+    if (nextSession.sessionStatus === 'complete' || nextSession.sessionStatus === 'error') {
+      clearStreamWatchdog(runKey);
+    } else {
+      get()._armStreamWatchdog(runKey);
+    }
+
     set((state) => ({
       _streamingKey: runKey,
       sessionsByKey: { ...state.sessionsByKey, [runKey as string]: nextSession },
@@ -1259,6 +1330,47 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       multiTfPatterns: null,
       isFetchingPatterns: false,
     }));
+  },
+
+  cancelAnalysis: async () => {
+    const st = get();
+    const runKey = st._streamingKey || st.activeViewKey;
+    if (!runKey) return;
+    const sess = st.sessionsByKey[runKey];
+    const threadId = sess?.currentThreadId;
+
+    clearStreamWatchdog(runKey);
+    if (threadId) {
+      cancelledThreads.add(threadId);
+      try {
+        await tauriInvoke('cancel_deep_quant_agent', { threadId });
+      } catch {
+        // best-effort
+      }
+    }
+
+    const cancelStep = {
+      id: `cancel-${Date.now()}`,
+      type: 'message' as const,
+      content: '⏹ Analysis cancelled by user.',
+      timestamp: Date.now(),
+    };
+    set((s) => {
+      const existing = s.sessionsByKey[runKey] ?? blankSession();
+      const cancelled: QuantSession = {
+        ...existing,
+        isAnalyzing: false,
+        sessionStatus: 'idle',
+        reasoningSteps: [...existing.reasoningSteps, cancelStep],
+        _runFinishedProcessed: true,
+        updatedAt: Date.now(),
+      };
+      return {
+        _streamingKey: s._streamingKey === runKey ? null : s._streamingKey,
+        sessionsByKey: { ...s.sessionsByKey, [runKey]: cancelled },
+        ...(s.activeViewKey === runKey ? projectSession(cancelled) : {}),
+      };
+    });
   },
 
   clearQa: () => set({

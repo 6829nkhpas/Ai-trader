@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useMemo } from 'react';
-import { Zap, Loader2, Shield, ChevronDown, Cpu } from 'lucide-react';
+import { Zap, Loader2, Shield, ChevronDown, Cpu, Square } from 'lucide-react';
 import { useQuantStore, isActionableTrade } from '../../store/useQuantStore';
 import type { StreamEventPayload } from '../../store/useQuantStore';
 import { useTradeStore } from '../../store/useTradeStore';
@@ -43,6 +43,7 @@ export default function DeepQuantPanel() {
     currentThreadId,
     selectedModel,
     setSelectedModel,
+    cancelAnalysis,
   } = useQuantStore();
 
   // Register the deep-quant-stream listener at the PANEL level so it is mounted
@@ -234,9 +235,11 @@ export default function DeepQuantPanel() {
           <button
             id="btn-run-deep-quant"
             type="button"
-            disabled={isAnalyzing || !dataReady}
+            disabled={!isAnalyzing && !dataReady}
             onClick={() => {
-              if (activeMode === 'FIND') {
+              if (isAnalyzing) {
+                cancelAnalysis();
+              } else if (activeMode === 'FIND') {
                 handleAIAnalysis();
               } else {
                 handleVerifyAnalysis();
@@ -246,28 +249,28 @@ export default function DeepQuantPanel() {
               relative flex-grow flex h-8 items-center justify-center gap-1.5
               rounded-l px-3 text-[10px] font-bold uppercase tracking-wider
               transition-all duration-300 ease-out border border-r-0
-              ${!dataReady
+              ${!dataReady && !isAnalyzing
                 ? 'bg-elevated/40 text-text-muted/50 border-border-default opacity-50 cursor-not-allowed'
                 : isAnalyzing
-                  ? 'bg-elevated text-text-primary border-border-default cursor-wait'
+                  ? 'bg-rose-600 text-white border-rose-600 hover:bg-rose-700 hover:border-rose-700 active:scale-[0.99] cursor-pointer'
                   : 'bg-text-primary text-surface border-text-primary hover:bg-text-secondary hover:border-text-secondary active:scale-[0.99]'
               }
             `}
           >
             <span className="relative flex items-center gap-1.5">
-              {!dataReady ? (
+              {!dataReady && !isAnalyzing ? (
                 <Loader2 size={11} className="animate-spin text-text-muted" />
               ) : isAnalyzing ? (
-                <Loader2 size={11} className="animate-spin text-surface" />
+                <Square size={11} />
               ) : activeMode === 'VERIFY' ? (
                 <Shield size={11} className="group-hover:animate-pulse" />
               ) : (
                 <Zap size={11} className="group-hover:animate-pulse" />
               )}
-              {!dataReady
+              {!dataReady && !isAnalyzing
                 ? 'AWAITING DATA…'
                 : isAnalyzing
-                  ? 'ANALYZING...'
+                  ? 'STOP ANALYSIS'
                   : activeMode === 'VERIFY'
                     ? 'VERIFY MY SETUP'
                     : 'FIND QUANT TRADE'}

@@ -190,6 +190,13 @@ async fn analyze_sentiment_via_llm(symbol: &str, news: &str, headlines: Vec<Stri
         news = news,
     );
 
+    // Force a non-streaming response. Some OpenAI-compatible gateways (e.g.
+    // omniroute) default to SSE streaming, which returns `data: {...}` chunks
+    // instead of a single JSON envelope — breaking the parse below. Pinning
+    // stream=false yields the plain `chat.completion` object we expect.
+    let mut extra = resolve_effort_params();
+    extra.insert("stream".to_string(), serde_json::Value::Bool(false));
+
     let request_body = ChatRequest {
         model: model.clone(),
         messages: vec![
@@ -210,7 +217,7 @@ async fn analyze_sentiment_via_llm(symbol: &str, news: &str, headlines: Vec<Stri
         max_tokens: 512,
         response_format: None,
         tools: None,
-        extra: resolve_effort_params(),
+        extra,
     };
 
     let timeout_secs: u64 = std::env::var("LLM_TIMEOUT_SECS")
@@ -227,6 +234,14 @@ async fn analyze_sentiment_via_llm(symbol: &str, news: &str, headlines: Vec<Stri
         .post(&api_url)
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
+        // Some gateways sit behind Cloudflare bot protection, which rejects the
+        // default reqwest User-Agent with "error code: 1010". Present a common
+        // browser UA so the request is allowed through.
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+             (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        )
         .json(&request_body)
         .send()
         .await
@@ -236,7 +251,16 @@ async fn analyze_sentiment_via_llm(symbol: &str, news: &str, headlines: Vec<Stri
     let body = response.text().await.unwrap_or_default();
 
     if !status.is_success() {
-        return Err(format!("Sentiment LLM returned HTTP {}", status));
+        // Log the provider's response body — a 401/403 almost always carries a
+        // JSON error explaining the real cause (bad/expired key, wrong model,
+        // quota exceeded, IP-blocked). Without this the operator only sees the
+        // bare status code and cannot tell why the key was rejected.
+        let snippet = &body[..body.len().min(500)];
+        warn!(
+            "[sentiment] LLM endpoint={} model={} rejected request: HTTP {} — body: {}",
+            api_url, model, status, snippet
+        );
+        return Err(format!("Sentiment LLM returned HTTP {} — {}", status, snippet));
     }
 
     // Parse OpenAI-compatible envelope
