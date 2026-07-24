@@ -9,10 +9,15 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # Stage 1: Builder
 # ──────────────────────────────────────────────────────────────────────────────
-FROM rust:1.80-slim-bookworm AS builder
+FROM rust:1-slim-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
+    build-essential \
+    libcurl4-openssl-dev \
+    libsasl2-dev \
+    zlib1g-dev \
+    libzstd-dev \
     pkg-config \
     libssl-dev \
     clang \
@@ -45,6 +50,9 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \
+    libcurl4 \
+    libsasl2-2 \
+    libzstd1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/quant-rag /usr/local/bin/quant-rag

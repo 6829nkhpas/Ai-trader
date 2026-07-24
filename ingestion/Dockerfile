@@ -9,7 +9,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # Stage 1: Builder
 # ──────────────────────────────────────────────────────────────────────────────
-FROM rust:1.78-slim-bookworm AS builder
+FROM rust:1-slim-bookworm AS builder
 
 # Install system dependencies required by rdkafka (cmake-build feature):
 #   cmake          — builds librdkafka from source
@@ -19,6 +19,11 @@ FROM rust:1.78-slim-bookworm AS builder
 #   curl           — used only for Cargo vendor check (removed post-build)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
+    build-essential \
+    libcurl4-openssl-dev \
+    libsasl2-dev \
+    zlib1g-dev \
+    libzstd-dev \
     pkg-config \
     libssl-dev \
     clang \
@@ -34,8 +39,11 @@ WORKDIR /app
 COPY ingestion/Cargo.toml ingestion/Cargo.lock ingestion/build.rs ./
 COPY shared_protos/ ./shared_protos/
 
-# Create a minimal fake main so cargo build --release has something to compile
-RUN mkdir src && echo 'fn main() {}' > src/main.rs
+# Create a minimal fake main so cargo build --release has something to compile.
+# Also rewrite the proto path: build.rs uses ../shared_protos, but in this build
+# context shared_protos is copied to ./shared_protos.
+RUN mkdir src && echo 'fn main() {}' > src/main.rs \
+    && sed -i 's|\.\./shared_protos|./shared_protos|g' build.rs
 
 # Compile all dependencies (this layer is cached as long as Cargo.toml is unchanged)
 RUN cargo build --release --features kafka 2>&1
@@ -58,6 +66,9 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \
+    libcurl4 \
+    libsasl2-2 \
+    libzstd1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the compiled binary from the builder stage

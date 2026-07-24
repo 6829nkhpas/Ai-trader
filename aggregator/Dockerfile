@@ -9,10 +9,15 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # Stage 1: Builder
 # ──────────────────────────────────────────────────────────────────────────────
-FROM rust:1.80-slim-bookworm AS builder
+FROM rust:1-slim-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
+    build-essential \
+    libcurl4-openssl-dev \
+    libsasl2-dev \
+    zlib1g-dev \
+    libzstd-dev \
     pkg-config \
     libssl-dev \
     clang \
@@ -26,7 +31,7 @@ COPY aggregator/Cargo.toml aggregator/Cargo.lock* aggregator/build.rs ./
 COPY shared_protos/ ./shared_protos/
 
 RUN mkdir -p src && echo 'fn main() {}' > src/main.rs \
-    && sed -i 's|../../shared_protos|./shared_protos|g' build.rs
+    && sed -i 's|\.\./shared_protos|./shared_protos|g' build.rs
 
 RUN cargo build --release --features kafka 2>&1 || true
 RUN rm -rf src target/release/aggregator target/release/deps/aggregator*
@@ -44,6 +49,9 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \
+    libcurl4 \
+    libsasl2-2 \
+    libzstd1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/aggregator /usr/local/bin/aggregator

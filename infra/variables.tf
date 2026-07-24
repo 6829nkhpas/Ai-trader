@@ -13,7 +13,7 @@ variable "do_token" {
 variable "ssh_public_key_path" {
   description = "Path to the SSH public key (OpenSSH format) uploaded to DigitalOcean and injected into the droplet."
   type        = string
-  default     = "../../keys/thestratai_ssh.pub"
+  default     = "../keys/stratai_deploy.pub"
 }
 
 variable "ssh_key_name" {
