@@ -111,3 +111,5 @@ tools/cmake-3.30.0/
 
 # server Key 
 keys
+
+.kiro/
