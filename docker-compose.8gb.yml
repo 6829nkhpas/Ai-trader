@@ -1,0 +1,51 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# 8 GB memory-tuned OVERRIDE for docker-compose.prod.yml
+# ──────────────────────────────────────────────────────────────────────────────
+# The base prod file's mem_limits sum to ~9.5 GB, which overflows a 4vCPU/8GB
+# droplet. This override trims each service so the stack fits within ~6.3 GB,
+# leaving ~1.7 GB for the OS + Docker daemon.
+#
+# Usage on the droplet:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.8gb.yml up -d --build
+#
+# NOTES:
+#   - Do NOT enable the `platform` profile (auth/payment) on 8 GB — no headroom.
+#   - QuestDB at 2.5 GB is fine for a light beta but can pressure under heavy
+#     history backfills. If you see QuestDB OOM-restart, move to s-8vcpu-16gb.
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  redpanda:
+    mem_limit: 1200m
+
+  questdb:
+    mem_limit: 2560m
+    environment:
+      QDB_SHARED_WORKER_COUNT: "2"
+
+  postgres:
+    mem_limit: 384m
+
+  redis:
+    mem_limit: 200m
+
+  ingestion:
+    mem_limit: 320m
+
+  alpha-terminal:
+    mem_limit: 200m
+
+  technical:
+    mem_limit: 200m
+
+  aggregator:
+    mem_limit: 220m
+
+  predictive:
+    mem_limit: 200m
+
+  quant-rag:
+    mem_limit: 300m
+
+  sentiment:
+    mem_limit: 320m
