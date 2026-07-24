@@ -3,8 +3,14 @@ import path from "node:path";
 
 const isTestMode = process.env.ALPHA_TEST_MODE === '1' || process.env.ALPHA_TEST_MODE === 'true';
 
+// Static export is required for the Tauri desktop production bundle (frontendDist
+// points at ../out). It is toggled on ONLY when NEXT_OUTPUT_EXPORT=1 so that dev
+// mode (next dev + rewrites) and the hosted web build are completely unaffected.
+const staticExport = process.env.NEXT_OUTPUT_EXPORT === '1' || process.env.NEXT_OUTPUT_EXPORT === 'true';
+
 const nextConfig: NextConfig = {
-  // output: 'export', // Disabled because we use Next.js rewrites for the API in dev mode
+  // Emit a fully static site into ../out for the Tauri bundle when exporting.
+  ...(staticExport ? { output: 'export' as const } : {}),
   trailingSlash: true,
   images: { unoptimized: true },
 
@@ -16,6 +22,12 @@ const nextConfig: NextConfig = {
   },
 
   async rewrites() {
+    // Static export has no Node server, so rewrites are unsupported (and
+    // unnecessary — the native Tauri Rust core proxies QuestDB/Kite over IPC).
+    if (staticExport) {
+      return [];
+    }
+
     // In test mode: route /kite/* → local Next.js mock API routes so that
     // useHistoricalData can fetch synthetic candles for any symbol without
     // needing the real aggregator running. /questdb/* returns 503 (no mock).
