@@ -54,7 +54,8 @@ services:
     mem_limit: 1536m
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "rpk cluster health | grep -q 'HEALTHY'"]
+      # `rpk cluster health` prints "Healthy: true" (mixed case) — match case-insensitively.
+      test: ["CMD-SHELL", "rpk cluster health | grep -i healthy | grep -qi true"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -80,7 +81,8 @@ services:
     mem_limit: 4096m
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9000/status || exit 1"]
+      # QuestDB has no /status route (returns 404); probe a trivial query on /exec.
+      test: ["CMD-SHELL", "curl -sf 'http://localhost:9000/exec?query=SELECT%201' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
