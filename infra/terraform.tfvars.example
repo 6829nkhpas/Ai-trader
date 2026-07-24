@@ -1,0 +1,24 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+# In CI these are provided as TF_VAR_* environment variables from repo secrets.
+
+tenancy_ocid     = "ocid1.tenancy.oc1..xxxxxxxx"
+user_ocid        = "ocid1.user.oc1..xxxxxxxx"
+fingerprint      = "aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99"
+private_key_path = "../keys/thestratai.pem"
+region           = "ap-mumbai-1"
+
+# Leave empty to use the tenancy (root) compartment.
+compartment_ocid = ""
+
+# SSH public key injected into the instance.
+ssh_public_key_path = "../keys/thestratai-public.pem"
+
+# Optional hardening: restrict who can reach SSH / app ports.
+# ssh_ingress_cidr = "203.0.113.10/32"
+# app_ingress_cidr = "0.0.0.0/0"
+
+# Always-Free sizing (defaults already max out the free A1 budget).
+# instance_ocpus            = 4
+# instance_memory_gbs       = 24
+# boot_volume_gbs           = 100
+# availability_domain_index = 0   # bump to 1/2 if A1 capacity is exhausted

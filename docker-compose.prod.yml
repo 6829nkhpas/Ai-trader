@@ -1,0 +1,335 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Strat Ai — PRODUCTION Compose (Oracle Cloud ARM / Ampere A1, 24GB, ~10-user beta)
+# ──────────────────────────────────────────────────────────────────────────────
+# This is the deployment topology for the SHARED BACKEND DATA PLANE. Beta users
+# run the packaged Tauri desktop app locally, pointed at this host's public IP
+# (Topology A). The reasoning plane (deep-quant Python agent + Rust tool server)
+# runs client-side inside the desktop app and is intentionally NOT hosted here.
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d --build           # core data plane
+#   docker compose -f docker-compose.prod.yml --profile platform up -d --build  # + auth/payment
+#   docker compose -f docker-compose.prod.yml logs -f ingestion
+#   docker compose -f docker-compose.prod.yml down
+#
+# Prerequisites:
+#   - Docker Engine 24+ with the compose v2 plugin
+#   - A .env file at repo root (see .env.example + DEPLOYMENT.md checklist)
+#
+# Resource budget (mem_limit sum ≈ 9.5 GB of the 24 GB box — generous headroom):
+#   redpanda 1.5G · questdb 4G · postgres 512M · redis 256M · app services 256–384M each
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: stratai
+
+networks:
+  stratai:
+    driver: bridge
+
+volumes:
+  questdb_data:
+  postgres_data:
+  redis_data:
+
+services:
+
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+
+  redpanda:
+    image: redpandadata/redpanda:latest
+    container_name: stratai-redpanda
+    command:
+      - redpanda start
+      - --smp 1
+      - --memory 1G
+      - --reserve-memory 0M
+      - --overprovisioned
+      - --node-id 0
+      - --kafka-addr PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:19092
+      - --advertise-kafka-addr PLAINTEXT://redpanda:29092,OUTSIDE://localhost:19092
+      - --set auto_create_topics_enabled=true
+    networks: [stratai]
+    ports:
+      - "127.0.0.1:19092:19092"   # external Kafka API — localhost only (SSH tunnel for debug)
+    mem_limit: 1536m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'HEALTHY'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  questdb:
+    image: questdb/questdb:latest
+    container_name: stratai-questdb
+    environment:
+      # Trim worker threads to fit the 4-OCPU box and leave cores for app services.
+      QDB_SHARED_WORKER_COUNT: "2"
+      QDB_PG_USER: "admin"
+      QDB_PG_PASSWORD: "quest"
+    networks: [stratai]
+    ports:
+      # Datastore ports are localhost-only — reach the web console via SSH tunnel.
+      # App services talk to QuestDB over the internal 'stratai' network, not these.
+      - "127.0.0.1:9000:9000"     # web console / HTTP query
+      - "127.0.0.1:8812:8812"     # PostgreSQL wire protocol
+      - "127.0.0.1:9009:9009"     # InfluxDB line protocol
+    volumes:
+      - questdb_data:/var/lib/questdb
+    mem_limit: 4096m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/status || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: stratai-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-alpha}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-alpha_dev_pw}
+      POSTGRES_DB: ${POSTGRES_DB:-alpha}
+    networks: [stratai]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    mem_limit: 512m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-alpha}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: stratai-redis
+    command: ["redis-server", "--save", "60", "1", "--maxmemory", "200mb", "--maxmemory-policy", "allkeys-lru"]
+    networks: [stratai]
+    volumes:
+      - redis_data:/data
+    mem_limit: 256m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Kafka topic pre-creation (runs once, then exits) ─────────────────────────
+  kafka-init:
+    image: redpandadata/redpanda:latest
+    container_name: stratai-kafka-init
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    networks: [stratai]
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        for t in market.ticks market.ohlc.10m technical_signals sentiment_signals \
+                 signals.predictive signals.insights trade_decisions aggregated_decisions; do
+          rpk topic create "$$t" --brokers redpanda:29092 --partitions 3 || true
+        done
+        echo "Topics ready:"; rpk topic list --brokers redpanda:29092
+    restart: "no"
+
+  # ── Data-plane services ──────────────────────────────────────────────────────
+
+  ingestion:
+    build:
+      context: .
+      dockerfile: ingestion/Dockerfile
+    container_name: stratai-ingestion
+    env_file: .env
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+      KAFKA_BROKER_URL: redpanda:29092
+      QUESTDB_POSTGRES_URL: postgresql://admin:quest@questdb:8812/qdb
+      QUESTDB_ILP_ADDR: questdb:9009
+      INGESTION_CONTROL_PORT: "8085"
+      KITE_API_PORT: "8087"
+      RUST_LOG: info
+    networks: [stratai]
+    ports:
+      - "8085:8085"     # TCP control (desktop clients send subscription diffs)
+      - "8087:8087"     # Kite OAuth token exchange
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      questdb:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    mem_limit: 384m
+    restart: unless-stopped
+
+  alpha-terminal:
+    build:
+      context: .
+      dockerfile: alpha-terminal/Dockerfile
+    container_name: stratai-alpha-terminal
+    env_file: .env
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+      OHLC_WEBSOCKET_PORT: "8081"
+      RUST_LOG: info
+    networks: [stratai]
+    ports:
+      - "8081:8081"     # OHLC candle WebSocket (desktop clients)
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    mem_limit: 256m
+    restart: unless-stopped
+
+  technical:
+    build:
+      context: .
+      dockerfile: agents/technical/Dockerfile
+    container_name: stratai-technical
+    env_file: .env
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+      RUST_LOG: info
+    networks: [stratai]
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    mem_limit: 256m
+    restart: unless-stopped
+
+  aggregator:
+    build:
+      context: .
+      dockerfile: aggregator/Dockerfile
+    container_name: stratai-aggregator
+    env_file: .env
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+      WEBSOCKET_PORT: "8080"
+      RUST_LOG: info
+    networks: [stratai]
+    ports:
+      - "8080:8080"     # AggregatedDecision WebSocket (desktop clients)
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    mem_limit: 256m
+    restart: unless-stopped
+
+  predictive:
+    build:
+      context: .
+      dockerfile: agents/predictive/Dockerfile
+    container_name: stratai-predictive
+    env_file: .env
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+      RUST_LOG: info
+    networks: [stratai]
+    ports:
+      - "8082:8082"     # PredictiveSignal WebSocket (Ghost Line)
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    mem_limit: 256m
+    restart: unless-stopped
+
+  quant-rag:
+    build:
+      context: .
+      dockerfile: agents/quant-rag/Dockerfile
+    container_name: stratai-quant-rag
+    env_file: .env
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+      RUST_LOG: info
+    networks: [stratai]
+    ports:
+      - "8083:8083"     # MarketInsight WebSocket
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    mem_limit: 384m
+    restart: unless-stopped
+
+  sentiment:
+    build:
+      context: .
+      dockerfile: agents/sentiment/Dockerfile
+    container_name: stratai-sentiment
+    env_file: .env
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+    networks: [stratai]
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    mem_limit: 384m
+    restart: unless-stopped
+
+  # ── Platform services (opt-in: --profile platform) ───────────────────────────
+  # Not required for a closed beta that skips login/billing. Enable when you need
+  # user auth / payments. Both use Prisma against the shared postgres.
+
+  auth-service:
+    build:
+      context: ./alpha-backend
+      dockerfile: services/auth-service/Dockerfile
+    container_name: stratai-auth
+    profiles: ["platform"]
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-alpha}:${POSTGRES_PASSWORD:-alpha_dev_pw}@postgres:5432/${POSTGRES_DB:-alpha}
+      REDIS_URL: redis://redis:6379
+    networks: [stratai]
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    mem_limit: 384m
+    restart: unless-stopped
+
+  payment-service:
+    build:
+      context: ./alpha-backend
+      dockerfile: services/payment-service/Dockerfile
+    container_name: stratai-payment
+    profiles: ["platform"]
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3002"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-alpha}:${POSTGRES_PASSWORD:-alpha_dev_pw}@postgres:5432/${POSTGRES_DB:-alpha}
+    networks: [stratai]
+    ports:
+      - "3002:3002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 512m
+    restart: unless-stopped

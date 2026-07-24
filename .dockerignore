@@ -1,0 +1,61 @@
+# Keep secrets, VCS, and heavy build junk out of ALL Docker build contexts.
+# Services inject config at runtime via env_file/environment — never bake it in.
+
+# ── Secrets & environment ──
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+bedrock-api-key.txt
+
+# ── VCS & tooling ──
+.git
+.gitignore
+.github
+.vscode
+.idea
+.kiro
+.claude
+.agent
+.code-review-graph
+
+# ── Rust build output (rebuilt inside the image) ──
+target/
+**/target/
+**/*.rs.bk
+
+# ── Node build output & deps (reinstalled inside the image) ──
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+out/
+dist/
+**/dist/
+.turbo/
+
+# ── Python caches ──
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.venv/
+**/.venv/
+venv/
+
+# ── Local databases & logs ──
+*.sqlite
+*.sqlite3
+*.db
+telemetry.db
+trade_journal.db
+logs/
+*.log
+tmp/
+temp/
+
+# ── OS / misc ──
+.DS_Store
+Thumbs.db
+docker-compose.override.yml
