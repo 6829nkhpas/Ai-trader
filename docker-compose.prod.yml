@@ -171,7 +171,9 @@ services:
     environment:
       KAFKA_BROKERS: redpanda:29092
       KAFKA_BROKER_URL: redpanda:29092
-      QUESTDB_POSTGRES_URL: postgresql://admin:quest@questdb:8812/qdb
+      # Aligned with QuestDB's native PG-wire password (QDB_PG_PASSWORD). ILP (9009)
+      # is unauthenticated in QuestDB OSS, so ingestion writes are unaffected.
+      QUESTDB_POSTGRES_URL: postgresql://${QUESTDB_USER:-admin}:${QUESTDB_PASSWORD}@questdb:8812/qdb
       QUESTDB_ILP_ADDR: questdb:9009
       INGESTION_CONTROL_PORT: "8085"
       KITE_API_PORT: "8087"
