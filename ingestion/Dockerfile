@@ -36,7 +36,7 @@ WORKDIR /app
 # Copy manifests and build script first. By building a "hollow" binary before
 # copying the real source, we cache the (slow) dependency compilation layer.
 # Subsequent rebuilds that only change src/ skip this expensive step entirely.
-COPY ingestion/Cargo.toml ingestion/Cargo.lock ingestion/build.rs ./
+COPY ingestion/Cargo.toml ingestion/Cargo.lock* ingestion/build.rs ./
 COPY shared_protos/ ./shared_protos/
 
 # Create a minimal fake main so cargo build --release has something to compile.
