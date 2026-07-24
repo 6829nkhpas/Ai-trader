@@ -6,6 +6,7 @@ pub mod db;
 pub mod quant;
 pub mod services;
 pub mod execution;
+pub mod server;
 
 use commands::security::SecureKeyStore;
 
@@ -284,7 +285,7 @@ pub fn run() {
 
       // ── QuestDB Connection Pool (PG wire :8812) ─────────────────────
       let questdb_url = std::env::var("QUESTDB_POSTGRES_URL")
-          .unwrap_or_else(|_| "postgresql://admin:quest@localhost:8812/qdb".into());
+          .unwrap_or_else(|_| format!("postgresql://admin:quest@{}:8812/qdb", crate::server::host()));
 
       let app_handle_db = app.handle().clone();
       tauri::async_runtime::spawn(async move {

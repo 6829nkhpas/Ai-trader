@@ -117,7 +117,7 @@ async fn send_subscribe_to_ingestion(symbol: &str, token: u32) {
         .unwrap_or_else(|_| "8085".to_string());
 
     use tokio::io::AsyncWriteExt;
-    let addr = format!("127.0.0.1:{}", control_port);
+    let addr = format!("{}:{}", crate::server::host(), control_port);
     match tokio::net::TcpStream::connect(&addr).await {
         Ok(mut stream) => {
             let cmd = format!("subscribe:{}:{}\n", token, symbol);
@@ -150,7 +150,8 @@ async fn notify_ingestion_subscribe(symbol: &str) {
 
     // ── Step 1: Token lookup ─────────────────────────────────────────────────
     let url = format!(
-        "http://127.0.0.1:{}/api/kite/instruments?q={}&exchange=NSE",
+        "http://{}:{}/api/kite/instruments?q={}&exchange=NSE",
+        crate::server::host(),
         kite_port,
         urlencoding::encode(symbol)
     );
@@ -197,7 +198,7 @@ async fn notify_ingestion_subscribe(symbol: &str) {
 
     // ── Step 2: Notify ingestion control server ───────────────────────────────
     use tokio::io::AsyncWriteExt;
-    let addr = format!("127.0.0.1:{}", control_port);
+    let addr = format!("{}:{}", crate::server::host(), control_port);
     match tokio::net::TcpStream::connect(&addr).await {
         Ok(mut stream) => {
             let cmd = format!("subscribe:{}:{}\n", token, symbol);

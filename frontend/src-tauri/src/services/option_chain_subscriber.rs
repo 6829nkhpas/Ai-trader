@@ -207,12 +207,13 @@ fn build_chain_set_payload(selection: &ChainSelection, interval_secs: u64) -> se
 pub async fn push_chain_set(selection: &ChainSelection, interval_secs: u64) -> Result<(), String> {
     let control_port =
         std::env::var("INGESTION_CONTROL_PORT").unwrap_or_else(|_| "8085".to_string());
+    let server_host = crate::server::host();
 
     let payload = build_chain_set_payload(selection, interval_secs);
 
     let cmd = format!("option_chain_set:{}\n", payload);
 
-    let addr = format!("127.0.0.1:{}", control_port);
+    let addr = format!("{}:{}", server_host, control_port);
     let mut stream = tokio::net::TcpStream::connect(&addr)
         .await
         .map_err(|e| {

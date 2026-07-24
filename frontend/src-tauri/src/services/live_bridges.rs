@@ -65,7 +65,7 @@ pub fn ensure_bootstrapped(app: &AppHandle) {
 /// restarts without requiring a full app restart.
 fn spawn_bridge(app: AppHandle, port: u16, event_name: &'static str) {
     tauri::async_runtime::spawn(async move {
-        let url = format!("ws://127.0.0.1:{}", port);
+        let url = crate::server::ws_url(port);
         let mut backoff_secs = 1u64;
         const MAX_BACKOFF_SECS: u64 = 30;
 

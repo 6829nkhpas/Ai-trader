@@ -522,7 +522,7 @@ pub async fn get_pool_status(app: AppHandle) -> bool {
 #[tauri::command]
 pub async fn fetch_questdb(query: String) -> Result<String, String> {
     let questdb_url = std::env::var("QUESTDB_HTTP_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9000".to_string());
+        .unwrap_or_else(|_| format!("http://{}:9000", crate::server::host()));
 
     let url = format!("{}/exec", questdb_url);
 
