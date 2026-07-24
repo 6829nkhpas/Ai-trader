@@ -5,7 +5,8 @@
 # ----- Rust -----
 target/
 **/*.rs.bk
-Cargo.lock
+# Cargo.lock is committed for these binary/service crates so Docker builds use
+# the exact tested dependency versions (prevents fresh-resolution breakage).
 *.pdb
 .kiro
 static
