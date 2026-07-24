@@ -1,0 +1,14 @@
+# Keep the deep-quant image lean: exclude the large test suite, local venvs,
+# caches, and any local telemetry DB from the build context.
+tests/
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.hypothesis/
+telemetry.db
+*.db
+.env
+README.md

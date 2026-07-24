@@ -49,3 +49,10 @@ services:
 
   sentiment:
     mem_limit: 320m
+
+  # AI analysis service. Mostly I/O-bound (LLM + tool-server round-trips), but
+  # langgraph/langchain carry a sizeable resident footprint. This brings the
+  # 8 GB box to ~6.75 GB committed; once the Rust tool-server is added too the
+  # box is near capacity — plan to move to s-8vcpu-16gb for comfortable headroom.
+  deep-quant:
+    mem_limit: 512m

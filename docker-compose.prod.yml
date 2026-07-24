@@ -313,6 +313,34 @@ services:
     mem_limit: 384m
     restart: unless-stopped
 
+  # ── Deep Quant AI service (LangGraph glass-box, :8086) ───────────────────────
+  # The desktop thin client drives AI analysis by POSTing /run, /qa, /resume to
+  # this service. It calls the Rust tool-server (:8084) for market-data tools and
+  # QuestDB HTTP (:9000, internal — no Caddy auth on the private network) for the
+  # options read layer, both over the 'stratai' network.
+  #
+  # NOTE: port 8086 is intentionally NOT published to the host yet. The desktop
+  # reaches it via an authenticated Caddy gateway (added once the tool-server is
+  # hosted and the end-to-end path is verified), mirroring the QuestDB gateway.
+  deep-quant:
+    build:
+      context: ./agents/deep-quant-loop
+      dockerfile: Dockerfile
+    container_name: stratai-deep-quant
+    env_file: .env
+    environment:
+      DEEP_QUANT_HOST: "0.0.0.0"
+      DEEP_QUANT_PORT: "8086"
+      # Internal service wiring (stratai network hostnames).
+      RUST_TOOL_SERVER_URL: "http://tool-server:8084"
+      QUESTDB_HTTP_URL: "http://questdb:9000"
+    networks: [stratai]
+    depends_on:
+      questdb:
+        condition: service_healthy
+    mem_limit: 512m
+    restart: unless-stopped
+
   # ── Platform services (opt-in: --profile platform) ───────────────────────────
   # Not required for a closed beta that skips login/billing. Enable when you need
   # user auth / payments. Both use Prisma against the shared postgres.
