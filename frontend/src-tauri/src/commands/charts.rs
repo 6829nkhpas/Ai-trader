@@ -521,18 +521,18 @@ pub async fn get_pool_status(app: AppHandle) -> bool {
 /// Raw JSON string from QuestDB (the `{ dataset: [...] }` response).
 #[tauri::command]
 pub async fn fetch_questdb(query: String) -> Result<String, String> {
-    let questdb_url = std::env::var("QUESTDB_HTTP_URL")
-        .unwrap_or_else(|_| format!("http://{}:9000", crate::server::host()));
-
-    let url = format!("{}/exec", questdb_url);
+    let url = format!("{}/exec", crate::server::questdb_http_url());
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| format!("HTTP client error: {}", e))?;
 
+    // Basic auth for the Caddy gateway fronting QuestDB. An unconfigured local
+    // QuestDB ignores the Authorization header, so dev is unaffected.
     let response = client
         .get(&url)
+        .basic_auth(crate::server::questdb_user(), Some(crate::server::questdb_password()))
         .query(&[("query", &query), ("fmt", &"json".to_string())])
         .send()
         .await

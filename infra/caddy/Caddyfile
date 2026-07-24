@@ -1,0 +1,26 @@
+# Caddy gateway for QuestDB HTTP (/exec, web console) — basic-auth protected.
+#
+# Fronts the internal `questdb:9000` (not published to the host) and requires
+# HTTP Basic auth. Credentials are injected from the environment:
+#   QUESTDB_USER          — the basic-auth username (matches QuestDB PG user)
+#   QUESTDB_PASSWORD_HASH — bcrypt hash of the password
+#                           (generate: `docker run --rm caddy:2-alpine \
+#                            caddy hash-password --plaintext '<password>'`)
+#
+# NOTE: This listens on plain HTTP (the droplet has no domain, only an IP, so
+# Caddy's automatic HTTPS cannot issue a public cert). Basic-auth credentials
+# therefore travel base64-encoded, not encrypted. For production, point a
+# domain at the droplet and switch this to `https://questdb.example.com` so
+# Caddy provisions a real certificate automatically.
+
+{
+	admin off
+	auto_https off
+}
+
+:9000 {
+	basic_auth {
+		{$QUESTDB_USER} {$QUESTDB_PASSWORD_HASH}
+	}
+	reverse_proxy questdb:9000
+}

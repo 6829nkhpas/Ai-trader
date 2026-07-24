@@ -284,8 +284,7 @@ pub fn run() {
       });
 
       // ── QuestDB Connection Pool (PG wire :8812) ─────────────────────
-      let questdb_url = std::env::var("QUESTDB_POSTGRES_URL")
-          .unwrap_or_else(|_| format!("postgresql://admin:quest@{}:8812/qdb", crate::server::host()));
+      let questdb_url = crate::server::questdb_pg_url();
 
       let app_handle_db = app.handle().clone();
       tauri::async_runtime::spawn(async move {
@@ -295,7 +294,7 @@ pub fn run() {
               .await
           {
               Ok(pool) => {
-                  info!("QuestDB PG pool connected → {}", questdb_url);
+                  info!("QuestDB PG pool connected → {}:8812/qdb", crate::server::host());
 
                   // Run historical_candles migration
                   services::history_loader::run_migration(&pool).await;

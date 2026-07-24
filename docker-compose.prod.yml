@@ -65,15 +65,16 @@ services:
     environment:
       # Trim worker threads to fit the 4-OCPU box and leave cores for app services.
       QDB_SHARED_WORKER_COUNT: "2"
-      QDB_PG_USER: "admin"
-      QDB_PG_PASSWORD: "quest"
+      # PostgreSQL-wire auth. Password comes from the server .env (never committed).
+      QDB_PG_USER: "${QUESTDB_USER:-admin}"
+      QDB_PG_PASSWORD: "${QUESTDB_PASSWORD:?QUESTDB_PASSWORD must be set in .env}"
     networks: [stratai]
     ports:
-      # Datastore ports are localhost-only — reach the web console via SSH tunnel.
-      # App services talk to QuestDB over the internal 'stratai' network, not these.
-      - "127.0.0.1:9000:9000"     # web console / HTTP query
-      - "127.0.0.1:8812:8812"     # PostgreSQL wire protocol
-      - "127.0.0.1:9009:9009"     # InfluxDB line protocol
+      # HTTP 9000 is NOT published here — the Caddy gateway (below) fronts it with
+      # basic auth and proxies over the internal 'stratai' network to questdb:9000.
+      # PG wire is exposed publicly but protected by QuestDB's native user/password.
+      - "0.0.0.0:8812:8812"       # PostgreSQL wire protocol (auth: QDB_PG_USER/PASSWORD)
+      - "127.0.0.1:9009:9009"     # InfluxDB line protocol — localhost only
     volumes:
       - questdb_data:/var/lib/questdb
     mem_limit: 4096m
@@ -83,6 +84,27 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  # ── QuestDB HTTP Gateway (Caddy basic-auth reverse proxy) ─────────────────
+  # Public :9000 → basic auth → internal questdb:9000. The desktop thin client
+  # sends Authorization: Basic <user:pass> on every /exec request (see
+  # server::questdb_user/questdb_password baked into release builds).
+  questdb-gateway:
+    image: caddy:2-alpine
+    container_name: stratai-questdb-gateway
+    depends_on:
+      - questdb
+    environment:
+      QUESTDB_USER: "${QUESTDB_USER:-admin}"
+      # bcrypt hash of QUESTDB_PASSWORD (generate with: caddy hash-password).
+      QUESTDB_PASSWORD_HASH: "${QUESTDB_PASSWORD_HASH:?QUESTDB_PASSWORD_HASH must be set in .env}"
+    networks: [stratai]
+    ports:
+      - "0.0.0.0:9000:9000"       # public HTTP query endpoint (basic auth)
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+    mem_limit: 128m
+    restart: unless-stopped
 
   postgres:
     image: postgres:16-alpine

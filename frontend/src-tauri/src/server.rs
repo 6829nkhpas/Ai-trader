@@ -18,18 +18,84 @@
 // take precedence where present; their DEFAULTS are built from host() so setting
 // STRATAI_SERVER_HOST alone is sufficient for a standard deployment.
 
-/// Resolve the backend server host (no scheme, no port).
-pub fn host() -> String {
-    if let Ok(h) = std::env::var("STRATAI_SERVER_HOST") {
-        let h = h.trim();
-        if !h.is_empty() {
-            return h.to_string();
+/// Resolve a value with priority: runtime env → compile-time env → default.
+///
+/// `compile` should be the result of `option_env!("KEY")` at the call site
+/// (the macro must expand inside this crate to bake the release value).
+fn resolve(runtime: Result<String, std::env::VarError>, compile: Option<&str>, default: &str) -> String {
+    if let Ok(v) = runtime {
+        let v = v.trim();
+        if !v.is_empty() {
+            return v.to_string();
         }
     }
-    match option_env!("STRATAI_SERVER_HOST") {
-        Some(h) if !h.is_empty() => h.to_string(),
-        _ => "127.0.0.1".to_string(),
+    match compile {
+        Some(v) if !v.is_empty() => v.to_string(),
+        _ => default.to_string(),
     }
+}
+
+/// Resolve the backend server host (no scheme, no port).
+pub fn host() -> String {
+    resolve(
+        std::env::var("STRATAI_SERVER_HOST"),
+        option_env!("STRATAI_SERVER_HOST"),
+        "127.0.0.1",
+    )
+}
+
+/// QuestDB auth username — a single shared beta credential used for BOTH the
+/// authenticated HTTP `/exec` endpoint (via the Caddy basic-auth gateway) and
+/// the PostgreSQL wire protocol. Baked into release builds by the pipeline.
+pub fn questdb_user() -> String {
+    resolve(
+        std::env::var("QUESTDB_USER"),
+        option_env!("QUESTDB_USER"),
+        "admin",
+    )
+}
+
+/// QuestDB auth password (see `questdb_user`). Local-dev default matches an
+/// unconfigured QuestDB (`quest`), so basic-auth is simply ignored locally.
+pub fn questdb_password() -> String {
+    resolve(
+        std::env::var("QUESTDB_PASSWORD"),
+        option_env!("QUESTDB_PASSWORD"),
+        "quest",
+    )
+}
+
+/// Full PostgreSQL-wire connection URL for QuestDB (`:8812`).
+///
+/// An explicit `QUESTDB_POSTGRES_URL` override wins; otherwise the URL is
+/// built from `questdb_user()`, `questdb_password()` and `host()`.
+pub fn questdb_pg_url() -> String {
+    if let Ok(u) = std::env::var("QUESTDB_POSTGRES_URL") {
+        let u = u.trim();
+        if !u.is_empty() {
+            return u.to_string();
+        }
+    }
+    format!(
+        "postgresql://{}:{}@{}:8812/qdb",
+        questdb_user(),
+        questdb_password(),
+        host()
+    )
+}
+
+/// Base HTTP URL for QuestDB (`http://<host>:9000`, no path).
+///
+/// Behind the Caddy gateway this endpoint requires basic auth; callers should
+/// attach `questdb_user()` / `questdb_password()` as credentials.
+pub fn questdb_http_url() -> String {
+    if let Ok(u) = std::env::var("QUESTDB_HTTP_URL") {
+        let u = u.trim();
+        if !u.is_empty() {
+            return u.to_string();
+        }
+    }
+    format!("http://{}:9000", host())
 }
 
 /// `ws://<host>:<port>`
