@@ -17,8 +17,8 @@ pub async fn publish_candle(producer: &FutureProducer, topic: &str, candle: &Ohl
     candle.encode(&mut encoded).expect("Failed to encode OhlcCandle");
 
     let record: FutureRecord<'_, str, [u8]> = FutureRecord::to(topic)
-        .payload(&encoded)
-        .key(&candle.symbol);
+        .payload(encoded.as_slice())
+        .key(candle.symbol.as_str());
 
     match producer.send(record, rdkafka::util::Timeout::Never).await {
         Ok((partition, offset)) => {
