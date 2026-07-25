@@ -161,11 +161,16 @@ export interface ModelProviderGroup { provider: string; models: ModelOption[]; }
 // "gemini-2.5-pro" / "deepseek-chat", while a unified gateway like OpenRouter
 // expects a "vendor/model" form (e.g. "anthropic/claude-3.5-sonnet"). These are
 // the native ids; adjust the prefixes to match your deployment's gateway.
-// Model ids are OpenRouter canonical ids (provider/model). The deep-quant
-// service resolves the user's OpenRouter key and calls these against
-// https://openrouter.ai/api/v1. All listed models support tool calling (the
-// glass-box agent requires it). Empty id = the deployment's default model.
-export const MODEL_PROVIDERS: ModelProviderGroup[] = [
+// The LLM gateway differs by deployment:
+//   • beta       → omniroute (our shared key/model/URL) — omniroute model ids
+//   • production → OpenRouter (per-user keys)            — provider/model ids
+// The active list is selected by NEXT_PUBLIC_LLM_GATEWAY at build time and must
+// match the server's OPENROUTER_BASE_URL / LLM_MODEL for that deployment. All
+// listed models support tool calling (the glass-box agent requires it).
+// Empty id = the deployment's default model (server LLM_MODEL).
+
+// ── OpenRouter (production) — canonical provider/model ids ───────────────────
+const MODEL_PROVIDERS_OPENROUTER: ModelProviderGroup[] = [
   { provider: 'Default', models: [
     { id: '', label: 'Deployment Default' },
   ]},
@@ -202,6 +207,48 @@ export const MODEL_PROVIDERS: ModelProviderGroup[] = [
     { id: 'x-ai/grok-4.3', label: 'Grok 4.3' },
   ]},
 ];
+
+// ── omniroute (beta) — omniroute gateway model ids ───────────────────────────
+// `auto/*` are smart-routing combos (safest); `aug/*` are specific tuned models.
+const MODEL_PROVIDERS_OMNIROUTE: ModelProviderGroup[] = [
+  { provider: 'Default', models: [
+    { id: '', label: 'Deployment Default' },
+  ]},
+  { provider: 'Auto (Smart Routing)', models: [
+    { id: 'auto/best-reasoning', label: 'Best Reasoning', recommended: true },
+    { id: 'auto/smart', label: 'Smart' },
+    { id: 'auto/best-fast', label: 'Best Fast' },
+    { id: 'auto/best-chat', label: 'Best Chat' },
+    { id: 'auto/best-coding', label: 'Best Coding' },
+  ]},
+  { provider: 'Anthropic (Claude)', models: [
+    { id: 'auto/claude-sonnet', label: 'Claude Sonnet (auto)', recommended: true },
+    { id: 'auto/claude-opus', label: 'Claude Opus (auto)' },
+    { id: 'aug/claude-sonnet-4.6-thinking', label: 'Claude Sonnet 4.6 (thinking)' },
+    { id: 'aug/claude-opus-4.6', label: 'Claude Opus 4.6' },
+    { id: 'aug/claude-haiku-4.5', label: 'Claude Haiku 4.5' },
+  ]},
+  { provider: 'OpenAI (GPT)', models: [
+    { id: 'aug/gpt-5.5-high', label: 'GPT-5.5 (high)' },
+    { id: 'aug/gpt-5.5-medium', label: 'GPT-5.5 (medium)' },
+    { id: 'aug/gpt-5.4-high', label: 'GPT-5.4 (high)' },
+  ]},
+  { provider: 'Google (Gemini)', models: [
+    { id: 'auto/gemini', label: 'Gemini (auto)' },
+    { id: 'aug/gemini-3.1-pro', label: 'Gemini 3.1 Pro' },
+    { id: 'aug/gemini-3.0-flash', label: 'Gemini 3.0 Flash' },
+  ]},
+  { provider: 'DeepSeek', models: [
+    { id: 'tllm/deepseek_v4', label: 'DeepSeek V4' },
+  ]},
+];
+
+// Active list for this build. Defaults to omniroute (beta); production builds set
+// NEXT_PUBLIC_LLM_GATEWAY=openrouter.
+export const MODEL_PROVIDERS: ModelProviderGroup[] =
+  process.env.NEXT_PUBLIC_LLM_GATEWAY === 'openrouter'
+    ? MODEL_PROVIDERS_OPENROUTER
+    : MODEL_PROVIDERS_OMNIROUTE;
 
 // ── Decoupled Sentiment Payload (independent of Kafka/WS ticks) ─────────
 

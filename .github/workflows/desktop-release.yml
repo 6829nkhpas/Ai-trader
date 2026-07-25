@@ -88,6 +88,11 @@ jobs:
           # NEXT_PUBLIC_PROD=true to gate features by the user's plan accessFlags
           # once subscriptions are provisioned.
           NEXT_PUBLIC_PROD: ${{ vars.NEXT_PUBLIC_PROD || 'false' }}
+          # LLM gateway the model selector targets. Beta uses omniroute (our
+          # shared key/model/URL); production uses OpenRouter (per-user keys).
+          # MUST match the server's OPENROUTER_BASE_URL + LLM_MODEL for the same
+          # deployment. Set the repo variable to 'openrouter' for the prod build.
+          NEXT_PUBLIC_LLM_GATEWAY: ${{ vars.NEXT_PUBLIC_LLM_GATEWAY || 'omniroute' }}
           # ── Thin-client backend target (baked into the binary at compile time) ──
           # server.rs reads these via option_env! so shipped installers connect to
           # the droplet with the shared beta QuestDB credentials out of the box.
