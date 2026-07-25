@@ -1,5 +1,6 @@
 import { API_BASE_URL, API_V1_PREFIX } from '../env';
 import { useAuthStore } from '../../store/useAuthStore';
+import { tauriFetch } from '../tauriFetch';
 import { ApiError, type ApiResponse } from './types';
 
 const ACCESS_TOKEN_KEY = 'token';
@@ -36,7 +37,7 @@ async function refreshAccessToken(): Promise<string> {
       throw new ApiError('No refresh token available', 401);
     }
 
-    const res = await fetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/refresh-token`, {
+    const res = await tauriFetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/refresh-token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh: refreshToken }),
@@ -88,14 +89,14 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   };
   if (body !== undefined) init.body = JSON.stringify(body);
 
-  const res = await fetch(url, init);
+  const res = await tauriFetch(url, init);
 
   if (res.status === 401 && auth) {
     const newToken = await refreshAccessToken();
     finalHeaders['Authorization'] = `Bearer ${newToken}`;
     const retryInit: RequestInit = { method, headers: finalHeaders, signal };
     if (body !== undefined) retryInit.body = JSON.stringify(body);
-    const retryRes = await fetch(url, retryInit);
+    const retryRes = await tauriFetch(url, retryInit);
     return parseEnvelope<T>(retryRes);
   }
 

@@ -9,14 +9,18 @@ import { dashboardUrl, openExternalUrl } from '../../lib/redirect';
 export default function AuthOverlay() {
   const login = useAuthStore((s) => s.login);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleLogin = async () => {
     if (loading) return;
+    setError(null);
     setLoading(true);
     try {
       await login();
-    } catch {
-      // Silently handle — login always succeeds for now
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Login failed. Please try again.';
+      console.error('[AuthOverlay] Login failed:', err);
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -101,6 +105,13 @@ export default function AuthOverlay() {
             </>
           )}
         </button>
+
+        {/* Error message */}
+        {error && (
+          <p className="text-xs text-rose-400 text-center max-w-[280px] break-words">
+            {error}
+          </p>
+        )}
 
         {/* Subtle helper link */}
         <p className="text-xs text-[#475569] text-center">

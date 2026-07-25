@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { API_BASE_URL, API_V1_PREFIX } from '../lib/env';
+import { tauriFetch } from '../lib/tauriFetch';
 import { usersApi } from '../lib/api/endpoints';
 import { REFRESH_TOKEN_KEY } from '../lib/api/client';
 import { useFeatureStore } from './useFeatureStore';
@@ -67,7 +68,7 @@ export const useAuthStore = create<AuthState>((set, get) => {
     isBrokerConnected: true,
 
     login: async () => {
-      const response = await fetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/desktop/session`, {
+      const response = await tauriFetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/desktop/session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -78,17 +79,24 @@ export const useAuthStore = create<AuthState>((set, get) => {
       const resJson = await response.json();
       const { sessionId, loginUrl } = resJson.data;
 
+      let browserOpened = false;
       try {
         const { invoke } = await import('@tauri-apps/api/core');
         await invoke('open_browser', { url: loginUrl });
-      } catch {
+        browserOpened = true;
+      } catch (err) {
+        console.error('[Auth Store] open_browser invoke failed:', err);
         if (typeof window !== 'undefined') {
-          window.open(loginUrl, '_blank', 'noopener,noreferrer');
+          const w = window.open(loginUrl, '_blank', 'noopener,noreferrer');
+          browserOpened = !!w;
         }
+      }
+      if (!browserOpened) {
+        console.error('[Auth Store] Could not open a browser for login URL:', loginUrl);
       }
 
       const exchangeToken = async (loginToken: string) => {
-        const exchangeRes = await fetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/desktop/exchange`, {
+        const exchangeRes = await tauriFetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/desktop/exchange`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ token: loginToken }),
@@ -135,7 +143,7 @@ export const useAuthStore = create<AuthState>((set, get) => {
             return;
           }
           try {
-            const statusRes = await fetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/desktop/session/${sessionId}`);
+            const statusRes = await tauriFetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/desktop/session/${sessionId}`);
             if (!statusRes.ok) return;
             const statusData = await statusRes.json();
             const { status, token } = statusData.data;

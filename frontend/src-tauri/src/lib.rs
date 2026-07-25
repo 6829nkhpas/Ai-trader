@@ -336,6 +336,7 @@ pub fn run() {
         commands::fno::fno_resolve_nearest_contract,
         commands::fno::fno_resolve_option_contract,
         commands::security::open_browser,
+        commands::security::api_fetch,
         db::save_workspace,
         db::load_workspace,
         db::log_completed_trade,
