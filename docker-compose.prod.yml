@@ -105,9 +105,11 @@ services:
     networks: [stratai]
     ports:
       - "0.0.0.0:80:80"           # HTTP — Let's Encrypt ACME challenge for app.stratai.live
-      - "0.0.0.0:443:443"         # HTTPS — app.stratai.live WSS gateway (live feeds)
-      - "0.0.0.0:9000:9000"       # public QuestDB HTTP query endpoint (basic auth)
-      - "0.0.0.0:8086:8086"       # public deep-quant AI endpoint (basic auth)
+      - "0.0.0.0:443:443"         # HTTPS — app.stratai.live gateway: WSS feeds + /questdb + /deepquant
+      # QuestDB HTTP (:9000) and deep-quant (:8086) are no longer published to the
+      # host — they are served over TLS at https://app.stratai.live/questdb and
+      # /deepquant. Caddy still reaches them internally as questdb:9000 /
+      # deep-quant:8086. (Re-add these mappings only for legacy direct-IP clients.)
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       # Persist issued TLS certificates + ACME account across restarts so Caddy
@@ -212,8 +214,8 @@ services:
       OHLC_WEBSOCKET_PORT: "8081"
       RUST_LOG: info
     networks: [stratai]
-    ports:
-      - "8081:8081"     # OHLC candle WebSocket (desktop clients)
+    # Not published to the host — fronted by the app.stratai.live WSS gateway
+    # (Caddy reaches this over the internal network as alpha-terminal:8081).
     depends_on:
       redpanda:
         condition: service_healthy
@@ -251,8 +253,8 @@ services:
       WEBSOCKET_PORT: "8080"
       RUST_LOG: info
     networks: [stratai]
-    ports:
-      - "8080:8080"     # AggregatedDecision WebSocket (desktop clients)
+    # Not published to the host — fronted by the app.stratai.live WSS gateway
+    # (Caddy reaches this over the internal network as aggregator:8080).
     depends_on:
       redpanda:
         condition: service_healthy
@@ -271,8 +273,8 @@ services:
       KAFKA_BROKERS: redpanda:29092
       RUST_LOG: info
     networks: [stratai]
-    ports:
-      - "8082:8082"     # PredictiveSignal WebSocket (Ghost Line)
+    # Not published to the host — fronted by the app.stratai.live WSS gateway
+    # (Caddy reaches this over the internal network as predictive:8082).
     depends_on:
       redpanda:
         condition: service_healthy
@@ -291,8 +293,8 @@ services:
       KAFKA_BROKERS: redpanda:29092
       RUST_LOG: info
     networks: [stratai]
-    ports:
-      - "8083:8083"     # MarketInsight WebSocket
+    # Not published to the host — fronted by the app.stratai.live WSS gateway
+    # (Caddy reaches this over the internal network as quant-rag:8083).
     depends_on:
       redpanda:
         condition: service_healthy

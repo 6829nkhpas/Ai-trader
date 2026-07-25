@@ -1,66 +1,41 @@
-# Caddy gateway for QuestDB HTTP (/exec, web console) — basic-auth protected.
+# Caddy gateway for the Strat Ai data plane — one TLS domain fronts every
+# desktop-facing endpoint (live WS feeds, QuestDB HTTP, deep-quant AI).
 #
-# Fronts the internal `questdb:9000` (not published to the host) and requires
-# HTTP Basic auth. Credentials are injected from the environment:
+# Credentials for the basic-auth-protected routes are injected from the
+# environment (see the questdb-gateway service in docker-compose.prod.yml):
 #   QUESTDB_USER          — the basic-auth username (matches QuestDB PG user)
 #   QUESTDB_PASSWORD_HASH — bcrypt hash of the password
 #                           (generate: `docker run --rm caddy:2-alpine \
 #                            caddy hash-password --plaintext '<password>'`)
 #
-# NOTE: This listens on plain HTTP (the droplet has no domain, only an IP, so
-# Caddy's automatic HTTPS cannot issue a public cert). Basic-auth credentials
-# therefore travel base64-encoded, not encrypted. For production, point a
-# domain at the droplet and switch this to `https://questdb.example.com` so
-# Caddy provisions a real certificate automatically.
+# TLS certificates are provisioned automatically by Let's Encrypt for
+# app.stratai.live and persisted in the caddy_data volume across restarts.
 
 {
 	admin off
-	# Automatic HTTPS is ENABLED so the app.stratai.live WSS gateway (below) gets
-	# a real Let's Encrypt certificate. `disable_redirects` stops Caddy adding a
-	# global HTTP->HTTPS redirect, so the plain-HTTP, port-only sites below
-	# (:9000 QuestDB, :8086 deep-quant — both basic-auth over the droplet IP)
-	# keep serving over HTTP exactly as before.
+	# `disable_redirects` keeps automatic HTTPS (so app.stratai.live gets a real
+	# certificate) without adding a global HTTP->HTTPS redirect. Port 80 is still
+	# used for the ACME challenge.
 	auto_https disable_redirects
 }
 
-:9000 {
-	basic_auth {
-		{$QUESTDB_USER} {$QUESTDB_PASSWORD_HASH}
-	}
-	reverse_proxy questdb:9000
-}
-
-# Deep-quant AI service (:8086) — same shared beta credential. Fronts the
-# internal `deep-quant:8086` (not published to the host). The desktop thin
-# client sends the analysis /run, /qa, /cancel requests here and receives the
-# glass-box SSE stream; `flush_interval -1` disables response buffering so
-# Server-Sent Events are streamed to the client as they arrive.
-:8086 {
-	basic_auth {
-		{$QUESTDB_USER} {$QUESTDB_PASSWORD_HASH}
-	}
-	reverse_proxy deep-quant:8086 {
-		flush_interval -1
-	}
-}
-
-# ── Public WSS gateway for the live data-plane feeds (app.stratai.live) ─────
-# Fronts the four internal WebSocket services with automatic TLS so desktop
-# clients connect over ONE wss:// domain instead of the raw droplet IP:port.
-# Caddy detects the `Upgrade: websocket` header and proxies the connection
-# transparently (bidirectional streaming, no buffering config needed).
-#
-# `handle_path` strips the matched route prefix, so each upstream receives the
-# "/" path it already serves today (identical to a direct ws://host:<port>).
+# ── Public gateway for the whole desktop-facing data plane (app.stratai.live) ─
+# Automatic TLS fronts every endpoint the shipped desktop app talks to, so the
+# installer carries NO raw droplet IP. Caddy detects `Upgrade: websocket` and
+# proxies WS connections transparently; `handle_path` strips each route prefix
+# so every upstream receives the exact path it already serves.
 #
 #   wss://app.stratai.live/ws/aggregator  -> aggregator:8080     (decisions)
 #   wss://app.stratai.live/ws/alpha       -> alpha-terminal:8081 (OHLC candles)
 #   wss://app.stratai.live/ws/predictive  -> predictive:8082     (ghost line)
 #   wss://app.stratai.live/ws/insight     -> quant-rag:8083      (market insight)
+#   https://app.stratai.live/questdb/*    -> questdb:9000        (HTTP /exec, basic-auth)
+#   https://app.stratai.live/deepquant/*  -> deep-quant:8086     (glass-box SSE, basic-auth)
 #
 # Requires: a DNS A/AAAA record for app.stratai.live -> this droplet, and the
-# firewall open on 80 (ACME challenge) + 443 (see infra/*.tf and the compose
-# gateway port mappings).
+# firewall open on 80 (ACME challenge) + 443 (see infra/variables.tf and the
+# compose gateway port mappings). Internal containers reach QuestDB/deep-quant
+# directly by service name, so no host ports are published for them.
 app.stratai.live {
 	handle_path /ws/aggregator* {
 		reverse_proxy aggregator:8080
@@ -76,9 +51,8 @@ app.stratai.live {
 	}
 
 	# ── QuestDB HTTP query endpoint (/questdb/* -> questdb:9000) ──────────────
-	# Same shared beta basic-auth credential as the direct :9000 gateway. The
-	# desktop hits …/questdb/exec?query=… ; handle_path strips /questdb so the
-	# upstream receives /exec exactly as on the direct port.
+	# The desktop hits …/questdb/exec?query=… ; handle_path strips /questdb so
+	# the upstream receives /exec exactly as a direct connection would.
 	handle_path /questdb/* {
 		basic_auth {
 			{$QUESTDB_USER} {$QUESTDB_PASSWORD_HASH}
@@ -89,7 +63,7 @@ app.stratai.live {
 	# ── Deep-quant AI service (/deepquant/* -> deep-quant:8086) ───────────────
 	# Fronts the glass-box /run, /qa, /resume, /cancel endpoints. `flush_interval
 	# -1` disables buffering so the SSE stream reaches the client as it is
-	# produced. Same basic-auth credential as the direct :8086 gateway.
+	# produced.
 	handle_path /deepquant/* {
 		basic_auth {
 			{$QUESTDB_USER} {$QUESTDB_PASSWORD_HASH}

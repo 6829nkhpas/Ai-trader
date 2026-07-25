@@ -127,7 +127,11 @@ jobs:
           # the droplet with the shared beta QuestDB credentials out of the box.
           # Set these as repo secrets: Settings → Secrets and variables → Actions.
           # Fallback default keeps the host usable even if the secret is unset.
-          STRATAI_SERVER_HOST: ${{ secrets.STRATAI_SERVER_HOST || '168.144.86.130' }}
+          # Used for the raw-TCP services that can't sit behind an HTTPS path:
+          # QuestDB PG wire (:8812), ingestion control (:8085), Kite OAuth (:8087).
+          # Points at the domain (resolves to the droplet) so shipped builds carry
+          # NO raw IP. The HTTP/WS feeds use STRATAI_HTTP_BASE_URL / _WS_BASE_URL.
+          STRATAI_SERVER_HOST: ${{ secrets.STRATAI_SERVER_HOST || 'app.stratai.live' }}
           # Public WSS gateway base for the Rust live-feed bridges (OHLC/predictive/
           # insight). When set, server::feed_ws_url routes them through the TLS
           # domain (wss://app.stratai.live/ws/<feed>) instead of ws://<host>:<port>.

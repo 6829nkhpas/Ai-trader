@@ -65,9 +65,9 @@ variable "ssh_ingress_cidrs" {
 }
 
 variable "app_ports" {
-  description = "Public TCP ports for the data-plane services (desktop clients connect here). 80/443 front the app.stratai.live WSS gateway (Caddy auto-TLS). QuestDB HTTP 9000 is behind Caddy basic-auth; PG wire 8812 uses QuestDB native auth."
+  description = "Public TCP ports. 80/443 front the app.stratai.live TLS gateway (WSS feeds + /questdb + /deepquant). 8085 ingestion control, 8087 Kite OAuth, 8812 QuestDB PG wire (native auth) — raw TCP, not HTTP-frontable. The WS (8080-8083) and QuestDB/deep-quant HTTP (9000/8086) ports are no longer published; they are served over TLS via the domain."
   type        = list(string)
-  default     = ["80", "443", "8080", "8081", "8082", "8083", "8085", "8087", "9000", "8812", "8086"]
+  default     = ["80", "443", "8085", "8087", "8812"]
 }
 
 variable "app_ingress_cidrs" {
