@@ -2,10 +2,10 @@
 
 import React from 'react';
 import { Calendar, Shield, AtSign, BadgeCheck } from 'lucide-react';
-import type { User } from '../../../../lib/api/types';
+import type { AuthUser } from '../../../../store/useAuthStore';
 
 interface IdentityHeaderProps {
-  user: User | null;
+  user: AuthUser | null;
   planName: string | null;
   formatDate: (date: string | number) => string;
 }

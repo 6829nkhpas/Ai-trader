@@ -4,7 +4,7 @@ import { usersApi } from '../lib/api/endpoints';
 import { REFRESH_TOKEN_KEY } from '../lib/api/client';
 import { useFeatureStore } from './useFeatureStore';
 
-interface AuthUser {
+export interface AuthUser {
   id: string;
   email: string;
   name: string;

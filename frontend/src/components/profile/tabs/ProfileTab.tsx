@@ -5,7 +5,7 @@ import { Loader2, ArrowRight, Save, Pencil } from 'lucide-react';
 import IdentityHeader from './profile/IdentityHeader';
 import { useAuthStore } from '../../../store/useAuthStore';
 import { dashboardUrl, openExternalUrl } from '../../../lib/redirect';
-import type { User } from '../../../lib/api/types';
+import type { AuthUser } from '../../../store/useAuthStore';
 
 interface PaperPortfolio {
   balance?: number;
@@ -14,7 +14,7 @@ interface PaperPortfolio {
 }
 
 interface ProfileTabProps {
-  user: User | null;
+  user: AuthUser | null;
   planName: string | null;
   paperPortfolio: PaperPortfolio | null;
   formatDate: (date: string | number) => string;
