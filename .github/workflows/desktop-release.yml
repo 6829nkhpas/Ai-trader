@@ -43,8 +43,24 @@ jobs:
     runs-on: ${{ matrix.platform }}
 
     steps:
+      # Main repo via the default GITHUB_TOKEN (no submodules yet — the charting
+      # library lives in a PRIVATE repo the default token can't read).
       - name: Checkout
         uses: actions/checkout@v4
+
+      # Fetch the private TradingView charting_library submodule using a PAT that
+      # has read access to it (github.com/tradingview/charting_library). Create a
+      # PAT on the account granted access and add it as the repo secret
+      # CHARTING_LIBRARY_PAT. Without it the app builds with NO charts, because
+      # `output: export` bundles frontend/public/static/charting_library into the
+      # installer. The insteadOf rewrite scopes the PAT to submodule fetches only,
+      # so the main repo stays on GITHUB_TOKEN.
+      - name: Checkout private charting_library submodule
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.CHARTING_LIBRARY_PAT }}@github.com/".insteadOf "https://github.com/"
+          git submodule sync --recursive
+          git submodule update --init --recursive
+          git config --global --unset url."https://x-access-token:${{ secrets.CHARTING_LIBRARY_PAT }}@github.com/".insteadOf || true
 
       - name: Setup Node
         uses: actions/setup-node@v4
