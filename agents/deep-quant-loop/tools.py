@@ -2871,6 +2871,10 @@ def watch_price_condition(
     try:
         import time as _time
         thread_id = config.get("configurable", {}).get("thread_id", "default_thread")
+        # Stamp the run's user id so the tool-server can carry it on the eventual
+        # /resume handoff, letting a watcher-triggered resume resolve the SAME
+        # user's OpenRouter key (no shared/env fallback).
+        from run_context import get_run_user_id
         payload = {
             "thread_id": thread_id,
             "symbol": symbol,
@@ -2878,7 +2882,8 @@ def watch_price_condition(
             "price_level": price_level,
             "direction": direction,
             "volume_multiplier": volume_multiplier,
-            "invalidation_level": invalidation_level
+            "invalidation_level": invalidation_level,
+            "user_id": get_run_user_id(),
         }
         # ── Adaptive Opportunity Engine heartbeat configuration (R5.1) ────────
         # Pass the resolved heartbeat fields so the Rust watcher emits bounded,

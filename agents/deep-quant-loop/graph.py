@@ -983,12 +983,21 @@ def set_run_llm_credentials(run_key, run_base_url) -> None:
 
 
 def _eff_api_key() -> str:
-    """Effective LLM API key: the per-run override if set, else the env key."""
-    return _run_api_key.get() or api_key
+    """Effective LLM API key — the per-user key bound for this run.
+
+    There is NO env-based fallback: main.py resolves and binds the requesting
+    user's OpenRouter key before any node runs (failing the run cleanly when it
+    can't), so this is always populated at call time. Returning None here would
+    let the OpenAI client silently pick up an ambient OPENAI_API_KEY env var,
+    which we explicitly do not want, so callers only reach this after a per-run
+    key is set.
+    """
+    return _run_api_key.get()
 
 
 def _eff_base_url() -> str:
-    """Effective LLM base URL: the per-run override if set, else the env base."""
+    """Effective LLM base URL — the per-run OpenRouter base bound for this run
+    (falls back to the module base only as a non-secret default)."""
     return _run_base_url.get() or base_url
 
 
@@ -1020,9 +1029,13 @@ def _effort_extra_body() -> dict:
 # Fail loud (in the log) on misconfiguration rather than silently using a fake
 # key — every LLM call would otherwise 401, and the cause would be opaque.
 if not api_key:
+    # This is EXPECTED and fine in the hosted deployment: LLM credentials are
+    # resolved per-user at request time (each run binds the requesting user's
+    # OpenRouter key from the backend). The env LLM_API_KEY is no longer used by
+    # the hosted service and only matters for a fully local/self-hosted run.
     print(
-        "[deep-quant] WARNING: no LLM_API_KEY set in environment or .env. "
-        "LLM calls will fail with an auth error. Set LLM_API_KEY (see .env)."
+        "[deep-quant] INFO: no env LLM_API_KEY set — using per-user OpenRouter "
+        "keys resolved at request time (hosted mode)."
     )
 
 # Strip trailing /chat/completions if present because LangChain appends it internally

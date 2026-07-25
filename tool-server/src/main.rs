@@ -139,6 +139,10 @@ struct WatchConditionRequest {
     heartbeat_cadence_secs: f64,
     #[serde(default)]
     heartbeat_max: u32,
+    /// Authenticated user id, carried so a watcher-triggered /resume can resolve
+    /// the SAME user's OpenRouter key (no env fallback).
+    #[serde(default)]
+    user_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -154,6 +158,7 @@ pub struct Watcher {
     pub heartbeat_enabled: bool,
     pub heartbeat_cadence_secs: f64,
     pub heartbeat_max: u32,
+    pub user_id: Option<String>,
 }
 
 // ── get_candles ───────────────────────────────────────────────────────────────
@@ -762,6 +767,7 @@ async fn post_resume(
     candle: &OhlcCandle,
     trigger_kind: serde_json::Value,
     heartbeat_seq: Option<u32>,
+    user_id: Option<&str>,
 ) -> Result<bool, String> {
     let client = reqwest::Client::new();
     let mut payload = serde_json::json!({
@@ -771,6 +777,12 @@ async fn post_resume(
     });
     if let Some(seq) = heartbeat_seq {
         payload["heartbeat_seq"] = serde_json::json!(seq);
+    }
+    // Carry the user id so the resume run resolves the same user's OpenRouter key.
+    if let Some(uid) = user_id {
+        if !uid.is_empty() {
+            payload["user_id"] = serde_json::json!(uid);
+        }
     }
     let resume_url = format!(
         "{}/resume",
@@ -898,6 +910,7 @@ async fn watch_condition(
         heartbeat_enabled: payload.heartbeat_enabled,
         heartbeat_cadence_secs: payload.heartbeat_cadence_secs,
         heartbeat_max: payload.heartbeat_max,
+        user_id: payload.user_id.clone(),
     };
     {
         let mut map = state.watchers.write().await;
@@ -974,7 +987,7 @@ async fn watch_condition(
                     map.remove(&watcher.thread_id);
                 }
                 let tk = serde_json::to_value(trigger_kind).unwrap_or(serde_json::json!("target"));
-                let _ = post_resume(&watcher.thread_id, &candle, tk, None).await;
+                let _ = post_resume(&watcher.thread_id, &candle, tk, None, watcher.user_id.as_deref()).await;
                 break;
             }
 
@@ -984,7 +997,7 @@ async fn watch_condition(
                 if elapsed >= watcher.heartbeat_cadence_secs {
                     {
                         let seq = heartbeat_seq + 1;
-                        match post_resume(&watcher.thread_id, &candle, serde_json::json!("heartbeat"), Some(seq)).await {
+                        match post_resume(&watcher.thread_id, &candle, serde_json::json!("heartbeat"), Some(seq), watcher.user_id.as_deref()).await {
                             Ok(true) => {
                                 heartbeat_seq = seq;
                                 last_heartbeat = tokio::time::Instant::now();

@@ -16,6 +16,7 @@ from api_key_resolver import (
     openrouter_base_url,
     ApiKeyResolutionError,
 )
+from run_context import set_run_user_id
 
 # F&O read layer + analytics (F1/F2) and the agent options-bias classifier (F3).
 # The /options/snapshot endpoint (F4 transport seam) strictly COMPOSES these
@@ -168,23 +169,27 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None,
     # R17.1: RUN_STARTED is always the first event of the run.
     yield format_sse(RUN_STARTED, build_run_started_event(thread_id))
 
-    # ── Bind the per-user OpenRouter key for this run ────────────────────────
-    # Resolve the requesting user's key from the backend internal endpoint and
-    # bind it (via graph.set_run_llm_credentials) so every LLM call in this run
-    # uses the user's key + OpenRouter. With no user_id (local dev / self-hosted)
-    # the env-configured key stays in effect. A resolution failure surfaces a
-    # clean ERROR — never a fabricated plan and never a shared-key fallback.
-    if user_id:
-        try:
-            _run_key = resolve_openrouter_key(user_id)
-            set_run_llm_credentials(_run_key, openrouter_base_url())
-        except ApiKeyResolutionError as _key_err:
-            print(f"[main] LLM key resolution failed for user {user_id}: {_key_err}")
-            yield format_sse(ERROR, build_error_event(f"LLM key unavailable: {_key_err}"))
-            return
-    else:
-        # No user id supplied — use the deployment's env credentials.
-        set_run_llm_credentials(None, None)
+    # ── Bind the per-user OpenRouter key for this run (REQUIRED) ─────────────
+    # Every LLM call uses the REQUESTING user's OpenRouter key, resolved from the
+    # backend internal endpoint. There is no shared/env-based credential fallback:
+    # a missing user_id or an unresolvable key surfaces a clean ERROR (never a
+    # fabricated plan, never a shared key). The user id is also bound in the run
+    # context so a watcher registered during this run can carry it onto its
+    # eventual /resume handoff.
+    set_run_user_id(user_id)
+    if not (user_id and str(user_id).strip()):
+        yield format_sse(
+            ERROR,
+            build_error_event("authentication required: no user_id supplied for LLM access"),
+        )
+        return
+    try:
+        _run_key = resolve_openrouter_key(user_id)
+        set_run_llm_credentials(_run_key, openrouter_base_url())
+    except ApiKeyResolutionError as _key_err:
+        print(f"[main] LLM key resolution failed for user {user_id}: {_key_err}")
+        yield format_sse(ERROR, build_error_event(f"LLM key unavailable: {_key_err}"))
+        return
 
     config = {"configurable": {"thread_id": thread_id}}
     # Stamp the run's workspace profile into the tool config so profile-aware
