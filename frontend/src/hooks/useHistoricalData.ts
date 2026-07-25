@@ -15,6 +15,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useTradeStore, type OhlcCandle } from '../store/useTradeStore';
+import { kiteFetch } from '../lib/tauriFetch';
 
 export interface HistoricalCandle {
   /** Seconds since Unix epoch (lightweight-charts format) */
@@ -208,7 +209,7 @@ async function resolveInstrumentToken(symbol: string): Promise<number | null> {
     const sym = symbol.toUpperCase();
     const isFno = sym.endsWith('FUT') || ((sym.endsWith('CE') || sym.endsWith('PE')) && /\d/.test(sym));
     const exchange = isFno ? 'NFO' : 'NSE';
-    const res = await fetch(`/kite/quote?i=${exchange}:${encodeURIComponent(symbol)}`);
+    const res = await kiteFetch(`/quote?i=${exchange}:${encodeURIComponent(symbol)}`);
     if (!res.ok) return null;
     const data = await res.json();
     const quotes = data.quotes as { symbol: string; instrument_token: number }[] | undefined;

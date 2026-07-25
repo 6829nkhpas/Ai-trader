@@ -73,6 +73,22 @@ app.stratai.live {
 		}
 	}
 
+	# ── Kite REST proxy (/kite/* -> ingestion:8087/api/kite/*) ────────────────
+	# The aggregator's Kite proxy (historical candles, quotes, instrument
+	# search) is served by the ingestion container on 8087. The desktop fetches
+	# …/kite/historical?…; handle_path strips /kite and the rewrite restores the
+	# upstream's /api/kite prefix, so ingestion receives /api/kite/historical
+	# exactly as the dev rewrite (next.config /kite/* -> :8087/api/kite/*) does.
+	# basic_auth (same credentials as the questdb/deepquant routes) prevents the
+	# public endpoint from being used to exhaust the shared Kite rate limit.
+	handle_path /kite/* {
+		basic_auth {
+			{$QUESTDB_USER} {$QUESTDB_PASSWORD_HASH}
+		}
+		rewrite * /api/kite{uri}
+		reverse_proxy ingestion:8087
+	}
+
 	# Friendly root / health probe (returns 200 for a plain GET).
 	respond / "Strat Ai gateway" 200
 }

@@ -7,6 +7,7 @@ import { useTradeStore, hydrateWatchlist } from '../../../store/useTradeStore';
 import { useChartUIStore } from '../../../store/useChartUIStore';
 import { isFnoSymbol } from '../../../charting/symbolUtils';
 import WatchlistSkeleton from './WatchlistSkeleton';
+import { kiteFetch } from '../../../lib/tauriFetch';
 
 interface ResolvedContract {
   tradingsymbol: string;
@@ -126,7 +127,7 @@ export default function WatchlistBlock() {
         })
         .join('&');
 
-      const res = await fetch(`/kite/quote?${params}`);
+      const res = await kiteFetch(`/quote?${params}`);
       if (!res.ok) return;
       const data = await res.json();
       if (data.quotes) {

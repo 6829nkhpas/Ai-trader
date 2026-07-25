@@ -63,3 +63,28 @@ export async function tauriFetch(url: string, init: RequestInit = {}): Promise<R
 
   return makeResponse(res);
 }
+
+/**
+ * Fetch a Kite REST endpoint (historical candles, quotes, instrument search).
+ *
+ * In the packaged Tauri app a relative `/kite/*` URL resolves to
+ * `tauri.localhost` and 404s; the real proxy lives behind the app.stratai.live
+ * gateway under basic-auth. This routes through the Rust `kite_fetch` command,
+ * which prefixes the gateway base and injects the gateway credentials
+ * server-side (neither leaks into the JS bundle).
+ *
+ * In a plain browser (`npm run dev`) there is no Tauri runtime, so it falls
+ * back to the native relative `/kite<path>` fetch handled by the Next.js dev
+ * rewrite (`/kite/* -> :8087/api/kite/*`).
+ *
+ * @param path the part after `/kite` — e.g. `/quote?i=NSE:TCS`.
+ */
+export async function kiteFetch(path: string): Promise<Response> {
+  const rel = path.startsWith('/') ? path : `/${path}`;
+  if (!isTauri()) {
+    return fetch(`/kite${rel}`);
+  }
+  const { invoke } = await import('@tauri-apps/api/core');
+  const res = await invoke<ApiFetchResponse>('kite_fetch', { path: rel });
+  return makeResponse(res);
+}

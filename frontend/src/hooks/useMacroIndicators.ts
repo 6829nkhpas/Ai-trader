@@ -9,6 +9,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTradeStore } from '../store/useTradeStore';
+import { kiteFetch } from '../lib/tauriFetch';
 
 // ── Index Definitions ────────────────────────────────────────────────────────
 // These are NSE indices available via Kite Connect's quote API.
@@ -107,7 +108,7 @@ export function useMacroIndicators(): UseMacroIndicatorsReturn {
     try {
       // Build query params identical to WatchlistPanel pattern
       const params = MACRO_INDICES.map((idx) => `i=${encodeURIComponent(idx.kiteKey)}`).join('&');
-      const res = await fetch(`/kite/quote?${params}`);
+      const res = await kiteFetch(`/quote?${params}`);
 
       if (!res.ok) {
         throw new Error(`Kite quote API returned ${res.status}`);

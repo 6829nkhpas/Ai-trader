@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { SymbolQuote } from '../types/home';
+import { kiteFetch } from '../lib/tauriFetch';
 
 /**
  * Polls the Kite quote endpoint for the active symbol every 30 s.
@@ -16,7 +17,8 @@ export function useSymbolQuote(symbol: string): SymbolQuote | null {
       const sym = symbol.toUpperCase();
       const isFno = sym.endsWith('FUT') || ((sym.endsWith('CE') || sym.endsWith('PE')) && /\d/.test(sym));
       const exchange = isFno ? 'NFO' : 'NSE';
-      const res = await fetch(`/kite/quote?i=${exchange}:${symbol}`, { signal });
+      const res = await kiteFetch(`/quote?i=${exchange}:${symbol}`);
+      if (signal?.aborted) return;
       if (!res.ok) return;
       const data = await res.json();
       if (data.quotes && data.quotes.length > 0) {

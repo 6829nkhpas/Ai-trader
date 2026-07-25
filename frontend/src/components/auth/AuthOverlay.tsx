@@ -5,6 +5,7 @@ import { useAuthStore } from '../../store/useAuthStore';
 import { Loader2 } from 'lucide-react';
 import Antigravity from '../Antigravity';
 import { dashboardUrl, openExternalUrl } from '../../lib/redirect';
+import Image from 'next/image';
 
 export default function AuthOverlay() {
   const login = useAuthStore((s) => s.login);
@@ -57,7 +58,7 @@ export default function AuthOverlay() {
       {/* Subtle radial glow behind the card */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
         <div
-          className="absolute left-1/2 top-[38%] -translate-x-1/2 -translate-y-1/2 h-[420px] w-[420px] rounded-full opacity-[0.07]"
+          className="absolute left-1/2 top-[38%] -translate-x-1/2 -translate-y-1/2 h-105 w-105 rounded-full opacity-[0.07]"
           style={{
             background:
               'radial-gradient(circle, rgba(16,185,129,0.8) 0%, rgba(56,189,248,0.4) 40%, transparent 70%)',
@@ -69,7 +70,7 @@ export default function AuthOverlay() {
       <div className="relative flex flex-col items-center gap-6 px-8 py-10 w-full max-w-sm z-10">
         {/* Logo */}
         <div className="relative">
-          <img
+          <Image
             src="/strat.svg"
             alt="Strat AI"
             className="h-16 w-16 object-contain drop-shadow-lg"
@@ -86,7 +87,7 @@ export default function AuthOverlay() {
           type="button"
           onClick={handleLogin}
           disabled={loading}
-          className="flex items-center justify-center gap-2.5 rounded-lg border border-[#1e2a3a] bg-[#131922] hover:bg-[#1a2332] px-6 py-3 text-sm font-semibold text-white/90 transition-all duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-wait shadow-lg shadow-black/20 hover:border-[#2a3a4e] hover:shadow-xl hover:shadow-black/30 active:scale-[0.98] min-w-[220px]"
+          className="flex items-center justify-center gap-2.5 rounded-lg border border-[#1e2a3a] bg-[#131922] hover:bg-[#1a2332] px-6 py-3 text-sm font-semibold text-white/90 transition-all duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-wait shadow-lg shadow-black/20 hover:border-[#2a3a4e] hover:shadow-xl hover:shadow-black/30 active:scale-[0.98] min-w-85"
         >
           {loading ? (
             <>
@@ -96,7 +97,7 @@ export default function AuthOverlay() {
           ) : (
             <>
               {/* Strat AI mini icon */}
-              <img
+              <Image
                 src="/strat.svg"
                 alt=""
                 className="h-4 w-4 object-contain"
@@ -108,7 +109,7 @@ export default function AuthOverlay() {
 
         {/* Error message */}
         {error && (
-          <p className="text-xs text-rose-400 text-center max-w-[280px] break-words">
+          <p className="text-xs text-rose-400 text-center max-w-70 wrap-break-words">
             {error}
           </p>
         )}

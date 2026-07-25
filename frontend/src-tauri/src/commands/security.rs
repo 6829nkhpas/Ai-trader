@@ -125,3 +125,68 @@ pub async fn api_fetch(
         body: text,
     })
 }
+
+/// Proxy a Kite REST call through the app.stratai.live gateway.
+///
+/// The aggregator's Kite proxy (historical candles, quotes, instrument search)
+/// is served by the ingestion container and fronted by Caddy at
+/// `<gateway>/kite/*` (basic-auth, same credentials as the QuestDB route). The
+/// frontend cannot reach it directly: in the packaged app a relative
+/// `/kite/*` fetch resolves to `tauri.localhost`, and a cross-origin browser
+/// fetch to the gateway would hit CORS + a basic-auth challenge. This command
+/// runs the request in reqwest (no CORS) and injects the gateway credentials
+/// server-side, so neither the gateway URL nor the password lives in the JS
+/// bundle.
+///
+/// `path` is the part after `/kite` (e.g. `/quote?i=NSE:TCS`). The gateway base
+/// comes from `server::http_base()`; when unset (local dev) it falls back to the
+/// direct `http://<host>:8087/api/kite` proxy so a Tauri dev build still works.
+#[tauri::command]
+pub async fn kite_fetch(path: String) -> Result<ApiFetchResponse, String> {
+    let path = if path.starts_with('/') {
+        path
+    } else {
+        format!("/{path}")
+    };
+
+    let base = crate::server::http_base();
+    let (url, use_auth) = if base.is_empty() {
+        // Local dev / direct-IP: hit the proxy's real /api/kite path directly.
+        (
+            format!("http://{}:8087/api/kite{}", crate::server::host(), path),
+            false,
+        )
+    } else {
+        // Gateway: Caddy strips /kite and restores /api/kite upstream.
+        (format!("{}/kite{}", base.trim_end_matches('/'), path), true)
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+
+    let mut req = client.get(&url);
+    if use_auth {
+        req = req.basic_auth(
+            crate::server::questdb_user(),
+            Some(crate::server::questdb_password()),
+        );
+    }
+
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("kite_fetch request failed: {e}"))?;
+    let status = resp.status();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("kite_fetch failed reading body: {e}"))?;
+
+    Ok(ApiFetchResponse {
+        status: status.as_u16(),
+        ok: status.is_success(),
+        body: text,
+    })
+}

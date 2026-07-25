@@ -25,6 +25,7 @@ import type {
   DatafeedConfiguration,
 } from './datafeedTypes';
 import { useTradeStore, type OhlcCandle } from '../store/useTradeStore';
+import { kiteFetch } from '../lib/tauriFetch';
 
 // ── Resolution Mapping ────────────────────────────────────────────────────
 // Maps TV resolution strings to Kite Historical API interval strings.
@@ -176,7 +177,7 @@ async function resolveInstrumentToken(symbol: string, exchange: string = 'NSE'):
   const cached = tokenCache.get(cacheKey);
   if (cached) return cached;
   try {
-    const res = await fetch(`/kite/quote?i=${exchange}:${encodeURIComponent(symbol)}`);
+    const res = await kiteFetch(`/quote?i=${exchange}:${encodeURIComponent(symbol)}`);
     if (res.ok) {
       const data = await res.json();
       const quotes = data.quotes as { symbol: string; instrument_token: number }[] | undefined;
@@ -190,7 +191,7 @@ async function resolveInstrumentToken(symbol: string, exchange: string = 'NSE'):
       }
     }
 
-    const resInst = await fetch(`/kite/instruments?q=${encodeURIComponent(symbol)}&exchange=${encodeURIComponent(exchange)}`);
+    const resInst = await kiteFetch(`/instruments?q=${encodeURIComponent(symbol)}&exchange=${encodeURIComponent(exchange)}`);
     if (resInst.ok) {
       const data = await resInst.json();
       const results = data.results as { tradingsymbol: string; instrument_token: number }[] | undefined;
@@ -297,8 +298,8 @@ async function fetchKiteBatch(
     try {
       let candles: Bar[] = [];
 
-      const url = `/kite/historical?symbol=${encodeURIComponent(symbol)}&interval=${interval}${dateParams}`;
-      const response = await fetch(url);
+      const url = `/historical?symbol=${encodeURIComponent(symbol)}&interval=${interval}${dateParams}`;
+      const response = await kiteFetch(url);
       if (response.ok) {
         const data = await response.json();
         candles = parseCandles(data);
@@ -307,8 +308,8 @@ async function fetchKiteBatch(
       if (candles.length === 0) {
         const token = await resolveInstrumentToken(symbol, exchange);
         if (!token) break;
-        const tokenUrl = `/kite/historical?instrument_token=${token}&interval=${interval}${dateParams}`;
-        const tokenResponse = await fetch(tokenUrl);
+        const tokenUrl = `/historical?instrument_token=${token}&interval=${interval}${dateParams}`;
+        const tokenResponse = await kiteFetch(tokenUrl);
         if (!tokenResponse.ok) break;
         const tokenData = await tokenResponse.json();
         candles = parseCandles(tokenData);
@@ -512,7 +513,7 @@ async function fallbackRestSearch(
 
   const ex = exchange || 'NSE';
   try {
-    const res = await fetch(`/kite/instruments?q=${encodeURIComponent(userInput)}&exchange=${encodeURIComponent(ex)}`);
+    const res = await kiteFetch(`/instruments?q=${encodeURIComponent(userInput)}&exchange=${encodeURIComponent(ex)}`);
     if (!res.ok) {
       onResult([]);
       return;
@@ -692,7 +693,7 @@ export function createDatafeed(): IBasicDatafeed {
         };
 
         // Verify symbol exists via quote API
-        fetch(`/kite/quote?i=${exchange}:${encodeURIComponent(cleanSymbol)}`)
+        kiteFetch(`/quote?i=${exchange}:${encodeURIComponent(cleanSymbol)}`)
           .then((res) => {
             if (!res.ok) {
               // Still resolve — the symbol might work with historical API

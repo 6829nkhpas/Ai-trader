@@ -6,6 +6,7 @@ import type { OhlcCandle } from '../../store/useTradeStore';
 import { ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import ReasoningBlock from './order-execution/ReasoningBlock';
 import MetricsHUD from './order-execution/MetricsHUD';
+import { kiteFetch } from '../../lib/tauriFetch';
 
 // ── ATR Calculation (Average True Range — 14 period) ─────────────────────────
 // Used to compute dynamic Target and Stop levels based on recent volatility.
@@ -82,7 +83,7 @@ export default function OrderExecutionPanel() {
       const sym = symbol.toUpperCase();
       const isFno = sym.endsWith('FUT') || ((sym.endsWith('CE') || sym.endsWith('PE')) && /\d/.test(sym));
       const exchange = isFno ? 'NFO' : 'NSE';
-      const res = await fetch(`/kite/quote?i=${exchange}:${symbol}`);
+      const res = await kiteFetch(`/quote?i=${exchange}:${symbol}`);
       if (!res.ok) return;
       const data = await res.json();
       if (data.quotes && data.quotes.length > 0) {

@@ -7,6 +7,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useTradeStore } from '../../store/useTradeStore';
 import { staggerContainer, fadeInUp, crossfade } from '../../lib/motionVariants';
 import WatchlistSkeleton from './left-panel/WatchlistSkeleton';
+import { kiteFetch } from '../../lib/tauriFetch';
 
 // ── Static Top-10 Watchlist Symbols (NIFTY 50 Blue Chips) ──────────────
 const TOP_WATCHLIST = [
@@ -106,7 +107,7 @@ export default function WatchlistPanel() {
   const fetchQuotes = useCallback(async () => {
     try {
       const params = TOP_WATCHLIST.map((s) => `i=NSE:${s.symbol}`).join('&');
-      const res = await fetch(`/kite/quote?${params}`);
+      const res = await kiteFetch(`/quote?${params}`);
       if (!res.ok) return;
       const data = await res.json();
       if (data.quotes) {
