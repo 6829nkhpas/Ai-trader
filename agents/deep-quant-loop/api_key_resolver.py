@@ -37,19 +37,13 @@ def internal_api_base_url() -> str:
 
 
 def openrouter_base_url() -> str:
-    """OpenAI-compatible base URL for the provisioned keys' LLM gateway.
+    """OpenAI-compatible base URL for the OpenRouter gateway.
 
-    Priority: OPENROUTER_BASE_URL > the deployment's LLM_API_URL (e.g. the
-    omniroute gateway) > openrouter.ai. LangChain appends /chat/completions, so
-    the trailing path is stripped here. The base URL is NOT a secret.
+    Defaults to https://openrouter.ai/api/v1; overridable via OPENROUTER_BASE_URL
+    only. LangChain appends /chat/completions, so any trailing path is stripped.
+    The base URL is NOT a secret.
     """
-    explicit = os.getenv("OPENROUTER_BASE_URL")
-    if explicit and explicit.strip():
-        base = explicit.strip()
-    else:
-        llm_url = os.getenv("LLM_API_URL")
-        base = llm_url.strip() if (llm_url and llm_url.strip()) else "https://openrouter.ai/api/v1"
-    base = base.rstrip("/")
+    base = _env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
     if base.endswith("/chat/completions"):
         base = base[: -len("/chat/completions")]
     return base.rstrip("/")

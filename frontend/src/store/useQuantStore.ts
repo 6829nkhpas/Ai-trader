@@ -161,49 +161,45 @@ export interface ModelProviderGroup { provider: string; models: ModelOption[]; }
 // "gemini-2.5-pro" / "deepseek-chat", while a unified gateway like OpenRouter
 // expects a "vendor/model" form (e.g. "anthropic/claude-3.5-sonnet"). These are
 // the native ids; adjust the prefixes to match your deployment's gateway.
+// Model ids are OpenRouter canonical ids (provider/model). The deep-quant
+// service resolves the user's OpenRouter key and calls these against
+// https://openrouter.ai/api/v1. All listed models support tool calling (the
+// glass-box agent requires it). Empty id = the deployment's default model.
 export const MODEL_PROVIDERS: ModelProviderGroup[] = [
   { provider: 'Default', models: [
     { id: '', label: 'Deployment Default' },
   ]},
   { provider: 'Anthropic (Claude)', models: [
-    { id: 'claude-fable-5', label: 'Claude Fable 5', recommended: true },
-    { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
-    { id: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
-    { id: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
-    { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
-    { id: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
-    { id: 'claude-opus-4-5', label: 'Claude Opus 4.5' },
-    { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
-    { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
-    { id: 'claude-opus-4-1', label: 'Claude Opus 4.1' },
-  ]},
-  { provider: 'Google (Gemini)', models: [
-    { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
-    { id: 'gemini-3.1-pro', label: 'Gemini 3.1 Pro' },
-    { id: 'gemini-3-flash', label: 'Gemini 3 Flash' },
-    { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite' },
-    { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-    { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite' },
+    { id: 'anthropic/claude-sonnet-4.5', label: 'Claude Sonnet 4.5', recommended: true },
+    { id: 'anthropic/claude-opus-4.5', label: 'Claude Opus 4.5' },
+    { id: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4' },
+    { id: 'anthropic/claude-opus-4.1', label: 'Claude Opus 4.1' },
+    { id: 'anthropic/claude-haiku-4.5', label: 'Claude Haiku 4.5' },
+    { id: 'anthropic/claude-3-haiku', label: 'Claude 3 Haiku' },
   ]},
   { provider: 'OpenAI', models: [
-    { id: 'gpt-5.5', label: 'GPT-5.5' },
-    { id: 'gpt-5.4', label: 'GPT-5.4' },
-    { id: 'gpt-5.4-mini', label: 'GPT-5.4-mini' },
-    { id: 'gpt-5-pro', label: 'GPT-5 pro' },
-    { id: 'gpt-5', label: 'GPT-5' },
-    { id: 'gpt-5-mini', label: 'GPT-5 mini' },
-    { id: 'gpt-5-nano', label: 'GPT-5 nano' },
+    { id: 'openai/gpt-4o', label: 'GPT-4o', recommended: true },
+    { id: 'openai/gpt-4o-mini', label: 'GPT-4o mini' },
+    { id: 'openai/gpt-4.1', label: 'GPT-4.1' },
+    { id: 'openai/gpt-4.1-mini', label: 'GPT-4.1 mini' },
+    { id: 'openai/gpt-5', label: 'GPT-5' },
+    { id: 'openai/gpt-5-mini', label: 'GPT-5 mini' },
+    { id: 'openai/o3', label: 'o3' },
+    { id: 'openai/o4-mini', label: 'o4-mini' },
+  ]},
+  { provider: 'Google (Gemini)', models: [
+    { id: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro', recommended: true },
+    { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+    { id: 'google/gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite' },
   ]},
   { provider: 'DeepSeek', models: [
-    { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
-    { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
-    { id: 'deepseek-v4-base', label: 'DeepSeek V4 Base' },
-    { id: 'deepseek-r1', label: 'DeepSeek R1' },
-    { id: 'deepseek-v3.2', label: 'DeepSeek V3.2' },
-    { id: 'deepseek-v3.1', label: 'DeepSeek V3.1' },
-    { id: 'deepseek-v3', label: 'DeepSeek V3' },
-    { id: 'deepseek-v2.5', label: 'DeepSeek V2.5' },
+    { id: 'deepseek/deepseek-r1', label: 'DeepSeek R1', recommended: true },
+    { id: 'deepseek/deepseek-chat-v3.1', label: 'DeepSeek V3.1 (Chat)' },
+    { id: 'deepseek/deepseek-v3.2', label: 'DeepSeek V3.2' },
+  ]},
+  { provider: 'xAI (Grok)', models: [
+    { id: 'x-ai/grok-4.5', label: 'Grok 4.5' },
+    { id: 'x-ai/grok-4.3', label: 'Grok 4.3' },
   ]},
 ];
 

@@ -945,12 +945,14 @@ def _env_nonempty(*names: str, default: str = "") -> str:
             return val.strip()
     return default
 
-GEMINI_DEFAULT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-GEMINI_DEFAULT_MODEL = "gemini-2.5-flash"
+# OpenRouter is the LLM gateway. Per-user keys are resolved at request time and
+# bound over these defaults; model ids are OpenRouter canonical (provider/model).
+OPENROUTER_DEFAULT_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_DEFAULT_MODEL = "openai/gpt-4o"
 
-api_key = _env_nonempty("LLM_API_KEY", "GEMINI_API_KEY")
-base_url = _env_nonempty("LLM_API_URL", default=GEMINI_DEFAULT_URL)
-model_name = _env_nonempty("LLM_MODEL", default=GEMINI_DEFAULT_MODEL)
+api_key = _env_nonempty("LLM_API_KEY")
+base_url = _env_nonempty("OPENROUTER_BASE_URL", "LLM_API_URL", default=OPENROUTER_DEFAULT_URL)
+model_name = _env_nonempty("LLM_MODEL", default=OPENROUTER_DEFAULT_MODEL)
 
 # ── Per-request LLM credentials (per-user OpenRouter key) ─────────────────────
 # The Deep Quant service is shared, but each analysis run must use the
