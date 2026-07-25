@@ -135,6 +135,13 @@ jobs:
           # direct-IP mode. QuestDB (:9000) + deep-quant (:8086) stay on
           # STRATAI_SERVER_HOST — only the live WS feeds move to the domain.
           STRATAI_WS_BASE_URL: ${{ vars.STRATAI_WS_BASE_URL || 'wss://app.stratai.live/ws' }}
+          # Public HTTPS gateway base for the request/response services. When set,
+          # server::questdb_http_url + server::deep_quant_url route through the TLS
+          # domain (https://app.stratai.live/questdb, …/deepquant) instead of
+          # http://<host>:9000 / :8086. Baked via option_env! in server.rs. Clear
+          # the var to fall back to direct-IP mode. PG wire (:8812) stays on
+          # STRATAI_SERVER_HOST (raw TCP, not HTTP).
+          STRATAI_HTTP_BASE_URL: ${{ vars.STRATAI_HTTP_BASE_URL || 'https://app.stratai.live' }}
           QUESTDB_USER: ${{ secrets.QUESTDB_USER || 'admin' }}
           QUESTDB_PASSWORD: ${{ secrets.QUESTDB_PASSWORD }}
           # ── macOS code signing + notarization (OPTIONAL) ──

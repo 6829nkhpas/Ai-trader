@@ -84,9 +84,28 @@ pub fn questdb_pg_url() -> String {
     )
 }
 
-/// Base HTTP URL for QuestDB (`http://<host>:9000`, no path).
+/// Optional public HTTPS gateway base for the request/response services
+/// (e.g. `https://app.stratai.live`).
 ///
-/// Behind the Caddy gateway this endpoint requires basic auth; callers should
+/// When set (runtime or baked at compile time via `STRATAI_HTTP_BASE_URL`),
+/// QuestDB HTTP and the deep-quant service are reached through this single TLS
+/// domain by path (`/questdb`, `/deepquant`) instead of raw
+/// `http://<host>:<port>`. Empty by default (direct-IP mode / local dev). The
+/// PostgreSQL wire (`:8812`) is unaffected — it is a raw TCP protocol and stays
+/// on `host()`.
+pub fn http_base() -> String {
+    resolve(
+        std::env::var("STRATAI_HTTP_BASE_URL"),
+        option_env!("STRATAI_HTTP_BASE_URL"),
+        "",
+    )
+}
+
+/// Base HTTP URL for QuestDB (no path).
+///
+/// Priority: explicit `QUESTDB_HTTP_URL` → the public HTTPS gateway
+/// (`http_base()/questdb`) when configured → direct `http://<host>:9000`.
+/// Behind either gateway this endpoint requires basic auth; callers should
 /// attach `questdb_user()` / `questdb_password()` as credentials.
 pub fn questdb_http_url() -> String {
     if let Ok(u) = std::env::var("QUESTDB_HTTP_URL") {
@@ -95,7 +114,25 @@ pub fn questdb_http_url() -> String {
             return u.to_string();
         }
     }
+    let base = http_base();
+    if !base.is_empty() {
+        return format!("{}/questdb", base.trim_end_matches('/'));
+    }
     format!("http://{}:9000", host())
+}
+
+/// Base URL for the deep-quant FastAPI service (callers append `/run`, `/qa`,
+/// `/resume`, `/cancel`).
+///
+/// Prefers the public HTTPS gateway (`http_base()/deepquant`) when
+/// `STRATAI_HTTP_BASE_URL` is set; otherwise the direct `http://<host>:8086`.
+/// An explicit `DEEP_QUANT_URL` env var still wins at the call sites.
+pub fn deep_quant_url() -> String {
+    let base = http_base();
+    if !base.is_empty() {
+        return format!("{}/deepquant", base.trim_end_matches('/'));
+    }
+    http_url(8086)
 }
 
 /// `ws://<host>:<port>`

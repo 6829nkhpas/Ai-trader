@@ -75,6 +75,30 @@ app.stratai.live {
 		reverse_proxy quant-rag:8083
 	}
 
+	# ── QuestDB HTTP query endpoint (/questdb/* -> questdb:9000) ──────────────
+	# Same shared beta basic-auth credential as the direct :9000 gateway. The
+	# desktop hits …/questdb/exec?query=… ; handle_path strips /questdb so the
+	# upstream receives /exec exactly as on the direct port.
+	handle_path /questdb/* {
+		basic_auth {
+			{$QUESTDB_USER} {$QUESTDB_PASSWORD_HASH}
+		}
+		reverse_proxy questdb:9000
+	}
+
+	# ── Deep-quant AI service (/deepquant/* -> deep-quant:8086) ───────────────
+	# Fronts the glass-box /run, /qa, /resume, /cancel endpoints. `flush_interval
+	# -1` disables buffering so the SSE stream reaches the client as it is
+	# produced. Same basic-auth credential as the direct :8086 gateway.
+	handle_path /deepquant/* {
+		basic_auth {
+			{$QUESTDB_USER} {$QUESTDB_PASSWORD_HASH}
+		}
+		reverse_proxy deep-quant:8086 {
+			flush_interval -1
+		}
+	}
+
 	# Friendly root / health probe (returns 200 for a plain GET).
-	respond / "Strat Ai WSS gateway" 200
+	respond / "Strat Ai gateway" 200
 }

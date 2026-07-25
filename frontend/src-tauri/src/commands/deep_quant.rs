@@ -2239,7 +2239,7 @@ pub async fn run_deep_quant_agent(
     let handle = tokio::spawn(async move {
         let client = reqwest::Client::new();
         let base = std::env::var("DEEP_QUANT_URL")
-            .unwrap_or_else(|_| crate::server::http_url(8086));
+            .unwrap_or_else(|_| crate::server::deep_quant_url());
         let url = format!("{}/run", base.trim_end_matches('/'));
         let mut saw_run_finished = false;
         let mut saw_error = false;
@@ -2372,7 +2372,7 @@ pub async fn cancel_deep_quant_agent(thread_id: String) -> Result<(), String> {
     let tid = thread_id.clone();
     tokio::spawn(async move {
         let base = std::env::var("DEEP_QUANT_URL")
-            .unwrap_or_else(|_| crate::server::http_url(8086));
+            .unwrap_or_else(|_| crate::server::deep_quant_url());
         let url = format!("{}/cancel", base.trim_end_matches('/'));
         let client = reqwest::Client::new();
         let _ = client
@@ -2424,7 +2424,7 @@ pub async fn ask_trade_question(
     tokio::spawn(async move {
         let client = reqwest::Client::new();
         let base = std::env::var("DEEP_QUANT_URL")
-            .unwrap_or_else(|_| crate::server::http_url(8086));
+            .unwrap_or_else(|_| crate::server::deep_quant_url());
         let url = format!("{}/qa", base.trim_end_matches('/'));
         let mut saw_run_finished = false;
 
