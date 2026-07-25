@@ -457,29 +457,18 @@ pub async fn generate_deep_quant_plan_with_url(
     let t0 = Instant::now();
 
     // ── Resolve API key ─────────────────────────────────────────────────
-    let vault_key = app.and_then(|handle| {
-        use crate::commands::security::get_api_key_from_vault;
-        get_api_key_from_vault(handle, "llm_key")
-            .or_else(|| get_api_key_from_vault(handle, "hf_key"))
-            .or_else(|| get_api_key_from_vault(handle, "deepseek"))
-    });
-
-    let api_key = if let Some(k) = vault_key {
-        info!("[llm] step=resolve_key source=SECURE_VAULT");
-        k
-    } else {
-        match resolve_api_key() {
-            Some(k) => {
-                info!("[llm] step=resolve_key source=LLM_API_KEY");
-                k
-            }
-            None => {
-                error!("[llm] no API key configured (set LLM_API_KEY in .env or save via Settings → Security Vault)");
-                return Err(
-                    "LLM API Failure: no API key found. Set LLM_API_KEY in .env or save via Settings → Security Vault."
-                        .to_string(),
-                );
-            }
+    // Credentials are provisioned and managed by the backend; the desktop never
+    // stores or accepts a raw key locally. In thin-client mode the active LLM
+    // path runs server-side, so a locally-unset key simply disables this legacy
+    // in-process path.
+    let api_key = match resolve_api_key() {
+        Some(k) => {
+            info!("[llm] step=resolve_key source=backend_managed");
+            k
+        }
+        None => {
+            error!("[llm] no LLM API key available for the in-process path");
+            return Err("LLM API Failure: no API key available (managed by backend).".to_string());
         }
     };
 
@@ -1080,19 +1069,12 @@ pub async fn generate_sentinel_plan(
     macd_signal: f64,
     ema9_val: f64,
     ema21_val: f64,
-    app: Option<&tauri::AppHandle>,
+    _app: Option<&tauri::AppHandle>,
 ) -> Result<AiExecutionPlan, String> {
     let t0 = Instant::now();
     let api_url = resolve_endpoint();
-    let api_key = if let Some(handle) = app {
-        use crate::commands::security::get_api_key_from_vault;
-        get_api_key_from_vault(handle, "llm_key")
-            .or_else(|| get_api_key_from_vault(handle, "hf_key"))
-            .or_else(|| get_api_key_from_vault(handle, "deepseek"))
-            .or_else(|| resolve_api_key())
-    } else {
-        resolve_api_key()
-    }.ok_or_else(|| "LLM API Key not found. Set LLM_API_KEY in .env or Settings.".to_string())?;
+    let api_key = resolve_api_key()
+        .ok_or_else(|| "LLM API key not available (managed by backend).".to_string())?;
 
     let model = resolve_model();
     let timeout_secs = resolve_timeout();
@@ -1229,24 +1211,15 @@ pub async fn generate_sentinel_plan(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn generate_autonomous_step(
-    app: &tauri::AppHandle,
+    _app: &tauri::AppHandle,
     messages: Vec<ChatMessage>,
     tools: serde_json::Value,
 ) -> Result<ChatMessageResponse, String> {
     let api_url = resolve_endpoint();
-    let api_key = if let Some(k) = {
-        use crate::commands::security::get_api_key_from_vault;
-        get_api_key_from_vault(app, "llm_key")
-            .or_else(|| get_api_key_from_vault(app, "hf_key"))
-            .or_else(|| get_api_key_from_vault(app, "deepseek"))
-    } {
-        k
-    } else {
-        match resolve_api_key() {
-            Some(k) => k,
-            None => {
-                return Err("LLM API Failure: no API key found.".to_string());
-            }
+    let api_key = match resolve_api_key() {
+        Some(k) => k,
+        None => {
+            return Err("LLM API Failure: no API key available (managed by backend).".to_string());
         }
     };
 

@@ -8,7 +8,7 @@ pub mod services;
 pub mod execution;
 pub mod server;
 
-use commands::security::SecureKeyStore;
+
 
 /// Handles deep links received from the OS (e.g. alphasuite://broker-callback?token=XXXXX)
 fn handle_deep_link(app: &tauri::AppHandle, url_str: &str) {
@@ -33,20 +33,15 @@ fn handle_deep_link(app: &tauri::AppHandle, url_str: &str) {
                 }
             }
 
-            if let Some(token) = access_token {
-                info!("[deep link] Parsed Zerodha token. Encryption-saving to vault...");
-                if let Some(store) = app.try_state::<SecureKeyStore>() {
-                    store.insert("zerodha", &token);
-                    info!("[deep link] Encrypted token cached in SecureKeyStore.");
-
-                    // Emit event to React frontend so the UI clears any loader screen
-                    if let Err(e) = app.emit("broker-connection-success", serde_json::json!({})) {
-                        error!("[deep link] Failed to emit broker-connection-success: {:?}", e);
-                    } else {
-                        info!("[deep link] Emitted connection success event to UI.");
-                    }
+            if access_token.is_some() {
+                // Broker auth is handled and secured server-side; the desktop no
+                // longer caches any token locally. Just notify the UI so it can
+                // clear the loader and refresh state from the backend.
+                info!("[deep link] Broker callback received; notifying UI.");
+                if let Err(e) = app.emit("broker-connection-success", serde_json::json!({})) {
+                    error!("[deep link] Failed to emit broker-connection-success: {:?}", e);
                 } else {
-                    error!("[deep link] SecureKeyStore is not initialized.");
+                    info!("[deep link] Emitted connection success event to UI.");
                 }
             } else {
                 log::warn!("[deep link] No token found in url parameters.");
@@ -169,30 +164,8 @@ pub fn run() {
         }
     }))
     .plugin(tauri_plugin_deep_link::init())
-    .plugin({
-      // ── Stronghold Encrypted Credential Vault ──────────────────────────
-      // Argon2id derives a 32-byte key from the vault password.
-      // Fixed salt ensures the same key is derived on every launch.
-      // The password is application-defined (not user-visible).
-      tauri_plugin_stronghold::Builder::new(|password| {
-          // argon2 v0.5 (RustCrypto) raw key derivation path.
-          // salt must be ≥ 8 bytes; we use 32 fixed bytes.
-          let salt = b"alpha_suite_v3_stronghold_salt_01"; // 32 bytes
-          let mut output = vec![0u8; 32];
-          argon2::Argon2::default()
-               .hash_password_into(password.as_bytes(), salt, &mut output)
-               .unwrap_or_else(|_| {
-                   // Should never fail with valid static inputs, but we
-                   // must not panic in the hash closure.
-                   for (i, b) in output.iter_mut().enumerate() { *b = i as u8; }
-               });
-          output
-      })
-      .build()
-    })
     .manage(active_symbol_state)
     .manage(tx.clone())
-    .manage(SecureKeyStore::new())
     .manage(quant::radar::RadarRegistry::new())
     .manage(std::sync::Mutex::new(execution::paper::VirtualPortfolio {
         balance: 1000000.0,
@@ -362,10 +335,6 @@ pub fn run() {
         commands::fno::fno_unsubscribe,
         commands::fno::fno_resolve_nearest_contract,
         commands::fno::fno_resolve_option_contract,
-        commands::security::save_api_key,
-        commands::security::check_api_key_exists,
-        commands::security::hydrate_key_cache,
-        commands::security::vault_store_token,
         commands::security::open_browser,
         db::save_workspace,
         db::load_workspace,
