@@ -1,0 +1,59 @@
+name: deploy-server
+
+# Continuous deployment for the DROPLET backend stack.
+#
+# On every push to main that touches server code (or manually), SSH into the
+# droplet and run redeploy.sh, which syncs the repo to origin/main, rebuilds the
+# affected services (Docker layer cache keeps unchanged ones fast), and restarts
+# the stack. The runner does NOT check out or build anything — it only triggers
+# the server to pull + rebuild itself, so the droplet is the single build host.
+#
+# One-time setup (repo → Settings → Secrets and variables → Actions):
+#   Secrets:
+#     DEPLOY_SSH_KEY   — the PRIVATE deploy key (contents of keys/stratai_deploy)
+#   Variables:
+#     DEPLOY_HOST      — droplet IP/host (e.g. 168.144.86.130)
+#     DEPLOY_USER      — SSH user (optional; defaults to root)
+#     DEPLOY_PATH      — repo path on the droplet (optional; defaults to /root/Ai-trader)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ingestion/**"
+      - "alpha-terminal/**"
+      - "aggregator/**"
+      - "agents/**"
+      - "tool-server/**"
+      - "quant-core/**"
+      - "shared_protos/**"
+      - "docker-compose.prod.yml"
+      - "docker-compose.8gb.yml"
+      - "deploy.sh"
+      - "redeploy.sh"
+      - "infra/caddy/**"
+      - ".github/workflows/deploy-server.yml"
+  workflow_dispatch: {}
+
+# Never run two deploys at once; queue the latest so the droplet isn't building
+# the same stack concurrently.
+concurrency:
+  group: deploy-server
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Redeploy on the droplet over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ vars.DEPLOY_HOST }}
+          username: ${{ vars.DEPLOY_USER || 'root' }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          # Rust rebuilds on a cold cache can take a while; give it headroom.
+          command_timeout: "40m"
+          script: |
+            set -e
+            cd "${{ vars.DEPLOY_PATH || '/root/Ai-trader' }}"
+            bash redeploy.sh
