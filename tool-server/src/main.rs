@@ -30,8 +30,7 @@ use quant_core::{
     patterns::Candle,
     predictive::calculate_dual_projection,
     vwepr::OhlcCandle,
-    Action, AiExecutionPlan, ConsensusEngine, ConsensusReport, ExecutionLevels, IndicatorState,
-    SrLevels, ValidatorOutcome,
+    Action, AiExecutionPlan, ConsensusEngine, ExecutionLevels, IndicatorState, ValidatorOutcome,
 };
 use tokio::sync::RwLock;
 
@@ -178,6 +177,40 @@ fn sort_candles_ascending(mut candles: Vec<CandleWithTs>) -> Vec<CandleWithTs> {
     candles
 }
 
+/// Map a candle-load failure to an HTTP response, matching the get_candles
+/// contract: an Availability_Shortfall degrades to a graceful 200
+/// `{"unavailable": true, ...}` marker (the agent treats it as a missing input,
+/// not an error), while an Infrastructure_Fault is a 503 naming the cause.
+fn candle_load_error_response(e: CandleLoadError) -> Response {
+    match e {
+        CandleLoadError::Shortfall {
+            symbol,
+            timeframe,
+            available,
+            needed,
+            detail,
+        } => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "unavailable": true,
+                "reason": detail,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "available": available,
+                "needed": needed,
+            })),
+        )
+            .into_response(),
+        CandleLoadError::Fault { source, detail } => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": format!("candle store fault: {}: {}", source, detail),
+            })),
+        )
+            .into_response(),
+    }
+}
+
 async fn get_candles(
     State(state): State<ServerState>,
     Json(payload): Json<GetCandlesRequest>,
@@ -233,21 +266,17 @@ async fn get_candles(
 async fn get_consensus(
     State(state): State<ServerState>,
     Json(payload): Json<GetConsensusRequest>,
-) -> Result<Json<ConsensusReport>, (StatusCode, Json<serde_json::Value>)> {
+) -> Response {
     let limit = payload.limit.unwrap_or(200);
     let tf = payload.timeframe.unwrap_or_else(|| "10m".to_string());
-    let candles = load_candles(&state.pool, &payload.symbol, &tf, limit)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-        })?;
+    let candles = match load_candles(&state.pool, &payload.symbol, &tf, limit).await {
+        Ok(c) => c,
+        Err(e) => return candle_load_error_response(e),
+    };
 
     let indicators = IndicatorState::from_candles_basic(&candles);
     let consensus = ConsensusEngine::compile_consensus(&payload.symbol, &candles, &indicators, &tf);
-    Ok(Json(consensus))
+    (StatusCode::OK, Json(consensus)).into_response()
 }
 
 // ── get_support_resistance ────────────────────────────────────────────────────
@@ -255,23 +284,20 @@ async fn get_consensus(
 async fn get_support_resistance(
     State(state): State<ServerState>,
     Json(payload): Json<GetSupportResistanceRequest>,
-) -> Result<Json<SrLevels>, (StatusCode, Json<serde_json::Value>)> {
+) -> Response {
     let tf = payload.timeframe.clone().unwrap_or_else(|| "10m".to_string());
     if let Err(e) = quant_core::validate_timeframe(&tf) {
-        return Err((
+        return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": e.to_string() })),
-        ));
+        )
+            .into_response();
     }
     let limit = payload.limit.unwrap_or(200);
-    let candles = load_candles(&state.pool, &payload.symbol, &tf, limit)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-        })?;
+    let candles = match load_candles(&state.pool, &payload.symbol, &tf, limit).await {
+        Ok(c) => c,
+        Err(e) => return candle_load_error_response(e),
+    };
 
     let sr = quant_core::compute_sr(&candles, &tf);
     info!(
@@ -281,7 +307,7 @@ async fn get_support_resistance(
         sr.pivot,
         sr.ordering_exception.is_some()
     );
-    Ok(Json(sr))
+    (StatusCode::OK, Json(sr)).into_response()
 }
 
 // ── get_chart_patterns ────────────────────────────────────────────────────────
@@ -289,17 +315,13 @@ async fn get_support_resistance(
 async fn get_chart_patterns_handler(
     State(state): State<ServerState>,
     Json(payload): Json<GetChartPatternsRequest>,
-) -> Result<Json<ChartPatternResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Response {
     let limit = payload.limit.unwrap_or(200);
     let tf = payload.timeframe.unwrap_or_else(|| "10m".to_string());
-    let candles = load_candles(&state.pool, &payload.symbol, &tf, limit)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-        })?;
+    let candles = match load_candles(&state.pool, &payload.symbol, &tf, limit).await {
+        Ok(c) => c,
+        Err(e) => return candle_load_error_response(e),
+    };
 
     let patterns = ChartPatternEngine::analyze(&candles);
     info!(
@@ -308,11 +330,15 @@ async fn get_chart_patterns_handler(
         tf,
         patterns.len()
     );
-    Ok(Json(ChartPatternResponse {
-        symbol: payload.symbol,
-        timeframe: tf,
-        patterns,
-    }))
+    (
+        StatusCode::OK,
+        Json(ChartPatternResponse {
+            symbol: payload.symbol,
+            timeframe: tf,
+            patterns,
+        }),
+    )
+        .into_response()
 }
 
 // ── get_multi_tf_trend ────────────────────────────────────────────────────────
