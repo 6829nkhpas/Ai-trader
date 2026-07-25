@@ -2,14 +2,18 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Cpu, ChevronDown, ChevronRight, Check } from 'lucide-react';
-import { MODEL_PROVIDERS, type ModelProviderGroup } from '../../../store/useQuantStore';
+import { Cpu, ChevronDown, ChevronRight, Check, Lock } from 'lucide-react';
+import { MODEL_PROVIDERS, MODEL_SELECTION_LOCKED, type ModelProviderGroup } from '../../../store/useQuantStore';
 
 interface ModelSelectorProps {
   value: string;
   onChange: (id: string) => void;
   disabled?: boolean;
   variant?: 'default' | 'inline';
+  // When true, models are shown but NOT selectable (beta/omniroute gateway).
+  // Defaults to the build-time MODEL_SELECTION_LOCKED so callers don't have to
+  // wire it, but can be overridden.
+  locked?: boolean;
 }
 
 /**
@@ -23,7 +27,7 @@ interface ModelSelectorProps {
  * where the submenu was cut off and forced a horizontal scrollbar). The panel
  * opens upward because the composer sits at the bottom of the screen.
  */
-export default function ModelSelector({ value, onChange, disabled = false, variant = 'default' }: ModelSelectorProps) {
+export default function ModelSelector({ value, onChange, disabled = false, variant = 'default', locked = MODEL_SELECTION_LOCKED }: ModelSelectorProps) {
   const [open, setOpen] = useState(false);
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
   const [panelPos, setPanelPos] = useState<{ left: number; top?: number; bottomOffset?: number }>({ left: 0 });
@@ -101,6 +105,7 @@ export default function ModelSelector({ value, onChange, disabled = false, varia
   };
 
   const pick = (id: string) => {
+    if (locked) return; // beta/omniroute: selection is locked to the default model
     onChange(id);
     setOpen(false);
     setActiveGroup(null);
@@ -113,7 +118,7 @@ export default function ModelSelector({ value, onChange, disabled = false, varia
         type="button"
         onClick={toggle}
         disabled={disabled}
-        title="Select the LLM provider / model"
+        title={locked ? 'Model selection is locked in beta — upgrade to choose any model' : 'Select the LLM provider / model'}
         className={variant === 'inline'
           ? "flex items-center gap-1 bg-transparent px-1 py-0.5 text-[10px] font-sans font-semibold text-text-muted hover:text-text-primary focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           : "flex w-full items-center justify-between rounded bg-elevated/35 border border-border-default/60 px-2.5 py-1.5 text-[10px] font-sans font-semibold text-text-primary hover:bg-elevated/65 hover:border-border-default/90 transition-all focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
@@ -131,7 +136,9 @@ export default function ModelSelector({ value, onChange, disabled = false, varia
               <span className="text-text-muted select-none shrink-0">Model:</span>
               <span className="truncate">{selectedLabel}</span>
             </div>
-            <ChevronDown size={11} className={`text-text-muted shrink-0 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+            {locked
+              ? <Lock size={11} className="text-amber-500 shrink-0" />
+              : <ChevronDown size={11} className={`text-text-muted shrink-0 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />}
           </>
         )}
       </button>
@@ -149,8 +156,14 @@ export default function ModelSelector({ value, onChange, disabled = false, varia
                 ? { top: panelPos.top }
                 : { bottom: panelPos.bottomOffset }),
             }}
-            className="z-[9999] w-[210px] max-h-[60vh] overflow-y-auto overflow-x-hidden bg-surface border border-border-default shadow-2xl scrollbar-thin py-1"
+            className="z-[9999] w-[230px] max-h-[60vh] overflow-y-auto overflow-x-hidden bg-surface border border-border-default shadow-2xl scrollbar-thin py-1"
           >
+            {locked && (
+              <div className="flex items-start gap-1.5 px-3 py-2 mb-1 border-b border-border-default/40 text-[9px] leading-snug text-text-muted">
+                <Lock size={11} className="text-amber-500 shrink-0 mt-px" />
+                <span>Model selection is locked in beta. Upgrade to choose any model.</span>
+              </div>
+            )}
             {MODEL_PROVIDERS.map((group) => {
               const single = group.models.length === 1;
               const isActive = activeGroup === group.provider;
@@ -185,10 +198,14 @@ export default function ModelSelector({ value, onChange, disabled = false, varia
                   key={m.id}
                   type="button"
                   onClick={() => pick(m.id)}
+                  disabled={locked}
+                  aria-disabled={locked}
                   className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[11px] transition-colors ${
-                    m.id === value
-                      ? 'bg-elevated text-text-primary font-semibold'
-                      : 'text-text-secondary hover:bg-elevated/60 hover:text-text-primary'
+                    locked
+                      ? 'text-text-muted/60 cursor-not-allowed'
+                      : m.id === value
+                        ? 'bg-elevated text-text-primary font-semibold'
+                        : 'text-text-secondary hover:bg-elevated/60 hover:text-text-primary'
                   }`}
                 >
                   <span className="flex items-center gap-1.5 min-w-0">
@@ -199,7 +216,9 @@ export default function ModelSelector({ value, onChange, disabled = false, varia
                       </span>
                     )}
                   </span>
-                  {m.id === value && <Check size={12} className="text-emerald-500 shrink-0" />}
+                  {locked
+                    ? <Lock size={11} className="text-text-muted/60 shrink-0" />
+                    : m.id === value && <Check size={12} className="text-emerald-500 shrink-0" />}
                 </button>
               ))}
             </div>

@@ -243,12 +243,20 @@ const MODEL_PROVIDERS_OMNIROUTE: ModelProviderGroup[] = [
   ]},
 ];
 
+// Which LLM gateway this build targets: 'openrouter' (production, per-user keys)
+// or 'omniroute' (beta, shared key). Defaults to omniroute.
+export const LLM_GATEWAY: 'openrouter' | 'omniroute' =
+  process.env.NEXT_PUBLIC_LLM_GATEWAY === 'openrouter' ? 'openrouter' : 'omniroute';
+
+// Model selection is LOCKED on the beta (omniroute) gateway — beta users run the
+// deployment's default model and cannot switch. On OpenRouter (production) every
+// model is selectable (billed to the user's own credits).
+export const MODEL_SELECTION_LOCKED = LLM_GATEWAY !== 'openrouter';
+
 // Active list for this build. Defaults to omniroute (beta); production builds set
 // NEXT_PUBLIC_LLM_GATEWAY=openrouter.
 export const MODEL_PROVIDERS: ModelProviderGroup[] =
-  process.env.NEXT_PUBLIC_LLM_GATEWAY === 'openrouter'
-    ? MODEL_PROVIDERS_OPENROUTER
-    : MODEL_PROVIDERS_OMNIROUTE;
+  LLM_GATEWAY === 'openrouter' ? MODEL_PROVIDERS_OPENROUTER : MODEL_PROVIDERS_OMNIROUTE;
 
 // ── Decoupled Sentiment Payload (independent of Kafka/WS ticks) ─────────
 
@@ -1163,7 +1171,9 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
           timeframe: activeTimeframe,
           profile: activeProfile,
           fnoExpiry,
-          model: get().selectedModel || null,
+          // Beta (locked) always uses the deployment default model; production
+          // sends the user's selection.
+          model: MODEL_SELECTION_LOCKED ? null : (get().selectedModel || null),
           manualTrade: manualTrade ? {
             side: manualTrade.side,
             entry: manualTrade.entry,
@@ -1555,7 +1565,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       });
 
       // Invoke the proxy command (camelCase args → snake_case Rust params).
-      await tauriInvoke<void>('ask_trade_question', { threadId, question: trimmed, model: get().selectedModel || null, userId: useAuthStore.getState().user?.id ?? null });
+      await tauriInvoke<void>('ask_trade_question', { threadId, question: trimmed, model: MODEL_SELECTION_LOCKED ? null : (get().selectedModel || null), userId: useAuthStore.getState().user?.id ?? null });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[QuantStore] ✘ askQuestion FAIL: ${message}`);
