@@ -73,6 +73,21 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Force Next.js to emit the static ../out bundle Tauri needs.
           NEXT_OUTPUT_EXPORT: "1"
+          # ── Backend (auth + credit + LLM key) target, baked into the static
+          #    export at build time. frontend/src/lib/env.ts REQUIRES these two,
+          #    and .env.local is gitignored, so they MUST be provided here or the
+          #    static export fails. Both are public URLs (no secrets). Overridable
+          #    via repo variables if the backend host ever changes.
+          NEXT_PUBLIC_API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL || 'https://api-web.stratai.live' }}
+          NEXT_PUBLIC_DASHBOARD_URL: ${{ vars.NEXT_PUBLIC_DASHBOARD_URL || 'https://dashboard.stratai.live' }}
+          # Broker/portfolio calls (legacy AUTH_SERVICE_URL) also target the same
+          # deployed backend in shipped builds.
+          NEXT_PUBLIC_AUTH_SERVICE_URL: ${{ vars.NEXT_PUBLIC_AUTH_SERVICE_URL || 'https://api-web.stratai.live' }}
+          # Premium-feature gating. false = every feature unlocked (safe for a
+          # beta where users may not have active plans yet); set the repo variable
+          # NEXT_PUBLIC_PROD=true to gate features by the user's plan accessFlags
+          # once subscriptions are provisioned.
+          NEXT_PUBLIC_PROD: ${{ vars.NEXT_PUBLIC_PROD || 'false' }}
           # ── Thin-client backend target (baked into the binary at compile time) ──
           # server.rs reads these via option_env! so shipped installers connect to
           # the droplet with the shared beta QuestDB credentials out of the box.
