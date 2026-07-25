@@ -2182,6 +2182,7 @@ pub async fn run_deep_quant_agent(
     fno_expiry: Option<String>,
     model: Option<String>,
     manual_trade: Option<ManualTradeInfo>,
+    user_id: Option<String>,
 ) -> Result<String, String> {
     let mode_str = mode.unwrap_or_else(|| "FIND".to_string());
     // Workspace profile (INTRADAY / SWING / INVESTOR / FNO) selected in the
@@ -2228,7 +2229,8 @@ pub async fn run_deep_quant_agent(
         "profile": profile_str,
         "fno_expiry": fno_expiry,
         "model": model,
-        "manual_trade": manual_trade
+        "manual_trade": manual_trade,
+        "user_id": user_id
     });
     
     let thread_id_for_registry = thread_id.clone();
@@ -2403,6 +2405,7 @@ pub async fn ask_trade_question(
     thread_id: String,
     question: String,
     model: Option<String>,
+    user_id: Option<String>,
 ) -> Result<(), String> {
     info!("[ask_trade_question] Starting Trade_QA_Mode proxy for thread={} model={:?}", thread_id, model);
 
@@ -2412,7 +2415,8 @@ pub async fn ask_trade_question(
     let payload = serde_json::json!({
         "thread_id": thread_id,
         "question": question,
-        "model": model
+        "model": model,
+        "user_id": user_id
     });
 
     // Spawn the streaming reqwest client in the background, returning Ok(())

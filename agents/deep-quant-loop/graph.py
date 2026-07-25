@@ -952,6 +952,52 @@ api_key = _env_nonempty("LLM_API_KEY", "GEMINI_API_KEY")
 base_url = _env_nonempty("LLM_API_URL", default=GEMINI_DEFAULT_URL)
 model_name = _env_nonempty("LLM_MODEL", default=GEMINI_DEFAULT_MODEL)
 
+# ── Per-request LLM credentials (per-user OpenRouter key) ─────────────────────
+# The Deep Quant service is shared, but each analysis run must use the
+# REQUESTING user's OpenRouter key (resolved by main.py from the backend
+# internal endpoint). These context variables carry that per-run override so
+# every ChatOpenAI builder below binds the correct key/base WITHOUT a
+# process-global mutation (concurrency-safe: each event_generator coroutine sets
+# its own value). When unset, the module falls back to the env-configured
+# api_key/base_url (local dev / self-hosted).
+from contextvars import ContextVar  # noqa: E402
+
+_run_api_key: ContextVar = ContextVar("_run_api_key", default=None)
+_run_base_url: ContextVar = ContextVar("_run_base_url", default=None)
+
+
+def set_run_llm_credentials(run_key, run_base_url) -> None:
+    """Set the per-request LLM credentials for the current async task.
+
+    Called by main.py's event_generator before ``graph.astream`` so all LLM
+    builders in this run bind the user's key. Passing ``None`` leaves the env
+    default in effect.
+    """
+    _run_api_key.set(run_key if (run_key and str(run_key).strip()) else None)
+    base = run_base_url.strip() if isinstance(run_base_url, str) and run_base_url.strip() else None
+    if base and base.endswith("/chat/completions"):
+        base = base[: -len("/chat/completions")]
+    if base and base.endswith("/"):
+        base = base[:-1]
+    _run_base_url.set(base)
+
+
+def _eff_api_key() -> str:
+    """Effective LLM API key: the per-run override if set, else the env key."""
+    return _run_api_key.get() or api_key
+
+
+def _eff_base_url() -> str:
+    """Effective LLM base URL: the per-run override if set, else the env base."""
+    return _run_base_url.get() or base_url
+
+
+def _creds_cache_tag() -> str:
+    """A short, non-secret cache discriminator for the effective credentials so
+    per-user bindings never collide in the shared build caches (keyed on the
+    base URL + a hash of the key, never the raw key)."""
+    return f"{_eff_base_url()}::{hash(_eff_api_key())}"
+
 # ── Reasoning effort (FreeModel / OpenAI-compatible) ─────────────────────────
 # LLM_EFFORT selects how hard the model "thinks": low | medium | high | xhigh.
 # LLM_EFFORT_FIELD is the JSON body key carrying that value — FreeModel is
@@ -1080,7 +1126,7 @@ def _build_profile_llm_for_model(model: str, is_fno: bool):
     default binding and NEVER raises if the client cannot be constructed.
     """
     scope = "fno" if is_fno else "nonfno"
-    key = (model, scope)
+    key = (model, scope, _creds_cache_tag())
     cached = _MODEL_PROFILE_LLM_CACHE.get(key)
     if cached is not None:
         return cached
@@ -1088,8 +1134,8 @@ def _build_profile_llm_for_model(model: str, is_fno: bool):
     try:
         role_llm = ChatOpenAI(
             model=model,
-            openai_api_key=api_key,
-            openai_api_base=base_url,
+            openai_api_key=_eff_api_key(),
+            openai_api_base=_eff_base_url(),
             temperature=0.2,
             extra_body=_effort_extra_body(),
             default_headers={
@@ -1134,6 +1180,11 @@ def _llm_for_profile(state: "AgentState"):
     model = state.get("model") if isinstance(state, dict) else None
     if isinstance(model, str) and model.strip():
         return _build_profile_llm_for_model(model.strip(), expose_options)
+    # When a per-run OpenRouter key is active (resolved per user), build the
+    # binding with it — the pre-built module bindings use the env key. Default
+    # to the deployment model when the run didn't select one.
+    if _run_api_key.get():
+        return _build_profile_llm_for_model(model_name, expose_options)
     return llm_with_tools if expose_options else non_fno_llm_with_tools
 
 # Cache of read-only-bound role models keyed by (model_name, "readonly") so the
@@ -1150,15 +1201,15 @@ def _build_readonly_llm_for_model(role_model: str):
     (``readonly_llm_with_tools``). Reuses the same api_key / base_url / retry /
     timeout configuration as the system ``llm``.
     """
-    key = (role_model, "readonly")
+    key = (role_model, "readonly", _creds_cache_tag())
     cached = _ROLE_LLM_CACHE.get(key)
     if cached is not None:
         return cached
     try:
         role_llm = ChatOpenAI(
             model=role_model,
-            openai_api_key=api_key,
-            openai_api_base=base_url,
+            openai_api_key=_eff_api_key(),
+            openai_api_base=_eff_base_url(),
             temperature=0.2,
             extra_body=_effort_extra_body(),
             default_headers={
@@ -1220,15 +1271,15 @@ def _build_full_llm_for_model(role_model: str):
     raises (R6.4): if constructing a role-specific client fails, falls back to
     the default full-tool binding (``llm_with_tools``).
     """
-    key = (role_model, "full")
+    key = (role_model, "full", _creds_cache_tag())
     cached = _ROLE_LLM_CACHE.get(key)
     if cached is not None:
         return cached
     try:
         role_llm = ChatOpenAI(
             model=role_model,
-            openai_api_key=api_key,
-            openai_api_base=base_url,
+            openai_api_key=_eff_api_key(),
+            openai_api_base=_eff_base_url(),
             temperature=0.2,
             extra_body=_effort_extra_body(),
             default_headers={
@@ -1264,6 +1315,43 @@ def get_judge_llm():
             f"Using the default full-tool binding."
         )
         return llm_with_tools
+
+
+# ── Per-run base (no-tools) model, honoring the per-user OpenRouter key ────────
+_BASE_LLM_CACHE: dict = {}
+
+
+def _base_llm_for_run():
+    """Return a no-tools ChatOpenAI bound to the effective per-run credentials.
+
+    Used by the Q&A final-turn (which must answer with no tools). When no per-run
+    key is active this is the module ``llm``; otherwise a per-credential client is
+    built and cached so the user's OpenRouter key is used. Never raises.
+    """
+    if not _run_api_key.get():
+        return llm
+    tag = _creds_cache_tag()
+    cached = _BASE_LLM_CACHE.get(tag)
+    if cached is not None:
+        return cached
+    try:
+        built = ChatOpenAI(
+            model=model_name,
+            openai_api_key=_eff_api_key(),
+            openai_api_base=_eff_base_url(),
+            temperature=0.2,
+            extra_body=_effort_extra_body(),
+            default_headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
+            max_retries=int(_env_nonempty("LLM_MAX_RETRIES", default="4")),
+            timeout=float(_env_nonempty("LLM_TIMEOUT_SECS", default="90")),
+        )
+    except Exception:  # noqa: BLE001
+        built = llm
+    _BASE_LLM_CACHE[tag] = built
+    return built
+
 
 # ── Nodes & Routing ─────────────────────────────────────────────────────────
 
@@ -4855,13 +4943,13 @@ def qa_node(state: AgentState):
                 "data was unavailable, say so honestly and answer with what you have."
             )
         )
-        # Base `llm` has no tools bound, so the model must respond with text.
-        response = llm.invoke(llm_messages + [final_directive])
+        # No-tools binding (per-run creds) so the model must respond with text.
+        response = _base_llm_for_run().invoke(llm_messages + [final_directive])
     else:
         _qa_llm = (
             _build_profile_llm_for_model(_qa_model.strip(), is_fno=True)
             if isinstance(_qa_model, str) and _qa_model.strip()
-            else llm_with_tools
+            else _build_profile_llm_for_model(model_name, is_fno=True)
         )
         response = _qa_llm.invoke(llm_messages)
 

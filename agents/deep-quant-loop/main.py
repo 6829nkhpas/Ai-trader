@@ -5,8 +5,17 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from langgraph.types import Command
 
-# Import the compiled LangGraph state machine
-from graph import graph
+# Import the compiled LangGraph state machine + the per-run LLM credential hook.
+from graph import graph, set_run_llm_credentials
+
+# Per-user OpenRouter key resolution (backend internal endpoint, droplet
+# IP-whitelisted). Each run binds the requesting user's key instead of a shared
+# env key.
+from api_key_resolver import (
+    resolve_openrouter_key,
+    openrouter_base_url,
+    ApiKeyResolutionError,
+)
 
 # F&O read layer + analytics (F1/F2) and the agent options-bias classifier (F3).
 # The /options/snapshot endpoint (F4 transport seam) strictly COMPOSES these
@@ -82,6 +91,9 @@ class RunRequest(BaseModel):
     message: str
     mode: Optional[str] = "FIND"
     symbol: Optional[str] = "N/A"
+    # Authenticated user id, forwarded by the desktop. Used to resolve this
+    # user's OpenRouter key from the backend internal endpoint for the run.
+    user_id: Optional[str] = None
     manual_trade: Optional[dict] = None
     timeframe: Optional[str] = None
     # Workspace profile selected in the terminal (INTRADAY / SWING / INVESTOR /
@@ -101,6 +113,9 @@ class ResumeRequest(BaseModel):
     thread_id: str
     triggered_candle: dict
     trigger_kind: Optional[str] = "target"
+    # Optional user id for re-resolving the OpenRouter key on a watcher-triggered
+    # resume (falls back to the key persisted on the run's thread when absent).
+    user_id: Optional[str] = None
 
 class QARequest(BaseModel):
     # Trade_QA_Mode follow-up question. Reuses the SAME thread_id so the run
@@ -110,6 +125,8 @@ class QARequest(BaseModel):
     question: str
     # Optional LLM model override for this Q&A turn ('' / None => default).
     model: Optional[str] = None
+    # Authenticated user id for resolving this user's OpenRouter key.
+    user_id: Optional[str] = None
 
 class CancelRequest(BaseModel):
     # User-requested cancellation of an in-flight /run for this thread_id. The
@@ -128,7 +145,7 @@ _CANCELLED: set[str] = set()
 
 # ── SSE Generator ────────────────────────────────────────────────────────────
 
-async def event_generator(thread_id: str, graph_input=None, resume_command=None):
+async def event_generator(thread_id: str, graph_input=None, resume_command=None, user_id=None):
     """Stream the run as ordered glass-box Server-Sent Events.
 
     Ordering and resilience guarantees (Requirement 17):
@@ -150,6 +167,24 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None)
     """
     # R17.1: RUN_STARTED is always the first event of the run.
     yield format_sse(RUN_STARTED, build_run_started_event(thread_id))
+
+    # ── Bind the per-user OpenRouter key for this run ────────────────────────
+    # Resolve the requesting user's key from the backend internal endpoint and
+    # bind it (via graph.set_run_llm_credentials) so every LLM call in this run
+    # uses the user's key + OpenRouter. With no user_id (local dev / self-hosted)
+    # the env-configured key stays in effect. A resolution failure surfaces a
+    # clean ERROR — never a fabricated plan and never a shared-key fallback.
+    if user_id:
+        try:
+            _run_key = resolve_openrouter_key(user_id)
+            set_run_llm_credentials(_run_key, openrouter_base_url())
+        except ApiKeyResolutionError as _key_err:
+            print(f"[main] LLM key resolution failed for user {user_id}: {_key_err}")
+            yield format_sse(ERROR, build_error_event(f"LLM key unavailable: {_key_err}"))
+            return
+    else:
+        # No user id supplied — use the deployment's env credentials.
+        set_run_llm_credentials(None, None)
 
     config = {"configurable": {"thread_id": thread_id}}
     # Stamp the run's workspace profile into the tool config so profile-aware
@@ -238,7 +273,7 @@ async def run_agent(payload: RunRequest):
         "fno_expiry": payload.fno_expiry,
         "model": payload.model,
     }
-    gen = event_generator(payload.thread_id, graph_input=initial_state)
+    gen = event_generator(payload.thread_id, graph_input=initial_state, user_id=payload.user_id)
     # Best-effort telemetry tee (passthrough; falls back to bare gen on any failure).
     gen = _observe(
         payload.thread_id,
@@ -269,6 +304,7 @@ async def resume_agent(payload: ResumeRequest):
             "candle": payload.triggered_candle,
             "trigger_kind": payload.trigger_kind,
         }),
+        user_id=payload.user_id,
     )
     # Best-effort telemetry tee. ResumeRequest carries no symbol/timeframe/mode
     # (those belong to the originating /run and are folded into the same Session
@@ -309,7 +345,7 @@ async def qa_agent(payload: QARequest):
         "model": payload.model,
     }
     return StreamingResponse(
-        event_generator(payload.thread_id, graph_input=qa_input),
+        event_generator(payload.thread_id, graph_input=qa_input, user_id=payload.user_id),
         media_type="text/event-stream"
     )
 

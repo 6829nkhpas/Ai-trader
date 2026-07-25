@@ -4,6 +4,7 @@
 // and the Deep Quant Analysis pipeline trigger.
 
 import { create } from 'zustand';
+import { useAuthStore } from './useAuthStore';
 
 // ── TypeScript interfaces matching Rust backend structs ─────────────────
 
@@ -1126,7 +1127,10 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
             stop_loss: manualTrade.stopLoss,
             take_profit: manualTrade.takeProfit,
             user_analysis: manualTrade.userAnalysis
-          } : null
+          } : null,
+          // Authenticated user id → the droplet resolves this user's OpenRouter
+          // key from the backend internal endpoint for the run.
+          userId: useAuthStore.getState().user?.id ?? null
         }
       );
 
@@ -1508,7 +1512,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       });
 
       // Invoke the proxy command (camelCase args → snake_case Rust params).
-      await tauriInvoke<void>('ask_trade_question', { threadId, question: trimmed, model: get().selectedModel || null });
+      await tauriInvoke<void>('ask_trade_question', { threadId, question: trimmed, model: get().selectedModel || null, userId: useAuthStore.getState().user?.id ?? null });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[QuantStore] ✘ askQuestion FAIL: ${message}`);

@@ -23,10 +23,14 @@ import EmptyState from './deep-quant/EmptyState';
 import { useVerificationForm } from './deep-quant/useVerificationForm';
 import { useFeature } from '../../store/useFeatureStore';
 import { dashboardUrl, openExternalUrl } from '../../lib/redirect';
+import { useCredit } from '../../hooks/useApi';
 
 export default function DeepQuantPanel() {
   const user = useAuthStore((s) => s.user);
   const deepseekGlmEnabled = useFeature('deepseekGlm');
+  // Live credit balance — LLM usage is billed against the user's plan credits,
+  // deducted server-side as OpenRouter usage syncs. Refetched when auth changes.
+  const { data: credit } = useCredit();
 
   const handleUpgrade = async () => {
     await openExternalUrl(dashboardUrl());
@@ -335,6 +339,32 @@ export default function DeepQuantPanel() {
         {/* ── Model Selector Row ── */}
         <div className="mt-2.5 pt-2 border-t border-border-default/20">
           <ModelSelector value={selectedModel} onChange={setSelectedModel} disabled={isAnalyzing} />
+          {/* ── Credit balance ── LLM usage is billed against the user's plan
+              credits (resolved + deducted server-side). Shown here so the user
+              sees remaining balance before running an analysis. */}
+          {credit && (
+            <button
+              type="button"
+              onClick={handleUpgrade}
+              title={
+                credit.hasActiveSubscription
+                  ? `Plan: ${credit.planName} — click to manage / top up`
+                  : 'No active plan — click to subscribe'
+              }
+              className="mt-2 w-full flex items-center justify-between rounded-sm border border-border-default/30 bg-elevated/40 px-2.5 py-1.5 text-[10px] transition-colors hover:bg-elevated"
+            >
+              <span className="flex items-center gap-1.5 text-text-secondary">
+                <Zap size={11} className="text-accent" />
+                Credits
+              </span>
+              <span className="font-mono font-semibold text-text-primary">
+                {credit.credits.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                <span className="ml-1 font-sans font-normal text-text-muted">
+                  {credit.hasActiveSubscription ? credit.planName : 'no plan'}
+                </span>
+              </span>
+            </button>
+          )}
         </div>
 
         <p className="text-[9px] text-text-muted/50 text-center mt-2.5">
