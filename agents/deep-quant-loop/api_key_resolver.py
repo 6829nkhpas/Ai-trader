@@ -37,11 +37,22 @@ def internal_api_base_url() -> str:
 
 
 def openrouter_base_url() -> str:
-    # LangChain appends /chat/completions, so store the base without it.
-    base = _env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
+    """OpenAI-compatible base URL for the provisioned keys' LLM gateway.
+
+    Priority: OPENROUTER_BASE_URL > the deployment's LLM_API_URL (e.g. the
+    omniroute gateway) > openrouter.ai. LangChain appends /chat/completions, so
+    the trailing path is stripped here. The base URL is NOT a secret.
+    """
+    explicit = os.getenv("OPENROUTER_BASE_URL")
+    if explicit and explicit.strip():
+        base = explicit.strip()
+    else:
+        llm_url = os.getenv("LLM_API_URL")
+        base = llm_url.strip() if (llm_url and llm_url.strip()) else "https://openrouter.ai/api/v1"
+    base = base.rstrip("/")
     if base.endswith("/chat/completions"):
         base = base[: -len("/chat/completions")]
-    return base
+    return base.rstrip("/")
 
 
 def _ttl_seconds() -> float:
@@ -83,29 +94,40 @@ def _store(user_id: str, key: str) -> None:
 
 
 def _extract_openrouter_key(payload: dict) -> Optional[str]:
-    """Pull the active OpenRouter key from the internal endpoint response.
+    """Pull the active LLM key from the internal endpoint response.
 
-    Prefers an entry whose provider is ``openrouter``; falls back to the first
-    key with a non-empty ``key`` field. Never raises on a malformed shape.
+    Handles both observed response shapes and any provider label
+    (omniroute / openrouter / etc.):
+
+      * ``data`` is a single key object: ``{ "id", "key", "provider" }``
+      * ``data.apiKeys`` is a list of such objects
+
+    Never raises on a malformed shape.
     """
     data = payload.get("data") if isinstance(payload, dict) else None
-    keys = data.get("apiKeys") if isinstance(data, dict) else None
-    if not isinstance(keys, list):
+    if not isinstance(data, dict):
         return None
-    # Prefer an explicit openrouter provider.
-    for entry in keys:
-        if not isinstance(entry, dict):
-            continue
-        provider = str(entry.get("provider", "")).lower()
-        k = entry.get("key")
-        if provider == "openrouter" and isinstance(k, str) and k.strip():
-            return k.strip()
-    # Fallback: first usable key regardless of provider label.
-    for entry in keys:
-        if isinstance(entry, dict):
-            k = entry.get("key")
-            if isinstance(k, str) and k.strip():
-                return k.strip()
+
+    # Shape A: `data` is a single key object.
+    k = data.get("key")
+    if isinstance(k, str) and k.strip():
+        return k.strip()
+
+    # Shape B: `data.apiKeys` is a list. Prefer a known LLM-router provider,
+    # then fall back to the first usable key regardless of provider label.
+    keys = data.get("apiKeys")
+    if isinstance(keys, list):
+        for preferred in ("omniroute", "openrouter"):
+            for entry in keys:
+                if isinstance(entry, dict) and str(entry.get("provider", "")).lower() == preferred:
+                    kk = entry.get("key")
+                    if isinstance(kk, str) and kk.strip():
+                        return kk.strip()
+        for entry in keys:
+            if isinstance(entry, dict):
+                kk = entry.get("key")
+                if isinstance(kk, str) and kk.strip():
+                    return kk.strip()
     return None
 
 
@@ -152,7 +174,7 @@ def resolve_openrouter_key(user_id: str) -> str:
 
     key = _extract_openrouter_key(payload)
     if not key:
-        raise ApiKeyResolutionError(f"no active OpenRouter key provisioned for user {uid}")
+        raise ApiKeyResolutionError(f"no active LLM key provisioned for user {uid}")
 
     _store(uid, key)
     return key
