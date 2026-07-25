@@ -1,0 +1,23 @@
+[package]
+name = "tool-server"
+version = "0.1.0"
+edition = "2021"
+description = "Standalone (Tauri-free) market-data tool server for the deep-quant LangGraph agent. Serves /tools/* over :8084, backed by QuestDB and the shared quant-core engine."
+
+[[bin]]
+name = "tool-server"
+path = "src/main.rs"
+
+[dependencies]
+quant-core = { path = "../quant-core" }
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "chrono"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"], default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+futures-util = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
+env_logger = "0.11"
+urlencoding = "2.1"

@@ -148,6 +148,7 @@ dependencies = [
  "mockito",
  "once_cell",
  "proptest",
+ "quant-core",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",
@@ -3911,6 +3912,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "quant-core"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -3,7 +3,7 @@
 // Mirrors aggregator/src/quant/strategies.rs for local Tauri execution.
 // Detects: Golden Cross, Death Cross, VWAP Bounce, ORB Breakout/Breakdown.
 
-use crate::quant::patterns::Candle;
+use crate::patterns::Candle;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IndicatorSnapshot {

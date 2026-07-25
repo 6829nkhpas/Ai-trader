@@ -18,6 +18,11 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.6.0", features = [] }
 
 [dependencies]
+# Tauri-free shared quant engine (indicators, patterns, consensus, validators).
+# Also consumed by the standalone tool-server binary so both share one source
+# of truth. Re-exported by src/quant/mod.rs to preserve existing crate::quant::*
+# import paths.
+quant-core = { path = "../../quant-core" }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"

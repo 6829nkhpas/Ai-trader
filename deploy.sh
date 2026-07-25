@@ -14,7 +14,7 @@ COMPOSE="docker compose -f docker-compose.prod.yml -f docker-compose.8gb.yml"
 # Rust services first (heaviest builds), then the Python AI service. `deep-quant`
 # is a light pip install, so building it last keeps peak memory during the Rust
 # compiles unchanged.
-for svc in ingestion alpha-terminal technical aggregator predictive quant-rag sentiment deep-quant; do
+for svc in ingestion alpha-terminal technical aggregator predictive quant-rag sentiment tool-server deep-quant; do
   echo "=== [$(date +%H:%M:%S)] building $svc ==="
   $COMPOSE build "$svc"
 done

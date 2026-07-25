@@ -313,6 +313,32 @@ services:
     mem_limit: 384m
     restart: unless-stopped
 
+  # ── Market-data Tool Server (Tauri-free, :8084, internal-only) ───────────────
+  # The headless extraction of the desktop quant tool_server. The deep-quant
+  # LangGraph agent calls its /tools/* endpoints over the internal network. It
+  # reads QuestDB via PG wire and shares the quant-core engine with the desktop
+  # app (one source of truth). NOT exposed publicly.
+  tool-server:
+    build:
+      context: .
+      dockerfile: tool-server/Dockerfile
+    container_name: stratai-tool-server
+    env_file: .env
+    environment:
+      QUANT_TOOL_SERVER_PORT: "8084"
+      QUESTDB_POSTGRES_URL: postgresql://${QUESTDB_USER:-admin}:${QUESTDB_PASSWORD}@questdb:8812/qdb
+      DEEP_QUANT_URL: "http://deep-quant:8086"
+      # Node sentiment service has no HTTP endpoint yet; get_news_context degrades
+      # to Google-News RSS headlines when this is unreachable (honest fallback).
+      SENTIMENT_SERVICE_URL: "http://sentiment:8090/sentiment"
+      RUST_LOG: info
+    networks: [stratai]
+    depends_on:
+      questdb:
+        condition: service_healthy
+    mem_limit: 256m
+    restart: unless-stopped
+
   # ── Deep Quant AI service (LangGraph glass-box, :8086) ───────────────────────
   # The desktop thin client drives AI analysis by POSTing /run, /qa, /resume to
   # this service. It calls the Rust tool-server (:8084) for market-data tools and
@@ -338,6 +364,8 @@ services:
     depends_on:
       questdb:
         condition: service_healthy
+      tool-server:
+        condition: service_started
     mem_limit: 512m
     restart: unless-stopped
 

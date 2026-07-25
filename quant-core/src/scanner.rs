@@ -20,9 +20,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::quant::patterns::{Candle, PatternEngine};
-use crate::quant::strategies::{IndicatorSnapshot, StrategyEngine};
-use crate::quant::{ConsensusEngine, IndicatorState};
+use crate::patterns::{Candle, PatternEngine};
+use crate::strategies::{IndicatorSnapshot, StrategyEngine};
+use crate::{ConsensusEngine, IndicatorState};
 
 // ── Input Contract ──────────────────────────────────────────────────────
 
@@ -246,7 +246,7 @@ pub fn scan(symbol: &str, timed: &[TimedCandle], timeframe: &str, lookback: usiz
         }
 
         // ── Structural Chart Patterns located in lookback window ──────────
-        let structural_patterns = crate::quant::chart_patterns::ChartPatternEngine::analyze(&plain);
+        let structural_patterns = crate::chart_patterns::ChartPatternEngine::analyze(&plain);
         for p in structural_patterns {
             if p.end_idx >= scan_start && p.end_idx < timed.len() && p.start_idx < timed.len() {
                 let mut max_high = timed[p.start_idx].high;
