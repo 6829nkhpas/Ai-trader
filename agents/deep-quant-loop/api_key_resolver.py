@@ -131,10 +131,14 @@ def resolve_openrouter_key(user_id: str) -> str:
     except Exception as exc:  # noqa: BLE001
         raise ApiKeyResolutionError(f"internal api-key endpoint unreachable: {exc}") from exc
 
-    if resp.status_code == 403 or resp.status_code == 401:
+    if resp.status_code in (401, 403, 404):
+        # The backend hides the internal endpoint from non-whitelisted callers
+        # (404) and denies unauthorized ones (401/403). The most common cause in
+        # deployment is the droplet IP not being in the backend allowlist.
         raise ApiKeyResolutionError(
-            "internal api-key endpoint denied access — is the droplet IP in "
-            "INTERNAL_ALLOWED_IPS?"
+            f"internal api-key endpoint returned HTTP {resp.status_code} — the "
+            "droplet IP may not be in the backend INTERNAL_ALLOWED_IPS, or no key "
+            "is provisioned for this user"
         )
     if resp.status_code // 100 != 2:
         raise ApiKeyResolutionError(
