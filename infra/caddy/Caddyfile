@@ -24,3 +24,17 @@
 	}
 	reverse_proxy questdb:9000
 }
+
+# Deep-quant AI service (:8086) — same shared beta credential. Fronts the
+# internal `deep-quant:8086` (not published to the host). The desktop thin
+# client sends the analysis /run, /qa, /cancel requests here and receives the
+# glass-box SSE stream; `flush_interval -1` disables response buffering so
+# Server-Sent Events are streamed to the client as they arrive.
+:8086 {
+	basic_auth {
+		{$QUESTDB_USER} {$QUESTDB_PASSWORD_HASH}
+	}
+	reverse_proxy deep-quant:8086 {
+		flush_interval -1
+	}
+}

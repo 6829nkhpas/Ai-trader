@@ -102,7 +102,8 @@ services:
       QUESTDB_PASSWORD_HASH: "${QUESTDB_PASSWORD_HASH:?QUESTDB_PASSWORD_HASH must be set in .env}"
     networks: [stratai]
     ports:
-      - "0.0.0.0:9000:9000"       # public HTTP query endpoint (basic auth)
+      - "0.0.0.0:9000:9000"       # public QuestDB HTTP query endpoint (basic auth)
+      - "0.0.0.0:8086:8086"       # public deep-quant AI endpoint (basic auth)
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
     mem_limit: 128m

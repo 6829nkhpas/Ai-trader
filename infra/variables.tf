@@ -67,7 +67,7 @@ variable "ssh_ingress_cidrs" {
 variable "app_ports" {
   description = "Public TCP ports for the data-plane services (desktop clients connect here). QuestDB HTTP 9000 is behind Caddy basic-auth; PG wire 8812 uses QuestDB native auth."
   type        = list(string)
-  default     = ["8080", "8081", "8082", "8083", "8085", "8087", "9000", "8812"]
+  default     = ["8080", "8081", "8082", "8083", "8085", "8087", "9000", "8812", "8086"]
 }
 
 variable "app_ingress_cidrs" {

@@ -2242,7 +2242,15 @@ pub async fn run_deep_quant_agent(
         let mut saw_run_finished = false;
         let mut saw_error = false;
         
-        match client.post(url).json(&payload).send().await {
+        // Shared beta credential for the authenticated deep-quant gateway; an
+        // unauthenticated local dev service simply ignores the header.
+        match client
+            .post(url)
+            .basic_auth(crate::server::questdb_user(), Some(crate::server::questdb_password()))
+            .json(&payload)
+            .send()
+            .await
+        {
             Ok(response) => {
                 let mut stream = response.bytes_stream();
                 use futures_util::StreamExt;
@@ -2367,6 +2375,7 @@ pub async fn cancel_deep_quant_agent(thread_id: String) -> Result<(), String> {
         let client = reqwest::Client::new();
         let _ = client
             .post(&url)
+            .basic_auth(crate::server::questdb_user(), Some(crate::server::questdb_password()))
             .json(&serde_json::json!({ "thread_id": tid }))
             .timeout(std::time::Duration::from_secs(3))
             .send()
@@ -2415,7 +2424,13 @@ pub async fn ask_trade_question(
         let url = format!("{}/qa", base.trim_end_matches('/'));
         let mut saw_run_finished = false;
 
-        match client.post(url).json(&payload).send().await {
+        match client
+            .post(url)
+            .basic_auth(crate::server::questdb_user(), Some(crate::server::questdb_password()))
+            .json(&payload)
+            .send()
+            .await
+        {
             Ok(response) => {
                 let mut stream = response.bytes_stream();
                 use futures_util::StreamExt;
