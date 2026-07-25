@@ -48,24 +48,29 @@ pub fn ensure_bootstrapped(app: &AppHandle) {
          WS bridges (OHLC :8081, Predictive :8082, Insight :8083)."
     );
 
-    spawn_bridge(app.clone(), 8081, "ohlc-tick");
-    spawn_bridge(app.clone(), 8082, "predictive-tick");
-    spawn_bridge(app.clone(), 8083, "insight-tick");
+    // The `feed` name selects the public WSS gateway route (…/alpha, …/predictive,
+    // …/insight) when STRATAI_WS_BASE_URL is set; otherwise it falls back to the
+    // direct ws://<host>:<port> form. The port is the direct-mode fallback.
+    spawn_bridge(app.clone(), "alpha", 8081, "ohlc-tick");
+    spawn_bridge(app.clone(), "predictive", 8082, "predictive-tick");
+    spawn_bridge(app.clone(), "insight", 8083, "insight-tick");
 }
 
 /// Spawn one WS → Tauri-event forwarding task.
 ///
-/// The bridge connects to `ws://127.0.0.1:<port>`, parses each text frame
-/// as JSON, and re-emits it on `<event_name>` for the React layer.
+/// The bridge connects to the resolved feed URL — either the public WSS gateway
+/// (`wss://app.stratai.live/ws/<feed>`) when `STRATAI_WS_BASE_URL` is set, or the
+/// direct `ws://<host>:<port>` fallback — parses each text frame as JSON, and
+/// re-emits it on `<event_name>` for the React layer.
 ///
 /// The task runs a resilient reconnect loop: if the connection cannot be
 /// established or the stream closes, it waits with a capped backoff and
 /// retries indefinitely. This keeps live data (and the tool-server price
 /// watchers fed by the OHLC bridge) flowing across transient upstream
 /// restarts without requiring a full app restart.
-fn spawn_bridge(app: AppHandle, port: u16, event_name: &'static str) {
+fn spawn_bridge(app: AppHandle, feed: &'static str, port: u16, event_name: &'static str) {
     tauri::async_runtime::spawn(async move {
-        let url = crate::server::ws_url(port);
+        let url = crate::server::feed_ws_url(feed, port);
         let mut backoff_secs = 1u64;
         const MAX_BACKOFF_SECS: u64 = 30;
 

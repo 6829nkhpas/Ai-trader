@@ -15,7 +15,12 @@
 
 {
 	admin off
-	auto_https off
+	# Automatic HTTPS is ENABLED so the app.stratai.live WSS gateway (below) gets
+	# a real Let's Encrypt certificate. `disable_redirects` stops Caddy adding a
+	# global HTTP->HTTPS redirect, so the plain-HTTP, port-only sites below
+	# (:9000 QuestDB, :8086 deep-quant — both basic-auth over the droplet IP)
+	# keep serving over HTTP exactly as before.
+	auto_https disable_redirects
 }
 
 :9000 {
@@ -37,4 +42,39 @@
 	reverse_proxy deep-quant:8086 {
 		flush_interval -1
 	}
+}
+
+# ── Public WSS gateway for the live data-plane feeds (app.stratai.live) ─────
+# Fronts the four internal WebSocket services with automatic TLS so desktop
+# clients connect over ONE wss:// domain instead of the raw droplet IP:port.
+# Caddy detects the `Upgrade: websocket` header and proxies the connection
+# transparently (bidirectional streaming, no buffering config needed).
+#
+# `handle_path` strips the matched route prefix, so each upstream receives the
+# "/" path it already serves today (identical to a direct ws://host:<port>).
+#
+#   wss://app.stratai.live/ws/aggregator  -> aggregator:8080     (decisions)
+#   wss://app.stratai.live/ws/alpha       -> alpha-terminal:8081 (OHLC candles)
+#   wss://app.stratai.live/ws/predictive  -> predictive:8082     (ghost line)
+#   wss://app.stratai.live/ws/insight     -> quant-rag:8083      (market insight)
+#
+# Requires: a DNS A/AAAA record for app.stratai.live -> this droplet, and the
+# firewall open on 80 (ACME challenge) + 443 (see infra/*.tf and the compose
+# gateway port mappings).
+app.stratai.live {
+	handle_path /ws/aggregator* {
+		reverse_proxy aggregator:8080
+	}
+	handle_path /ws/alpha* {
+		reverse_proxy alpha-terminal:8081
+	}
+	handle_path /ws/predictive* {
+		reverse_proxy predictive:8082
+	}
+	handle_path /ws/insight* {
+		reverse_proxy quant-rag:8083
+	}
+
+	# Friendly root / health probe (returns 200 for a plain GET).
+	respond / "Strat Ai WSS gateway" 200
 }

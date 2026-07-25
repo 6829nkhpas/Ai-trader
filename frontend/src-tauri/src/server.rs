@@ -103,6 +103,35 @@ pub fn ws_url(port: u16) -> String {
     format!("ws://{}:{}", host(), port)
 }
 
+/// Optional public WebSocket gateway base (e.g. `wss://app.stratai.live/ws`).
+///
+/// When set (runtime or baked at compile time via `STRATAI_WS_BASE_URL`), the
+/// live data-plane feeds are routed through this single TLS domain by path
+/// instead of raw `ws://<host>:<port>`. Empty by default (direct-IP mode / local
+/// dev).
+pub fn ws_base() -> String {
+    resolve(
+        std::env::var("STRATAI_WS_BASE_URL"),
+        option_env!("STRATAI_WS_BASE_URL"),
+        "",
+    )
+}
+
+/// Resolve the live-feed WebSocket URL for a named stream.
+///
+/// Prefers the public WSS gateway (`ws_base()/<name>`, e.g.
+/// `wss://app.stratai.live/ws/alpha`) when `STRATAI_WS_BASE_URL` is configured;
+/// otherwise falls back to the direct `ws://<host>:<port>` form used for local
+/// dev and raw-IP deployments. `name` MUST match the gateway route (see
+/// infra/caddy/Caddyfile): `aggregator`, `alpha`, `predictive`, `insight`.
+pub fn feed_ws_url(name: &str, port: u16) -> String {
+    let base = ws_base();
+    if !base.is_empty() {
+        return format!("{}/{}", base.trim_end_matches('/'), name);
+    }
+    ws_url(port)
+}
+
 /// `<host>:<port>` (for raw TCP control sockets)
 pub fn tcp_addr(port: u16) -> String {
     format!("{}:{}", host(), port)

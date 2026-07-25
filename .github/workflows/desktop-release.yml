@@ -110,21 +110,31 @@ jobs:
           # deployment. Set the repo variable to 'openrouter' for the prod build.
           NEXT_PUBLIC_LLM_GATEWAY: ${{ vars.NEXT_PUBLIC_LLM_GATEWAY || 'omniroute' }}
           # ── Live data-plane WebSocket feeds (baked into the static export) ──
-          # The frontend opens these browser WebSockets directly to the droplet's
-          # public WS ports. Without them the shipped app defaults to
-          # ws://127.0.0.1:* (the USER's machine) and the "Trading Server" gate is
-          # stuck CONNECTING. Derived from the same host as the Rust core so the
-          # whole app targets one backend. Overridable via repo variables.
-          NEXT_PUBLIC_AGGREGATOR_WS_URL: ${{ vars.NEXT_PUBLIC_AGGREGATOR_WS_URL || format('ws://{0}:8080', secrets.STRATAI_SERVER_HOST || '168.144.86.130') }}
-          NEXT_PUBLIC_ALPHA_WS_URL: ${{ vars.NEXT_PUBLIC_ALPHA_WS_URL || format('ws://{0}:8081', secrets.STRATAI_SERVER_HOST || '168.144.86.130') }}
-          NEXT_PUBLIC_PREDICTIVE_WS_URL: ${{ vars.NEXT_PUBLIC_PREDICTIVE_WS_URL || format('ws://{0}:8082', secrets.STRATAI_SERVER_HOST || '168.144.86.130') }}
-          NEXT_PUBLIC_INSIGHT_WS_URL: ${{ vars.NEXT_PUBLIC_INSIGHT_WS_URL || format('ws://{0}:8083', secrets.STRATAI_SERVER_HOST || '168.144.86.130') }}
+          # Routed through the single TLS gateway wss://app.stratai.live/ws/* (see
+          # infra/caddy/Caddyfile) so the shipped app never touches a raw droplet
+          # IP:port. Only NEXT_PUBLIC_AGGREGATOR_WS_URL is actually consumed by the
+          # Tauri build (the aggregator socket is opened from the webview); the
+          # alpha/predictive/insight feeds are bridged in Rust via
+          # STRATAI_WS_BASE_URL below (these three matter only for a plain-browser
+          # `npm run dev`). All overridable via repo variables. To revert to
+          # direct-IP: set the vars to ws://<host>:<port>.
+          NEXT_PUBLIC_AGGREGATOR_WS_URL: ${{ vars.NEXT_PUBLIC_AGGREGATOR_WS_URL || 'wss://app.stratai.live/ws/aggregator' }}
+          NEXT_PUBLIC_ALPHA_WS_URL: ${{ vars.NEXT_PUBLIC_ALPHA_WS_URL || 'wss://app.stratai.live/ws/alpha' }}
+          NEXT_PUBLIC_PREDICTIVE_WS_URL: ${{ vars.NEXT_PUBLIC_PREDICTIVE_WS_URL || 'wss://app.stratai.live/ws/predictive' }}
+          NEXT_PUBLIC_INSIGHT_WS_URL: ${{ vars.NEXT_PUBLIC_INSIGHT_WS_URL || 'wss://app.stratai.live/ws/insight' }}
           # ── Thin-client backend target (baked into the binary at compile time) ──
           # server.rs reads these via option_env! so shipped installers connect to
           # the droplet with the shared beta QuestDB credentials out of the box.
           # Set these as repo secrets: Settings → Secrets and variables → Actions.
           # Fallback default keeps the host usable even if the secret is unset.
           STRATAI_SERVER_HOST: ${{ secrets.STRATAI_SERVER_HOST || '168.144.86.130' }}
+          # Public WSS gateway base for the Rust live-feed bridges (OHLC/predictive/
+          # insight). When set, server::feed_ws_url routes them through the TLS
+          # domain (wss://app.stratai.live/ws/<feed>) instead of ws://<host>:<port>.
+          # Baked via option_env! in server.rs. Clear the var to fall back to
+          # direct-IP mode. QuestDB (:9000) + deep-quant (:8086) stay on
+          # STRATAI_SERVER_HOST — only the live WS feeds move to the domain.
+          STRATAI_WS_BASE_URL: ${{ vars.STRATAI_WS_BASE_URL || 'wss://app.stratai.live/ws' }}
           QUESTDB_USER: ${{ secrets.QUESTDB_USER || 'admin' }}
           QUESTDB_PASSWORD: ${{ secrets.QUESTDB_PASSWORD }}
           # ── macOS code signing + notarization (OPTIONAL) ──
