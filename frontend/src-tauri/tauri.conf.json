@@ -25,7 +25,8 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:* wss://*.stratai.live https://*.stratai.live https://integrate.api.nvidia.com https://api.kite.trade; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; frame-src 'self' blob:; worker-src blob:"
+      "csp": "default-src 'self'; connect-src 'self' ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:* wss://*.stratai.live https://*.stratai.live https://integrate.api.nvidia.com https://api.kite.trade; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; frame-src 'self' https://tauri.localhost blob:; worker-src blob:",
+      "dangerousDisableAssetCspModification": ["script-src", "style-src"]
     }
   },
   "plugins": {
