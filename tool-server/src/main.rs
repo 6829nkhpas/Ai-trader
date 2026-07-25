@@ -1031,6 +1031,10 @@ async fn main() {
         }
     };
 
+    // Ensure the historical candle tables exist (idempotent) so first-run queries
+    // return a graceful empty result rather than a "table does not exist" fault.
+    candles::migrate(&pool).await;
+
     let state = ServerState {
         pool,
         watchers: Arc::new(RwLock::new(HashMap::new())),

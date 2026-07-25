@@ -50,6 +50,49 @@ fn is_infrastructure_error(e: &sqlx::Error) -> bool {
     )
 }
 
+/// A "table does not exist" QuestDB error is NOT an infrastructure fault: on a
+/// fresh deployment (before any data has been written for a source) the table
+/// simply hasn't been created yet. Treating it as an empty source lets an empty
+/// union degrade to a graceful Availability_Shortfall instead of a 503 Fault.
+fn is_missing_table_error(e: &sqlx::Error) -> bool {
+    if let sqlx::Error::Database(db) = e {
+        db.message().to_lowercase().contains("does not exist")
+    } else {
+        false
+    }
+}
+
+/// Ensure the historical candle tables exist (idempotent). Mirrors the desktop
+/// `history_loader::run_migration` DDL exactly so the schema is identical
+/// whether the desktop or the tool-server creates them. `live_ticks` is owned
+/// by the ingestion service (auto-created via the ILP write path) and is not
+/// created here; a missing `live_ticks` is treated as an empty source.
+pub async fn migrate(pool: &PgPool) {
+    let ddl_daily = "CREATE TABLE IF NOT EXISTS historical_candles (\
+        symbol SYMBOL, ts TIMESTAMP, open DOUBLE, high DOUBLE, low DOUBLE, \
+        close DOUBLE, volume LONG) timestamp(ts) PARTITION BY YEAR;";
+    if let Err(e) = sqlx::query(ddl_daily).execute(pool).await {
+        log::error!("[tool-server] migration historical_candles failed: {}", e);
+    }
+    let _ = sqlx::query("ALTER TABLE historical_candles DEDUP ENABLE UPSERT KEYS(ts, symbol);")
+        .execute(pool)
+        .await;
+
+    let ddl_intraday = "CREATE TABLE IF NOT EXISTS historical_intraday (\
+        symbol SYMBOL, timeframe SYMBOL, ts TIMESTAMP, open DOUBLE, high DOUBLE, \
+        low DOUBLE, close DOUBLE, volume LONG) timestamp(ts) PARTITION BY MONTH;";
+    if let Err(e) = sqlx::query(ddl_intraday).execute(pool).await {
+        log::error!("[tool-server] migration historical_intraday failed: {}", e);
+    }
+    let _ = sqlx::query(
+        "ALTER TABLE historical_intraday DEDUP ENABLE UPSERT KEYS(ts, symbol, timeframe);",
+    )
+    .execute(pool)
+    .await;
+
+    log::info!("[tool-server] QuestDB historical table migration complete.");
+}
+
 const PRIO_DAILY: u8 = 1;
 const PRIO_INTRADAY: u8 = 2;
 const PRIO_LIVE: u8 = 3;
@@ -160,7 +203,7 @@ pub async fn load_candles_with_ts(
             Ok(rows) if !rows.is_empty() => all_candles.extend(parse_rows_with_ts(rows, PRIO_DAILY)),
             Ok(_) => {}
             Err(e) => {
-                if infra_fault.is_none() && is_infrastructure_error(e) {
+                if infra_fault.is_none() && is_infrastructure_error(e) && !is_missing_table_error(e) {
                     infra_fault = Some(("historical_candles".to_string(), e.to_string()));
                 }
             }
@@ -202,7 +245,7 @@ pub async fn load_candles_with_ts(
             }
             Ok(_) => {}
             Err(e) => {
-                if infra_fault.is_none() && is_infrastructure_error(e) {
+                if infra_fault.is_none() && is_infrastructure_error(e) && !is_missing_table_error(e) {
                     infra_fault = Some(("historical_intraday".to_string(), e.to_string()));
                 }
             }
@@ -224,7 +267,7 @@ pub async fn load_candles_with_ts(
             Ok(rows) if !rows.is_empty() => all_candles.extend(parse_rows_with_ts(rows, PRIO_LIVE)),
             Ok(_) => {}
             Err(e) => {
-                if infra_fault.is_none() && is_infrastructure_error(e) {
+                if infra_fault.is_none() && is_infrastructure_error(e) && !is_missing_table_error(e) {
                     infra_fault = Some(("live_ticks".to_string(), e.to_string()));
                 }
             }
