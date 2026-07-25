@@ -177,19 +177,30 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None,
     # context so a watcher registered during this run can carry it onto its
     # eventual /resume handoff.
     set_run_user_id(user_id)
-    if not (user_id and str(user_id).strip()):
-        yield format_sse(
-            ERROR,
-            build_error_event("authentication required: no user_id supplied for LLM access"),
-        )
-        return
-    try:
-        _run_key = resolve_openrouter_key(user_id)
-        set_run_llm_credentials(_run_key, openrouter_base_url())
-    except ApiKeyResolutionError as _key_err:
-        print(f"[main] LLM key resolution failed for user {user_id}: {_key_err}")
-        yield format_sse(ERROR, build_error_event(f"LLM key unavailable: {_key_err}"))
-        return
+    # Credential mode:
+    #   • SHARED-KEY (beta): a deployment LLM_API_KEY is configured → every run
+    #     uses that single shared key against the configured gateway (omniroute).
+    #     No per-user resolution and no user_id requirement.
+    #   • PER-USER (production): no shared key → resolve the REQUESTING user's key
+    #     from the backend internal endpoint (OpenRouter), failing cleanly if it
+    #     can't be resolved. Never a silent fallback between the two modes.
+    _shared_key = (os.getenv("LLM_API_KEY") or "").strip()
+    if _shared_key:
+        set_run_llm_credentials(_shared_key, openrouter_base_url())
+    else:
+        if not (user_id and str(user_id).strip()):
+            yield format_sse(
+                ERROR,
+                build_error_event("authentication required: no user_id supplied for LLM access"),
+            )
+            return
+        try:
+            _run_key = resolve_openrouter_key(user_id)
+            set_run_llm_credentials(_run_key, openrouter_base_url())
+        except ApiKeyResolutionError as _key_err:
+            print(f"[main] LLM key resolution failed for user {user_id}: {_key_err}")
+            yield format_sse(ERROR, build_error_event(f"LLM key unavailable: {_key_err}"))
+            return
 
     config = {"configurable": {"thread_id": thread_id}}
     # Stamp the run's workspace profile into the tool config so profile-aware
