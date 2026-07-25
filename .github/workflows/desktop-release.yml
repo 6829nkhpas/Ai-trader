@@ -109,6 +109,16 @@ jobs:
           # MUST match the server's OPENROUTER_BASE_URL + LLM_MODEL for the same
           # deployment. Set the repo variable to 'openrouter' for the prod build.
           NEXT_PUBLIC_LLM_GATEWAY: ${{ vars.NEXT_PUBLIC_LLM_GATEWAY || 'omniroute' }}
+          # ── Live data-plane WebSocket feeds (baked into the static export) ──
+          # The frontend opens these browser WebSockets directly to the droplet's
+          # public WS ports. Without them the shipped app defaults to
+          # ws://127.0.0.1:* (the USER's machine) and the "Trading Server" gate is
+          # stuck CONNECTING. Derived from the same host as the Rust core so the
+          # whole app targets one backend. Overridable via repo variables.
+          NEXT_PUBLIC_AGGREGATOR_WS_URL: ${{ vars.NEXT_PUBLIC_AGGREGATOR_WS_URL || format('ws://{0}:8080', secrets.STRATAI_SERVER_HOST || '168.144.86.130') }}
+          NEXT_PUBLIC_ALPHA_WS_URL: ${{ vars.NEXT_PUBLIC_ALPHA_WS_URL || format('ws://{0}:8081', secrets.STRATAI_SERVER_HOST || '168.144.86.130') }}
+          NEXT_PUBLIC_PREDICTIVE_WS_URL: ${{ vars.NEXT_PUBLIC_PREDICTIVE_WS_URL || format('ws://{0}:8082', secrets.STRATAI_SERVER_HOST || '168.144.86.130') }}
+          NEXT_PUBLIC_INSIGHT_WS_URL: ${{ vars.NEXT_PUBLIC_INSIGHT_WS_URL || format('ws://{0}:8083', secrets.STRATAI_SERVER_HOST || '168.144.86.130') }}
           # ── Thin-client backend target (baked into the binary at compile time) ──
           # server.rs reads these via option_env! so shipped installers connect to
           # the droplet with the shared beta QuestDB credentials out of the box.
