@@ -187,12 +187,10 @@ services:
       QUESTDB_POSTGRES_URL: postgresql://${QUESTDB_USER:-admin}:${QUESTDB_PASSWORD}@questdb:8812/qdb
       QUESTDB_ILP_ADDR: questdb:9009
       INGESTION_CONTROL_PORT: "8085"
-      KITE_API_PORT: "8087"
       RUST_LOG: info
     networks: [stratai]
     ports:
       - "8085:8085"     # TCP control (desktop clients send subscription diffs)
-      - "8087:8087"     # Kite OAuth token exchange
     depends_on:
       redpanda:
         condition: service_healthy
@@ -251,6 +249,7 @@ services:
     environment:
       KAFKA_BROKERS: redpanda:29092
       WEBSOCKET_PORT: "8080"
+      KITE_API_PORT: "8087"
       RUST_LOG: info
     networks: [stratai]
     # Not published to the host — fronted by the app.stratai.live WSS gateway
