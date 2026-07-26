@@ -28,36 +28,34 @@ const nextConfig: NextConfig = {
     root: path.resolve(__dirname),
   },
 
-  async rewrites() {
-    // Static export has no Node server, so rewrites are unsupported (and
-    // unnecessary — the native Tauri Rust core proxies QuestDB/Kite over IPC).
-    if (staticExport) {
-      return [];
-    }
+  // Rewrites are only used in dev / hosted-web mode. Static export (Tauri
+  // production bundle) has no Node server — the Rust core proxies over IPC.
+  // Omitting the key entirely in export mode silences the Next.js warning.
+  ...(!staticExport
+    ? {
+        async rewrites() {
+          if (isTestMode) {
+            return [
+              {
+                source: '/kite/:path*',
+                destination: '/api/kite/:path*',
+              },
+            ];
+          }
 
-    // In test mode: route /kite/* → local Next.js mock API routes so that
-    // useHistoricalData can fetch synthetic candles for any symbol without
-    // needing the real aggregator running. /questdb/* returns 503 (no mock).
-    if (isTestMode) {
-      return [
-        {
-          source: '/kite/:path*',
-          destination: '/api/kite/:path*',
+          return [
+            {
+              source: '/questdb/:path*',
+              destination: 'http://127.0.0.1:9000/:path*',
+            },
+            {
+              source: '/kite/:path*',
+              destination: 'http://127.0.0.1:8087/api/kite/:path*',
+            },
+          ];
         },
-      ];
-    }
-
-    return [
-      {
-        source: '/questdb/:path*',
-        destination: 'http://127.0.0.1:9000/:path*',
-      },
-      {
-        source: '/kite/:path*',
-        destination: 'http://127.0.0.1:8087/api/kite/:path*',
-      },
-    ];
-  },
+      }
+    : {}),
 };
 
 export default nextConfig;
