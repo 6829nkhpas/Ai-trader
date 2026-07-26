@@ -348,27 +348,40 @@ async fn analyze_sentiment_via_llm(symbol: &str, news: &str, headlines: Vec<Stri
 }
 
 // ── LLM Config Resolution (unified — reads LLM_API_URL, LLM_API_KEY, LLM_MODEL) ──
+//
+// Uses the same resolve() pattern as server.rs: runtime env → compile-time
+// baked value → hardcoded default. This ensures the production binary has
+// working LLM credentials even when the .env file isn't accessible.
 
 fn resolve_llm_endpoint() -> String {
-    std::env::var("LLM_API_URL")
-        .unwrap_or_else(|_| "https://api.freemodel.dev/v1/chat/completions".to_string())
+    crate::server::resolve_env(
+        std::env::var("LLM_API_URL"),
+        option_env!("LLM_API_URL"),
+        "https://api.freemodel.dev/v1/chat/completions",
+    )
 }
 
 fn resolve_llm_model() -> String {
-    std::env::var("LLM_MODEL")
-        .unwrap_or_else(|_| "deepseek-ai/DeepSeek-V3-0324".to_string())
+    crate::server::resolve_env(
+        std::env::var("LLM_MODEL"),
+        option_env!("LLM_MODEL"),
+        "deepseek-ai/DeepSeek-V3-0324",
+    )
 }
 
 fn resolve_llm_key() -> Result<String, String> {
-    if let Ok(key) = std::env::var("LLM_API_KEY") {
-        if !key.trim().is_empty() {
-            return Ok(key);
-        }
+    let key = crate::server::resolve_env(
+        std::env::var("LLM_API_KEY"),
+        option_env!("LLM_API_KEY"),
+        "",
+    );
+    if !key.is_empty() {
+        return Ok(key);
     }
     if crate::is_test_mode() {
         return Ok("TEST_KEY".to_string());
     }
-    Err("No LLM_API_KEY configured in .env".to_string())
+    Err("No LLM_API_KEY configured in .env or baked at compile time".to_string())
 }
 
 // ── Tauri IPC Command ───────────────────────────────────────────────────────

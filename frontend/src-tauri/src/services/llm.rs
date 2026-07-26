@@ -254,23 +254,34 @@ const DEFAULT_LLM_URL: &str = "https://api.freemodel.dev/v1/chat/completions";
 const DEFAULT_LLM_MODEL: &str = "deepseek-ai/DeepSeek-V3-0324";
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 
-// ── Config Resolution (clean, no fallbacks) ─────────────────────────────────
+// ── Config Resolution ────────────────────────────────────────────────────────
+// Uses the resolve_env pattern: runtime env → compile-time baked → default.
+// This ensures the production binary works without a .env file at runtime.
 
 fn resolve_endpoint() -> String {
-    std::env::var("LLM_API_URL")
-        .unwrap_or_else(|_| DEFAULT_LLM_URL.to_string())
+    crate::server::resolve_env(
+        std::env::var("LLM_API_URL"),
+        option_env!("LLM_API_URL"),
+        DEFAULT_LLM_URL,
+    )
 }
 
 fn resolve_model() -> String {
-    std::env::var("LLM_MODEL")
-        .unwrap_or_else(|_| DEFAULT_LLM_MODEL.to_string())
+    crate::server::resolve_env(
+        std::env::var("LLM_MODEL"),
+        option_env!("LLM_MODEL"),
+        DEFAULT_LLM_MODEL,
+    )
 }
 
 fn resolve_api_key() -> Option<String> {
-    if let Ok(key) = std::env::var("LLM_API_KEY") {
-        if !key.trim().is_empty() {
-            return Some(key);
-        }
+    let key = crate::server::resolve_env(
+        std::env::var("LLM_API_KEY"),
+        option_env!("LLM_API_KEY"),
+        "",
+    );
+    if !key.is_empty() {
+        return Some(key);
     }
     if crate::is_test_mode() {
         return Some("TEST_KEY".to_string());
@@ -293,16 +304,18 @@ fn resolve_timeout() -> u64 {
 /// unchanged for plain (non-reasoning) models.
 pub fn resolve_effort_params() -> serde_json::Map<String, serde_json::Value> {
     let mut map = serde_json::Map::new();
-    if let Ok(effort) = std::env::var("LLM_EFFORT") {
-        let effort = effort.trim();
-        if !effort.is_empty() {
-            let field = std::env::var("LLM_EFFORT_FIELD")
-                .ok()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "reasoning_effort".to_string());
-            map.insert(field, serde_json::Value::String(effort.to_string()));
-        }
+    let effort = crate::server::resolve_env(
+        std::env::var("LLM_EFFORT"),
+        option_env!("LLM_EFFORT"),
+        "",
+    );
+    if !effort.is_empty() {
+        let field = crate::server::resolve_env(
+            std::env::var("LLM_EFFORT_FIELD"),
+            option_env!("LLM_EFFORT_FIELD"),
+            "reasoning_effort",
+        );
+        map.insert(field, serde_json::Value::String(effort));
     }
     map
 }

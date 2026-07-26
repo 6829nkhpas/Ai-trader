@@ -148,6 +148,15 @@ jobs:
           STRATAI_HTTP_BASE_URL: ${{ vars.STRATAI_HTTP_BASE_URL || 'https://app.stratai.live' }}
           QUESTDB_USER: ${{ secrets.QUESTDB_USER || 'admin' }}
           QUESTDB_PASSWORD: ${{ secrets.QUESTDB_PASSWORD }}
+          # ── LLM / Sentiment / Deep Quant config (baked via option_env!) ──
+          # These are read by services/llm.rs and commands/sentiment.rs at compile
+          # time so the shipped binary has working LLM credentials out of the box.
+          # Set as repo secrets: Settings → Secrets and variables → Actions.
+          LLM_API_URL: ${{ secrets.LLM_API_URL || 'https://omniroute.premraj.online/v1/chat/completions' }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL || 'gpt-5.5' }}
+          LLM_EFFORT: ${{ secrets.LLM_EFFORT || 'high' }}
+          LLM_EFFORT_FIELD: ${{ secrets.LLM_EFFORT_FIELD || 'high' }}
           # ── macOS code signing + notarization (OPTIONAL) ──
           # Uncomment and set these repo secrets to ship signed, notarized Macs
           # (removes the "unidentified developer" Gatekeeper warning):

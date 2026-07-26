@@ -23,6 +23,11 @@
 /// `compile` should be the result of `option_env!("KEY")` at the call site
 /// (the macro must expand inside this crate to bake the release value).
 fn resolve(runtime: Result<String, std::env::VarError>, compile: Option<&str>, default: &str) -> String {
+    resolve_env(runtime, compile, default)
+}
+
+/// Public version of [`resolve`] for use by other modules (sentiment, llm).
+pub fn resolve_env(runtime: Result<String, std::env::VarError>, compile: Option<&str>, default: &str) -> String {
     if let Ok(v) = runtime {
         let v = v.trim();
         if !v.is_empty() {
