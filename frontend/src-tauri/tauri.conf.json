@@ -40,7 +40,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
     "publisher": "Strat AI",
     "homepage": "https://stratai.live",
     "copyright": "© 2026 Strat AI. All rights reserved.",

@@ -73,6 +73,8 @@ export default function AuthOverlay() {
           <Image
             src="/strat.svg"
             alt="Strat AI"
+            width={64}
+            height={64}
             className="h-16 w-16 object-contain drop-shadow-lg"
           />
         </div>
@@ -100,6 +102,8 @@ export default function AuthOverlay() {
               <Image
                 src="/strat.svg"
                 alt=""
+                width={16}
+                height={16}
                 className="h-4 w-4 object-contain"
               />
               <span>Login with Strat AI</span>

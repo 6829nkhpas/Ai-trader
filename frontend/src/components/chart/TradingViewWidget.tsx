@@ -357,19 +357,15 @@ export default function TradingViewWidget({
     <div className="relative h-full w-full min-h-0 overflow-hidden flex flex-col">
       {/* Loading state — script is still downloading */}
       {!scriptReady && !displayError && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-surface">
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#0a0a0a]">
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
           <span className="text-xs text-text-muted">Loading chart engine…</span>
         </div>
       )}
       {/* Error state — script or widget failed */}
       {displayError && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-surface px-6 text-center">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-400">
-            <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
-            <path d="M12 9v4" /><path d="M12 17h.01" />
-          </svg>
-          <span className="text-xs font-semibold text-text-primary">Chart failed to load</span>
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-[#0a0a0a] px-6 text-center">
+          <span className="text-sm font-bold text-amber-400">⚠ Chart failed to load</span>
           <span className="max-w-md text-[10px] text-text-muted">{displayError}</span>
         </div>
       )}
