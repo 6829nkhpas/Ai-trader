@@ -1,0 +1,93 @@
+# Azure Pipelines Configuration for Strat Ai Tauri Desktop App
+# Compiles both Windows (.exe / .msi) and macOS (.dmg / .app universal) binaries for free.
+
+trigger:
+  tags:
+    include:
+      - 'v*'
+  branches:
+    include:
+      - main
+
+pr: none
+
+strategy:
+  matrix:
+    macOS:
+      imageName: 'macOS-latest'
+      tauriTarget: '--target universal-apple-darwin'
+      rustTargets: 'aarch64-apple-darwin x86_64-apple-darwin'
+    Windows:
+      imageName: 'windows-latest'
+      tauriTarget: ''
+      rustTargets: ''
+
+pool:
+  vmImage: $(imageName)
+
+steps:
+  - checkout: self
+    submodules: false
+    persistCredentials: true
+
+  # Fetch private TradingView charting_library submodule using CHARTING_LIBRARY_PAT
+  - script: |
+      git config --global url."https://x-access-token:$(CHARTING_LIBRARY_PAT)@github.com/".insteadOf "https://github.com/"
+      git submodule sync --recursive
+      git submodule update --init --recursive
+    displayName: 'Checkout private charting_library submodule'
+
+  # Setup Node.js 20
+  - task: NodeTool@0
+    inputs:
+      versionSpec: '20.x'
+    displayName: 'Setup Node.js 20'
+
+  # Setup Rust Toolchain
+  - script: |
+      rustup update stable
+      rustup default stable
+      if [ -n "$(rustTargets)" ]; then
+        rustup target add $(rustTargets)
+      fi
+    displayName: 'Setup Rust toolchain'
+
+  # Install Frontend Dependencies
+  - script: |
+      cd frontend
+      npm ci
+    displayName: 'Install frontend dependencies'
+
+  # Build App with Tauri CLI & Next.js Static Export
+  - script: |
+      cd frontend
+      npx tauri build $(tauriTarget)
+    displayName: 'Build Tauri app'
+    env:
+      NEXT_OUTPUT_EXPORT: '1'
+      NEXT_PUBLIC_API_BASE_URL: 'https://api-web.stratai.live'
+      NEXT_PUBLIC_DASHBOARD_URL: 'https://dashboard.stratai.live'
+      NEXT_PUBLIC_AUTH_SERVICE_URL: 'https://api-web.stratai.live'
+      NEXT_PUBLIC_PROD: 'false'
+      NEXT_PUBLIC_LLM_GATEWAY: 'omniroute'
+      NEXT_PUBLIC_AGGREGATOR_WS_URL: 'wss://app.stratai.live/ws/aggregator'
+      NEXT_PUBLIC_ALPHA_WS_URL: 'wss://app.stratai.live/ws/alpha'
+      NEXT_PUBLIC_PREDICTIVE_WS_URL: 'wss://app.stratai.live/ws/predictive'
+      NEXT_PUBLIC_INSIGHT_WS_URL: 'wss://app.stratai.live/ws/insight'
+      STRATAI_SERVER_HOST: 'app.stratai.live'
+      STRATAI_WS_BASE_URL: 'wss://app.stratai.live/ws'
+      STRATAI_HTTP_BASE_URL: 'https://app.stratai.live'
+      QUESTDB_USER: $(QUESTDB_USER)
+      QUESTDB_PASSWORD: $(QUESTDB_PASSWORD)
+      LLM_API_URL: $(LLM_API_URL)
+      LLM_API_KEY: $(LLM_API_KEY)
+      LLM_MODEL: $(LLM_MODEL)
+      LLM_EFFORT: $(LLM_EFFORT)
+      LLM_EFFORT_FIELD: $(LLM_EFFORT_FIELD)
+
+  # Publish artifacts to Azure DevOps Pipeline Artifacts
+  - task: PublishPipelineArtifact@1
+    inputs:
+      targetPath: 'frontend/src-tauri/target'
+      artifact: 'Desktop-Build-$(Agent.OS)'
+    displayName: 'Publish Build Artifacts'
