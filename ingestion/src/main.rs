@@ -417,7 +417,9 @@ async fn main() {
     // Called by the Tauri `subscribe_ticker` command after updating local state.
     let control_port = std::env::var("INGESTION_CONTROL_PORT")
         .unwrap_or_else(|_| "8085".to_string());
-    let control_addr = format!("127.0.0.1:{}", control_port);
+    let control_bind = std::env::var("INGESTION_CONTROL_BIND")
+        .unwrap_or_else(|_| "0.0.0.0".to_string());
+    let control_addr = format!("{}:{}", control_bind, control_port);
     let sub_tx_control = sub_tx.clone();
     let symbol_map_control = Arc::clone(&symbol_map);
 
