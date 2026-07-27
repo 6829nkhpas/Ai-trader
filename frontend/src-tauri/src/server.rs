@@ -140,6 +140,24 @@ pub fn deep_quant_url() -> String {
     http_url(8086)
 }
 
+/// Base HTTP URL for the Kite REST proxy (for quotes, instruments, etc.).
+///
+/// Priority: explicit `KITE_API_URL` → the public HTTPS gateway
+/// (`http_base()/kite`) when configured → direct `http://<host>:8087/api/kite`.
+pub fn kite_url() -> String {
+    if let Ok(u) = std::env::var("KITE_API_URL") {
+        let u = u.trim();
+        if !u.is_empty() {
+            return u.to_string();
+        }
+    }
+    let base = http_base();
+    if !base.is_empty() {
+        return format!("{}/kite", base.trim_end_matches('/'));
+    }
+    format!("http://{}:8087/api/kite", host())
+}
+
 /// `ws://<host>:<port>`
 pub fn ws_url(port: u16) -> String {
     format!("ws://{}:{}", host(), port)

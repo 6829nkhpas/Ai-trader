@@ -109,6 +109,18 @@ struct KiteQuoteData {
     oi: Option<u64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ServerProxyQuote {
+    symbol: String,
+    last_price: f64,
+    oi: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ServerQuoteProxyResponse {
+    quotes: Vec<ServerProxyQuote>,
+}
+
 // ── Service Helpers ──
 
 pub fn resolve_nearest_expiry(db_state: &DbState, underlying: &str) -> Option<String> {
@@ -332,72 +344,70 @@ pub async fn build_fno_snapshot(
     let mut spot = None;
     let now_ms = chrono::Utc::now().timestamp_millis();
 
-    if !api_key.is_empty() && !access_token.is_empty() {
-        let instruments = load_instruments_for_expiry(db_state, underlying, &expiry);
-        if !instruments.is_empty() {
-            let mut instrument_map = HashMap::new();
-            let mut symbols_to_query = Vec::new();
+    let instruments = load_instruments_for_expiry(db_state, underlying, &expiry);
+    if !instruments.is_empty() {
+        let mut instrument_map = HashMap::new();
+        let mut symbols_to_query = Vec::new();
 
-            for (_, sym, inst_type, strike) in &instruments {
-                let kite_symbol = format!("NFO:{}", sym);
-                symbols_to_query.push(kite_symbol.clone());
-                instrument_map.insert(kite_symbol, (inst_type.clone(), *strike));
-            }
+        for (_, sym, inst_type, strike) in &instruments {
+            let kite_symbol = format!("NFO:{}", sym);
+            symbols_to_query.push(kite_symbol.clone());
+            instrument_map.insert(kite_symbol, (inst_type.clone(), *strike));
+        }
 
-            let spot_symbol = map_spot_quote_symbol(underlying);
-            symbols_to_query.push(spot_symbol.clone());
+        let spot_symbol = map_spot_quote_symbol(underlying);
+        symbols_to_query.push(spot_symbol.clone());
 
-            info!("[fno_service] Querying Kite Quote API for F&O chain ({} symbols)", symbols_to_query.len());
+        info!("[fno_service] Querying Kite Quote API for F&O chain ({} symbols)", symbols_to_query.len());
 
-            match fetch_kite_quotes_api(&api_key, &access_token, &symbols_to_query).await {
-                Ok(quotes) => {
-                    let mut strike_rows: HashMap<String, FnoChainRow> = HashMap::new();
-                    
-                    // Parse quotes
-                    if let Some(spot_data) = quotes.get(&spot_symbol) {
-                        spot = Some(spot_data.last_price);
-                    }
+        match fetch_kite_quotes_api(&api_key, &access_token, &symbols_to_query).await {
+            Ok(quotes) => {
+                let mut strike_rows: HashMap<String, FnoChainRow> = HashMap::new();
+                
+                // Parse quotes
+                if let Some(spot_data) = quotes.get(&spot_symbol) {
+                    spot = Some(spot_data.last_price);
+                }
 
-                    for (kite_symbol, quote) in &quotes {
-                        if let Some((inst_type, strike)) = instrument_map.get(kite_symbol) {
-                            let strike_key = format!("{:.2}", strike);
-                            let entry = strike_rows.entry(strike_key).or_insert_with(|| FnoChainRow {
-                                strike: *strike,
-                                ce_oi: None,
-                                pe_oi: None,
-                                ce_price: None,
-                                pe_price: None,
-                                iv: None,
-                            });
+                for (kite_symbol, quote) in &quotes {
+                    if let Some((inst_type, strike)) = instrument_map.get(kite_symbol) {
+                        let strike_key = format!("{:.2}", strike);
+                        let entry = strike_rows.entry(strike_key).or_insert_with(|| FnoChainRow {
+                            strike: *strike,
+                            ce_oi: None,
+                            pe_oi: None,
+                            ce_price: None,
+                            pe_price: None,
+                            iv: None,
+                        });
 
-                            if inst_type == "CE" {
-                                entry.ce_oi = quote.oi;
-                                entry.ce_price = Some(quote.last_price);
-                            } else if inst_type == "PE" {
-                                entry.pe_oi = quote.oi;
-                                entry.pe_price = Some(quote.last_price);
-                            }
+                        if inst_type == "CE" {
+                            entry.ce_oi = quote.oi;
+                            entry.ce_price = Some(quote.last_price);
+                        } else if inst_type == "PE" {
+                            entry.pe_oi = quote.oi;
+                            entry.pe_price = Some(quote.last_price);
                         }
                     }
-
-                    chain = strike_rows.into_values().collect();
-                    chain.sort_by(|a, b| a.strike.partial_cmp(&b.strike).unwrap());
-                    quote_success = !chain.is_empty();
-
-                    if quote_success {
-                        let pool_clone = pool.clone();
-                        let underlying_clone = underlying.to_string();
-                        let expiry_clone = expiry.clone();
-                        let chain_clone = chain.clone();
-                        let instruments_clone = instruments.clone();
-                        tauri::async_runtime::spawn(async move {
-                            write_snapshot_to_questdb(&pool_clone, &underlying_clone, &expiry_clone, &chain_clone, &instruments_clone).await;
-                        });
-                    }
                 }
-                Err(err) => {
-                    warn!("[fno_service] Kite Quote API call failed: {}. Falling back to QuestDB.", err);
+
+                chain = strike_rows.into_values().collect();
+                chain.sort_by(|a, b| a.strike.partial_cmp(&b.strike).unwrap());
+                quote_success = !chain.is_empty();
+
+                if quote_success {
+                    let pool_clone = pool.clone();
+                    let underlying_clone = underlying.to_string();
+                    let expiry_clone = expiry.clone();
+                    let chain_clone = chain.clone();
+                    let instruments_clone = instruments.clone();
+                    tauri::async_runtime::spawn(async move {
+                        write_snapshot_to_questdb(&pool_clone, &underlying_clone, &expiry_clone, &chain_clone, &instruments_clone).await;
+                    });
                 }
+            }
+            Err(err) => {
+                warn!("[fno_service] Kite Quote API call failed: {}. Falling back to QuestDB.", err);
             }
         }
     }
@@ -532,38 +542,96 @@ async fn fetch_kite_quotes_api(
     symbols: &[String],
 ) -> Result<HashMap<String, KiteQuoteData>, String> {
     let client = reqwest::Client::new();
-    let url = "https://api.kite.trade/quote";
-    
-    // Group symbols into chunks of 500
     let mut all_quotes = HashMap::new();
-    for chunk in symbols.chunks(500) {
-        let mut query = Vec::new();
-        for sym in chunk {
-            query.push(("i", sym.clone()));
+
+    if !api_key.is_empty() && !access_token.is_empty() {
+        // Direct local Kite API call (local dev)
+        let url = "https://api.kite.trade/quote";
+        for chunk in symbols.chunks(500) {
+            let mut query = Vec::new();
+            for sym in chunk {
+                query.push(("i", sym.clone()));
+            }
+
+            let resp = client
+                .get(url)
+                .query(&query)
+                .header("Authorization", format!("token {}:{}", api_key, access_token))
+                .header("X-Kite-Version", "3")
+                .send()
+                .await
+                .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                return Err(format!("Kite API returned status {}: {}", status, text));
+            }
+
+            let body: KiteQuoteResponse = resp
+                .json()
+                .await
+                .map_err(|e| format!("JSON parse failed: {}", e))?;
+
+            for (k, v) in body.data {
+                all_quotes.insert(k, v);
+            }
         }
+    } else {
+        // Thin-client production mode: query server Kite REST proxy
+        let kite_base = crate::server::kite_url();
+        let url = format!("{}/quote", kite_base.trim_end_matches('/'));
 
-        let resp = client
-            .get(url)
-            .query(&query)
-            .header("Authorization", format!("token {}:{}", api_key, access_token))
-            .header("X-Kite-Version", "3")
-            .send()
-            .await
-            .map_err(|e| format!("HTTP request failed: {}", e))?;
+        for chunk in symbols.chunks(500) {
+            let mut query = Vec::new();
+            for sym in chunk {
+                query.push(("i", sym.clone()));
+            }
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(format!("Kite API returned status {}: {}", status, text));
-        }
+            let mut req = client.get(&url).query(&query);
 
-        let body: KiteQuoteResponse = resp
-            .json()
-            .await
-            .map_err(|e| format!("JSON parse failed: {}", e))?;
+            let user = crate::server::questdb_user();
+            let pass = crate::server::questdb_password();
+            if !user.is_empty() {
+                req = req.basic_auth(&user, Some(&pass));
+            }
 
-        for (k, v) in body.data {
-            all_quotes.insert(k, v);
+            let resp = req
+                .send()
+                .await
+                .map_err(|e| format!("Server Kite proxy request failed: {}", e))?;
+
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                return Err(format!("Server Kite proxy returned status {}: {}", status, text));
+            }
+
+            let body: ServerQuoteProxyResponse = resp
+                .json()
+                .await
+                .map_err(|e| format!("JSON parse failed from server proxy: {}", e))?;
+
+            for q in body.quotes {
+                // Server proxy returns symbol e.g. "NIFTY26JUL24000CE" or full key
+                let key = if symbols.iter().any(|s| s == &q.symbol) {
+                    q.symbol.clone()
+                } else {
+                    symbols
+                        .iter()
+                        .find(|s| s.ends_with(&q.symbol) || s == &&q.symbol)
+                        .cloned()
+                        .unwrap_or_else(|| q.symbol.clone())
+                };
+
+                all_quotes.insert(
+                    key,
+                    KiteQuoteData {
+                        last_price: q.last_price,
+                        oi: q.oi,
+                    },
+                );
+            }
         }
     }
 

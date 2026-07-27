@@ -50,6 +50,7 @@ pub struct QuoteData {
     pub low: f64,
     pub close: f64,
     pub volume: u64,
+    pub oi: Option<u64>,
     pub change: f64,
     pub net_change: f64,
 }
@@ -646,6 +647,7 @@ async fn quote_handler(
                 low: ohlc.get("low").and_then(|v| v.as_f64()).unwrap_or(0.0),
                 close: prev_close,
                 volume: value.get("volume").and_then(|v| v.as_u64()).unwrap_or(0),
+                oi: value.get("oi").and_then(|v| v.as_u64()),
                 change: (pct_change * 100.0).round() / 100.0,
                 net_change: (net_change * 100.0).round() / 100.0,
             }
