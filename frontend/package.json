@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:desktop": "cross-env NEXT_OUTPUT_EXPORT=1 next build",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
@@ -12,7 +13,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:dev:remote": "cross-env STRATAI_SERVER_HOST=app.stratai.live STRATAI_HTTP_BASE_URL=https://app.stratai.live STRATAI_WS_BASE_URL=wss://app.stratai.live/ws QUESTDB_USER=admin tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "tauri:build:remote": "cross-env STRATAI_SERVER_HOST=app.stratai.live STRATAI_HTTP_BASE_URL=https://app.stratai.live STRATAI_WS_BASE_URL=wss://app.stratai.live/ws QUESTDB_USER=admin tauri build"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
