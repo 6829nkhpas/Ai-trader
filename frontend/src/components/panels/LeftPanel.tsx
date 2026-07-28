@@ -41,17 +41,22 @@ export default function LeftPanel() {
     }
   }, [selectedSymbol, loadConsensusForSymbol]);
 
-  // Load multi-timeframe chart-pattern detection on symbol change, independent
-  // of a Deep Quant run (mirroring the sentiment/consensus loads above). Results
-  // are cached per symbol with a short TTL, so switching back to a symbol shows
-  // its patterns instantly and only refetches when the cache is stale. Without
-  // this, patterns only appeared right after running analysis and vanished on a
-  // plain symbol switch.
+  // Load multi-timeframe chart-pattern detection, but only once the chart
+  // datafeed has populated historicalCache for this symbol. Without this guard
+  // the Tauri command fires before get_historical_view has triggered the Kite
+  // backfill into QuestDB, so the Rust engine sees 0–1 candles and returns
+  // "Insufficient data / 1 candle available".
+  const historicalCache = useTradeStore((s) => s.historicalCache);
+  const symUpper = selectedSymbol?.toUpperCase() ?? '';
+  const hasCacheForSymbol = symUpper
+    ? Object.keys(historicalCache).some((k) => k.startsWith(`${symUpper}::`) && historicalCache[k].length >= 30)
+    : false;
+
   useEffect(() => {
-    if (selectedSymbol) {
+    if (selectedSymbol && hasCacheForSymbol) {
       fetchMultiTfPatterns(selectedSymbol);
     }
-  }, [selectedSymbol, fetchMultiTfPatterns]);
+  }, [selectedSymbol, hasCacheForSymbol, fetchMultiTfPatterns]);
 
   return (
     <div className="flex h-full flex-col select-none">

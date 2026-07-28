@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Loader2, User, Cpu, Wrench, Copy, Check, ThumbsUp, ThumbsDown, Share2, RotateCw, MoreHorizontal } from 'lucide-react';
+import { Loader2, User, Cpu, Wrench, Copy, Check, ThumbsUp, ThumbsDown, Share2 } from 'lucide-react';
 import { useQuantStore, QaChatMessage } from '../../../store/useQuantStore';
+import MarkdownRenderer from './MarkdownRenderer';
 
 // Small copy-to-clipboard button with transient "copied" feedback. Used to copy
 // either a user prompt or the assistant's Q&A answer verbatim.
@@ -133,7 +134,7 @@ function AssistantMessageRow({ msg }: { msg: QaChatMessage }) {
 
         {msg.content ? (
           <div>
-            <AnswerText content={msg.content} />
+            <MarkdownRenderer content={msg.content} simple />
           </div>
         ) : msg.streaming ? (
           <div className="flex items-center gap-2 text-[10px] text-text-muted/60 animate-pulse py-1">

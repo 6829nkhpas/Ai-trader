@@ -2197,7 +2197,32 @@ pub async fn run_deep_quant_agent(
     
     // Generate a unique thread ID
     let thread_id = format!("thread_{}_{}", symbol, chrono::Utc::now().timestamp_millis());
-    
+
+    // ── Compute and emit consensus BEFORE the agent run ──────────────────────────
+    // The agent path is a pure SSE proxy to Python; it never computed consensus
+    // locally, so the sidebar HUD stayed blank after every run. The fix: load
+    // candles from QuestDB (which was already backfilled by the chart), compute
+    // consensus, and emit it so the technical HUD populates immediately.
+    let timeframe_for_consensus = timeframe.clone().unwrap_or_else(|| "10m".to_string());
+    if let Some(pool) = app.try_state::<PgPool>() {
+        match load_candles_from_db(Some(&app), pool.inner(), &symbol, &timeframe_for_consensus, 200).await {
+            Ok(candles) if candles.len() >= 30 => {
+                let indicators = IndicatorState::from_candles_basic(&candles);
+                let consensus = ConsensusEngine::compile_consensus(&symbol, &candles, &indicators, &timeframe_for_consensus);
+                let _ = app.emit("quant-consensus", &consensus);
+                info!("[deep_quant_agent] Emitted consensus for {} (tf={}, {} candles)", symbol, timeframe_for_consensus, candles.len());
+            }
+            Ok(candles) => {
+                warn!("[deep_quant_agent] Insufficient candles for consensus: {} < 30", candles.len());
+            }
+            Err(e) => {
+                warn!("[deep_quant_agent] Failed to load candles for consensus: {}", e);
+            }
+        }
+    } else {
+        warn!("[deep_quant_agent] QuestDB pool not available — skipping consensus emission");
+    }
+
     let message = if mode_str == "VERIFY" && manual_trade.is_some() {
         let info = manual_trade.as_ref().unwrap();
         format!(
