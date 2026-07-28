@@ -1,6 +1,7 @@
+import asyncio
 import uvicorn
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from langgraph.types import Command
@@ -144,6 +145,41 @@ class CancelRequest(BaseModel):
 # server is single-process asyncio.
 _CANCELLED: set[str] = set()
 
+# ── Per-thread SSE fan-out hub (watcher re-attach transport) ───────────────────
+# In the thin-client production topology the price watcher runs in the headless
+# tool-server container, NOT in-process on the desktop. When it fires a heartbeat
+# or target trigger it POSTs /resume here, and the resumed glass-box stream is the
+# HTTP RESPONSE to THAT POST — i.e. it goes back to the tool-server, which drains
+# and discards it. The desktop's only live stream was the original /run, which
+# ended the moment the graph paused at watch_price_condition. So without a
+# re-attach channel the desktop never sees heartbeat/target resumes and the
+# terminal sits in "WATCHING" forever.
+#
+# This hub fixes that: every frame `event_generator` yields is ALSO published to
+# any subscribers registered for that thread_id. The desktop opens a long-lived
+# GET /stream/{thread_id} (see below) that stays attached across the whole
+# watching lifecycle — through every resume/heartbeat cycle — so server-initiated
+# resumes reach the UI over the SAME deep-quant-stream event as the live run.
+#
+# `_SUBSCRIBERS[thread_id]` is a set of asyncio.Queue, one per attached client.
+# Publishing is best-effort and never blocks the run (full queues drop the frame
+# for that subscriber only). Single-process asyncio server ⇒ a plain dict + set is
+# race-free (all mutations happen on the event loop).
+_SUBSCRIBERS: dict[str, set[asyncio.Queue]] = {}
+
+def _publish_frame(thread_id: str, frame: str) -> None:
+    """Best-effort fan-out of one already-formatted SSE frame to all subscribers
+    attached to ``thread_id``. Never raises and never blocks the producing run —
+    a subscriber whose queue is full simply misses this frame."""
+    subs = _SUBSCRIBERS.get(thread_id)
+    if not subs:
+        return
+    for q in list(subs):
+        try:
+            q.put_nowait(frame)
+        except Exception:  # noqa: BLE001 - a slow/full subscriber must not stall the run
+            pass
+
 # ── SSE Generator ────────────────────────────────────────────────────────────
 
 async def event_generator(thread_id: str, graph_input=None, resume_command=None, user_id=None):
@@ -274,6 +310,15 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None,
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
+async def _tee_publish(thread_id: str, gen):
+    """Wrap an ``event_generator`` SSE iterator so every frame it yields is ALSO
+    published to the per-thread fan-out hub (for re-attached GET /stream clients),
+    then yielded unchanged to the original HTTP caller. Passthrough: the bytes the
+    direct caller receives are identical whether or not anyone is subscribed."""
+    async for frame in gen:
+        _publish_frame(thread_id, frame)
+        yield frame
+
 @app.post("/run")
 async def run_agent(payload: RunRequest):
     """
@@ -299,6 +344,10 @@ async def run_agent(payload: RunRequest):
         timeframe=payload.timeframe,
         mode=payload.mode,
     )
+    # Fan-out tee: also publish frames to any re-attached GET /stream client so a
+    # later server-initiated resume (heartbeat/target) can reach the desktop even
+    # after this /run stream ends at the watch pause.
+    gen = _tee_publish(payload.thread_id, gen)
     return StreamingResponse(gen, media_type="text/event-stream")
 
 @app.post("/resume")
@@ -313,7 +362,7 @@ async def resume_agent(payload: ResumeRequest):
             status_code=400,
             detail=f"Thread_id '{payload.thread_id}' is not in a paused/interruptible state."
         )
-    
+
     gen = event_generator(
         payload.thread_id,
         resume_command=Command(resume={
@@ -331,7 +380,49 @@ async def resume_agent(payload: ResumeRequest):
         gen,
         trigger_kind=payload.trigger_kind,
     )
+    # Fan-out tee: the headless tool-server watcher POSTs /resume and discards the
+    # returned stream, so publishing here is what actually delivers heartbeat /
+    # target resumes to the desktop's re-attached GET /stream subscriber.
+    gen = _tee_publish(payload.thread_id, gen)
     return StreamingResponse(gen, media_type="text/event-stream")
+
+@app.get("/stream/{thread_id}")
+async def stream_thread(thread_id: str, request: Request):
+    """Long-lived re-attach channel for a thread's server-initiated resumes.
+
+    The desktop opens this AFTER its /run stream ends in a paused (watching)
+    state and keeps it open for the whole watching lifecycle. Every frame the
+    fan-out hub publishes for ``thread_id`` — from any /resume the headless
+    watcher triggers (heartbeat or target) — is relayed here, so those resumes
+    reach the UI over the same deep-quant-stream event as the live run.
+
+    A keepalive comment is sent on idle so proxies/clients don't time the
+    connection out during a long wait. The subscriber is always removed on
+    disconnect (client close or server shutdown), and an empty thread bucket is
+    pruned so the hub never leaks."""
+    queue: asyncio.Queue = asyncio.Queue(maxsize=256)
+    _SUBSCRIBERS.setdefault(thread_id, set()).add(queue)
+
+    async def relay():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    frame = await asyncio.wait_for(queue.get(), timeout=20.0)
+                    yield frame
+                except asyncio.TimeoutError:
+                    # SSE keepalive comment (ignored by the parser) to hold the
+                    # connection open through long watch waits.
+                    yield ": keepalive\n\n"
+        finally:
+            subs = _SUBSCRIBERS.get(thread_id)
+            if subs is not None:
+                subs.discard(queue)
+                if not subs:
+                    _SUBSCRIBERS.pop(thread_id, None)
+
+    return StreamingResponse(relay(), media_type="text/event-stream")
 
 @app.post("/qa")
 async def qa_agent(payload: QARequest):

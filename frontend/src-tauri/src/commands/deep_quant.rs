@@ -2171,6 +2171,110 @@ async fn run_sentinel_loop(app: tauri::AppHandle, symbol: String, timeframe: Str
     info!("[sentinel] Watchdog loop terminated for {}", symbol);
 }
 
+/// Terminal classification of a consumed deep-quant SSE stream.
+///
+/// The graph can end a stream in several ways, and the desktop proxy needs to
+/// react differently to each — in particular, a `Paused` outcome means the graph
+/// is now waiting server-side at a price-watch interrupt and the desktop must
+/// REATTACH to the per-thread fan-out hub to keep receiving heartbeat/target
+/// frames (which are streamed by server-initiated `/resume` calls, not down the
+/// original `/run` connection).
+enum StreamOutcome {
+    /// Graph paused at a watch/interrupt (`RUN_FINISHED` with `status="paused"`).
+    Paused,
+    /// Terminal completion (`RUN_FINISHED` with a non-paused status).
+    Completed,
+    /// Python emitted an `ERROR` event, or the transport failed mid-stream.
+    Errored,
+    /// Stream ended cleanly without any terminal marker.
+    Disconnected,
+}
+
+/// Consume one deep-quant SSE response to completion, forwarding every frame
+/// onto the `deep-quant-stream` Tauri event, and return how it ended.
+///
+/// Shared by the initial `/run` stream and every `/stream/{thread_id}` reattach
+/// so both paths parse SSE blocks identically (multi-line `data:` accumulation,
+/// terminal-marker detection).
+async fn relay_deep_quant_sse(app: &tauri::AppHandle, response: reqwest::Response) -> StreamOutcome {
+    use futures_util::StreamExt;
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    let mut outcome = StreamOutcome::Disconnected;
+
+    while let Some(chunk_result) = stream.next().await {
+        match chunk_result {
+            Ok(bytes) => {
+                let text = String::from_utf8_lossy(&bytes);
+                buffer.push_str(&text);
+
+                // Process complete SSE event blocks (separated by a blank line).
+                while let Some(pos) = buffer.find("\n\n") {
+                    let event_block = buffer.drain(..pos + 2).collect::<String>();
+
+                    let mut event_type = None;
+                    // Accumulate ALL `data:` lines per SSE spec (joined with '\n').
+                    let mut data_lines: Vec<String> = Vec::new();
+
+                    for line in event_block.lines() {
+                        if line.starts_with("event: ") {
+                            event_type = Some(line["event: ".len()..].trim().to_string());
+                        } else if line.starts_with("data: ") {
+                            data_lines.push(line["data: ".len()..].trim().to_string());
+                        }
+                    }
+
+                    if let Some(ev_type) = event_type {
+                        let json_val = if !data_lines.is_empty() {
+                            let joined_data = data_lines.join("\n");
+                            serde_json::from_str::<serde_json::Value>(&joined_data)
+                                .unwrap_or(serde_json::Value::Null)
+                        } else {
+                            serde_json::Value::Null
+                        };
+
+                        // Classify terminal markers. RUN_FINISHED carries a
+                        // `status`: "paused" means the graph is parked at a
+                        // watch interrupt (reattach); anything else is a real
+                        // terminal completion.
+                        if ev_type == "RUN_FINISHED" {
+                            let status = json_val
+                                .get("status")
+                                .and_then(|s| s.as_str())
+                                .unwrap_or("");
+                            outcome = if status == "paused" {
+                                StreamOutcome::Paused
+                            } else {
+                                StreamOutcome::Completed
+                            };
+                        } else if ev_type == "ERROR" {
+                            outcome = StreamOutcome::Errored;
+                        }
+
+                        let _ = app.emit(
+                            "deep-quant-stream",
+                            serde_json::json!({ "event": ev_type, "data": json_val }),
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                error!("[deep_quant_agent] Stream read error: {}", e);
+                let _ = app.emit(
+                    "deep-quant-stream",
+                    serde_json::json!({
+                        "event": "ERROR",
+                        "data": { "error": format!("Stream read error: {}", e) }
+                    }),
+                );
+                return StreamOutcome::Errored;
+            }
+        }
+    }
+
+    outcome
+}
+
 /// Run deep quant agent loop with real-time SSE stream proxy.
 #[tauri::command]
 pub async fn run_deep_quant_agent(
@@ -2265,110 +2369,77 @@ pub async fn run_deep_quant_agent(
         let client = reqwest::Client::new();
         let base = std::env::var("DEEP_QUANT_URL")
             .unwrap_or_else(|_| crate::server::deep_quant_url());
-        let url = format!("{}/run", base.trim_end_matches('/'));
-        let mut saw_run_finished = false;
-        let mut saw_error = false;
-        
+        let base = base.trim_end_matches('/').to_string();
+        let url = format!("{}/run", base);
+
         // Shared beta credential for the authenticated deep-quant gateway; an
         // unauthenticated local dev service simply ignores the header.
-        match client
+        let run_result = client
             .post(url)
             .basic_auth(crate::server::questdb_user(), Some(crate::server::questdb_password()))
             .json(&payload)
             .send()
-            .await
-        {
-            Ok(response) => {
-                let mut stream = response.bytes_stream();
-                use futures_util::StreamExt;
-                let mut buffer = String::new();
-                
-                while let Some(chunk_result) = stream.next().await {
-                    match chunk_result {
-                        Ok(bytes) => {
-                            let text = String::from_utf8_lossy(&bytes);
-                            buffer.push_str(&text);
-                            
-                            // Process SSE event blocks
-                            while let Some(pos) = buffer.find("\n\n") {
-                                let event_block = buffer.drain(..pos + 2).collect::<String>();
-                                
-                                let mut event_type = None;
-                                // Bug 8 fix: Accumulate ALL data: lines per SSE spec.
-                                // The SSE spec says multiple `data:` lines in a single
-                                // event block should be joined with newlines.
-                                let mut data_lines: Vec<String> = Vec::new();
-                                
-                                for line in event_block.lines() {
-                                    if line.starts_with("event: ") {
-                                        event_type = Some(line["event: ".len()..].trim().to_string());
-                                    } else if line.starts_with("data: ") {
-                                        data_lines.push(line["data: ".len()..].trim().to_string());
-                                    }
-                                }
-                                
-                                if let Some(ref ev_type) = event_type {
-                                    if ev_type == "RUN_FINISHED" {
-                                        saw_run_finished = true;
-                                    } else if ev_type == "ERROR" {
-                                        // Python emits ERROR (and no RUN_FINISHED)
-                                        // on a failed run. Record it so the
-                                        // synthetic-completion fallback below is
-                                        // suppressed and the UI keeps the error.
-                                        saw_error = true;
-                                    }
-                                }
-                                
-                                if let Some(ev_type) = event_type {
-                                    let json_val = if !data_lines.is_empty() {
-                                        let joined_data = data_lines.join("\n");
-                                        serde_json::from_str::<serde_json::Value>(&joined_data)
-                                            .unwrap_or(serde_json::Value::Null)
-                                    } else {
-                                        serde_json::Value::Null
-                                    };
+            .await;
 
-                                    let outbound = serde_json::json!({
-                                        "event": ev_type,
-                                        "data": json_val
-                                    });
-                                    let _ = app.emit("deep-quant-stream", outbound);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            error!("[deep_quant_agent] Stream read error: {}", e);
-                            saw_error = true;
-                            let _ = app.emit("deep-quant-stream", serde_json::json!({
-                                "event": "ERROR",
-                                "data": { "error": format!("Stream read error: {}", e) }
-                            }));
-                            break;
-                        }
-                    }
-                }
-                
-                // Bug 10 fix: If the stream ended without a RUN_FINISHED event
-                // (e.g. Python server crashed mid-stream or connection dropped cleanly),
-                // emit a synthetic RUN_FINISHED so the frontend always transitions
-                // out of the 'running' state.
-                if !saw_run_finished && !saw_error {
-                    warn!("[deep_quant_agent] Stream ended without RUN_FINISHED — emitting synthetic completion.");
-                    let _ = app.emit("deep-quant-stream", serde_json::json!({
-                        "event": "RUN_FINISHED",
-                        "data": { "thread_id": thread_id, "status": "completed" }
-                    }));
-                }
-            }
+        let mut final_outcome = match run_result {
+            Ok(response) => relay_deep_quant_sse(&app, response).await,
             Err(e) => {
                 error!("[deep_quant_agent] Failed to connect to Python server: {}", e);
                 let _ = app.emit("deep-quant-stream", serde_json::json!({
                     "event": "ERROR",
                     "data": { "error": format!("Failed to connect to Python server: {}", e) }
                 }));
+                StreamOutcome::Errored
+            }
+        };
+
+        // ── Reattach loop for server-initiated resumes (heartbeat / target) ──────
+        // In the thin-client topology the graph parks at a price-watch interrupt
+        // and is resumed SERVER-SIDE (by the headless tool-server) via /resume —
+        // those glass-box frames never come back down this original /run stream.
+        // So once /run reports the graph is Paused, we subscribe to the per-thread
+        // fan-out hub (`GET /stream/{thread_id}`) and relay every heartbeat/target
+        // frame onto `deep-quant-stream` until the graph reaches a real terminal
+        // state (or this task is aborted by cancel_deep_quant_agent).
+        while matches!(final_outcome, StreamOutcome::Paused) {
+            let stream_url = format!("{}/stream/{}", base, thread_id);
+            info!("[deep_quant_agent] Paused — reattaching to fan-out hub {}", stream_url);
+            match client
+                .get(&stream_url)
+                .basic_auth(crate::server::questdb_user(), Some(crate::server::questdb_password()))
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    final_outcome = relay_deep_quant_sse(&app, response).await;
+                    // A clean Disconnected here means the hub connection dropped
+                    // (idle timeout / gateway hiccup) while the graph is still
+                    // paused — reconnect after a short backoff instead of leaving
+                    // the desktop deaf to future heartbeats.
+                    if matches!(final_outcome, StreamOutcome::Disconnected) {
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        final_outcome = StreamOutcome::Paused;
+                    }
+                }
+                Err(e) => {
+                    warn!("[deep_quant_agent] Reattach failed: {} — retrying in 3s", e);
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                    final_outcome = StreamOutcome::Paused;
+                }
             }
         }
-        
+
+        // If the stream ended without any terminal marker (Python crashed
+        // mid-stream or the connection dropped cleanly), emit a synthetic
+        // RUN_FINISHED so the frontend always transitions out of 'running'.
+        if matches!(final_outcome, StreamOutcome::Disconnected) {
+            warn!("[deep_quant_agent] Stream ended without RUN_FINISHED — emitting synthetic completion.");
+            let _ = app.emit("deep-quant-stream", serde_json::json!({
+                "event": "RUN_FINISHED",
+                "data": { "thread_id": thread_id, "status": "completed" }
+            }));
+        }
+
         info!("[deep_quant_agent] Stream proxy finished for thread={}", thread_id);
         // Self-clean from registry on normal completion.
         AGENT_TASKS.lock().unwrap().remove(&thread_id_for_cleanup);
