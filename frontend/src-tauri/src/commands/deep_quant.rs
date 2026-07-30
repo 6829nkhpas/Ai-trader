@@ -14,7 +14,7 @@ use sqlx::PgPool;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::quant::{
-    patterns::Candle, AiExecutionPlan, ConsensusEngine, IndicatorState,
+    patterns::Candle, AiExecutionPlan, ConsensusEngine, ConsensusReport, IndicatorState,
 };
 use crate::services::llm;
 
@@ -2249,6 +2249,46 @@ async fn relay_deep_quant_sse(app: &tauri::AppHandle, response: reqwest::Respons
                             };
                         } else if ev_type == "ERROR" {
                             outcome = StreamOutcome::Errored;
+                        }
+
+                        // ── Technical-consensus bridge (thin-client mode) ──────
+                        // The HUD is fed by the `quant-consensus` event. When the
+                        // tool-server runs INSIDE this desktop process (local dev),
+                        // its /tools/get_consensus handler emits that event itself.
+                        // In a shipped thin-client build the agent runs on the
+                        // server and calls the HEADLESS tool-server, which has no
+                        // AppHandle — its emits are structured logs — so nothing
+                        // ever reached the desktop and the HUD stayed blank.
+                        //
+                        // The agent's own `get_consensus_report` result already
+                        // travels down this SSE channel, so re-emit it here. It is
+                        // the verbatim serde form of `ConsensusReport` (the Python
+                        // tool passes the tool-server's JSON through untouched), so
+                        // it is parsed into that type before emitting: an error dict
+                        // or an oversized-and-summarized frame fails to deserialize
+                        // and is skipped rather than blanking the HUD with junk.
+                        if ev_type == "TOOL_CALL_RESULT"
+                            && json_val.get("tool").and_then(|t| t.as_str())
+                                == Some("get_consensus_report")
+                            && json_val.get("summarized").is_none()
+                        {
+                            if let Some(result) = json_val.get("result") {
+                                match serde_json::from_value::<ConsensusReport>(result.clone()) {
+                                    Ok(report) => {
+                                        info!(
+                                            "[deep_quant_agent] Bridging agent consensus → quant-consensus for {} (trend_score={})",
+                                            report.symbol, report.trend_score
+                                        );
+                                        let _ = app.emit("quant-consensus", &report);
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "[deep_quant_agent] get_consensus_report result not a ConsensusReport ({}) — HUD not updated from this frame",
+                                            e
+                                        );
+                                    }
+                                }
+                            }
                         }
 
                         let _ = app.emit(
