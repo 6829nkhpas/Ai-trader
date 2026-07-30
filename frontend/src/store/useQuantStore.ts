@@ -616,6 +616,44 @@ function extractFinalTrade(text: string): AiExecutionPlan | null {
   };
 }
 
+/**
+ * Merge a plan scraped from the model's closing monologue (`scraped`) into the
+ * plan committed by the `DECISION` event (`committed`), without ever losing the
+ * committed decision's directional identity.
+ *
+ * Why this exists: `graph.py` instructs the model to restate a final JSON
+ * conviction block AFTER `declare_trade` succeeds. That block carries only
+ * `conviction_score` / `setup_validation` / `execution_plan` — it has no
+ * `action` and no `execution_levels`. `RUN_FINISHED` used to assign the scraped
+ * plan straight over `finalTrade`/`aiPlan`, which stripped `action: 'BUY'` and
+ * the validated levels off an already-committed trade. `isActionableTrade` then
+ * failed and the UI rendered "Stand Aside — No Trade" for every run, no matter
+ * what the backend validated. (The overwrite predates the commit that added
+ * `action` to the DECISION plan and was never updated for it.)
+ *
+ * Rules: the committed decision wins on every field it actually carries —
+ * `action`, `opportunity_tier` and `execution_levels` are taken from it
+ * exclusively and are never sourced from scraped text. The scrape may only
+ * fill gaps (a missing conviction, empty prose), which is its useful role since
+ * `DECISION` often ships an empty `execution_plan`. Pure; total over nulls.
+ */
+export function mergeFinalPlan(
+  committed: AiExecutionPlan | null,
+  scraped: AiExecutionPlan | null,
+): AiExecutionPlan | null {
+  if (!committed) return scraped;
+  if (!scraped) return committed;
+  return {
+    conviction_score: committed.conviction_score ?? scraped.conviction_score,
+    setup_validation: committed.setup_validation || scraped.setup_validation,
+    execution_plan: committed.execution_plan || scraped.execution_plan,
+    // Directional identity is decided by the backend, never by scraped prose.
+    action: committed.action,
+    opportunity_tier: committed.opportunity_tier,
+    execution_levels: committed.execution_levels,
+  };
+}
+
 // ── Store ───────────────────────────────────────────────────────────────
 
 // ── Per-symbol analysis session ─────────────────────────────────────────
@@ -892,8 +930,11 @@ function applyStreamEvent(session: QuantSession, payload: StreamEventPayload): Q
       return {
         ...s,
         sessionStatus: s.sessionStatus === 'error' ? 'error' : 'complete',
-        finalTrade: tradePlan ?? s.finalTrade,
-        aiPlan: tradePlan ?? s.aiPlan,
+        // Enrich, never downgrade: a committed BUY/SELL keeps its action and
+        // validated levels; the scraped block only fills fields the decision
+        // left empty. See mergeFinalPlan.
+        finalTrade: mergeFinalPlan(s.finalTrade, tradePlan),
+        aiPlan: mergeFinalPlan(s.aiPlan, tradePlan),
         isAnalyzing: false,
         _runFinishedProcessed: true,
         updatedAt: Date.now(),
