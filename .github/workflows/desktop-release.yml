@@ -96,6 +96,12 @@ jobs:
         # Blocking the release is strictly better than shipping that.
         env:
           QUESTDB_PASSWORD: ${{ secrets.QUESTDB_PASSWORD }}
+        # `shell: bash` is REQUIRED: this job runs a matrix over macos-latest and
+        # windows-latest, and on Windows the default shell is PowerShell, which
+        # parses `if [ -z ... ]` as a syntax error ("Missing '(' after 'if'").
+        # GitHub ships bash on the Windows runners, so pinning it keeps one
+        # portable script for both platforms.
+        shell: bash
         run: |
           if [ -z "$QUESTDB_PASSWORD" ]; then
             echo "::error::QUESTDB_PASSWORD secret is empty or not in scope. The build would ship an installer that 401s on every authenticated backend route (blank chart / LTP / consensus, live order book). Set it under Settings → Secrets and variables → Actions, and note that fork-triggered runs do not receive secrets."
