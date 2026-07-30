@@ -135,6 +135,34 @@ pub fn run() {
       }
   }
 
+  // ── Backend wiring self-check (loud, early) ─────────────────────────────
+  // Log the resolved backend configuration (never the password itself) and
+  // shout if this build targets the public gateway with no real credentials.
+  //
+  // Without this, a build made without QUESTDB_PASSWORD in scope produces an
+  // installer whose authenticated routes (/questdb, /deepquant, /kite) all 401
+  // while the unauthenticated /ws feeds keep streaming — so the app looks
+  // "half-working" (live order book, empty chart / LTP / consensus) rather than
+  // misconfigured. It works for whoever has the repo `.env` and fails for every
+  // other user, which is exceptionally hard to diagnose from the UI alone.
+  eprintln!("[config] {}", server::config_summary());
+  if server::gateway_credentials_missing() {
+      eprintln!(
+          "[config] ############################################################\n\
+           [config] # FATAL CONFIG: gateway mode with NO baked QuestDB password.\n\
+           [config] # Authenticated routes (/questdb, /deepquant, /kite) WILL 401,\n\
+           [config] # so the chart, LTP and technical consensus will be EMPTY\n\
+           [config] # while the order book (unauthenticated /ws) still streams.\n\
+           [config] # Rebuild with QUESTDB_PASSWORD set at COMPILE time — via the\n\
+           [config] # release workflow, or `QUESTDB_PASSWORD=... npm run tauri:build:remote`.\n\
+           [config] ############################################################"
+      );
+      log::error!(
+          "FATAL CONFIG: gateway mode with no baked QuestDB password — authenticated backend routes will 401 ({})",
+          server::config_summary()
+      );
+  }
+
   // ── Active Symbol State (shared between test mock + subscribe_ticker cmd) ─
   // Managed directly (no Arc wrapper) — Tauri wraps managed state in Arc internally.
   // Accessible in commands via `tauri::State<'_, commands::ticker::ActiveSymbolState>`.

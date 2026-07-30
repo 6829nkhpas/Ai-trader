@@ -1202,21 +1202,29 @@ pub struct DeclareTradeRequest {
 /// `Fail(MissingLevels)`, while HOLD bypasses every level check and always
 /// passes.
 ///
-// NOTE: Commented out — the handler calls `evaluate_declared_trade_with_profile`
-// directly. Kept for reference in case a no-profile convenience caller is needed.
+// NOTE: the handler calls `evaluate_declared_trade_with_profile` directly, so
+// this no-profile convenience wrapper is not needed in production and was once
+// commented out entirely. That broke `cargo test --lib` for the WHOLE crate:
+// ~9 tests below still call it, so the test binary failed to compile and no
+// test in any module could run. It is restored here as `#[cfg(test)]` — the
+// tests keep their concise no-profile call, production keeps a single code
+// path, and there is no dead-code warning in release builds.
 //
-// /// Factored out of the handler so the commit-iff-pass decision is unit-testable
-// /// without a live `AppHandle` or event bus: the handler commits exactly when
-// /// this returns `Pass` and rejects (without emitting) when it returns `Fail`.
-// fn evaluate_declared_trade(
-//     action_str: &str,
-//     entry: Option<f64>,
-//     stop_loss: Option<f64>,
-//     take_profit: Option<f64>,
-//     atr_14: Option<f64>,
-// ) -> crate::quant::ValidatorOutcome {
-//     evaluate_declared_trade_with_profile(action_str, entry, stop_loss, take_profit, atr_14, None)
-// }
+/// Factored out of the handler so the commit-iff-pass decision is unit-testable
+/// without a live `AppHandle` or event bus: the handler commits exactly when
+/// this returns `Pass` and rejects (without emitting) when it returns `Fail`.
+///
+/// Delegates with `profile: None`, i.e. the default 1:2 Risk_Reward floor.
+#[cfg(test)]
+fn evaluate_declared_trade(
+    action_str: &str,
+    entry: Option<f64>,
+    stop_loss: Option<f64>,
+    take_profit: Option<f64>,
+    atr_14: Option<f64>,
+) -> crate::quant::ValidatorOutcome {
+    evaluate_declared_trade_with_profile(action_str, entry, stop_loss, take_profit, atr_14, None)
+}
 
 /// Profile-aware variant of [`evaluate_declared_trade`]: resolves the minimum
 /// Risk_Reward floor from the run's workspace `profile` (INTRADAY → 1:1.5, all

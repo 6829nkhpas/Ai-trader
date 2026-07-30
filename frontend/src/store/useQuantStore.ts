@@ -772,6 +772,16 @@ function applyStreamEvent(session: QuantSession, payload: StreamEventPayload): Q
           analysisError: null,
           _pendingToolCalls: 0,
           _runFinishedProcessed: false,
+          // Drop the PREVIOUS leg's committed decision. This resume branch keeps
+          // the reasoning transcript (that's its whole point), but the decision
+          // itself is now stale: the watcher woke precisely because the market
+          // moved. `DECISION` is first-write-wins for within-leg idempotency
+          // (reattach can replay frames), so leaving the old plan here made the
+          // stale leg-1 stand-aside HOLD swallow the real BUY the resumed leg
+          // declares — the "always HOLD" symptom, on the heartbeat path that
+          // dominates shipped builds. Clearing here keeps both properties.
+          finalTrade: null,
+          aiPlan: null,
           reasoningSteps: [...session.reasoningSteps, resumeStep],
           updatedAt: Date.now(),
         };
@@ -857,7 +867,16 @@ function applyStreamEvent(session: QuantSession, payload: StreamEventPayload): Q
       };
     }
     case 'DECISION': {
-      const action = (data?.action as string) || (data?.decision as string) || '';
+      // Normalize case at the single entry point. Python threads the model's raw
+      // action string through verbatim (stream_events.py builds the payload with
+      // `decision.get("action")`), while it normalizes separately when deciding
+      // whether to attach execution_levels. So a lowercase "sell" arrives WITH
+      // levels and passes isActionableTrade (which upper-cases) — but downstream
+      // consumers compare raw (`aiPlan.action === 'SELL'` in DeepQuantPanel and
+      // ActionableTradePlan), so it would fall through to BUY and place a
+      // wrong-direction order. Upper-casing here fixes every consumer at once.
+      const actionRaw = (data?.action as string) || (data?.decision as string) || '';
+      const action = typeof actionRaw === 'string' ? actionRaw.trim().toUpperCase() : '';
       const convictionRaw = data?.conviction_score ?? data?.conviction;
       const conviction = typeof convictionRaw === 'number' && Number.isFinite(convictionRaw) ? convictionRaw : undefined;
       const rationale = (data?.rationale as string) || (data?.setup_validation as string) || (data?.thesis as string) || '';

@@ -2007,6 +2007,29 @@ def _declare_is_directional(args) -> bool:
     return action.strip().upper() in {"BUY", "SELL"}
 
 
+def _coerce_price(v):
+    """Coerce a declared price/ATR arg to float, or None when not numeric.
+
+    Mirrors the pydantic coercion the tool signature already applies to the
+    real invocation, so the decision record agrees with what the authoritative
+    validator actually saw. Rejects bools (``True`` is not a price) and anything
+    non-finite. Returns None rather than raising — an unusable value must degrade
+    to "absent", never fabricate a level.
+    """
+    if isinstance(v, bool) or v is None:
+        return None
+    if isinstance(v, (int, float)):
+        f = float(v)
+    elif isinstance(v, str):
+        try:
+            f = float(v.strip())
+        except (TypeError, ValueError):
+            return None
+    else:
+        return None
+    return f if math.isfinite(f) else None
+
+
 def _decision_from_declare(ok_calls) -> Optional[dict]:
     """Build the structured decision from a declare_trade tool call, if present.
 
@@ -2020,14 +2043,28 @@ def _decision_from_declare(ok_calls) -> Optional[dict]:
         if tc.get("name") == "declare_trade":
             args = tc.get("args") or {}
             return {
-                "action": (args.get("action") or "HOLD"),
+                # Normalize the action so downstream string comparisons (and the
+                # frontend's directional gate) cannot be defeated by casing.
+                # `_normalize_action` (defined below) maps LONG->BUY / SHORT->SELL
+                # and upper-cases, so downstream string comparisons and the
+                # frontend's directional gate cannot be defeated by casing. It
+                # returns None for an empty action, so keep the original HOLD default.
+                "action": _normalize_action(args.get("action")) or "HOLD",
                 "conviction_score": args.get("conviction_score"),
                 "setup_validation": args.get("setup_validation"),
                 "execution_plan": args.get("execution_plan"),
-                "entry": args.get("entry"),
-                "stop_loss": args.get("stop_loss"),
-                "take_profit": args.get("take_profit"),
-                "atr_14": args.get("atr_14"),
+                # These are the PRE-COERCION tool args: LangChain/pydantic coerces
+                # "24500.5" -> 24500.5 for the actual tool invocation (so the Rust
+                # validator sees a number and passes), but this dict is read from
+                # the raw call, where the value stays a string. stream_events'
+                # `_is_finite_num` rejects strings, so `execution_levels` was
+                # silently omitted from a genuinely validated BUY/SELL and the UI
+                # rendered a non-actionable card. Coerce to float here, mirroring
+                # what pydantic already did for the tool itself.
+                "entry": _coerce_price(args.get("entry")),
+                "stop_loss": _coerce_price(args.get("stop_loss")),
+                "take_profit": _coerce_price(args.get("take_profit")),
+                "atr_14": _coerce_price(args.get("atr_14")),
                 # The optional multi-leg Management_Plan dict (legs / breakeven /
                 # trailing) the agent attached to declare_trade, carried through so
                 # build_defensibility_record can cite the committed plan (R9.1).

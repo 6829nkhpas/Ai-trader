@@ -179,6 +179,22 @@ pub async fn kite_fetch(path: String) -> Result<ApiFetchResponse, String> {
         .await
         .map_err(|e| format!("kite_fetch request failed: {e}"))?;
     let status = resp.status();
+
+    // A 401/403 here is a CREDENTIAL fault, not "no market data". Returning it as
+    // a plain empty body made the chart, LTP and consensus render blank while the
+    // unauthenticated /ws order book kept streaming — indistinguishable from a
+    // quiet symbol. Fail loudly with the actionable cause instead.
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        let detail = if crate::server::gateway_credentials_missing() {
+            " — this build has NO baked QuestDB/gateway password (rebuild with QUESTDB_PASSWORD set at compile time)"
+        } else {
+            " — the baked gateway credentials were rejected by the server"
+        };
+        let msg = format!("kite_fetch: gateway auth failed ({status}){detail}");
+        log::error!("{msg} [{}]", crate::server::config_summary());
+        return Err(msg);
+    }
+
     let text = resp
         .text()
         .await

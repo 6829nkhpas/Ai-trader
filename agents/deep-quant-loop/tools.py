@@ -314,6 +314,15 @@ def _is_number_or_null(v) -> bool:
     return v is None or _is_number(v)
 
 
+def _is_directional_action(action) -> bool:
+    """True when `action` is a BUY or SELL, i.e. a trade that risks capital.
+
+    Case- and whitespace-insensitive because the action arrives as a raw model
+    string. Total: any non-string (or None) is not directional.
+    """
+    return isinstance(action, str) and action.strip().upper() in {"BUY", "SELL"}
+
+
 def _has_honest_marker(payload) -> bool:
     """True when the payload already carries an honest, non-fatal marker.
 
@@ -3273,9 +3282,33 @@ def declare_trade(
                 f">= 1.5x ATR, then call declare_trade again."
             )
     except Exception as e:
-        # Don't fail the agent run if persistence fails — the JSON is still
-        # surfaced via the SSE stream — but make the failure visible.
+        # ── FAIL CLOSED for directional trades ───────────────────────────────
+        # The Rust Tool Server runs the AUTHORITATIVE Trade_Validator. This
+        # handler used to print a warning and fall through to
+        # "Trade declared successfully", so whenever the server was unreachable
+        # (wrong RUST_TOOL_SERVER_URL, container not up, network policy) EVERY
+        # directional declare_trade "passed" with zero risk validation — no
+        # direction-consistency check, no R:R floor, no stop-vs-ATR floor. A
+        # silently unvalidated BUY/SELL reaching the trader is a capital-safety
+        # failure, so a transport error must now REJECT the declaration.
+        #
+        # The reason is deliberately distinct from a levels rejection: revising
+        # entry/stop/target cannot fix an unreachable validator, so the agent is
+        # told not to retry with new numbers. If the server stays down the run
+        # ends at the bounded-hunt HOLD with this cause visible in the logs —
+        # the correct outcome, versus shipping an unchecked live order.
+        #
+        # A HOLD carries no levels and no capital risk, so it still commits: an
+        # infrastructure outage must not also suppress the agent's stand-aside.
         print(f"[Tool Warning] <<< declare_trade could not be persisted to Rust server: {str(e)}")
+        if _is_directional_action(action):
+            return (
+                f"TRADE_REJECTED: the authoritative Trade_Validator could not be reached "
+                f"({type(e).__name__}: {e}), so this {action} was NOT validated or committed. "
+                f"This is an infrastructure fault, NOT a problem with your levels — "
+                f"re-declaring the same or revised levels will fail the same way. "
+                f"Report the setup as unvalidated and stand aside."
+            )
 
     return f"Trade declared successfully: {action} with {conviction_score}% conviction."
 

@@ -83,6 +83,26 @@ jobs:
         run: npm ci
         working-directory: frontend
 
+      - name: Verify release credentials are present
+        # FAIL FAST. QUESTDB_PASSWORD is baked into the binary via option_env! and
+        # has NO fallback default (unlike QUESTDB_USER). If the secret is unset —
+        # or simply not in scope, as on fork/PR-triggered runs — the build still
+        # succeeds and publishes an installer whose gateway password falls back to
+        # the local-dev default "quest". Caddy then 401s every authenticated route
+        # (/questdb, /deepquant, /kite) while the unauthenticated /ws feeds keep
+        # streaming, so the shipped app shows a live order book with an empty
+        # chart, LTP and technical consensus. It "works on the developer's
+        # machine" only because a local .env supplies the password at runtime.
+        # Blocking the release is strictly better than shipping that.
+        env:
+          QUESTDB_PASSWORD: ${{ secrets.QUESTDB_PASSWORD }}
+        run: |
+          if [ -z "$QUESTDB_PASSWORD" ]; then
+            echo "::error::QUESTDB_PASSWORD secret is empty or not in scope. The build would ship an installer that 401s on every authenticated backend route (blank chart / LTP / consensus, live order book). Set it under Settings → Secrets and variables → Actions, and note that fork-triggered runs do not receive secrets."
+            exit 1
+          fi
+          echo "QUESTDB_PASSWORD present (${#QUESTDB_PASSWORD} chars) — gateway auth will be baked in."
+
       - name: Build app + publish release
         uses: tauri-apps/tauri-action@v0
         env:

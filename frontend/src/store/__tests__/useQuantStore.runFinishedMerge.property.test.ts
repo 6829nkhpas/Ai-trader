@@ -126,6 +126,117 @@ describe('RUN_FINISHED preserves a committed directional decision', () => {
   });
 });
 
+// Regression: the watch/heartbeat resume path. `RUN_STARTED` on a `watching`
+// session intentionally keeps the transcript, but `DECISION` is first-write-wins
+// (for reattach idempotency). That combination made leg 1's stale stand-aside
+// HOLD swallow the real BUY the resumed leg declares. Shipped builds run with
+// OPPORTUNITY_HEARTBEAT_ENABLED=true and graph.py prompts "ARM THE WATCH" as the
+// alternative to standing aside, so this is the dominant production path.
+describe('watch pause → resume', () => {
+  it('a directional decision on the resumed leg replaces the stale stand-aside', () => {
+    ev({ event: 'RUN_STARTED', data: { thread_id: 't-w' } });
+    ev({
+      event: 'DECISION',
+      data: { thread_id: 't-w', action: 'HOLD', opportunity_tier: 'watch', rationale: 'Watch armed.' },
+    });
+    ev({ event: 'RUN_FINISHED', data: { thread_id: 't-w', status: 'paused' } });
+    expect(useQuantStore.getState().sessionStatus).toBe('watching');
+    expect(isActionableTrade(useQuantStore.getState().finalTrade)).toBe(false);
+
+    const levels = { entry: 24112.85, stop_loss: 24078, take_profit: 24175 };
+    ev({ event: 'RUN_STARTED', data: { thread_id: 't-w' } });
+    ev({
+      event: 'DECISION',
+      data: {
+        thread_id: 't-w',
+        action: 'BUY',
+        conviction_score: 72,
+        opportunity_tier: 'a_plus',
+        rationale: 'VWAP reclaimed on volume.',
+        execution_levels: levels,
+      },
+    });
+    ev({ event: 'RUN_FINISHED', data: { thread_id: 't-w', status: 'completed' } });
+
+    const after = useQuantStore.getState().finalTrade;
+    expect(after?.action).toBe('BUY');
+    expect(after?.execution_levels).toEqual(levels);
+    expect(after?.setup_validation).toBe('VWAP reclaimed on volume.');
+    expect(isActionableTrade(after)).toBe(true);
+  });
+
+  it('the resumed leg keeps the transcript from the paused leg', () => {
+    ev({ event: 'RUN_STARTED', data: { thread_id: 't-t' } });
+    ev({ event: 'TEXT_MESSAGE', data: { thread_id: 't-t', content: 'Leg one analysis.' } });
+    ev({ event: 'RUN_FINISHED', data: { thread_id: 't-t', status: 'paused' } });
+    const before = useQuantStore.getState().reasoningSteps.length;
+    ev({ event: 'RUN_STARTED', data: { thread_id: 't-t' } });
+    expect(useQuantStore.getState().reasoningSteps.length).toBeGreaterThan(before);
+    expect(
+      useQuantStore.getState().reasoningSteps.some((s) => s.content.includes('Leg one analysis.')),
+    ).toBe(true);
+  });
+
+  it('DECISION stays first-write-wins WITHIN a single leg (reattach replay)', () => {
+    const levels = { entry: 100, stop_loss: 99, take_profit: 103 };
+    ev({ event: 'RUN_STARTED', data: { thread_id: 't-r' } });
+    ev({
+      event: 'DECISION',
+      data: { thread_id: 't-r', action: 'BUY', conviction_score: 70, execution_levels: levels },
+    });
+    // A replayed/duplicate frame must not mutate the committed decision.
+    ev({
+      event: 'DECISION',
+      data: { thread_id: 't-r', action: 'HOLD', opportunity_tier: 'stand_aside', rationale: 'dup' },
+    });
+    const after = useQuantStore.getState().finalTrade;
+    expect(after?.action).toBe('BUY');
+    expect(after?.execution_levels).toEqual(levels);
+  });
+});
+
+// Regression: Python threads the model's raw action string through verbatim,
+// but gates execution_levels on a separately-normalized copy. A lowercase
+// "sell" therefore arrives WITH levels and passes isActionableTrade (which
+// upper-cases) while DeepQuantPanel/ActionableTradePlan compare raw === 'SELL'
+// and would fall through to BUY — a wrong-direction order, worse than a miss.
+describe('DECISION action case normalization', () => {
+  it('lowercase actions are upper-cased so raw === comparisons cannot invert a SELL', () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom('sell', 'Sell', 'SELL', ' sell ', 'sElL'),
+        (raw) => {
+          resetStore();
+          ev({ event: 'RUN_STARTED', data: { thread_id: 't-c' } });
+          ev({
+            event: 'DECISION',
+            data: {
+              thread_id: 't-c',
+              action: raw,
+              conviction_score: 60,
+              execution_levels: { entry: 100, stop_loss: 101, take_profit: 97 },
+            },
+          });
+          const plan = useQuantStore.getState().finalTrade;
+          expect(plan?.action).toBe('SELL');
+          // The exact comparison the execution components make.
+          expect(plan?.action === 'SELL' ? 'SELL' : 'BUY').toBe('SELL');
+          expect(isActionableTrade(plan)).toBe(true);
+        },
+      ),
+      { numRuns: 20 },
+    );
+  });
+
+  it('lowercase hold is still recognized as non-actionable', () => {
+    ev({ event: 'RUN_STARTED', data: { thread_id: 't-lh' } });
+    ev({ event: 'DECISION', data: { thread_id: 't-lh', action: 'hold', rationale: 'no edge' } });
+    const plan = useQuantStore.getState().finalTrade;
+    expect(plan?.action).toBe('HOLD');
+    expect(isActionableTrade(plan)).toBe(false);
+  });
+});
+
 describe('mergeFinalPlan', () => {
   const committed: AiExecutionPlan = {
     conviction_score: 68,

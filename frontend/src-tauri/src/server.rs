@@ -158,6 +158,62 @@ pub fn kite_url() -> String {
     format!("http://{}:8087/api/kite", host())
 }
 
+/// The local-dev default password. A stock, unconfigured QuestDB accepts this,
+/// so locally it is correct; behind the public gateway it is guaranteed-wrong.
+pub const DEV_QUESTDB_PASSWORD: &str = "quest";
+
+/// True when this build targets the public HTTPS gateway but carries no real
+/// gateway password — i.e. the installer will 401 on every authenticated route.
+///
+/// WHY THIS EXISTS: `questdb_password()` falls back to the local-dev default
+/// (`"quest"`) when nothing is baked at compile time. On a developer's machine
+/// `lib.rs` loads the repo `.env` at runtime, so the real password is present and
+/// the app works. A shipped installer has no `.env`, so it depends ENTIRELY on
+/// the compile-time bake. A build made without `QUESTDB_PASSWORD` in scope (a
+/// plain `npm run tauri:build`, or CI where the secret is unset — note even
+/// `tauri:build:remote` sets only QUESTDB_USER) therefore ships credentials the
+/// gateway rejects.
+///
+/// The failure is silent and looks like missing data, not a config error: Caddy
+/// protects `/questdb/*`, `/deepquant/*` and `/kite/*` with basic auth but leaves
+/// `/ws/*` open, so live WebSocket panels (order book) keep streaming while the
+/// chart, LTP, and technical consensus render empty. That is the exact
+/// "works on my machine, blank for everyone else" report this guards against.
+///
+/// Checked at startup (see `lib.rs`) and by the authenticated-fetch paths so the
+/// condition is reported as a credential fault instead of an empty chart.
+pub fn gateway_credentials_missing() -> bool {
+    // Only meaningful in gateway mode; direct-IP / local dev legitimately uses
+    // the dev default against an unconfigured QuestDB.
+    if http_base().is_empty() {
+        return false;
+    }
+    let pass = questdb_password();
+    pass.trim().is_empty() || pass == DEV_QUESTDB_PASSWORD
+}
+
+/// One-line, non-secret description of the resolved backend wiring, for logs.
+/// Deliberately reports only whether the password is *present*, never its value.
+pub fn config_summary() -> String {
+    let http = http_base();
+    let ws = ws_base();
+    let pass = questdb_password();
+    format!(
+        "host={} http_base={} ws_base={} questdb_user={} questdb_password={}",
+        host(),
+        if http.is_empty() { "<direct-ip>" } else { &http },
+        if ws.is_empty() { "<direct-ip>" } else { &ws },
+        questdb_user(),
+        if pass.trim().is_empty() {
+            "<empty>"
+        } else if pass == DEV_QUESTDB_PASSWORD {
+            "<dev-default>"
+        } else {
+            "<set>"
+        },
+    )
+}
+
 /// `ws://<host>:<port>`
 pub fn ws_url(port: u16) -> String {
     format!("ws://{}:{}", host(), port)
@@ -200,4 +256,72 @@ pub fn tcp_addr(port: u16) -> String {
 /// `http://<host>:<port>`
 pub fn http_url(port: u16) -> String {
     format!("http://{}:{}", host(), port)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `resolve_env` is the pure core of every setting here, so the guard's
+    // behaviour is tested through it rather than by mutating process env
+    // (which is global and would race across the test binary's threads).
+
+    #[test]
+    fn runtime_env_wins_over_compile_and_default() {
+        let got = resolve_env(Ok("runtime.example".into()), Some("compile.example"), "default");
+        assert_eq!(got, "runtime.example");
+    }
+
+    #[test]
+    fn blank_runtime_falls_through_to_compile_then_default() {
+        // A whitespace-only runtime value must not shadow a real baked value —
+        // otherwise an empty CI env var would silently win.
+        let got = resolve_env(Ok("   ".into()), Some("compile.example"), "default");
+        assert_eq!(got, "compile.example");
+
+        let got = resolve_env(Err(std::env::VarError::NotPresent), Some(""), "default");
+        assert_eq!(got, "default", "an empty baked value must fall through");
+
+        let got = resolve_env(Err(std::env::VarError::NotPresent), None, "default");
+        assert_eq!(got, "default");
+    }
+
+    #[test]
+    fn dev_password_constant_matches_the_documented_fallback() {
+        // questdb_password()'s default and the guard MUST agree; if this drifts,
+        // the guard stops recognizing an unbaked build.
+        assert_eq!(DEV_QUESTDB_PASSWORD, "quest");
+        let defaulted = resolve_env(
+            Err(std::env::VarError::NotPresent),
+            None,
+            DEV_QUESTDB_PASSWORD,
+        );
+        assert_eq!(defaulted, DEV_QUESTDB_PASSWORD);
+    }
+
+    #[test]
+    fn config_summary_never_leaks_the_password() {
+        // The summary is logged on every start, so it must report presence only.
+        let summary = config_summary();
+        let actual = questdb_password();
+        assert!(
+            !summary.contains(&actual) || actual == DEV_QUESTDB_PASSWORD,
+            "config_summary must not embed the real password"
+        );
+        assert!(
+            summary.contains("questdb_password=<set>")
+                || summary.contains("questdb_password=<dev-default>")
+                || summary.contains("questdb_password=<empty>"),
+            "unexpected password rendering: {summary}"
+        );
+    }
+
+    #[test]
+    fn guard_is_inert_in_direct_ip_mode() {
+        // With no gateway configured, the dev default is legitimate (a stock
+        // local QuestDB accepts it), so the guard must not fire.
+        if http_base().is_empty() {
+            assert!(!gateway_credentials_missing());
+        }
+    }
 }
