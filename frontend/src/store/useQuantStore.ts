@@ -172,7 +172,7 @@ export interface ModelProviderGroup { provider: string; models: ModelOption[]; }
 // ── OpenRouter (production) — canonical provider/model ids ───────────────────
 const MODEL_PROVIDERS_OPENROUTER: ModelProviderGroup[] = [
   { provider: 'Default', models: [
-    { id: '', label: 'Deployment Default' },
+    { id: '', label: 'Auto' },
   ]},
   { provider: 'Anthropic (Claude)', models: [
     { id: 'anthropic/claude-sonnet-4.5', label: 'Claude Sonnet 4.5', recommended: true },
@@ -212,7 +212,7 @@ const MODEL_PROVIDERS_OPENROUTER: ModelProviderGroup[] = [
 // `auto/*` are smart-routing combos (safest); `aug/*` are specific tuned models.
 const MODEL_PROVIDERS_OMNIROUTE: ModelProviderGroup[] = [
   { provider: 'Default', models: [
-    { id: '', label: 'Deployment Default' },
+    { id: '', label: 'Auto' },
   ]},
   { provider: 'Auto (Smart Routing)', models: [
     { id: 'auto/best-reasoning', label: 'Best Reasoning', recommended: true },

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useMemo } from 'react';
-import { Zap, Loader2, Shield, ChevronDown, Cpu, Square } from 'lucide-react';
+import { Coins, Zap, Loader2, Shield, ChevronDown, Cpu, Square } from 'lucide-react';
 import { useQuantStore, isActionableTrade } from '../../store/useQuantStore';
 import type { StreamEventPayload } from '../../store/useQuantStore';
 import { useTradeStore } from '../../store/useTradeStore';
@@ -336,44 +336,81 @@ export default function DeepQuantPanel() {
           </>
         )}
 
-        {/* ── Model Selector Row ── */}
-        <div className="mt-2.5 pt-2 border-t border-border-default/20">
-          <ModelSelector value={selectedModel} onChange={setSelectedModel} disabled={isAnalyzing} />
-          {/* ── Credit balance ── LLM usage is billed against the user's plan
-              credits (resolved + deducted server-side). Shown here so the user
-              sees remaining balance before running an analysis. */}
-          {credit && (
+        {/* ── Footer Controls (Responsive 3 equal-width boxes) ── */}
+        <div className="mt-2 pt-1.5 border-t border-border-default/20 flex flex-wrap items-center gap-1.5 text-[10px]">
+          {/* 1. Model Selector Box */}
+          <div className="flex-1 min-w-[110px]">
+            <ModelSelector value={selectedModel} onChange={setSelectedModel} disabled={isAnalyzing} />
+          </div>
+
+          {/* 2. Candle Status Box */}
+          <div
+            className="flex-1 min-w-[100px] h-7 flex items-center justify-center rounded bg-elevated/35 border border-border-default/60 px-2 py-1 text-[9px] text-text-muted/70 text-center transition-all"
+            title={`${symbol} • ${activeTimeframe}`}
+          >
+            <span className="truncate">
+              {symbol} • {activeTimeframe} • {!dataReady
+                ? 'Loading…'
+                : insufficientData
+                  ? `⚠ ${symbolCandleCount} c`
+                  : `${symbolCandleCount} candles`}
+            </span>
+          </div>
+
+          {/* 3. Credits Box (Coins icon on left, circular progress ring on right) ── */}
+          {credit ? (
             <button
               type="button"
               onClick={handleUpgrade}
               title={
                 credit.hasActiveSubscription
-                  ? `Plan: ${credit.planName} — click to manage / top up`
+                  ? `Plan: ${credit.planName} — ${credit.credits.toLocaleString()} credits remaining`
                   : 'No active plan — click to subscribe'
               }
-              className="mt-2 w-full flex items-center justify-between rounded-sm border border-border-default/30 bg-elevated/40 px-2.5 py-1.5 text-[10px] transition-colors hover:bg-elevated"
+              className="flex-1 min-w-[100px] h-7 flex items-center justify-between rounded bg-elevated/35 border border-border-default/60 px-2 py-1 text-[10px] transition-all hover:bg-elevated/65 hover:border-border-default/90 cursor-pointer"
             >
-              <span className="flex items-center gap-1.5 text-text-secondary">
-                <Zap size={11} className="text-accent" />
-                Credits
-              </span>
-              <span className="font-mono font-semibold text-text-primary">
-                {credit.credits.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                <span className="ml-1 font-sans font-normal text-text-muted">
+              {/* Left: Coin Icon + Credit Number */}
+              <div className="flex items-center gap-1.5 min-w-0">
+                <Coins size={11} className="text-amber-400 shrink-0" />
+                <span className="font-mono font-semibold text-text-primary text-[10px] truncate">
+                  {credit.credits.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                </span>
+              </div>
+
+              {/* Right: Plan text + Circular Progress Ring */}
+              <div className="flex items-center gap-1 shrink-0 ml-1">
+                <span className="text-[9px] font-sans font-normal text-text-muted truncate hidden sm:inline">
                   {credit.hasActiveSubscription ? credit.planName : 'no plan'}
                 </span>
-              </span>
+                <svg className="w-3.5 h-3.5 -rotate-90 shrink-0" viewBox="0 0 14 14">
+                  <circle
+                    cx="7"
+                    cy="7"
+                    r="5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    className="text-border-default/50"
+                  />
+                  <circle
+                    cx="7"
+                    cy="7"
+                    r="5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeDasharray={31.4}
+                    strokeDashoffset={31.4 - (31.4 * Math.min(100, Math.max(10, (credit.credits / 100) * 100))) / 100}
+                    strokeLinecap="round"
+                    className={credit.credits > 0 ? "text-emerald-400 transition-all duration-300" : "text-amber-500"}
+                  />
+                </svg>
+              </div>
             </button>
+          ) : (
+            <div className="flex-1 min-w-[100px]" />
           )}
         </div>
-
-        <p className="text-[9px] text-text-muted/50 text-center mt-2.5">
-          {symbol} • {activeTimeframe} • {!dataReady
-            ? 'Loading candle data from QuestDB…'
-            : insufficientData
-              ? `⚠ Only ${symbolCandleCount} candles — may reduce accuracy`
-              : `${symbolCandleCount} candles`}
-        </p>
       </div>
 
       {/* ── Verification Input Form ── */}

@@ -196,11 +196,14 @@ pub async fn get_historical_view(
     //   - User switches to 4m → base_tf="1m" → data already cached, skip fetch!
     //   - User switches to 1m → base_tf="1m" → data already cached, skip fetch!
     if matches!(source, HistorySource::Intraday) {
-        let (api_key_val, access_token_val) = get_kite_credentials();
-        let api_key = if !api_key_val.is_empty() { Some(api_key_val) } else { None };
-        let access_token = if !access_token_val.is_empty() { Some(access_token_val) } else { None };
+        // Credentials may legitimately be EMPTY in a shipped thin client (no
+        // `.env`, no baked Kite creds). That is no longer a reason to skip the
+        // backfill: `fetch_kite_candles` routes through the server-side Kite
+        // proxy behind the gateway when they are absent. They are passed
+        // through as-is so the direct path is still used in local dev.
+        let (api_key, access_token) = get_kite_credentials();
 
-        if let (Some(api_key), Some(access_token)) = (api_key, access_token) {
+        {
             // Resolve instrument token from the local SQLite cache
             let local_token: Option<u32> = {
                 use tauri::Manager;
@@ -244,11 +247,6 @@ pub async fn get_historical_view(
                     );
                 }
             }
-        } else {
-            warn!(
-                "KITE_API_KEY / KITE_ACCESS_TOKEN not set — skipping intraday fetch for {}.",
-                symbol
-            );
         }
     }
 

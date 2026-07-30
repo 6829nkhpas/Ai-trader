@@ -228,6 +228,13 @@ const tokenCache = new Map<string, number>();
  * Fetch a single batch of historical candles from the Kite Historical API via
  * the aggregator's REST proxy at /kite/historical.
  *
+ * MUST go through `kiteFetch`, never a bare `fetch('/kite/...')`. A relative
+ * path only resolves under `npm run dev`, where the Next.js rewrite proxies it;
+ * the packaged app is a static export with no rewrites, so a bare fetch hits
+ * `tauri.localhost` and 404s. `kiteFetch` routes through the Rust `kite_fetch`
+ * command (gateway base + credentials injected server-side) under Tauri and
+ * falls back to the dev rewrite in a plain browser. Pass the path AFTER `/kite`.
+ *
  * When the symbol-based request fails (server can't resolve the symbol because
  * the instrument CSV cache is empty), we resolve the instrument_token via the
  * quote API and retry with the token directly.
@@ -256,8 +263,8 @@ async function fetchKiteBatch(
 
   try {
     // Attempt 1: Use symbol name (works if server instrument cache is populated)
-    const url = `/kite/historical?symbol=${encodeURIComponent(symbol)}&interval=${interval}${dateParams}`;
-    const response = await fetch(url);
+    const url = `/historical?symbol=${encodeURIComponent(symbol)}&interval=${interval}${dateParams}`;
+    const response = await kiteFetch(url);
     if (response.ok) {
       const data = await response.json();
       const candles = parseCandles(data);
@@ -276,8 +283,8 @@ async function fetchKiteBatch(
       tokenCache.set(symbol.toUpperCase(), token);
     }
 
-    const tokenUrl = `/kite/historical?instrument_token=${token}&interval=${interval}${dateParams}`;
-    const tokenResponse = await fetch(tokenUrl);
+    const tokenUrl = `/historical?instrument_token=${token}&interval=${interval}${dateParams}`;
+    const tokenResponse = await kiteFetch(tokenUrl);
     if (!tokenResponse.ok) return [];
     const tokenData = await tokenResponse.json();
     return parseCandles(tokenData);

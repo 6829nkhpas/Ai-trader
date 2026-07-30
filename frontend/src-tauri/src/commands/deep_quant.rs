@@ -522,11 +522,12 @@ pub(crate) async fn load_candles_with_ts(
 
     // ── Proactive Zerodha Kite loading if AppHandle is provided ──────────────────
     if let Some(app) = app {
-        let (api_key_val, access_token_val) = get_kite_credentials();
-        let api_key = if !api_key_val.is_empty() { Some(api_key_val) } else { None };
-        let access_token = if !access_token_val.is_empty() { Some(access_token_val) } else { None };
+        // Empty credentials are expected in a shipped thin client; the loader
+        // falls back to the server-side Kite proxy, so they no longer gate the
+        // backfill. Passed through as-is to keep the direct path in local dev.
+        let (api_key, access_token) = get_kite_credentials();
 
-        if let (Some(api_key), Some(access_token)) = (api_key, access_token) {
+        {
             let local_token: Option<u32> = {
                 app.try_state::<crate::db::DbState>()
                     .and_then(|db_state| {
@@ -1369,11 +1370,11 @@ async fn run_glass_box_loop(
 
     // Low data / proactive Kite fetch logic (same as original, but inside loop)
     if candles.len() < 50 {
-        let (api_key_val, access_token_val) = get_kite_credentials();
-        let api_key = if !api_key_val.is_empty() { Some(api_key_val) } else { None };
-        let access_token = if !access_token_val.is_empty() { Some(access_token_val) } else { None };
+        // Empty credentials no longer gate the backfill — the loader falls back
+        // to the server-side Kite proxy in a shipped thin client.
+        let (api_key, access_token) = get_kite_credentials();
 
-        if let (Some(api_key), Some(access_token)) = (api_key, access_token) {
+        {
             let local_token: Option<u32> = {
                 app.try_state::<crate::db::DbState>()
                     .and_then(|db_state| {

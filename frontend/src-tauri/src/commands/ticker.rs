@@ -143,16 +143,22 @@ async fn send_subscribe_to_ingestion(symbol: &str, token: u32) {
 /// instrument cache, then sends a `subscribe:TOKEN:SYMBOL\n` command to
 /// the ingestion service's TCP control port.
 async fn notify_ingestion_subscribe(symbol: &str) {
-    let kite_port    = std::env::var("KITE_API_PORT")
-        .unwrap_or_else(|_| "8084".to_string());
     let control_port = std::env::var("INGESTION_CONTROL_PORT")
         .unwrap_or_else(|_| "8085".to_string());
 
     // ── Step 1: Token lookup ─────────────────────────────────────────────────
+    // Resolve through `server::kite_url()` so this follows the same path as
+    // every other Kite REST call: the public HTTPS gateway (`{base}/kite`) in a
+    // shipped thin client, or the direct `http://<host>:8087/api/kite` proxy in
+    // local dev. This previously built `http://<host>:{KITE_API_PORT}/api/kite`
+    // with KITE_API_PORT defaulting to 8084 — the tool-server's port, not the
+    // Kite proxy's (8087). In production 8084 is neither published by
+    // docker-compose nor open in the firewall, so the lookup always failed and
+    // live ticks were never subscribed.
+    let kite_base = crate::server::kite_url();
     let url = format!(
-        "http://{}:{}/api/kite/instruments?q={}&exchange=NSE",
-        crate::server::host(),
-        kite_port,
+        "{}/instruments?q={}&exchange=NSE",
+        kite_base.trim_end_matches('/'),
         urlencoding::encode(symbol)
     );
 
@@ -161,7 +167,16 @@ async fn notify_ingestion_subscribe(symbol: &str) {
         .build()
         .unwrap_or_default();
 
-    let token: Option<u32> = match client.get(&url).send().await {
+    // The gateway route is behind basic auth; the direct-proxy path is not.
+    // Attaching credentials only when they resolve mirrors fno_service.rs.
+    let mut req = client.get(&url);
+    let user = crate::server::questdb_user();
+    let pass = crate::server::questdb_password();
+    if !user.is_empty() && !crate::server::http_base().is_empty() {
+        req = req.basic_auth(&user, Some(&pass));
+    }
+
+    let token: Option<u32> = match req.send().await {
         Ok(resp) if resp.status().is_success() => {
             resp.json::<serde_json::Value>().await.ok()
                 .and_then(|json| {

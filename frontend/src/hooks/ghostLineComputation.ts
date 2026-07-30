@@ -18,6 +18,7 @@
 import { useChartUIStore } from '../store/useChartUIStore';
 import { useTradeStore } from '../store/useTradeStore';
 import { TIMEFRAME_MS, KITE_INTERVAL_MAP, type Timeframe } from '../utils/chartTypes';
+import { kiteFetch } from '../lib/tauriFetch';
 
 const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -257,15 +258,19 @@ async function fetchLookbackCandles(symbol: string, timeframe: string): Promise<
     }
   }
 
-  // Path B: Next.js rewrite — /kite/historical.
+  // Path B: Kite REST via the gateway. Uses `kiteFetch` (Rust `kite_fetch`
+  // command under Tauri) rather than a bare fetch on `/kite/...`: the relative
+  // path only works under `npm run dev`, where the Next.js rewrite proxies it.
+  // The packaged app is a static export with no rewrites, so a bare fetch would
+  // hit `tauri.localhost` and 404. Path is the part AFTER `/kite`.
   try {
     const to   = new Date();
     const days = timeframe.endsWith('D') || timeframe.endsWith('W') || timeframe.endsWith('M') ? 365 : 10;
     const from = new Date(to.getTime() - days * 86_400_000);
     const fmt  = (d: Date) => d.toISOString().slice(0, 10);
-    const url  = `/kite/historical?symbol=${encodeURIComponent(symbol)}&interval=${kiteInterval}&from=${fmt(from)}&to=${fmt(to)}`;
-    console.log('[GhostLine] Fetching candles from:', url);
-    const res = await fetch(url);
+    const url  = `/historical?symbol=${encodeURIComponent(symbol)}&interval=${kiteInterval}&from=${fmt(from)}&to=${fmt(to)}`;
+    console.log('[GhostLine] Fetching candles from /kite:', url);
+    const res = await kiteFetch(url);
     if (res.ok) {
       const data = await res.json();
       const candles: LookbackCandle[] = (data.candles || []).map((c: any) => ({

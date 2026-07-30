@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Cpu, ChevronDown, ChevronRight, Check, Lock } from 'lucide-react';
+import { Sparkles, ChevronDown, ChevronRight, Check, Lock } from 'lucide-react';
 import { MODEL_PROVIDERS, MODEL_SELECTION_LOCKED, type ModelProviderGroup } from '../../../store/useQuantStore';
 
 interface ModelSelectorProps {
@@ -44,7 +44,7 @@ export default function ModelSelector({ value, onChange, disabled = false, varia
         if (m.id === value) return m.label;
       }
     }
-    return 'Deployment Default';
+    return 'Auto';
   }, [value]);
 
   const activeModels = useMemo(() => {
@@ -121,7 +121,7 @@ export default function ModelSelector({ value, onChange, disabled = false, varia
         title={locked ? 'Model selection is locked in beta — upgrade to choose any model' : 'Select the LLM provider / model'}
         className={variant === 'inline'
           ? "flex items-center gap-1 bg-transparent px-1 py-0.5 text-[10px] font-sans font-semibold text-text-muted hover:text-text-primary focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-          : "flex w-full items-center justify-between rounded bg-elevated/35 border border-border-default/60 px-2.5 py-1.5 text-[10px] font-sans font-semibold text-text-primary hover:bg-elevated/65 hover:border-border-default/90 transition-all focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+          : "flex w-full h-7 items-center justify-between rounded bg-elevated/35 border border-border-default/60 px-2 py-1 text-[10px] font-sans font-semibold text-text-primary hover:bg-elevated/65 hover:border-border-default/90 transition-all focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
         }
       >
         {variant === 'inline' ? (
@@ -132,8 +132,7 @@ export default function ModelSelector({ value, onChange, disabled = false, varia
         ) : (
           <>
             <div className="flex items-center gap-1.5 min-w-0">
-              <Cpu size={11} className="text-text-secondary shrink-0" />
-              <span className="text-text-muted select-none shrink-0">Model:</span>
+              <Sparkles size={11} className="text-accent shrink-0" />
               <span className="truncate">{selectedLabel}</span>
             </div>
             {locked
