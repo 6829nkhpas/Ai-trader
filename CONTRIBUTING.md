@@ -147,7 +147,7 @@ Once the repo is on GitHub Pro (or made public), run these to enforce the model
 properly:
 
 ```bash
-REPO=6829nkhpas/Ai-trader
+REPO=thestratai/Ai-trader
 
 # main — production: PR-only, 1 approval, no force-push, no deletion
 gh api -X PUT "repos/$REPO/branches/main/protection" \
