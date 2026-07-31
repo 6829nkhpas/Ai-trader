@@ -5,6 +5,30 @@
 
 ---
 
+## 0. Branching — read before committing
+
+**`main` is production. Never commit or push to it directly.** Code reaches
+`main` only through an approved PR from `staging`.
+
+```
+feature/* → develop → staging → main
+```
+
+- Branch off **`develop`** for all new work (`feature/`, `fix/`, `chore/`,
+  `refactor/`, `docs/`). Urgent production fixes use `hotfix/*` off `main` and
+  must be back-merged into `staging` then `develop`.
+- Merging to `main` **triggers a production deploy** (`deploy-server.yml` SSHes
+  into the droplet and runs `redeploy.sh`).
+- `ci.yml` runs on PRs into `main`/`staging`/`develop` and on pushes to
+  `develop`/`staging`. `branch-guard.yml` reports direct pushes to `main`/`staging`.
+- GitHub branch protection is **not active** (private repo, free plan → the
+  protection API 403s), so these rules are policy rather than enforced. Behave as
+  though they were enforced.
+
+Full rules: `CONTRIBUTING.md`.
+
+---
+
 ## 1. What this is
 
 Ai-trader (a.k.a. "Strat Ai" / Alpha Terminal) is a **desktop trading terminal** for the Indian market (NSE/NFO via Zerodha Kite Connect). It fuses live market data, an institutional charting suite (TradingView Advanced Charts), an F&O options-analytics workspace, and an LLM "deep quant" analysis agent.
