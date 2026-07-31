@@ -23,9 +23,6 @@ services:
     environment:
       QDB_SHARED_WORKER_COUNT: "2"
 
-  postgres:
-    mem_limit: 384m
-
   redis:
     mem_limit: 200m
 

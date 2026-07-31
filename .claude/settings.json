@@ -1,6 +1,47 @@
 {
-  "worktree": {
-    "bgIsolation": "none"
+  "permissions": {
+    "allow": [
+      "Bash(sed 's/.*\\\\.//')",
+      "Bash(node -e \"const p=require\\('./package.json'\\);console.log\\('deps:',Object.keys\\(p.dependencies||{}\\).length\\);console.log\\('devDeps:',Object.keys\\(p.devDependencies||{}\\).length\\)\")",
+      "Bash(xargs wc -l)",
+      "Bash(grep -rhoE \"invoke\\(<[^>]*>\\)?\\\\\\(\\\\s*['\\\\\"\\\\`][a-z0-9_]+['\\\\\"\\\\`]\" src/ --include=\"*.ts\" --include=\"*.tsx\")",
+      "Bash(grep -oE \"['\\\\\"\\\\`][a-z0-9_]+['\\\\\"\\\\`]\")",
+      "Read(//tmp/**)",
+      "Bash(sed -E 's/.*fn +\\([a-z0-9_]+\\).*/\\\\1/')",
+      "Bash(node --check verify-flow.js)",
+      "Bash(echo \"node --check exit: $?\")",
+      "Bash(grep -vE \"\\(/\\\\.venv/|/__pycache__/\\)\")",
+      "Bash(grep -vE \"\\(/\\\\.venv/|/node_modules/|/__pycache__/|site-packages|/target/|package-lock|/tests/|/test_\\)\")",
+      "Bash(grep -rhoE \"\\(tauriInvoke|invoke\\)\\(<[^>]*>\\)?\\\\\\(\\\\s*['\\\\\"\\\\`][a-z0-9_]+['\\\\\"\\\\`]\" src/ tests/ --include=\"*.ts\" --include=\"*.tsx\")",
+      "Bash(awk 'NR>=1999 && NR<=2200' src/commands/deep_quant.rs)",
+      "Bash(awk '/^pub async fn deploy_ai_sentinel/{f=1} f{print NR+1998\": \"$0} f&&/^}/{exit}')",
+      "Bash(awk 'NR>=1256{print NR\": \"$0}' src/commands/deep_quant.rs)",
+      "Bash(awk '/^[0-9]+: }/{print; exit} {if\\(NR<250\\) print}')",
+      "Bash(grep -rn 'HTTP_URL}\\\\\\\\' --include=*.py .)",
+      "Bash(grep -rn '\\\\\\\\exec' --include=*.py .)",
+      "Bash(echo \"exit=$? \\(1 means NO match => bug absent\\)\")",
+      "Bash(grep -vE \"\\(/\\\\.venv/|/__pycache__/|/tests/\\)\")",
+      "Bash(echo \"--- exit: $? ---\")",
+      "Bash(grep -vE \"\\(/\\\\.venv/|/__pycache__/|^\\\\./calibration.py\\)\")",
+      "Bash(sed -E 's/.*\"\\([A-Z_0-9]+\\)\"/\\\\1/')",
+      "Bash(sed -E 's/.*\"\\([A-Za-z_0-9]+\\)\".*/\\\\1/')",
+      "Bash(node -e \"const p=require\\('./package.json'\\);console.log\\(Object.keys\\(p.dependencies\\).join\\('\\\\n'\\)\\)\")",
+      "Bash(cd \"d:/Strat Ai/Ai-trader/frontend/src-tauri\" && echo \"=== stronghold in Cargo.toml / capabilities? ===\" && grep -rn \"stronghold\" Cargo.toml capabilities/ tauri.conf.json 2>/dev/null | head; echo \"\\(empty = JS plugin pkg with no Rust counterpart = dead\\)\"; echo \"\"; echo \"=== shadcn: components.json / any ui dir? ===\"; cd .. && ls components.json 2>/dev/null; ls -d src/components/ui 2>/dev/null || echo \"no src/components/ui — shadcn CLI dep unused at runtime\")",
+      "Read(//d/Strat Ai/**)",
+      "Bash(cd /e/monorepo && wc -l docs/CODE_AUDIT.md SECURITY_REVIEW.md docs/SECURITY_REVIEW.md 2>&1)",
+      "Read(//e//**)",
+      "Bash(ls -d /e)",
+      "Read(//d//**)",
+      "Bash(awk 'NR==685' docs/SECURITY_REVIEW.md)",
+      "Bash(git rm *)",
+      "Bash(rm -rf alpha-backend)",
+      "Bash(cp docker-compose.prod.yml /tmp/compose.bak)",
+      "Bash(sed -i '381,427d' docker-compose.prod.yml)",
+      "Bash(docker compose *)",
+      "Bash(bash -n scripts/linux/start_system.sh)",
+      "Bash(pwsh -NoProfile -Command '$ErrorActionPreference='\\\\''Stop'\\\\''; $null=[System.Management.Automation.Language.Parser]::ParseFile\\('\\\\''scripts/powershell/start_system.ps1'\\\\'',[ref]$null,[ref]$e\\); if\\($e\\){$e|%{$_.Message}}else{'\\\\''start_system.ps1: syntax OK'\\\\''}')",
+      "Bash(powershell -NoProfile -Command '$e=$null; $null=[System.Management.Automation.Language.Parser]::ParseFile\\(\\(Resolve-Path '\\\\''scripts/powershell/start_system.ps1'\\\\''\\),[ref]$null,[ref]$e\\); if\\($e -and $e.Count -gt 0\\){$e | ForEach-Object {$_.Message}} else {'\\\\''start_system.ps1: syntax OK'\\\\''}')"
+    ]
   },
   "hooks": {
     "PostToolUse": [
@@ -47,5 +88,12 @@
         ]
       }
     ]
+  },
+  "worktree": {
+    "bgIsolation": "none"
+  },
+  "enabledPlugins": {
+    "claude-md-management@claude-plugins-official": true,
+    "ponytail@ponytail": true
   }
 }

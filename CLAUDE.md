@@ -22,10 +22,17 @@ The shipped app is a **Tauri 2 desktop shell** wrapping a **Next.js 15 / React 1
 | `aggregator/` | Rust | Core decision fusion + Kite REST proxy (`kite_api.rs`) + OHLC WS server. |
 | `ingestion/` | Rust | Kite WebSocket tick ingestion → Kafka + QuestDB dual sink. |
 | `alpha-terminal/` | Rust | V2 predictive engine, 10m OHLC aggregation, WS :8081. |
-| `alpha-backend/` | Node.js | Auth / broker / credit API (Express). |
 | `backend/`, `agents/` (other) | mixed | Older/auxiliary services. |
 | `shared_protos/` | Protobuf | Cross-service data contracts. |
 | `docs/`, `ARCHITECTURE.md`, `README.md` | docs | Background reading. |
+
+**⚠️ Auth / payments are NOT in this repo.** The auth, broker-credential, credit,
+and payment API is a **separate deployment** reachable at
+`NEXT_PUBLIC_API_BASE_URL` (prod: `https://api-web.stratai.live`, prefix
+`/api/v1`). The frontend consumes it over HTTP only — see `store/useAuthStore.ts`
+and `lib/tauriFetch.ts`. There is no local auth service to start, and endpoints
+like `/auth/desktop/session` exist only on that remote deployment, so failures
+there must be debugged from its logs, not from this tree.
 
 **⚠️ Non-standard Next.js:** `frontend/AGENTS.md` (loaded via `frontend/CLAUDE.md`) warns this Next.js has breaking changes vs. training data. **Read `node_modules/next/dist/docs/` before writing Next-specific code** (routing, server components, metadata). Don't assume App Router conventions from memory.
 

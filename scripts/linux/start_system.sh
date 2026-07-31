@@ -113,10 +113,6 @@ cleanup() {
     if docker info >/dev/null 2>&1; then
         c_yellow "Stopping Docker infrastructure..."
         "${DC[@]}" down 2>/dev/null || true
-        if [ -d "$RepoRoot/alpha-backend" ]; then
-            c_yellow "Stopping PostgreSQL infrastructure..."
-            ( cd "$RepoRoot/alpha-backend" && "${DC[@]}" down 2>/dev/null || true )
-        fi
     else
         c_yellow "Docker daemon not reachable, skipping container cleanup."
     fi
@@ -125,17 +121,16 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # =============================================================================
-# Ports: 3000=Next.js, 3001=Auth, 3002=Payment, 8080-8083=WS agents,
-#        8084=Tauri Tool Server, 8085=Ingestion Control, 8086=Python Agent,
-#        8087=Kite REST API, 9000/9009=QuestDB, 5432=PG, 5433=Postgres DB,
-#        6379=Redis, 19092=Kafka
+# Ports: 3000=Next.js, 8080-8083=WS agents, 8084=Tauri Tool Server,
+#        8085=Ingestion Control, 8086=Python Agent, 8087=Kite REST API,
+#        9000/9009=QuestDB, 5432=PG, 6379=Redis, 19092=Kafka
 # =============================================================================
 
 c_magenta "==> Cleaning up stale processes and ports..."
 
-# Exclude Docker-managed ports (5432, 5433, 6379, 9000, 9009, 19092) from direct
+# Exclude Docker-managed ports (5432, 6379, 9000, 9009, 19092) from direct
 # kills — terminating those PIDs would kill docker-proxy / the Docker daemon.
-ports_to_kill=(3000 3001 3002 8080 8081 8082 8083 8084 8085 8086 8087)
+ports_to_kill=(3000 8080 8081 8082 8083 8084 8085 8086 8087)
 
 # Resolve the listeners on a port into PIDs, trying lsof then fuser then ss.
 pids_on_port() {
@@ -178,9 +173,6 @@ fi
 
 c_cyan "Stopping any stale Docker containers from previous runs..."
 "${DC[@]}" down 2>/dev/null || true
-if [ -d alpha-backend ]; then
-    ( cd alpha-backend && "${DC[@]}" down 2>/dev/null || true )
-fi
 
 # ── Load environment variables from .env ─────────────────────────────────────
 c_cyan "Loading environment variables from .env..."
@@ -211,16 +203,10 @@ fi
 c_cyan "Starting infrastructure (Kafka/Redpanda, QuestDB, Redis)..."
 "${DC[@]}" up -d redpanda questdb redis
 
-c_cyan "Starting PostgreSQL infrastructure for Auth & Payment services..."
-if [ -d alpha-backend ]; then
-    ( cd alpha-backend && "${DC[@]}" up -d postgres )
-fi
-
 # Wait for each infra service to be reachable before proceeding.
 wait_for_port 6379  60 "Redis (:6379)"
 wait_for_port 9000  90 "QuestDB (:9000)"
 wait_for_port 19092 90 "Redpanda/Kafka (:19092)"
-wait_for_port 5433  90 "PostgreSQL Auth/Payment DB (:5433)"
 
 # ── Install Node.js dependencies ─────────────────────────────────────────────
 c_cyan "Checking and installing Node.js dependencies..."
@@ -235,21 +221,8 @@ install_node_deps() {
         c_green "$label dependencies already installed."
     fi
 }
-install_node_deps "alpha-backend"   "alpha-backend"
 install_node_deps "agents/sentiment" "agents/sentiment"
 install_node_deps "frontend"        "frontend"
-
-# ── Push database schema & generate Prisma clients ───────────────────────────
-if [ -d alpha-backend ]; then
-    c_cyan "Synchronizing databases and generating Prisma clients..."
-    (
-        cd alpha-backend
-        c_dcyan "  Pushing schema & generating client for Auth Service..."
-        npm run auth:db-push
-        c_dcyan "  Pushing schema & generating client for Payment Service..."
-        npm run payment:db-push
-    )
-fi
 
 # ── Pre-create Kafka topics via rpk ──────────────────────────────────────────
 c_cyan "Pre-creating Kafka topics via rpk..."
@@ -266,8 +239,7 @@ c_green "All infrastructure is ready!"
 
 # ── Start PRODUCERS first, then CONSUMERS ────────────────────────────────────
 # Order: ingestion -> technical -> sentiment -> aggregator -> predictive ->
-#        quant-rag -> python deep-quant -> auth -> payment -> frontend
-# NOTE: the standalone auth/profile gate was removed from the dashboard entry.
+#        quant-rag -> python deep-quant -> frontend
 
 c_cyan "Starting Rust Ingestion Service (Kite -> Kafka)..."
 start_service "ingestion" cargo run --release
@@ -295,15 +267,6 @@ c_cyan "Starting Python LangGraph Deep Quant Agent (Port 8086)..."
 start_service "agents/deep-quant-loop" "$DEEP_QUANT_PY" main.py
 wait_for_port 8086 60 "Python Deep Quant Loop (:8086)"
 sleep 3
-
-c_cyan "Starting Alpha-Backend Auth Service (Port 3001)..."
-start_service "alpha-backend" npm run auth:dev
-
-c_cyan "Starting Alpha-Backend Payment Service (Port 3002)..."
-start_service "alpha-backend" npm run payment:dev
-
-wait_for_port 3001 30 "Auth Service (:3001)"
-wait_for_port 3002 30 "Payment Service (:3002)"
 
 c_cyan "Starting Next.js Frontend (Tauri)..."
 start_service "frontend" npm run tauri:dev

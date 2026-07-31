@@ -104,10 +104,10 @@ jobs:
         shell: bash
         run: |
           if [ -z "$QUESTDB_PASSWORD" ]; then
-            echo "::error::QUESTDB_PASSWORD secret is empty or not in scope. The build would ship an installer that 401s on every authenticated backend route (blank chart / LTP / consensus, live order book). Set it under Settings → Secrets and variables → Actions, and note that fork-triggered runs do not receive secrets."
+            echo "::error::QUESTDB_PASSWORD secret is empty or not in scope. The build would ship an installer that 401s on every authenticated backend route (blank chart / LTP / consensus, live order book). Set it under Settings > Secrets and variables > Actions, and note that fork-triggered runs do not receive secrets."
             exit 1
           fi
-          echo "QUESTDB_PASSWORD present (${#QUESTDB_PASSWORD} chars) — gateway auth will be baked in."
+          echo "QUESTDB_PASSWORD present (${#QUESTDB_PASSWORD} chars) - gateway auth will be baked in."
 
       - name: Build app + publish release
         uses: tauri-apps/tauri-action@v0

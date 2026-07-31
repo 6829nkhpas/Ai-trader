@@ -13,7 +13,7 @@ $env:PYTHONIOENCODING = "utf-8"
 # Anchor to the repository root regardless of where this script is launched from.
 # This script lives at <repo>/scripts/powershell/start_system.ps1, so the repo
 # root is two directories up. Every relative path below (docker-compose, .env,
-# alpha-backend, agents/*, ingestion, aggregator, frontend) is resolved against
+# alpha-terminal, agents/*, ingestion, aggregator, frontend) is resolved against
 # this root, so running the script from any directory works correctly.
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 Set-Location $RepoRoot
@@ -57,12 +57,6 @@ function Cleanup {
     if ($LASTEXITCODE -eq 0) {
         Write-Host "Stopping Docker infrastructure..." -ForegroundColor Yellow
         docker-compose down
-        if (Test-Path alpha-backend) {
-            Write-Host "Stopping PostgreSQL infrastructure..." -ForegroundColor Yellow
-            Push-Location alpha-backend
-            docker-compose down
-            Pop-Location
-        }
     } else {
         Write-Host "Docker daemon not reachable, skipping container cleanup." -ForegroundColor Yellow
     }
@@ -70,13 +64,13 @@ function Cleanup {
 }
 
 try {
-    # Ports: 3000=Next.js, 3001=Auth, 3002=Payment, 8080-8083=WS agents, 8084=Tauri Tool Server, 8085=Ingestion Control,
-    #        8086=Python Agent, 8087=Kite REST API, 9000/9009=QuestDB, 5432=PG (QuestDB/Default), 5433=Postgres DB (Auth/Payment), 6379=Redis, 19092=Kafka
+    # Ports: 3000=Next.js, 8080-8083=WS agents, 8084=Tauri Tool Server, 8085=Ingestion Control,
+    #        8086=Python Agent, 8087=Kite REST API, 9000/9009=QuestDB, 5432=PG (QuestDB/Default), 6379=Redis, 19092=Kafka
     Write-Host "==> Cleaning up stale processes and ports..." -ForegroundColor Magenta
 
-    # Exclude Docker-managed ports (5432, 5433, 6379, 9000, 9009, 19092) from direct taskkill, 
+    # Exclude Docker-managed ports (5432, 6379, 9000, 9009, 19092) from direct taskkill,
     # as killing those PIDs terminates the Docker/WSL daemon on the host.
-    $portsToKill = @(3000, 3001, 3002, 8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087)
+    $portsToKill = @(3000, 8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087)
     $netstatOut = netstat -ano
     foreach ($port in $portsToKill) {
         $matched = $netstatOut | Select-String (":$port\s")
@@ -113,11 +107,6 @@ try {
 
     Write-Host "Stopping any stale Docker containers from previous runs..." -ForegroundColor Cyan
     docker-compose down 2>$null | Out-Null
-    if (Test-Path alpha-backend) {
-        Push-Location alpha-backend
-        docker-compose down 2>$null | Out-Null
-        Pop-Location
-    }
 
     # ── Load environment variables ───────────────────────────────────────────
     Write-Host "Loading environment variables from .env..." -ForegroundColor Cyan
@@ -135,34 +124,15 @@ try {
     Write-Host "Starting infrastructure (Kafka/Redpanda, QuestDB, Redis)..." -ForegroundColor Cyan
     docker-compose up -d redpanda questdb redis
 
-    Write-Host "Starting PostgreSQL infrastructure for Auth & Payment services..." -ForegroundColor Cyan
-    Push-Location alpha-backend
-    docker-compose up -d postgres
-    Pop-Location
-
     # Wait for each infra service to be reachable before proceeding
     Wait-ForPort -Port 6379  -TimeoutSec 60 -Label "Redis (:6379)"
     Wait-ForPort -Port 9000  -TimeoutSec 90 -Label "QuestDB (:9000)"
     Wait-ForPort -Port 19092 -TimeoutSec 90 -Label "Redpanda/Kafka (:19092)"
-    Wait-ForPort -Port 5433  -TimeoutSec 90 -Label "PostgreSQL Auth/Payment DB (:5433)"
 
     # ── Install Node.js Dependencies ─────────────────────────────────────────
     Write-Host "Checking and installing Node.js dependencies..." -ForegroundColor Cyan
-    
-    # 1. alpha-backend (workspaces)
-    if (Test-Path alpha-backend) {
-        Write-Host "Checking alpha-backend dependencies..." -ForegroundColor DarkCyan
-        Push-Location alpha-backend
-        if (!(Test-Path "node_modules")) {
-            Write-Host "Installing alpha-backend dependencies..." -ForegroundColor Yellow
-            npm install
-        } else {
-            Write-Host "alpha-backend dependencies already installed." -ForegroundColor Green
-        }
-        Pop-Location
-    }
 
-    # 2. agents/sentiment
+    # 1. agents/sentiment
     if (Test-Path agents/sentiment) {
         Write-Host "Checking agents/sentiment dependencies..." -ForegroundColor DarkCyan
         Push-Location agents/sentiment
@@ -175,7 +145,7 @@ try {
         Pop-Location
     }
 
-    # 3. frontend
+    # 2. frontend
     if (Test-Path frontend) {
         Write-Host "Checking frontend dependencies..." -ForegroundColor DarkCyan
         Push-Location frontend
@@ -187,18 +157,6 @@ try {
         }
         Pop-Location
     }
-
-    # ── Push Database Schema & Generate Clients ──────────────────────────────
-    Write-Host "Synchronizing databases and generating Prisma clients..." -ForegroundColor Cyan
-    Push-Location alpha-backend
-    
-    Write-Host "  Pushing schema & generating client for Auth Service..." -ForegroundColor DarkCyan
-    npm run auth:db-push
-    
-    Write-Host "  Pushing schema & generating client for Payment Service..." -ForegroundColor DarkCyan
-    npm run payment:db-push
-    
-    Pop-Location
 
     # ── Pre-create Kafka topics via rpk ─────────────────────────────────────
     Write-Host "Pre-creating Kafka topics via rpk..." -ForegroundColor Cyan
@@ -279,19 +237,6 @@ try {
     Wait-ForPort -Port 8086 -TimeoutSec 60 -Label "Python Deep Quant Loop (:8086)"
 
     Start-Sleep -Seconds 3
-
-    Write-Host "Starting Alpha-Backend Auth Service (Port 3001)..." -ForegroundColor Cyan
-    Push-Location alpha-backend
-    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cmd.exe" -ArgumentList "/c npm run auth:dev"
-    Pop-Location
-
-    Write-Host "Starting Alpha-Backend Payment Service (Port 3002)..." -ForegroundColor Cyan
-    Push-Location alpha-backend
-    $script:processes += Start-Process -NoNewWindow -PassThru -FilePath "cmd.exe" -ArgumentList "/c npm run payment:dev"
-    Pop-Location
-
-    Wait-ForPort -Port 3001 -TimeoutSec 30 -Label "Auth Service (:3001)"
-    Wait-ForPort -Port 3002 -TimeoutSec 30 -Label "Payment Service (:3002)"
 
     Write-Host "Starting Next.js Frontend (Tauri)..." -ForegroundColor Cyan
     Push-Location frontend

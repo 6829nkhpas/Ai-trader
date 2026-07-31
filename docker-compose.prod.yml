@@ -17,7 +17,7 @@
 #   - A .env file at repo root (see .env.example + DEPLOYMENT.md checklist)
 #
 # Resource budget (mem_limit sum ≈ 9.5 GB of the 24 GB box — generous headroom):
-#   redpanda 1.5G · questdb 4G · postgres 512M · redis 256M · app services 256–384M each
+#   redpanda 1.5G · questdb 4G · redis 256M · app services 256–384M each
 # ──────────────────────────────────────────────────────────────────────────────
 
 name: stratai
@@ -28,7 +28,6 @@ networks:
 
 volumes:
   questdb_data:
-  postgres_data:
   redis_data:
   caddy_data:      # Caddy TLS certs + ACME account (app.stratai.live gateway)
   caddy_config:    # Caddy autosave config
@@ -118,24 +117,6 @@ services:
       - caddy_config:/config
     mem_limit: 128m
     restart: unless-stopped
-
-  postgres:
-    image: postgres:16-alpine
-    container_name: stratai-postgres
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-alpha}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-alpha_dev_pw}
-      POSTGRES_DB: ${POSTGRES_DB:-alpha}
-    networks: [stratai]
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    mem_limit: 512m
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-alpha}"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
 
   redis:
     image: redis:7-alpine
@@ -376,52 +357,5 @@ services:
         condition: service_healthy
       tool-server:
         condition: service_started
-    mem_limit: 512m
-    restart: unless-stopped
-
-  # ── Platform services (opt-in: --profile platform) ───────────────────────────
-  # Not required for a closed beta that skips login/billing. Enable when you need
-  # user auth / payments. Both use Prisma against the shared postgres.
-
-  auth-service:
-    build:
-      context: ./alpha-backend
-      dockerfile: services/auth-service/Dockerfile
-    container_name: stratai-auth
-    profiles: ["platform"]
-    env_file: .env
-    environment:
-      NODE_ENV: production
-      PORT: "3001"
-      DATABASE_URL: postgresql://${POSTGRES_USER:-alpha}:${POSTGRES_PASSWORD:-alpha_dev_pw}@postgres:5432/${POSTGRES_DB:-alpha}
-      REDIS_URL: redis://redis:6379
-    networks: [stratai]
-    ports:
-      - "3001:3001"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    mem_limit: 384m
-    restart: unless-stopped
-
-  payment-service:
-    build:
-      context: ./alpha-backend
-      dockerfile: services/payment-service/Dockerfile
-    container_name: stratai-payment
-    profiles: ["platform"]
-    env_file: .env
-    environment:
-      NODE_ENV: production
-      PORT: "3002"
-      DATABASE_URL: postgresql://${POSTGRES_USER:-alpha}:${POSTGRES_PASSWORD:-alpha_dev_pw}@postgres:5432/${POSTGRES_DB:-alpha}
-    networks: [stratai]
-    ports:
-      - "3002:3002"
-    depends_on:
-      postgres:
-        condition: service_healthy
     mem_limit: 512m
     restart: unless-stopped

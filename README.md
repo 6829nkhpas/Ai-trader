@@ -215,14 +215,17 @@ A local HTTP API server computing quantitative indicators on demand for the Lang
 
 Real-time OHLC candle aggregation from raw ticks with a configurable window (default 10 minutes) and WebSocket broadcasting.
 
-### 8. `alpha-backend/services/` — Node.js Platform Services
+### 8. Platform services (auth / payments) — **external**
 
-**Language**: Node.js
+User authentication, broker credentials, credit, and payments are **not part of
+this repository**. They run as a separate deployment that the desktop app talks
+to over HTTPS at `NEXT_PUBLIC_API_BASE_URL` (production:
+`https://api-web.stratai.live`, path prefix `/api/v1`).
 
-Backend microservices for platform operations (not trading logic):
-
-- **`auth-service/`**: User authentication and session management (Redis-backed).
-- **`payment-service/`**: Payment processing and subscription management (PostgreSQL-backed).
+Nothing here needs to be started for them, and no local port is reserved. If a
+login or payment call fails, debug it from that deployment's logs — see
+[`frontend/src/store/useAuthStore.ts`](frontend/src/store/useAuthStore.ts) for
+the endpoints the client expects.
 
 ### 9. `backend/` — QuestDB Schema Migrations
 
@@ -576,10 +579,6 @@ Ai-trader/
 │       └── package.json
 ├── aggregator/                   # Rust signal fusion & WebSocket broadcaster (port 8080)
 ├── alpha-terminal/               # Rust OHLC 10m aggregation & WS broadcast
-├── alpha-backend/
-│   └── services/
-│       ├── auth-service/         # Node.js authentication service
-│       └── payment-service/      # Node.js payment processing
 ├── backend/                      # QuestDB schema migration runner
 ├── ingestion/                    # Rust binary tick ingestion (port 8085)
 ├── tools/                        # Rust quant tool server (port 8084) + load tester
