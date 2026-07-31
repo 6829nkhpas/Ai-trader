@@ -23,6 +23,10 @@ concurrency:
 
 permissions:
   contents: read
+  # dorny/paths-filter calls the PR "list files" API to work out what changed.
+  # Without this it fails with "Resource not accessible by integration", every
+  # downstream job skips, and CI would go green on an unverified change.
+  pull-requests: read
 
 jobs:
   changes:
@@ -190,12 +194,23 @@ jobs:
 
   # A single required-status target. Point branch protection at this one check
   # rather than every job above, so path-filtered skips don't block a merge.
+  #
+  # `changes` is in `needs` deliberately: if it fails, every job below it skips,
+  # and treating skipped as OK would report green for a change nothing verified.
+  # A skip is only trustworthy when the filter that caused it actually ran.
   ci-ok:
     name: CI
     if: always()
-    needs: [frontend, tauri-backend, rust-services, python-agent]
+    needs: [changes, frontend, tauri-backend, rust-services, python-agent]
     runs-on: ubuntu-latest
     steps:
+      - name: Verify the change detector ran
+        if: needs.changes.result != 'success'
+        run: |
+          echo "::error::The 'Detect changed areas' job reported '${{ needs.changes.result }}'."
+          echo "Every build job skips when it fails, so nothing was actually verified."
+          exit 1
+
       - name: Verify no job failed
         run: |
           results="${{ join(needs.*.result, ' ') }}"
