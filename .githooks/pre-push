@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+#
+# Blocks direct pushes to the protected branches (main, staging).
+#
+# WHY THIS EXISTS: GitHub branch protection and rulesets both require a paid
+# plan for private repositories (this org is on Free, and both APIs return
+# 403 "Upgrade to GitHub Pro"). branch-guard.yml reports violations, but only
+# AFTER they land on the remote. This hook is the only piece that actually
+# prevents one, because it runs before the push leaves your machine.
+#
+# It is per-clone, not a server-side guarantee: it protects whoever installs it
+# and can be bypassed with --no-verify. It is a seatbelt against the accidental
+# `git push` on the wrong branch, not a security control.
+#
+# INSTALL (once per clone):
+#   git config core.hooksPath .githooks
+#
+# EMERGENCY BYPASS — prefer `git push --no-verify` so the intent is visible in
+# your shell history:
+#   ALLOW_PROTECTED_PUSH=1 git push origin main
+#
+# stdin receives one line per ref being pushed:
+#   <local ref> <local sha> <remote ref> <remote sha>
+
+set -u
+
+PROTECTED='main staging'
+ZERO='0000000000000000000000000000000000000000'
+
+if [ "${ALLOW_PROTECTED_PUSH:-}" = "1" ]; then
+  echo "pre-push: ALLOW_PROTECTED_PUSH=1 — protected-branch check skipped." >&2
+  exit 0
+fi
+
+blocked=''
+
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+  # Nothing to read (e.g. `git push` with no refs resolved).
+  [ -n "${remote_ref:-}" ] || continue
+
+  branch=${remote_ref#refs/heads/}
+  # Not a branch push (tag, note, etc.).
+  [ "$branch" != "$remote_ref" ] || continue
+
+  for p in $PROTECTED; do
+    if [ "$branch" = "$p" ]; then
+      if [ "$local_sha" = "$ZERO" ]; then
+        blocked="$blocked  - DELETING $branch"$'\n'
+      else
+        blocked="$blocked  - $branch"$'\n'
+      fi
+    fi
+  done
+done
+
+if [ -n "$blocked" ]; then
+  echo "" >&2
+  echo "  BLOCKED: direct push to a protected branch." >&2
+  echo "" >&2
+  printf '%s' "$blocked" >&2
+  echo "" >&2
+  echo "  These branches are updated through approved pull requests only:" >&2
+  echo "" >&2
+  echo "      feature/* -> develop -> staging -> main" >&2
+  echo "" >&2
+  echo "  main is PRODUCTION. Merging into it triggers a deploy." >&2
+  echo "" >&2
+  echo "  What to do instead:" >&2
+  echo "      git switch -c feature/my-change   # or fix/, chore/, docs/" >&2
+  echo "      git push -u origin feature/my-change" >&2
+  echo "      gh pr create --base develop" >&2
+  echo "" >&2
+  echo "  Promotions are PRs too:" >&2
+  echo "      gh pr create --base staging --head develop" >&2
+  echo "      gh pr create --base main    --head staging" >&2
+  echo "" >&2
+  echo "  See CONTRIBUTING.md. To override deliberately:" >&2
+  echo "      ALLOW_PROTECTED_PUSH=1 git push ..." >&2
+  echo "" >&2
+  exit 1
+fi
+
+exit 0
