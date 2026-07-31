@@ -2,6 +2,10 @@ name: deploy-server
 
 # Continuous deployment for the DROPLET backend stack.
 #
+# main is the PRODUCTION branch. Code reaches it only through an approved PR
+# from staging (see CONTRIBUTING.md), so every run of this workflow is a
+# production deploy of already-reviewed, already-CI-verified code.
+#
 # On every push to main that touches server code (or manually), SSH into the
 # droplet and run redeploy.sh, which syncs the repo to origin/main, rebuilds the
 # affected services (Docker layer cache keeps unchanged ones fast), and restarts

@@ -21,6 +21,7 @@ Strat is a proprietary, institutional-grade, AI-driven quantitative trading plat
 - [Testing Foundation](#-purity--property-based-testing-foundation)
 - [Directory Map](#-complete-directory-map)
 - [Developer Setup](#-developer-setup--deployment)
+- [Branching & Release Model](#-branching--release-model)
 - [Environment Reference](#environment-variable-reference)
 
 ---
@@ -710,6 +711,48 @@ npm test
 cd frontend
 npx playwright test
 ```
+
+---
+
+## 🌿 Branching & Release Model
+
+Three long-lived branches. Work flows in one direction only — see
+[CONTRIBUTING.md](CONTRIBUTING.md) for the full rules.
+
+```
+feature/*  fix/*  chore/*
+    │
+    │  PR + review
+    ▼
+develop ──────────► staging ──────────► main
+          PR                  PR          │
+     (integration)      (pre-prod)        └─► production deploy
+```
+
+| Branch | Purpose | Accepts | Triggers |
+|---|---|---|---|
+| **`main`** | **Production.** Always releasable. | Approved PRs from `staging` (or `hotfix/*`) — **never a direct push** | `deploy-server.yml` → droplet redeploy; `v*` tag → desktop release |
+| **`staging`** | Pre-production verification | PRs from `develop` | `ci.yml` |
+| **`develop`** | Day-to-day integration | PRs from `feature/*`, `fix/*`, `chore/*` | `ci.yml` |
+
+**Every merge into `main` is a production deploy.** Branch off `develop` for new
+work, and promote up the ladder rather than skipping a rung.
+
+```bash
+git checkout develop && git pull
+git checkout -b feature/my-thing
+# ... work, verify ...
+git push -u origin feature/my-thing
+gh pr create --base develop
+```
+
+> **Enforcement caveat.** GitHub branch protection is not currently active — the
+> repo is private on a free plan, and the protection API returns
+> `403 Upgrade to GitHub Pro`. [`branch-guard.yml`](.github/workflows/branch-guard.yml)
+> reports direct pushes to `main`/`staging` and wrongly-targeted PRs, but it runs
+> *after* the fact and cannot block them. Until the plan allows real protection,
+> review discipline is the actual gate. The `gh api` commands to enable
+> protection are in [CONTRIBUTING.md](CONTRIBUTING.md#turning-on-real-protection).
 
 ---
 
