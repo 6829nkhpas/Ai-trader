@@ -40,7 +40,8 @@
       "Bash(docker compose *)",
       "Bash(bash -n scripts/linux/start_system.sh)",
       "Bash(pwsh -NoProfile -Command '$ErrorActionPreference='\\\\''Stop'\\\\''; $null=[System.Management.Automation.Language.Parser]::ParseFile\\('\\\\''scripts/powershell/start_system.ps1'\\\\'',[ref]$null,[ref]$e\\); if\\($e\\){$e|%{$_.Message}}else{'\\\\''start_system.ps1: syntax OK'\\\\''}')",
-      "Bash(powershell -NoProfile -Command '$e=$null; $null=[System.Management.Automation.Language.Parser]::ParseFile\\(\\(Resolve-Path '\\\\''scripts/powershell/start_system.ps1'\\\\''\\),[ref]$null,[ref]$e\\); if\\($e -and $e.Count -gt 0\\){$e | ForEach-Object {$_.Message}} else {'\\\\''start_system.ps1: syntax OK'\\\\''}')"
+      "Bash(powershell -NoProfile -Command '$e=$null; $null=[System.Management.Automation.Language.Parser]::ParseFile\\(\\(Resolve-Path '\\\\''scripts/powershell/start_system.ps1'\\\\''\\),[ref]$null,[ref]$e\\); if\\($e -and $e.Count -gt 0\\){$e | ForEach-Object {$_.Message}} else {'\\\\''start_system.ps1: syntax OK'\\\\''}')",
+      "Bash(gh api *)"
     ]
   },
   "hooks": {
