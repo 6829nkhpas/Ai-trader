@@ -16,6 +16,7 @@
 #[cfg(feature = "kafka")]
 pub mod engine {
     use crate::math::PredictionEngine;
+    use crate::metrics::PredictiveMetrics;
     use crate::proto::market_data::OhlcCandle;
     use crate::proto::predictive_data::PredictiveSignal;
     use futures_util::StreamExt;
@@ -84,7 +85,16 @@ pub mod engine {
 
     /// Encodes a [`PredictiveSignal`] and publishes it to the given topic,
     /// keyed by the signal's symbol for partition co-locality.
-    async fn publish_signal(producer: &FutureProducer, topic: &str, signal: &PredictiveSignal) {
+    ///
+    /// Returns whether the send succeeded. Drop behaviour is unchanged — a
+    /// failed publish is still logged and abandoned — but the caller needs the
+    /// outcome to count predictions that were computed and then lost, which
+    /// `predictions_total` alone would hide.
+    async fn publish_signal(
+        producer: &FutureProducer,
+        topic: &str,
+        signal: &PredictiveSignal,
+    ) -> bool {
         let payload = signal.encode_to_vec();
         let key = signal.symbol.as_str();
 
@@ -104,6 +114,7 @@ pub mod engine {
                     signal.predicted_close_price,
                     signal.confidence_score,
                 );
+                true
             }
             Err((kafka_err, _owned_msg)) => {
                 log::error!(
@@ -111,6 +122,7 @@ pub mod engine {
                     signal.symbol,
                     kafka_err,
                 );
+                false
             }
         }
     }
@@ -131,7 +143,17 @@ pub mod engine {
     /// on the `market.ohlc.10m` topic.  After publishing each prediction
     /// to Kafka, the signal is serialized to JSON and sent through `ws_tx`
     /// for WebSocket fan-out on port 8082.
-    pub async fn run(prediction_engine: &mut PredictionEngine, ws_tx: broadcast::Sender<String>) {
+    ///
+    /// `metrics` records input, output, and both failure modes. The work
+    /// heartbeat beats on each *consumed candle*, not on each published
+    /// prediction: the regression needs 14 candles before it can predict at all,
+    /// so beating on output would report a stall for the whole 140-minute
+    /// warm-up after every restart.
+    pub async fn run(
+        prediction_engine: &mut PredictionEngine,
+        ws_tx: broadcast::Sender<String>,
+        metrics: PredictiveMetrics,
+    ) {
         // ── Configuration ────────────────────────────────────────────────
         let brokers = std::env::var("KAFKA_BROKER_URL")
             .or_else(|_| std::env::var("KAFKA_BROKERS"))
@@ -173,6 +195,7 @@ pub mod engine {
                                     "[engine] Protobuf decode error (skipping): {}",
                                     e
                                 );
+                                metrics.decode_failed();
                                 continue;
                             }
                         };
@@ -186,6 +209,10 @@ pub mod engine {
 
                         // ── Feed into prediction engine ──────────────────
                         prediction_engine.add_close_price(candle.close);
+
+                        // The work point. Reported after the window advances so
+                        // window_fill and the candle count can never disagree.
+                        metrics.candle_consumed(prediction_engine.window_fill());
 
                         // ── Attempt prediction ───────────────────────────
                         if let Some((predicted_close, confidence)) =
@@ -220,6 +247,11 @@ pub mod engine {
                                 "model_version": signal.model_version,
                             });
 
+                            // Counted before the spawn: the prediction exists at
+                            // this point regardless of whether the publish that
+                            // follows succeeds, and the two are separate facts.
+                            metrics.prediction_emitted(signal.confidence_score);
+
                             // Best-effort WS broadcast — receivers may be absent.
                             let _ = ws_tx.send(json.to_string());
 
@@ -227,14 +259,20 @@ pub mod engine {
                             // producer latency doesn't stall the consume loop.
                             let producer_clone = producer.clone();
                             let topic_clone = produce_topic.clone();
+                            let pub_metrics = metrics.clone();
 
                             tokio::spawn(async move {
-                                publish_signal(
+                                let published = publish_signal(
                                     &producer_clone,
                                     &topic_clone,
                                     &signal,
                                 )
                                 .await;
+                                if !published {
+                                    // The prediction was computed and then lost
+                                    // in transit — the aggregator never saw it.
+                                    pub_metrics.publish_failed();
+                                }
                             });
                         }
                     }

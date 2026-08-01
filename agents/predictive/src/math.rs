@@ -42,6 +42,16 @@ impl PredictionEngine {
         self.closes.push_back(price);
     }
 
+    /// How many closes the window currently holds, `0..=WINDOW_SIZE`.
+    ///
+    /// Exported as `predictive_window_fill`. Below [`WINDOW_SIZE`] no
+    /// prediction is mathematically possible, so this is what lets monitoring
+    /// tell a warming-up agent apart from a wedged one — otherwise both look
+    /// like "candles in, nothing out".
+    pub fn window_fill(&self) -> usize {
+        self.closes.len()
+    }
+
     /// Predicts the next closing price and returns a confidence score.
     ///
     /// Returns `None` if fewer than [`WINDOW_SIZE`] prices are available.
