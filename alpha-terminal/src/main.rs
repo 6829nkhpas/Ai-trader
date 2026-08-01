@@ -2,14 +2,22 @@ mod proto;
 mod engine;
 mod consumer;
 mod kafka_producer;
+mod metrics;
 mod ws_server;
 
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
     env_logger::init();
-    
+
     log::info!("Alpha Terminal: V2 Predictive Engine Initialized.");
+
+    // Started before any subsystem so /health answers during boot and a startup
+    // failure below shows up as an unhealthy service rather than as a scrape
+    // timeout with no explanation. AlphaMetrics degrades to an inert handle on
+    // registry failure, so instrumentation can never take down the service.
+    let metrics = metrics::AlphaMetrics::new();
+    metrics.serve();
 
     let brokers = std::env::var("KAFKA_BROKERS")
         .or_else(|_| std::env::var("KAFKA_BROKER_URL"))
@@ -20,11 +28,12 @@ async fn main() {
     let (tx, _) = tokio::sync::broadcast::channel::<String>(100);
 
     let tx_ws = tx.clone();
+    let ws_metrics = metrics.clone();
     tokio::spawn(async move {
-        ws_server::start_server(8081, tx_ws.subscribe()).await;
+        ws_server::start_server(8081, tx_ws.subscribe(), ws_metrics).await;
     });
 
     let producer = kafka_producer::init_producer(&brokers);
 
-    consumer::run_consumer(&brokers, &topic, producer, &ohlc_topic, tx).await;
+    consumer::run_consumer(&brokers, &topic, producer, &ohlc_topic, tx, metrics).await;
 }

@@ -76,4 +76,13 @@ impl OhlcEngine {
     pub fn get_active_candle(&self, symbol: &str) -> Option<OhlcCandle> {
         self.states.get(symbol).map(|s| s.active_candle.clone())
     }
+
+    /// How many symbols currently have an open candle.
+    ///
+    /// Reported as `alpha_terminal_tracked_symbols` and used to arm stall
+    /// detection: an empty engine has seen no ticks at all and so is idle by
+    /// definition, not stalled.
+    pub fn tracked_symbols(&self) -> usize {
+        self.states.len()
+    }
 }

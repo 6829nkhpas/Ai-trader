@@ -30,6 +30,11 @@ WORKDIR /app
 COPY alpha-terminal/Cargo.toml alpha-terminal/build.rs ./
 COPY shared_protos/ ./shared_protos/
 
+# The `service-metrics` path dependency (../service-metrics in Cargo.toml).
+# This crate is flattened into /app, so the sibling must sit at /service-metrics
+# for that relative path to resolve — the same arrangement ingestion uses.
+COPY service-metrics/ /service-metrics/
+
 # Fix proto paths for Docker context (build.rs uses ../../shared_protos)
 RUN mkdir -p src && echo 'fn main() {}' > src/main.rs \
     && sed -i 's|\.\./shared_protos|./shared_protos|g' build.rs
@@ -60,6 +65,7 @@ COPY --from=builder /app/target/release/alpha_terminal /usr/local/bin/alpha_term
 RUN useradd -r -s /bin/false app_user
 USER app_user
 
-EXPOSE 8081
+# 8081 candle WS · 9103 Prometheus
+EXPOSE 8081 9103
 
 ENTRYPOINT ["/usr/local/bin/alpha_terminal"]
