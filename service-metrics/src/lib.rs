@@ -49,7 +49,14 @@ mod session;
 pub use heartbeat::Heartbeat;
 pub use session::MarketSession;
 
-use std::sync::atomic::{AtomicU64, Ordering};
+/// Re-exported so services declare their own metrics without adding a direct
+/// `prometheus` dependency. That keeps one version across the monorepo and
+/// stops a service re-enabling the default features this crate deliberately
+/// turns off — the protobuf exposition path (unused) and the procfs collector
+/// (Linux-only, which would break Windows dev builds).
+pub use prometheus;
+
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use axum::extract::State;
@@ -100,6 +107,11 @@ struct Inner {
     /// `work_total`. Lets a plain atomic counter drive a monotonic Prometheus
     /// counter without the hot path touching Prometheus at all.
     exported_work: AtomicU64,
+
+    /// Whether the service currently has anything to do at all. See
+    /// [`ServiceMetrics::set_work_expected`].
+    work_expected: AtomicBool,
+    work_expected_gauge: Gauge,
 }
 
 impl ServiceMetrics {
@@ -149,6 +161,14 @@ impl ServiceMetrics {
             "1 during NSE trading hours (09:15-15:30 IST, weekdays), else 0.",
         )?;
 
+        let work_expected_gauge = g(
+            format!("{p}_work_expected"),
+            "1 when the service has something to do (subscriptions, an upstream \
+             connection), 0 when legitimately idle. Staleness is only a stall \
+             while this is 1.",
+        )?;
+        work_expected_gauge.set(1.0);
+
         let work_total = IntCounter::with_opts(
             Opts::new(
                 format!("{p}_work_completed_total"),
@@ -182,6 +202,8 @@ impl ServiceMetrics {
                 session,
                 work_total,
                 exported_work: AtomicU64::new(0),
+                work_expected: AtomicBool::new(true),
+                work_expected_gauge,
             }),
         })
     }
@@ -189,6 +211,21 @@ impl ServiceMetrics {
     /// The heartbeat to `beat()` on each completed unit of work.
     pub fn heartbeat(&self) -> Heartbeat {
         self.inner.heartbeat.clone()
+    }
+
+    /// Declare whether the service currently has anything to do.
+    ///
+    /// Defaults to `true`. Set it to `false` when the service is legitimately
+    /// idle *by design* rather than broken — `ingestion` boots with zero
+    /// subscriptions and waits for control-port commands, so without this it
+    /// would report a stall that grows forever while behaving exactly as
+    /// intended. While `false`, staleness is not treated as a stall; the age is
+    /// still exported, so the idleness itself remains visible.
+    ///
+    /// Set it back to `true` as soon as real work is expected again, otherwise
+    /// a genuine failure would be masked.
+    pub fn set_work_expected(&self, expected: bool) {
+        self.inner.work_expected.store(expected, Ordering::Relaxed);
     }
 
     /// The registry, for a service to add its own metrics to this endpoint.
@@ -220,8 +257,12 @@ impl ServiceMetrics {
         let session = MarketSession::now();
         let age = self.inner.heartbeat.last_work_age_seconds();
         let threshold = session.stall_threshold_seconds(self.inner.config.in_session_stall_seconds);
+        let work_expected = self.inner.work_expected.load(Ordering::Relaxed);
         Readiness {
-            stalled: age > threshold,
+            // Only a service that is *supposed* to be working can stall. An
+            // ingestion process with no subscriptions is idle, not broken.
+            stalled: work_expected && age > threshold,
+            work_expected,
             age_seconds: age,
             threshold_seconds: threshold,
             session,
@@ -241,6 +282,13 @@ impl ServiceMetrics {
         i.stall_threshold
             .set(session.stall_threshold_seconds(i.config.in_session_stall_seconds));
         i.session.set(if session.is_open() { 1.0 } else { 0.0 });
+        i.work_expected_gauge.set(
+            if i.work_expected.load(Ordering::Relaxed) {
+                1.0
+            } else {
+                0.0
+            },
+        );
 
         // Fold any work completed since the last refresh into the counter.
         //
@@ -265,8 +313,13 @@ impl ServiceMetrics {
 /// The answer to "is this service actually working right now?".
 #[derive(Debug, Clone)]
 pub struct Readiness {
-    /// True when `age_seconds` exceeds `threshold_seconds`.
+    /// True when work was expected and `age_seconds` exceeds
+    /// `threshold_seconds`.
     pub stalled: bool,
+    /// Whether the service had anything to do — see
+    /// [`ServiceMetrics::set_work_expected`]. A stale-but-not-expected service
+    /// reports `idle`, not `stalled`.
+    pub work_expected: bool,
     pub age_seconds: f64,
     pub threshold_seconds: f64,
     pub session: MarketSession,
@@ -277,21 +330,34 @@ pub struct Readiness {
 impl Readiness {
     /// JSON body shared by `/health` and `/ready`.
     ///
+    /// `status` is one of:
+    /// - `ok`      — working within its threshold.
+    /// - `stalled` — work was expected and none has happened in time.
+    /// - `idle`    — nothing to do (no subscriptions / no upstream demand).
+    ///   Reported distinctly so an operator is not sent chasing a stall that
+    ///   is really "nobody has asked for anything yet".
+    ///
     /// Hand-rolled rather than via serde: every field is a number, a bool or a
     /// name this crate controls, so there is nothing to escape — and it saves
     /// pulling serde into the dependency graph of a crate that seven services
     /// link.
     pub fn to_json(&self, service: &str) -> String {
-        let status = if self.stalled { "stalled" } else { "ok" };
+        let status = match (self.stalled, self.work_expected) {
+            (true, _) => "stalled",
+            (false, true) => "ok",
+            (false, false) => "idle",
+        };
         format!(
             concat!(
                 r#"{{"service":"{}","status":"{}","market_session":"{}","#,
-                r#""last_work_age_seconds":{:.1},"stall_threshold_seconds":{:.1},"#,
-                r#""work_completed":{},"uptime_seconds":{:.1}}}"#
+                r#""work_expected":{},"last_work_age_seconds":{:.1},"#,
+                r#""stall_threshold_seconds":{:.1},"work_completed":{},"#,
+                r#""uptime_seconds":{:.1}}}"#
             ),
             service,
             status,
             self.session.as_str(),
+            self.work_expected,
             self.age_seconds,
             self.threshold_seconds,
             self.work_completed,
@@ -548,6 +614,77 @@ mod tests {
         let mut r = m.readiness();
         r.stalled = true;
         assert!(r.to_json("ingestion").contains(r#""status":"stalled""#));
+    }
+
+    #[test]
+    fn idle_service_is_not_reported_as_stalled() {
+        // ingestion boots with zero subscriptions and waits for control-port
+        // commands. Without the work-expected gate its age grows forever and it
+        // would page as a stall while behaving exactly as designed.
+        let m = test_metrics("ingestion", 0.0);
+        m.set_work_expected(false);
+
+        let r = m.readiness();
+        assert!(!r.stalled, "an idle service must not read as stalled");
+        assert!(!r.work_expected);
+        assert!(
+            r.to_json("ingestion").contains(r#""status":"idle""#),
+            "idle must be distinguishable from ok: {}",
+            r.to_json("ingestion")
+        );
+    }
+
+    #[test]
+    fn idle_still_exports_the_age_so_idleness_stays_visible() {
+        // Suppressing the *alert* must not suppress the *signal* — an operator
+        // still needs to see how long the service has had nothing to do.
+        let m = test_metrics("ingestion", 60.0);
+        m.set_work_expected(false);
+        let r = m.readiness();
+        assert!(r.age_seconds >= 0.0);
+        assert!(r
+            .to_json("ingestion")
+            .contains(r#""last_work_age_seconds":"#));
+    }
+
+    #[test]
+    fn work_expected_gauge_tracks_the_flag() {
+        let m = test_metrics("ingestion", 60.0);
+
+        // Defaults to expecting work, so a service that never calls the setter
+        // is monitored strictly rather than silently exempted.
+        assert!(m.readiness().work_expected);
+        assert!(m
+            .render()
+            .unwrap()
+            .contains(r#"ingestion_work_expected{service="ingestion"} 1"#));
+
+        m.set_work_expected(false);
+        assert!(m
+            .render()
+            .unwrap()
+            .contains(r#"ingestion_work_expected{service="ingestion"} 0"#));
+
+        // Re-arming must restore strict monitoring, or a genuine failure after
+        // an idle spell would stay hidden.
+        m.set_work_expected(true);
+        assert!(m
+            .render()
+            .unwrap()
+            .contains(r#"ingestion_work_expected{service="ingestion"} 1"#));
+    }
+
+    #[test]
+    fn re_arming_after_idle_restores_stall_detection() {
+        let m = test_metrics("ingestion", 0.0);
+        m.set_work_expected(false);
+        assert!(!m.readiness().stalled);
+
+        // A subscription arrives: work is expected again, and the stale age now
+        // counts against the service.
+        m.set_work_expected(true);
+        let r = m.readiness();
+        assert_eq!(r.stalled, r.age_seconds > r.threshold_seconds);
     }
 
     #[test]

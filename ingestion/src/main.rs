@@ -43,6 +43,7 @@ mod questdb_writer; // ILP TCP writer â†’ QuestDB :9009  (highest-throughpu
 mod questdb_sink;   // SQLx PG writer â†’ QuestDB :8812  (SQL-accessible archive path)
 mod option_sink;    // SQLx PG writer â†’ option_ticks / option_chain_snapshots (F&O Phase F1)
 mod types;          // ParsedTick â€” shared internal data contract
+mod metrics;        // Prometheus /metrics + /health + /ready on :9101
 
 #[cfg(feature = "kafka")]
 mod kafka_producer; // rdkafka FutureProducer â†’ market.ticks  (requires CMake)
@@ -281,8 +282,7 @@ async fn main() {
         warn!("KITE_ACCESS_TOKEN is not set in .env! Startup will proceed, but connection attempts will fail until user logs in.");
     }
 
-    // â”€â”€ 3. Dynamic instrument map (starts EMPTY â€” no env scaffolding) â”€â”€â”€â”€â”€â”€â”€
-    //
+    // â”€â”€ 3. Dynamic instrument map (starts EMPTY â€” no env scaffolding) â”€â”€â”€â”€â”€â”€â”€    //
     // KITE_INSTRUMENT_TOKENS is NO LONGER read from the environment.
     // The service boots with zero subscriptions and waits for dynamic
     // `subscribe:TOKEN:SYMBOL` commands on the TCP control socket (:8085).
@@ -294,6 +294,19 @@ async fn main() {
         "Instrument map initialised EMPTY. \
          Subscriptions arrive dynamically via TCP control port."
     );
+
+    // â”€â”€ 3b. Prometheus instrumentation (:9101) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    //
+    // Started before the Kite connection so /health answers during the boot
+    // sequence and any startup failure below is visible as an unhealthy
+    // service rather than as a scrape timeout with no explanation.
+    //
+    // A metrics failure must never stop ingestion: IngestionMetrics degrades to
+    // an inert handle on registry failure (logging why), so every call site
+    // below stays unconditional and instrumentation cannot break the service it
+    // observes.
+    let metrics = metrics::IngestionMetrics::new();
+    metrics.serve();
 
     // â”€â”€ 4. Initialise Kafka producer (Subphase 16) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     #[cfg(feature = "kafka")]
@@ -330,9 +343,12 @@ async fn main() {
     let (tx, mut rx) = mpsc::channel::<ParsedTick>(CHANNEL_CAPACITY);
 
     // Drain mpsc channel â†’ ILP writer (legacy path)
+    let metrics_ilp = metrics.clone();
     let ilp_handle = tokio::spawn(async move {
         while let Some(tick) = rx.recv().await {
-            ilp_writer.write_tick(&tick).await;
+            if !ilp_writer.write_tick(&tick).await {
+                metrics_ilp.write_failed("questdb_ilp");
+            }
         }
         info!("ILP channel closed â€” legacy writer task exiting");
     });
@@ -368,6 +384,7 @@ async fn main() {
         let meta = Arc::clone(&option_meta);
         let latest = Arc::clone(&latest_state);
         let interval = Arc::clone(&snapshot_interval);
+        let metrics_snapshot = metrics.clone();
         tokio::spawn(async move {
             loop {
                 let secs = interval.load(Ordering::Relaxed);
@@ -404,7 +421,8 @@ async fn main() {
                 };
 
                 if !rows.is_empty() {
-                    option_sink::write_chain_snapshot(&pg, &rows).await;
+                    let failed = option_sink::write_chain_snapshot(&pg, &rows).await;
+                    metrics_snapshot.write_failed_n("snapshot", failed);
                 }
             }
         });
@@ -422,6 +440,7 @@ async fn main() {
     let control_addr = format!("{}:{}", control_bind, control_port);
     let sub_tx_control = sub_tx.clone();
     let symbol_map_control = Arc::clone(&symbol_map);
+    let metrics_control = metrics.clone();
 
     tokio::spawn(async move {
         let listener = match TcpListener::bind(&control_addr).await {
@@ -440,6 +459,7 @@ async fn main() {
                 Ok((stream, peer)) => {
                     let sub_tx = sub_tx_control.clone();
                     let symbol_map = Arc::clone(&symbol_map_control);
+                    let metrics = metrics_control.clone();
                     tokio::spawn(async move {
                         let reader = BufReader::new(stream);
                         let mut lines = reader.lines();
@@ -459,6 +479,11 @@ async fn main() {
                                                 continue;
                                             }
                                             map.insert(token, symbol.clone());
+                                            // First subscription arms stall
+                                            // detection: from here on, silence
+                                            // during market hours is a fault
+                                            // rather than an idle service.
+                                            metrics.set_subscribed(map.len());
                                         }
                                         info!("[Control] {} â€” new subscribe request from {}", symbol, peer);
                                         let _ = sub_tx.send(SubscribeCmd::Add { token, symbol }).await;
@@ -525,6 +550,7 @@ async fn main() {
     let option_selection_arc = Arc::clone(&option_selection);
     let latest_state_arc = Arc::clone(&latest_state);
     let snapshot_interval_arc = Arc::clone(&snapshot_interval);
+    let metrics_ws = metrics.clone();
 
     let direct_handle = tokio::spawn(async move {
         let mut backoff = std::time::Duration::from_secs(2);
@@ -542,6 +568,9 @@ async fn main() {
                 Ok(pair) => pair,
                 Err(e) => {
                     error!("Direct-stream: Kite WS connect failed: {}. Retrying in {:?}", e, backoff);
+                    // A refused connect is a feed outage exactly like a dropped
+                    // one, so it counts as a reconnect and holds the gauge at 0.
+                    metrics_ws.ws_disconnected();
                     tokio::time::sleep(backoff).await;
                     backoff = std::cmp::min(backoff * 2, std::time::Duration::from_secs(30));
                     continue;
@@ -551,6 +580,9 @@ async fn main() {
             // Connected! Reset backoff
             backoff = std::time::Duration::from_secs(2);
             info!("Direct-stream: WebSocket connected. Sending subscription.");
+            // kite_ws_connected is THE distinction between "container running"
+            // and "receiving market data" — the single most valuable gauge here.
+            metrics_ws.ws_connected();
 
             // Subscribe to any pre-existing tokens
             {
@@ -585,6 +617,13 @@ async fn main() {
                                     parser::parse_binary_frame(&payload, &*map)
                                 };
 
+                                // The work point: ticks decoded out of the frame
+                                // are real throughput. Counted before routing so
+                                // both the equity and option paths are included,
+                                // and a zero-tick frame (heartbeat, unknown
+                                // tokens) deliberately does not count as work.
+                                metrics_ws.ticks_decoded(ticks.len());
+
                                 for tick in ticks {
                                     let token = tick.instrument_token;
 
@@ -607,6 +646,7 @@ async fn main() {
                                         let pg = Arc::clone(&pg_pool_clone);
                                         let latest = Arc::clone(&latest_state_arc);
                                         let tick_clone = tick.clone();
+                                        let m = metrics_ws.clone();
                                         tokio::spawn(async move {
                                             // Update in-memory latest state for snapshots.
                                             {
@@ -620,7 +660,9 @@ async fn main() {
                                                     },
                                                 );
                                             }
-                                            option_sink::insert_option_tick(&pg, &tick_clone, &meta).await;
+                                            if !option_sink::insert_option_tick(&pg, &tick_clone, &meta).await {
+                                                m.write_failed("option_pg");
+                                            }
                                         });
                                         continue;
                                     }
@@ -646,6 +688,7 @@ async fn main() {
                                     let kp = Arc::clone(&kafka_producer_clone);
                                     let pg = Arc::clone(&pg_pool_clone);
                                     let tick_clone = tick.clone();
+                                    let m = metrics_ws.clone();
 
                                     // Concurrently send to Kafka and QuestDB PG
                                     tokio::spawn(async move {
@@ -656,11 +699,24 @@ async fn main() {
                                         // QuestDB PG insert
                                         let questdb_fut = questdb_sink::insert_tick(&pg, &tick_clone);
 
+                                        // Both sinks drop on failure by design, so
+                                        // the return flags are the only signal that
+                                        // a tick was lost.
                                         #[cfg(feature = "kafka")]
-                                        tokio::join!(kafka_fut, questdb_fut);
+                                        {
+                                            let (kafka_ok, questdb_ok) = tokio::join!(kafka_fut, questdb_fut);
+                                            if !kafka_ok {
+                                                m.write_failed("kafka");
+                                            }
+                                            if !questdb_ok {
+                                                m.write_failed("questdb_pg");
+                                            }
+                                        }
 
                                         #[cfg(not(feature = "kafka"))]
-                                        questdb_fut.await;
+                                        if !questdb_fut.await {
+                                            m.write_failed("questdb_pg");
+                                        }
                                     });
                                 }
                             }
@@ -745,6 +801,7 @@ async fn main() {
                                     for t in &tokens {
                                         smap.insert(t.token, t.tradingsymbol.to_uppercase());
                                     }
+                                    metrics_ws.set_subscribed(smap.len());
                                 }
                                 // Drop metadata / latest-state / symbol for removed.
                                 if !removed.is_empty() {
@@ -759,6 +816,10 @@ async fn main() {
                                     {
                                         let mut smap = symbol_map_arc.write().await;
                                         for t in &removed { smap.remove(t); }
+                                        // Unsubscribing the last token returns the
+                                        // service to legitimately idle, so silence
+                                        // stops being reported as a stall.
+                                        metrics_ws.set_subscribed(smap.len());
                                     }
                                 }
                                 // Record the new selection so the next command diffs against it.
@@ -810,6 +871,9 @@ async fn main() {
                 }
             }
             warn!("Direct-stream: Active connection lost. Retrying connection in {:?}", backoff);
+            // Every exit from the read loop above — server close, WS error, or
+            // stream end — lands here, so this one call covers all of them.
+            metrics_ws.ws_disconnected();
             tokio::time::sleep(backoff).await;
             backoff = std::cmp::min(backoff * 2, std::time::Duration::from_secs(30));
         }

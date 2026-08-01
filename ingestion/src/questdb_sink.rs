@@ -101,7 +101,12 @@ pub async fn create_table_if_not_exists(pool: &PgPool) {
 ///
 /// Failures are logged as warnings and the tick is dropped — this is
 /// intentional: we prefer slightly lossy archive over blocking the hot path.
-pub async fn insert_tick(pool: &PgPool, tick: &Tick) {
+///
+/// Returns `true` if the row landed. The tick is still dropped on failure; the
+/// bool exists only so the caller can count the loss into
+/// `ingestion_write_errors_total`. Without it a total QuestDB outage is visible
+/// nowhere but the log stream.
+pub async fn insert_tick(pool: &PgPool, tick: &Tick) -> bool {
     // milliseconds → microseconds for QuestDB TIMESTAMP type
     let ts_micros: i64 = tick.timestamp_ms * 1_000;
 
@@ -126,12 +131,14 @@ pub async fn insert_tick(pool: &PgPool, tick: &Tick) {
                 tick.symbol,
                 ts_micros
             );
+            true
         }
         Err(e) => {
             warn!(
                 "QuestDB PG insert failed for {}: {}",
                 tick.symbol, e
             );
+            false
         }
     }
 }
