@@ -23,6 +23,7 @@
 mod indicators;
 mod kafka_consumer;
 mod kafka_producer;
+mod metrics;
 mod proto;
 mod signal_engine;
 mod state;
@@ -56,6 +57,14 @@ async fn main() {
     log::info!("Consumer group : {}", group_id);
     log::info!("Signal topic   : {}", signal_topic);
 
+    // ── Metrics ──────────────────────────────────────────────────────────────
+    // Started before the subsystems below so that /health answers during boot.
+    // If the agent then wedges while connecting to Kafka, the probe reports an
+    // unready service rather than a connection refused, which is the difference
+    // between a diagnosable state and a blank panel.
+    let metrics = metrics::TechnicalMetrics::new();
+    metrics.serve();
+
     // ── Kafka-gated block ─────────────────────────────────────────────────────
     #[cfg(feature = "kafka")]
     {
@@ -77,7 +86,7 @@ async fn main() {
 
         // ── Kafka Consumer ────────────────────────────────────────────────────
         let consumer = init_consumer(&brokers, &group_id).await;
-        let mut rx = run_listener(consumer).await;
+        let mut rx = run_listener(consumer, metrics.clone()).await;
 
         // ── Kafka Producer ────────────────────────────────────────────────────
         // FutureProducer is internally Arc-backed → cheap to clone into tasks.
@@ -86,8 +95,22 @@ async fn main() {
         log::info!("All subsystems initialised. Entering main event loop...");
         log::info!("─────────────────────────────────────────────────────────");
 
+        // Symbol counts are pushed to Prometheus on change rather than on every
+        // tick. Both numbers only ever grow — a symbol is never dropped, and RSI
+        // warm-up is a one-way transition — so re-reporting them per tick would
+        // add two atomic stores to the hot path to restate what the gauges
+        // already hold.
+        let mut last_tracked = 0usize;
+        let mut warmed_symbols = 0usize;
+
         // ── Main event loop ───────────────────────────────────────────────────
         while let Some(tick) = rx.recv().await {
+            // Counted here rather than in the listener: this is the point at
+            // which the tick has actually moved through the indicator pipeline,
+            // so a wedge in this loop stops the heartbeat even while the Kafka
+            // listener keeps draining the topic behind it.
+            metrics.tick_processed();
+
             let symbol = tick.symbol.clone();
             let price  = tick.last_traded_price;
             let vol    = tick.volume as u64;   // cumulative intraday volume (u64)
@@ -99,13 +122,19 @@ async fn main() {
             );
 
             // ── Write lock: update SymbolState ────────────────────────────────
-            let (rsi_opt, vwap_opt) = {
+            let (rsi_opt, vwap_opt, tracked, newly_warmed) = {
                 let mut state_map = market_state.write().await;
 
                 // Get-or-insert the per-symbol state entry.
                 let sym_state = state_map
                     .entry(symbol.clone())
                     .or_insert_with(SymbolState::new);
+
+                // Sampled before the RSI update so the false→true crossing can
+                // be detected for this symbol alone. Counting warm symbols by
+                // scanning the whole map would be O(symbols) on every tick, for
+                // a number that changes at most once per symbol ever.
+                let was_warm = sym_state.rsi_warmed_up();
 
                 // Compute volume delta from the previous cumulative tick volume.
                 // On first tick for this symbol prev_volume = 0, so delta = vol.
@@ -118,13 +147,24 @@ async fn main() {
                 // Accumulate VWAP using the delta volume (not cumulative).
                 let vwap = update_vwap(sym_state, price, volume_delta);
 
-                (rsi, vwap)
+                let newly_warmed = !was_warm && sym_state.rsi_warmed_up();
+
+                (rsi, vwap, state_map.len(), newly_warmed)
             }; // write lock released here
+
+            if newly_warmed {
+                warmed_symbols += 1;
+            }
+            if tracked != last_tracked || newly_warmed {
+                metrics.set_symbol_counts(tracked, warmed_symbols);
+                last_tracked = tracked;
+            }
 
             // ── Publish only when both indicators are ready ────────────────────
             // RSI requires 14 prices (warm-up); VWAP requires at least 1 volume tick.
             if let (Some(rsi), Some(vwap)) = (rsi_opt, vwap_opt) {
                 let signal = evaluate_signal(&symbol, rsi, vwap, price, ts_ms);
+                metrics.signal_emitted();
 
                 // log::debug!(
                 //     "[signal] symbol={:<20} rsi={:>6.2}  vwap={:>10.2}  \
@@ -141,9 +181,17 @@ async fn main() {
                 let producer_clone  = producer.clone();
                 let topic_clone     = signal_topic.clone();
                 let signal_clone    = signal;
+                let pub_metrics     = metrics.clone();
 
                 tokio::spawn(async move {
-                    publish_signal(&producer_clone, &topic_clone, &signal_clone).await;
+                    let published =
+                        publish_signal(&producer_clone, &topic_clone, &signal_clone).await;
+                    if !published {
+                        // The signal was computed and then lost — the aggregator
+                        // never saw it. Without this the loss is invisible:
+                        // signals_total still climbs.
+                        pub_metrics.publish_failed();
+                    }
                 });
             }
         }

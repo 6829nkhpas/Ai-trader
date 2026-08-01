@@ -63,7 +63,16 @@ pub mod kafka_producer {
     /// Uses `FutureRecord` with a 5-second delivery timeout.  On failure the
     /// error is logged and the call returns without panicking — individual
     /// signal delivery failures are non-fatal for the tick processing loop.
-    pub async fn publish_signal(producer: &FutureProducer, topic: &str, signal: &TechSignal) {
+    ///
+    /// Returns `true` if the broker acknowledged the record. The signal is still
+    /// dropped on failure, exactly as before; the bool exists only so the caller
+    /// can count the loss into `technical_publish_errors_total`. Without it a
+    /// broker outage silently starves the aggregator with no metric anywhere.
+    pub async fn publish_signal(
+        producer: &FutureProducer,
+        topic: &str,
+        signal: &TechSignal,
+    ) -> bool {
         // Serialise the TechSignal Protobuf struct into a raw byte vector.
         let payload: Vec<u8> = signal.encode_to_vec();
 
@@ -86,6 +95,7 @@ pub mod kafka_producer {
                     offset,
                     signal.technical_conviction_score,
                 );
+                true
             }
             Err((kafka_err, _owned_msg)) => {
                 log::error!(
@@ -93,6 +103,7 @@ pub mod kafka_producer {
                     signal.symbol,
                     kafka_err,
                 );
+                false
             }
         }
     }
