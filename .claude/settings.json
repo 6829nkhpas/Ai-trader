@@ -41,7 +41,17 @@
       "Bash(bash -n scripts/linux/start_system.sh)",
       "Bash(pwsh -NoProfile -Command '$ErrorActionPreference='\\\\''Stop'\\\\''; $null=[System.Management.Automation.Language.Parser]::ParseFile\\('\\\\''scripts/powershell/start_system.ps1'\\\\'',[ref]$null,[ref]$e\\); if\\($e\\){$e|%{$_.Message}}else{'\\\\''start_system.ps1: syntax OK'\\\\''}')",
       "Bash(powershell -NoProfile -Command '$e=$null; $null=[System.Management.Automation.Language.Parser]::ParseFile\\(\\(Resolve-Path '\\\\''scripts/powershell/start_system.ps1'\\\\''\\),[ref]$null,[ref]$e\\); if\\($e -and $e.Count -gt 0\\){$e | ForEach-Object {$_.Message}} else {'\\\\''start_system.ps1: syntax OK'\\\\''}')",
-      "Bash(gh api *)"
+      "Bash(gh api *)",
+      "Bash(node docs/automation/_verify.js)",
+      "Bash(rm docs/automation/_verify.js)",
+      "Bash(node -e ' *)",
+      "Bash(cd /tmp/xtest && AUTH=\"679bcffec6d5a35cff8a3ed61ddddff0b5fe4871\" && CT0=\"0b99b9963ab0e4528ea587958db922387ae15245af2621b55e2b593e1f6c4f2a8bc5165fce48234ce79047e703e7046245d99f581de042faed32edefc1a79342f925dc97d18200452261d6ebc40773a2\" && BEARER=\"AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA\" && curl -sS -o resp.json -w \"HTTP %{http_code}\\\\n\" 'https://api.x.com/1.1/account/settings.json' -H \"authorization: Bearer $BEARER\" -H \"x-csrf-token: $CT0\" -H \"cookie: auth_token=$AUTH; ct0=$CT0\" -H \"x-twitter-auth-type: OAuth2Session\" -H \"x-twitter-active-user: yes\" -H \"user-agent: Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/131.0.0.0 Safari/537.36\" --max-time 45 ; head -c 600 resp.json; echo)",
+      "Bash(grep -oE '\"\\(isLoggedIn|screen_name|userId|is_logged_in\\)\"[: ]*[^,}]{0,40}' home.html)",
+      "Bash(grep -c -i 'loggedIn\\\\\\\\\":true' home.html)",
+      "Bash(rm -rf /tmp/xtest && echo \"temp cookie files removed\")"
+    ],
+    "additionalDirectories": [
+      "\\tmp"
     ]
   },
   "hooks": {

@@ -1,0 +1,1256 @@
+{
+  "name": "Strat AI — X Marketing Automation (60 Day Campaign)",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "pinData": {},
+  "tags": [],
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "nodes": [
+    {
+      "id": "sticky-setup",
+      "name": "Sticky — Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-1360, 60],
+      "parameters": {
+        "width": 700,
+        "height": 620,
+        "color": 7,
+        "content": "## SETUP — do this once, then the workflow is autonomous\n\n**1. Google Sheet** — sheetId is already prefilled (`1KTQQAOQpPzCQxUL_cEjqgHSXVxgqI1QQQ1XIy8cT0bI`). Add two tabs to it:\n\n`Posts` (header row, exact spelling):\n`Campaign Day | Theme | Post # | Post Text | Scheduled Time | Status | Tweet ID | Created | Posted`\n\n`Logs` (header row):\n`Timestamp | Campaign Day | Theme | Event | Model | Tokens | Posts | Status | Error`\n\n**2. Open the `Config` node** and check:\n- `campaignStartDate` — Day 1 of the 60 day campaign (YYYY-MM-DD)\n- `notifyEmail` / `fromEmail` — currently placeholders\n- `model` / `llmBaseUrl` / `llmApiKey` — prefilled for the OpenAI-compatible gateway (`cx/gpt-5.5-xhigh` @ omniroute). Both LLM calls are plain HTTP Request nodes, so any OpenAI-compatible endpoint works.\n\nAlso set the same `sheetId`, `timezone` and `notifyEmail` in the **Dispatch Config** node (Section B) and the email address in **Send Error Alert Email** (Section C).\n\n**3. Credentials** — Google Sheets (OAuth2), X / Twitter (OAuth2), Gmail (OAuth2). No OpenAI credential needed.\n\nAll four mail nodes use the **Gmail** node. Gmail always sends from the authenticated Google account, so `fromEmail` in Config is informational only — the Google account you connect *is* the sender. Only `notifyEmail` decides where mail lands.\n\nGmail OAuth2 setup: Google Cloud console → enable the **Gmail API** → OAuth client (Web application) → paste n8n's OAuth Redirect URL → scope `https://www.googleapis.com/auth/gmail.send` (n8n requests it) → connect. If the app is in Testing, add your address under OAuth consent screen → Test users. The same Google project can serve the Sheets credential; they are still two separate n8n credentials.\n\nOptional hardening: move the key out of `Config` into a Header Auth credential (`Authorization: Bearer <key>`) and attach it to **Generate Tweets** + **Regenerate Invalid Tweets** instead of the inline header.\n\n**4. Settings → Error Workflow** — point this workflow at itself so the Error Trigger fires.\n\n**5. Activate.** Section A generates at 08:00 IST. Section B publishes due posts every 5 minutes.\n\nX has no native scheduling endpoint, so the schedule lives in the sheet and the dispatcher publishes each post at its stored time (+/- 15 min randomised)."
+      }
+    },
+    {
+      "id": "sticky-a",
+      "name": "Sticky — Section A",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-640, 60],
+      "parameters": {
+        "width": 3560,
+        "height": 780,
+        "color": 4,
+        "content": "## SECTION A — Daily Generation (08:00 IST)\nCron → load database → resolve campaign day + theme → skip if already generated → generate 5 posts with campaign memory → validate → repair once if needed → save → schedule → email today's plan → log."
+      }
+    },
+    {
+      "id": "sticky-b",
+      "name": "Sticky — Section B",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-640, 900],
+      "parameters": {
+        "width": 1800,
+        "height": 640,
+        "color": 5,
+        "content": "## SECTION B — Scheduled Publisher (every 5 minutes)\nReads the sheet, finds posts whose scheduled time has arrived, publishes via the official X API node (3 automatic retries), stores the returned Tweet ID, marks failures and alerts."
+      }
+    },
+    {
+      "id": "sticky-c",
+      "name": "Sticky — Section C",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-640, 1600],
+      "parameters": {
+        "width": 900,
+        "height": 320,
+        "color": 3,
+        "content": "## SECTION C — Failure Alerting\nSet this workflow as its own Error Workflow (Settings → Error Workflow). Any exhausted retry on OpenAI, Google Sheets or X lands here and emails immediately."
+      }
+    },
+    {
+      "id": "trigger-daily",
+      "name": "Daily Trigger 0800 IST",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-600, 320],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "config",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-380, 320],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c1",
+              "name": "sheetId",
+              "value": "1KTQQAOQpPzCQxUL_cEjqgHSXVxgqI1QQQ1XIy8cT0bI",
+              "type": "string"
+            },
+            {
+              "id": "c2",
+              "name": "postsSheet",
+              "value": "Posts",
+              "type": "string"
+            },
+            {
+              "id": "c3",
+              "name": "logSheet",
+              "value": "Logs",
+              "type": "string"
+            },
+            {
+              "id": "c4",
+              "name": "campaignStartDate",
+              "value": "2026-08-01",
+              "type": "string"
+            },
+            {
+              "id": "c5",
+              "name": "timezone",
+              "value": "Asia/Kolkata",
+              "type": "string"
+            },
+            {
+              "id": "c6",
+              "name": "website",
+              "value": "https://www.stratai.live",
+              "type": "string"
+            },
+            {
+              "id": "c7",
+              "name": "notifyEmail",
+              "value": "founder@stratai.live",
+              "type": "string"
+            },
+            {
+              "id": "c8",
+              "name": "fromEmail",
+              "value": "automation@stratai.live",
+              "type": "string"
+            },
+            {
+              "id": "c9",
+              "name": "model",
+              "value": "cx/gpt-5.5-xhigh",
+              "type": "string"
+            },
+            {
+              "id": "c9b",
+              "name": "llmBaseUrl",
+              "value": "https://omniroute.premraj.online/v1",
+              "type": "string"
+            },
+            {
+              "id": "c9c",
+              "name": "llmApiKey",
+              "value": "sk-ace5fc784d6f9a6d-e7c6f7-0a8fb259",
+              "type": "string"
+            },
+            {
+              "id": "c10",
+              "name": "maxChars",
+              "value": 240,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "load-db",
+      "name": "Load Campaign Database",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [-160, 320],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $json.sheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Posts",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CREDENTIAL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "determine-day",
+      "name": "Determine Current Campaign Day",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [60, 320],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Resolves campaign day, theme, content mix, hook rotation, schedule and the AI prompts.\nconst cfg = $('Config').first().json;\nconst zone = cfg.timezone || 'Asia/Kolkata';\nconst site = cfg.website || 'https://www.stratai.live';\nconst now = $now.setZone(zone);\nconst today = now.startOf('day');\nconst start = DateTime.fromISO(String(cfg.campaignStartDate), { zone }).startOf('day');\n\nlet day = Math.floor(today.diff(start, 'days').days) + 1;\nif (!Number.isFinite(day) || day < 1) { day = 1; }\nif (day > 60) { day = ((day - 1) % 60) + 1; }\n\nconst THEMES = [\n  'Information Overload',\n  'Sometimes No Trade Is The Best Trade',\n  'Decision Intelligence',\n  'Institutional Thinking',\n  'Risk Management',\n  'Why Charts Only Show The Past',\n  'Conviction Without Evidence',\n  'Confluence Over Single Indicators',\n  'Market Structure Basics',\n  'Multi Timeframe Alignment',\n  'Market Regimes',\n  'Relative Strength Against The Index',\n  'Order Flow: Who Is Actually Pressing',\n  'Volume Profile And The Point Of Control',\n  'Support, Resistance And The Opening Range',\n  'Chart Patterns Without Superstition',\n  'Volatility Is Not Risk',\n  'The ATR Stop Rule',\n  'Risk To Reward Math',\n  'Position Sizing',\n  \"The Devil's Advocate\",\n  'Bull Versus Bear Debate',\n  'Consensus, Contested And Conviction',\n  'The Conviction Score One To Hundred',\n  'Fusing Technicals With Sentiment',\n  'The Capital Protection Guardrail',\n  'News Is A Calibration Not A Trigger',\n  'Anomaly Detection',\n  'Predictive Ghost Lines',\n  'R Squared: Knowing How Much To Trust A Projection',\n  'Honest Failure Over Fabrication',\n  'Glass Box Versus Black Box',\n  'Why We Are Not A Signal Provider',\n  'The Trade Journal',\n  'Expectancy Beats Win Rate',\n  'Track Record Calibration',\n  'Session Awareness Through The NSE Day',\n  'Expiry Day Distortion',\n  'Options Positioning: PCR, Max Pain, OI Walls',\n  'Event Risk And Earnings Gates',\n  'The First Account I Blew Up',\n  'Why We Wrote The Core In Rust',\n  'Sub Second Data Pipelines',\n  'Why We Chose A Desktop Terminal',\n  'Five Years Of History',\n  'Footprint Charts',\n  'Three Trader Profiles',\n  'Margin, Positions And Reality',\n  'Bounded Reasoning: Why AI Must Terminate',\n  'Hard Rules The AI Cannot Override',\n  'From Vibe Coding To Vibe Trading',\n  'What Retail Has That Institutions Do Not',\n  'The Psychology Of Being Stopped Out',\n  'Overtrading',\n  'Journaling Without Lying To Yourself',\n  'Backtests Versus Reality',\n  'Automation Is Not Abdication',\n  'Building In Public',\n  'What We Got Wrong',\n  'Institutional Intelligence For Every Trader'\n];\n\nconst CAPABILITIES = [\n  'AI Trade Discovery (FIND mode)',\n  'AI Trade Verification (VERIFY mode)',\n  'AI Bull versus Bear Debate',\n  'The Judge Agent and calibrated conviction',\n  'Market Structure Analysis',\n  'Multi timeframe macro alignment (1H, 4H, 1D)',\n  'Market Regime Classification',\n  'Relative Strength versus NIFTY 50',\n  'Order Flow Imbalance and cumulative volume delta',\n  'Volume Profile and the Point of Control',\n  'Footprint order flow rendering',\n  'Nineteen institutional chart patterns with confidence scores',\n  'VWEPR quadratic curvature',\n  'The volatility aware Directional Forecaster',\n  'News Sentiment as a calibration input',\n  'Options chain intelligence: PCR, max pain, OI walls',\n  'The Event Risk Gate',\n  'Track Record Calibration',\n  'Risk Validation: the 1.5x ATR stop rule and R:R floors',\n  'Predictive Ghost Lines with an R squared confidence score',\n  'The Fused Conviction Score from 1 to 100',\n  'The Capital Protection Guardrail that forces HOLD on conflict',\n  'Glass box streamed reasoning',\n  'Honest failure over fabrication',\n  'Session and expiry awareness',\n  'Three tailored profiles: Intraday, Swing, Investor',\n  'The sub second Rust tick pipeline',\n  'The self scoring trade journal and expectancy tracking',\n  'The Bear Agent devil advocate critique',\n  'QA mode interactive auditing'\n];\n\nconst HOOKS = [\n  'What if...', 'Nobody talks about...', 'The biggest mistake...', 'Most traders...',\n  'Three friends...', 'This changed...', 'Why do...', 'Everyone wants...',\n  'Retail traders...', 'The market does not...', 'Here is what...', 'Unpopular opinion...',\n  'A hard truth...', 'It took years to learn...', 'The first time...', 'Ask yourself...',\n  'There is a reason...', 'Two traders...', 'Consider this...', 'Something changed when...',\n  'The problem is not...', 'Before you...', 'A quiet observation...', 'Institutions do not...',\n  'You already know...', 'One number...', 'The uncomfortable part...', 'Nothing about...',\n  'Every losing trade...', 'We removed...', 'We rebuilt...', 'A question we keep hearing...',\n  'The day I...', 'What nobody tells...', 'Imagine...', 'If you have ever...',\n  'Screens do not...', 'A small change...', 'The gap between...', 'Say it plainly...'\n];\n\nconst theme = THEMES[day - 1];\n\n// Content mix: 35 / 20 / 15 / 10 / 10 / 10 spread across a rolling 100 slot pool,\n// so every 20 days the campaign lands exactly on the requested percentages.\nconst MIX_DEF = [['Educational', 35], ['Founder Journey', 20], ['Product Philosophy', 15], ['Behind The Scenes', 10], ['Question', 10], ['Community Engagement', 10]];\nconst buckets = MIX_DEF.map(d => ({ name: d[0], left: d[1], weight: d[1] }));\nconst POOL = [];\nfor (let s = 0; s < 100; s++) {\n  buckets.sort((a, b) => (b.left / b.weight) - (a.left / a.weight));\n  buckets[0].left -= 1;\n  POOL.push(buckets[0].name);\n}\n\nconst rows = $input.all().map(i => i.json).filter(r => r && r['Post Text']);\nconst todays = rows.filter(r => String(r['Campaign Day']) === String(day));\nconst alreadyGenerated = todays.length >= 5;\n\nconst history = rows.slice(-300);\nconst memoryBlock = history.length\n  ? history.map(r => '- D' + r['Campaign Day'] + ': ' + String(r['Post Text']).split('\\n').join(' ')).join('\\n')\n  : '(none yet - this is the opening day of the campaign)';\nconst openers = Array.from(new Set(history.slice(-80).map(r => String(r['Post Text']).trim().split(' ').slice(0, 4).join(' ')))).join(' | ') || '(none)';\n\nconst contentTypes = [0, 1, 2, 3, 4].map(i => POOL[((day - 1) * 5 + i) % 100]);\nconst hooks = [0, 1, 2, 3, 4].map(i => HOOKS[((day - 1) * 5 + i) % HOOKS.length]);\nconst focusCapability = CAPABILITIES[(day - 1) % CAPABILITIES.length];\n\nconst SLOTS = ['09:00', '12:30', '15:30', '18:30', '21:30'];\nconst schedule = SLOTS.map((s, i) => {\n  const p = s.split(':');\n  const jitter = Math.floor(Math.random() * 31) - 15; // +/- 15 minutes\n  const dt = today.set({ hour: Number(p[0]), minute: Number(p[1]), second: 0, millisecond: 0 }).plus({ minutes: jitter });\n  return { postNumber: i + 1, baseSlot: s, iso: dt.toISO(), display: dt.toFormat('dd LLL yyyy HH:mm') + ' IST' };\n});\n\nconst systemPrompt = [\n  'You are the Head of Content for Strat AI (' + site + '), an AI native trading intelligence terminal for Indian stock market traders on the NSE.',\n  '',\n  'WHAT STRAT AI IS',\n  '- A decision intelligence terminal. It is NOT a charting platform and it is NEVER a signal provider, tip service or calls channel.',\n  '- Traditional platforms show what already happened. Strat AI helps a trader decide what to do next, before capital is risked.',\n  '- Primary positioning: Institutional Intelligence for Every Trader. Secondary: From Vibe Coding to Vibe Trading.',\n  '',\n  'CAPABILITIES (introduce ONE at a time, never list them)',\n  '- AI Trade Discovery, FIND mode: macro alignment across 1H/4H/1D, microstructure readings with real numbers, market regime classification, relative strength versus NIFTY, order flow, volume profile, support and resistance plus the opening range, nineteen chart patterns with confidence scores, VWEPR quadratic curvature, a volatility aware directional forecaster, news sentiment, session and expiry awareness, options chain positioning, an event risk gate, and calibration against its own track record.',\n  '- AI Trade Verification, VERIFY mode: the stop must be at least 1.5x ATR, reward to risk at least 1:2 for swing and 1:1.3 for intraday, level ordering checks, multi leg exit plan validation, then a Bear Agent argues against the trade.',\n  '- AI Bull versus Bear Debate: two agents argue, a Judge classifies Strong Agree, Contested or Lean and derives a calibrated conviction score.',\n  '- Predictive Ghost Lines: OLS regression across fourteen ten minute closes, always shown with an R squared confidence score, and deliberately hidden on every other timeframe.',\n  '- Fused Conviction Score 1 to 100: seventy percent technical, thirty percent sentiment, and it forces HOLD when the two conflict. That is the capital protection guardrail.',\n  '- Honest failure over fabrication: when a data source fails the system reports unavailable instead of inventing a number.',\n  '',\n  'VOICE',\n  'Write the way OpenAI, Anthropic, Linear, Apple, Perplexity and Notion write. Calm, precise, quietly technical, confident without volume. Short sentences. Concrete nouns. No filler.',\n  'Every post must teach something, challenge a belief, ask a real question, tell a story, or explain a lesson.',\n  '',\n  'HARD RULES',\n  '1. Maximum 240 characters per post INCLUDING the URL and any hashtags. Target 170 to 230.',\n  '2. Every post ends with this URL on its own final line: ' + site,\n  '3. Maximum two hashtags, usually one, drawn from #StratAI #Trading #StockMarket #NSE #Nifty #Markets #FnO. Never stuff hashtags.',\n  '4. No emojis. No exclamation marks. No hype, no fake urgency, no countdowns, no DM requests.',\n  '5. Never promise returns, accuracy, tips, calls or specific buy and sell instructions.',\n  '6. Never describe Strat AI as a signal provider. It is decision intelligence.',\n  '7. Do not oversell. At most one soft product mention per post, and at least two of the five posts should carry no explicit product mention at all.',\n  '8. Never reuse a hook, an idea, a metaphor, a sentence rhythm or an opening phrase that appears in the campaign memory supplied to you.',\n  '9. Plain text only. No markdown, no surrounding quotes, no numbering inside the post text itself.',\n  '10. Build trust gradually. Teach first, market second.',\n  '',\n  'OUTPUT',\n  'Return ONLY a valid JSON object with this exact shape and nothing else:',\n  '{\"posts\":[{\"post_number\":1,\"content_type\":\"...\",\"hook_used\":\"...\",\"angle\":\"...\",\"text\":\"...\"},{\"post_number\":2,...},{\"post_number\":3,...},{\"post_number\":4,...},{\"post_number\":5,...}]}'\n].join('\\n');\n\nconst userPrompt = [\n  'CAMPAIGN DAY ' + day + ' OF 60',\n  'THEME FOR TODAY: ' + theme,\n  'CAPABILITY TO SURFACE TODAY (once, naturally, in one post only): ' + focusCapability,\n  '',\n  'Write exactly five posts. Each has an assigned content type and hook style:',\n  '1. ' + contentTypes[0] + ' | hook style: ' + hooks[0],\n  '2. ' + contentTypes[1] + ' | hook style: ' + hooks[1],\n  '3. ' + contentTypes[2] + ' | hook style: ' + hooks[2],\n  '4. ' + contentTypes[3] + ' | hook style: ' + hooks[3],\n  '5. ' + contentTypes[4] + ' | hook style: ' + hooks[4],\n  '',\n  'TODAY SPECIFIC REQUIREMENTS',\n  '- All five posts sit under the theme \"' + theme + '\" but attack it from five genuinely different angles.',\n  '- No two posts may share an opening pattern, a metaphor, or a sentence rhythm.',\n  '- Educational: teach exactly one mechanic a trader can use tomorrow morning.',\n  '- Founder Journey: first person, specific, humble, a real lesson, never bragging.',\n  '- Product Philosophy: explain one design decision and the reasoning behind it.',\n  '- Behind The Scenes: something real about building the terminal.',\n  '- Question: end on a genuine question worth answering.',\n  '- Community Engagement: invite traders to share their own experience.',\n  '- Assume the reader is an intelligent Indian retail trader who has lost money before and is tired of noise.',\n  '',\n  'CAMPAIGN MEMORY - the last ' + history.length + ' posts already published. Never write anything similar in idea, wording, hook or structure:',\n  memoryBlock,\n  '',\n  'OPENING PHRASES ALREADY USED - do not start any post like these:',\n  openers,\n  '',\n  'Return only the JSON object.'\n].join('\\n');\n\nreturn [{\n  json: {\n    campaignDay: day,\n    theme,\n    focusCapability,\n    contentTypes,\n    hooks,\n    schedule,\n    alreadyGenerated,\n    existingToday: todays.length,\n    historyCount: history.length,\n    runDate: today.toISODate(),\n    runAt: now.toISO(),\n    timezone: zone,\n    website: site,\n    model: cfg.model,\n    systemPrompt,\n    userPrompt\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "if-exists",
+      "name": "Already Generated Today",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [280, 320],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-exists",
+              "leftValue": "={{ $json.alreadyGenerated }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "exit-noop",
+      "name": "Exit — Already Generated",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [500, 180],
+      "parameters": {}
+    },
+    {
+      "id": "openai-generate",
+      "name": "Generate Tweets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 460],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.llmBaseUrl }}/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Config').first().json.llmApiKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json.model, messages: [ { role: 'system', content: $json.systemPrompt }, { role: 'user', content: $json.userPrompt } ] }) }}",
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "validate",
+      "name": "Validate Tweets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 460],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Validation: length, website, hashtag cap, banned language, emoji, in batch duplicates,\n// and similarity against every post already published in the campaign.\nconst cfg = $('Config').first().json;\nconst plan = $('Determine Current Campaign Day').first().json;\nconst site = cfg.website || 'https://www.stratai.live';\nconst maxChars = Number(cfg.maxChars || 240);\nconst raw = $input.first().json || {};\n\nlet payload = raw;\nif (raw.message && raw.message.content !== undefined) { payload = raw.message.content; }\nelse if (raw.content !== undefined) { payload = raw.content; }\nelse if (raw.choices && raw.choices[0] && raw.choices[0].message) { payload = raw.choices[0].message.content; }\nelse if (raw.text !== undefined) { payload = raw.text; }\n\nif (typeof payload === 'string') {\n  const s = payload.trim();\n  const a = s.indexOf('{');\n  const b = s.lastIndexOf('}');\n  try { payload = JSON.parse(a >= 0 && b > a ? s.slice(a, b + 1) : s); } catch (e) { payload = null; }\n}\n\nlet list = [];\nif (payload && Array.isArray(payload.posts)) { list = payload.posts; }\nelse if (Array.isArray(payload)) { list = payload; }\n\nconst issues = [];\nif (list.length !== 5) { issues.push('Expected 5 posts, received ' + list.length); }\n\nconst BANNED = ['guaranteed', 'guarantee', 'sure shot', 'sureshot', 'jackpot', 'multibagger', 'risk free', 'risk-free', 'no risk', 'assured return', 'double your money', 'get rich', 'free money', 'signal provider', 'buy now', 'sell now', 'tip of the day', 'intraday tips', 'dm for calls', 'join now', 'hurry', 'limited time', 'last chance', 'act fast', 'dont miss', 'do not miss', '100% accurate', 'profit daily', 'daily profit', 'confirm profit'];\n\nfunction tokens(s) {\n  const out = [];\n  const low = String(s).toLowerCase();\n  for (const ch of low) {\n    out.push((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') ? ch : ' ');\n  }\n  return out.join('').split(' ').filter(w => w.length > 3);\n}\n\nfunction jaccard(a, b) {\n  const A = new Set(a);\n  const B = new Set(b);\n  if (!A.size || !B.size) { return 0; }\n  let inter = 0;\n  A.forEach(w => { if (B.has(w)) { inter += 1; } });\n  return inter / (A.size + B.size - inter);\n}\n\nconst historyRows = $('Load Campaign Database').all().map(i => i.json).filter(r => r && r['Post Text']);\nconst historyTokens = historyRows.slice(-300).map(r => tokens(r['Post Text']));\n\nconst cleaned = [];\nconst batchTokens = [];\n\nlist.forEach((p, idx) => {\n  const n = idx + 1;\n  let text = String((p && (p.text || p.post || p.content)) || '').split('\\r').join('').trim();\n  if (text.length > 1 && text.charAt(0) === '\"' && text.charAt(text.length - 1) === '\"') {\n    text = text.slice(1, -1).trim();\n  }\n  // Auto repair: append the site if the model dropped it and there is room.\n  if (!text.includes(site)) {\n    const candidate = text + '\\n' + site;\n    if (candidate.length <= maxChars) { text = candidate; }\n  }\n  text = text.trim();\n\n  const chars = text.length;\n  if (chars > maxChars) { issues.push('Post ' + n + ' is ' + chars + ' characters, limit is ' + maxChars); }\n  if (chars < 60) { issues.push('Post ' + n + ' is too short at ' + chars + ' characters'); }\n  if (!text.includes(site)) { issues.push('Post ' + n + ' does not contain ' + site); }\n\n  const hashtags = text.split('#').length - 1;\n  if (hashtags > 2) { issues.push('Post ' + n + ' uses ' + hashtags + ' hashtags, limit is 2'); }\n\n  const low = text.toLowerCase();\n  BANNED.forEach(w => { if (low.includes(w)) { issues.push('Post ' + n + ' contains banned wording: ' + w); } });\n\n  if (Array.from(text).some(ch => ch.codePointAt(0) > 8500)) { issues.push('Post ' + n + ' contains an emoji or symbol character'); }\n\n  const tok = tokens(text);\n  batchTokens.forEach((prev, j) => {\n    if (jaccard(tok, prev) >= 0.55) { issues.push('Post ' + n + ' duplicates post ' + (j + 1) + ' in this batch'); }\n  });\n  if (historyTokens.some(prev => jaccard(tok, prev) >= 0.5)) {\n    issues.push('Post ' + n + ' is too similar to a post already published in the campaign');\n  }\n  batchTokens.push(tok);\n\n  const slot = (plan.schedule || [])[idx] || {};\n  cleaned.push({\n    postNumber: n,\n    contentType: (p && (p.content_type || p.contentType)) || (plan.contentTypes || [])[idx] || '',\n    hook: (p && (p.hook_used || p.hook)) || (plan.hooks || [])[idx] || '',\n    angle: (p && p.angle) || '',\n    text,\n    chars: text.length,\n    hashtags,\n    scheduledIso: slot.iso || null,\n    scheduledDisplay: slot.display || '',\n    baseSlot: slot.baseSlot || ''\n  });\n});\n\nconst uniqueIssues = Array.from(new Set(issues));\n\nlet totalTokens = null;\nif (raw.usage && raw.usage.total_tokens) { totalTokens = raw.usage.total_tokens; }\nelse if (raw.tokenUsage && raw.tokenUsage.totalTokens) { totalTokens = raw.tokenUsage.totalTokens; }\nelse { totalTokens = Math.round((JSON.stringify(payload || {}) || '').length / 4); }\n\nconst repairPrompt = [\n  'Your previous output for Campaign Day ' + plan.campaignDay + ' failed validation.',\n  '',\n  'ISSUES FOUND:',\n  uniqueIssues.length ? uniqueIssues.map(x => '- ' + x).join('\\n') : '- unknown formatting error',\n  '',\n  'Regenerate all five posts from scratch. Fix every issue. Keep every hard rule, especially the ' + maxChars + ' character ceiling including the URL, the two hashtag maximum, no emojis, and the closing URL ' + site + '.',\n  '',\n  'ORIGINAL BRIEF:',\n  plan.userPrompt,\n  '',\n  'Return only the JSON object.'\n].join('\\n');\n\nreturn [{\n  json: {\n    validationPassed: uniqueIssues.length === 0 && cleaned.length === 5,\n    issues: uniqueIssues,\n    issueCount: uniqueIssues.length,\n    campaignDay: plan.campaignDay,\n    theme: plan.theme,\n    model: plan.model,\n    totalTokens,\n    generatedAt: $now.setZone(plan.timezone || 'Asia/Kolkata').toISO(),\n    posts: cleaned,\n    repairPrompt\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "if-valid",
+      "name": "Validation Passed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [940, 460],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-valid",
+              "leftValue": "={{ $json.validationPassed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "openai-repair",
+      "name": "Regenerate Invalid Tweets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1160, 640],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.llmBaseUrl }}/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Config').first().json.llmApiKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $('Config').first().json.model, messages: [ { role: 'system', content: $('Determine Current Campaign Day').first().json.systemPrompt }, { role: 'user', content: $json.repairPrompt } ] }) }}",
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "revalidate",
+      "name": "Re Validate Tweets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1380, 640],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Second pass validation, identical rules, run against the repaired generation.\nconst cfg = $('Config').first().json;\nconst plan = $('Determine Current Campaign Day').first().json;\nconst site = cfg.website || 'https://www.stratai.live';\nconst maxChars = Number(cfg.maxChars || 240);\nconst raw = $input.first().json || {};\n\nlet payload = raw;\nif (raw.message && raw.message.content !== undefined) { payload = raw.message.content; }\nelse if (raw.content !== undefined) { payload = raw.content; }\nelse if (raw.choices && raw.choices[0] && raw.choices[0].message) { payload = raw.choices[0].message.content; }\nelse if (raw.text !== undefined) { payload = raw.text; }\n\nif (typeof payload === 'string') {\n  const s = payload.trim();\n  const a = s.indexOf('{');\n  const b = s.lastIndexOf('}');\n  try { payload = JSON.parse(a >= 0 && b > a ? s.slice(a, b + 1) : s); } catch (e) { payload = null; }\n}\n\nlet list = [];\nif (payload && Array.isArray(payload.posts)) { list = payload.posts; }\nelse if (Array.isArray(payload)) { list = payload; }\n\nconst issues = [];\nif (list.length !== 5) { issues.push('Repair pass expected 5 posts, received ' + list.length); }\n\nconst BANNED = ['guaranteed', 'guarantee', 'sure shot', 'sureshot', 'jackpot', 'multibagger', 'risk free', 'risk-free', 'no risk', 'assured return', 'double your money', 'get rich', 'free money', 'signal provider', 'buy now', 'sell now', 'tip of the day', 'intraday tips', 'dm for calls', 'join now', 'hurry', 'limited time', 'last chance', 'act fast', 'dont miss', 'do not miss', '100% accurate', 'profit daily', 'daily profit', 'confirm profit'];\n\nfunction tokens(s) {\n  const out = [];\n  const low = String(s).toLowerCase();\n  for (const ch of low) {\n    out.push((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') ? ch : ' ');\n  }\n  return out.join('').split(' ').filter(w => w.length > 3);\n}\n\nfunction jaccard(a, b) {\n  const A = new Set(a);\n  const B = new Set(b);\n  if (!A.size || !B.size) { return 0; }\n  let inter = 0;\n  A.forEach(w => { if (B.has(w)) { inter += 1; } });\n  return inter / (A.size + B.size - inter);\n}\n\nconst historyRows = $('Load Campaign Database').all().map(i => i.json).filter(r => r && r['Post Text']);\nconst historyTokens = historyRows.slice(-300).map(r => tokens(r['Post Text']));\n\nconst cleaned = [];\nconst batchTokens = [];\n\nlist.forEach((p, idx) => {\n  const n = idx + 1;\n  let text = String((p && (p.text || p.post || p.content)) || '').split('\\r').join('').trim();\n  if (text.length > 1 && text.charAt(0) === '\"' && text.charAt(text.length - 1) === '\"') {\n    text = text.slice(1, -1).trim();\n  }\n  if (!text.includes(site)) {\n    const candidate = text + '\\n' + site;\n    if (candidate.length <= maxChars) { text = candidate; }\n  }\n  text = text.trim();\n\n  const chars = text.length;\n  if (chars > maxChars) { issues.push('Post ' + n + ' is ' + chars + ' characters, limit is ' + maxChars); }\n  if (chars < 60) { issues.push('Post ' + n + ' is too short at ' + chars + ' characters'); }\n  if (!text.includes(site)) { issues.push('Post ' + n + ' does not contain ' + site); }\n\n  const hashtags = text.split('#').length - 1;\n  if (hashtags > 2) { issues.push('Post ' + n + ' uses ' + hashtags + ' hashtags, limit is 2'); }\n\n  const low = text.toLowerCase();\n  BANNED.forEach(w => { if (low.includes(w)) { issues.push('Post ' + n + ' contains banned wording: ' + w); } });\n\n  if (Array.from(text).some(ch => ch.codePointAt(0) > 8500)) { issues.push('Post ' + n + ' contains an emoji or symbol character'); }\n\n  const tok = tokens(text);\n  batchTokens.forEach((prev, j) => {\n    if (jaccard(tok, prev) >= 0.55) { issues.push('Post ' + n + ' duplicates post ' + (j + 1) + ' in this batch'); }\n  });\n  if (historyTokens.some(prev => jaccard(tok, prev) >= 0.5)) {\n    issues.push('Post ' + n + ' is too similar to a post already published in the campaign');\n  }\n  batchTokens.push(tok);\n\n  const slot = (plan.schedule || [])[idx] || {};\n  cleaned.push({\n    postNumber: n,\n    contentType: (p && (p.content_type || p.contentType)) || (plan.contentTypes || [])[idx] || '',\n    hook: (p && (p.hook_used || p.hook)) || (plan.hooks || [])[idx] || '',\n    angle: (p && p.angle) || '',\n    text,\n    chars: text.length,\n    hashtags,\n    scheduledIso: slot.iso || null,\n    scheduledDisplay: slot.display || '',\n    baseSlot: slot.baseSlot || ''\n  });\n});\n\nconst uniqueIssues = Array.from(new Set(issues));\nconst prior = $('Validate Tweets').first().json;\n\nlet totalTokens = null;\nif (raw.usage && raw.usage.total_tokens) { totalTokens = raw.usage.total_tokens; }\nelse if (raw.tokenUsage && raw.tokenUsage.totalTokens) { totalTokens = raw.tokenUsage.totalTokens; }\nelse { totalTokens = Math.round((JSON.stringify(payload || {}) || '').length / 4); }\n\nreturn [{\n  json: {\n    validationPassed: uniqueIssues.length === 0 && cleaned.length === 5,\n    issues: uniqueIssues,\n    issueCount: uniqueIssues.length,\n    firstPassIssues: prior.issues || [],\n    campaignDay: plan.campaignDay,\n    theme: plan.theme,\n    model: plan.model,\n    totalTokens: (prior.totalTokens || 0) + totalTokens,\n    generatedAt: $now.setZone(plan.timezone || 'Asia/Kolkata').toISO(),\n    posts: cleaned,\n    repaired: true\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "if-valid-2",
+      "name": "Repair Passed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1600, 640],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-valid-2",
+              "leftValue": "={{ $json.validationPassed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "email-gen-failed",
+      "name": "Alert Generation Failed",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1820, 780],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $('Config').first().json.notifyEmail }}",
+        "subject": "=Strat AI Campaign — generation failed for Day {{ $json.campaignDay }}",
+        "emailType": "html",
+        "message": "=<div style='font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#0b0d10;padding:28px;color:#e6e8eb;'><div style='max-width:640px;margin:0 auto;background:#12151a;border:1px solid #3a2226;border-radius:14px;padding:26px;'><div style='font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:#f87171;'>Generation Failed</div><h1 style='margin:8px 0 16px;font-size:20px;color:#ffffff;font-weight:600;'>Day {{ $json.campaignDay }} — {{ $json.theme }}</h1><p style='font-size:14px;color:#9fb0c3;line-height:1.6;'>Both the initial generation and the automatic repair pass failed validation. Nothing was written to the sheet and nothing will be posted today until this is resolved.</p><p style='font-size:13px;color:#7c8797;margin-top:18px;'>Remaining issues</p><pre style='background:#0e1116;border:1px solid #232830;border-radius:10px;padding:14px;font-size:12px;color:#e6e8eb;white-space:pre-wrap;'>{{ $json.issues.join('\\n') }}</pre><p style='font-size:13px;color:#7c8797;margin-top:18px;'>First pass issues</p><pre style='background:#0e1116;border:1px solid #232830;border-radius:10px;padding:14px;font-size:12px;color:#e6e8eb;white-space:pre-wrap;'>{{ ($json.firstPassIssues || []).join('\\n') }}</pre></div></div>",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Strat AI Automation"
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "split-posts",
+      "name": "Create Schedule Rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1820, 460],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Expands the validated batch into one sheet row per post, with its randomised slot time.\nconst cfg = $('Config').first().json;\nconst v = $input.first().json;\nconst zone = cfg.timezone || 'Asia/Kolkata';\nconst createdAt = $now.setZone(zone).toISO();\n\nreturn (v.posts || []).map(p => ({\n  json: {\n    'Campaign Day': v.campaignDay,\n    'Theme': v.theme,\n    'Post #': p.postNumber,\n    'Post Text': p.text,\n    'Scheduled Time': p.scheduledIso,\n    'Status': 'SCHEDULED',\n    'Tweet ID': '',\n    'Created': createdAt,\n    'Posted': ''\n  }\n}));\n"
+      }
+    },
+    {
+      "id": "save-posts",
+      "name": "Save Posts",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2040, 460],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Posts",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CREDENTIAL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "build-email",
+      "name": "Build Daily Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2260, 460],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Builds the morning HTML briefing: theme, all five posts, posting time, character count.\nconst cfg = $('Config').first().json;\nconst zone = cfg.timezone || 'Asia/Kolkata';\nconst rows = $input.all().map(i => i.json).filter(r => r && r['Post Text']);\nconst day = rows.length ? rows[0]['Campaign Day'] : '';\nconst theme = rows.length ? rows[0]['Theme'] : '';\nconst stamp = $now.setZone(zone).toFormat('dd LLL yyyy');\n\nfunction esc(s) {\n  return String(s === null || s === undefined ? '' : s)\n    .split('&').join('&amp;')\n    .split('<').join('&lt;')\n    .split('>').join('&gt;');\n}\n\nconst cards = rows.map(r => {\n  const text = String(r['Post Text']);\n  const dt = DateTime.fromISO(String(r['Scheduled Time']), { zone });\n  const when = dt.isValid ? dt.toFormat('HH:mm') + ' IST' : String(r['Scheduled Time']);\n  return [\n    `<div style='border:1px solid #232830;border-radius:12px;padding:16px;margin-bottom:14px;background:#0e1116;'>`,\n    `<div style='font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#7c8797;margin-bottom:10px;'>Post ${esc(r['Post #'])} &middot; ${esc(when)} &middot; ${text.length} characters</div>`,\n    `<div style='font-size:14px;line-height:1.65;color:#e6e8eb;white-space:pre-wrap;'>${esc(text)}</div>`,\n    `</div>`\n  ].join('');\n}).join('');\n\nconst html = [\n  `<div style='font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#0b0d10;padding:32px;color:#e6e8eb;'>`,\n  `<div style='max-width:660px;margin:0 auto;background:#12151a;border:1px solid #232830;border-radius:16px;padding:28px;'>`,\n  `<div style='font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#7c8797;'>Strat AI &middot; X Campaign</div>`,\n  `<h1 style='margin:10px 0 4px;font-size:24px;color:#ffffff;font-weight:600;letter-spacing:-0.01em;'>Day ${esc(day)} of 60</h1>`,\n  `<div style='font-size:14px;color:#9fb0c3;margin-bottom:24px;'>Theme: <span style='color:#4ade80;'>${esc(theme)}</span> &middot; ${esc(stamp)}</div>`,\n  cards,\n  `<div style='font-size:12px;color:#5f6a78;border-top:1px solid #232830;padding-top:16px;margin-top:8px;'>${rows.length} posts queued. The publisher checks every five minutes and posts each one at its scheduled time. Tweet IDs are written back to the sheet.</div>`,\n  `</div></div>`\n].join('');\n\nreturn [{\n  json: {\n    subject: 'Today\\'s Strat AI Campaign — Day ' + day + ': ' + theme,\n    html,\n    campaignDay: day,\n    theme,\n    postCount: rows.length,\n    totalChars: rows.reduce((a, r) => a + String(r['Post Text']).length, 0)\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "send-email",
+      "name": "Send Schedule Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [2480, 460],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $('Config').first().json.notifyEmail }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Strat AI Automation"
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "log-generation",
+      "name": "Log Generation Run",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2700, 460],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Logs",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $now.setZone($('Config').first().json.timezone).toISO() }}",
+            "Campaign Day": "={{ $json.campaignDay }}",
+            "Theme": "={{ $json.theme }}",
+            "Event": "GENERATION",
+            "Model": "={{ $('Config').first().json.model }}",
+            "Tokens": "={{ $('Validate Tweets').first().json.totalTokens }}",
+            "Posts": "={{ $json.postCount }}",
+            "Status": "={{ $('Validate Tweets').first().json.validationPassed ? 'OK' : 'OK_AFTER_REPAIR' }}",
+            "Error": "={{ ($('Validate Tweets').first().json.issues || []).join(' | ') }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CREDENTIAL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "trigger-dispatch",
+      "name": "Publisher Trigger Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-600, 1180],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "dispatch-config",
+      "name": "Dispatch Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-380, 1180],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d1",
+              "name": "sheetId",
+              "value": "1KTQQAOQpPzCQxUL_cEjqgHSXVxgqI1QQQ1XIy8cT0bI",
+              "type": "string"
+            },
+            {
+              "id": "d2",
+              "name": "timezone",
+              "value": "Asia/Kolkata",
+              "type": "string"
+            },
+            {
+              "id": "d3",
+              "name": "notifyEmail",
+              "value": "founder@stratai.live",
+              "type": "string"
+            },
+            {
+              "id": "d4",
+              "name": "fromEmail",
+              "value": "automation@stratai.live",
+              "type": "string"
+            },
+            {
+              "id": "d5",
+              "name": "maxPerCycle",
+              "value": 5,
+              "type": "number"
+            },
+            {
+              "id": "d6",
+              "name": "maxLateMinutes",
+              "value": 240,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "load-scheduled",
+      "name": "Load Scheduled Posts",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [-160, 1180],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $json.sheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Posts",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CREDENTIAL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "find-due",
+      "name": "Find Due Posts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [60, 1180],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Selects rows whose scheduled time has arrived and that have not been published yet.\nconst cfg = $('Dispatch Config').first().json;\nconst zone = cfg.timezone || 'Asia/Kolkata';\nconst nowMs = $now.setZone(zone).toMillis();\nconst maxPerCycle = Number(cfg.maxPerCycle || 5);\nconst maxLateMs = Number(cfg.maxLateMinutes || 240) * 60 * 1000;\n\nconst due = [];\nconst items = $input.all();\n\nitems.forEach((item, idx) => {\n  const r = item.json || {};\n  if (!r['Post Text']) { return; }\n  const status = String(r['Status'] || '').toUpperCase();\n  if (status !== 'SCHEDULED' && status !== 'RETRY') { return; }\n  const when = DateTime.fromISO(String(r['Scheduled Time']), { zone });\n  if (!when.isValid) { return; }\n  const ms = when.toMillis();\n  if (ms > nowMs) { return; }\n  if (nowMs - ms > maxLateMs) { return; }\n  due.push({\n    json: {\n      row_number: r.row_number || (idx + 2),\n      'Campaign Day': r['Campaign Day'],\n      'Theme': r['Theme'],\n      'Post #': r['Post #'],\n      'Post Text': String(r['Post Text']),\n      'Scheduled Time': r['Scheduled Time'],\n      'Status': status,\n      chars: String(r['Post Text']).length,\n      lateMinutes: Math.round((nowMs - ms) / 60000)\n    }\n  });\n});\n\ndue.sort((a, b) => String(a.json['Scheduled Time']).localeCompare(String(b.json['Scheduled Time'])));\n\nreturn due.slice(0, maxPerCycle);\n"
+      }
+    },
+    {
+      "id": "loop-due",
+      "name": "Loop Over Due Posts",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [280, 1180],
+      "parameters": {
+        "batchSize": 1,
+        "options": {
+          "reset": false
+        }
+      }
+    },
+    {
+      "id": "post-tweet",
+      "name": "Post Tweet",
+      "type": "n8n-nodes-base.twitter",
+      "typeVersion": 2,
+      "position": [520, 1300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "resource": "tweet",
+        "operation": "create",
+        "text": "={{ $json['Post Text'] }}",
+        "additionalFields": {}
+      },
+      "credentials": {
+        "twitterOAuth2Api": {
+          "id": "TWITTER_CREDENTIAL",
+          "name": "X account"
+        }
+      }
+    },
+    {
+      "id": "mark-posted",
+      "name": "Mark Post As Posted",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [760, 1180],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Dispatch Config').first().json.sheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Posts",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $('Loop Over Due Posts').item.json.row_number }}",
+            "Status": "POSTED",
+            "Tweet ID": "={{ $json.id || $json.id_str || ($json.data && $json.data.id) || '' }}",
+            "Posted": "={{ $now.setZone($('Dispatch Config').first().json.timezone).toISO() }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": []
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CREDENTIAL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "mark-failed",
+      "name": "Mark Post As Failed",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [760, 1420],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Dispatch Config').first().json.sheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Posts",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $('Loop Over Due Posts').item.json.row_number }}",
+            "Status": "FAILED",
+            "Tweet ID": "={{ ('ERROR: ' + ($json.error && $json.error.message ? $json.error.message : ($json.message || 'unknown X API error'))).slice(0, 240) }}",
+            "Posted": ""
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": []
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CREDENTIAL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "email-post-failed",
+      "name": "Alert Tweet Failed",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [980, 1420],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $('Dispatch Config').first().json.notifyEmail }}",
+        "subject": "=Strat AI — tweet failed after 3 retries (Day {{ $('Loop Over Due Posts').item.json['Campaign Day'] }}, Post {{ $('Loop Over Due Posts').item.json['Post #'] }})",
+        "emailType": "html",
+        "message": "=<div style='font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#0b0d10;padding:28px;color:#e6e8eb;'><div style='max-width:640px;margin:0 auto;background:#12151a;border:1px solid #3a2226;border-radius:14px;padding:26px;'><div style='font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#f87171;'>Publishing Failed</div><h1 style='margin:8px 0 14px;font-size:20px;color:#ffffff;font-weight:600;'>Day {{ $('Loop Over Due Posts').item.json['Campaign Day'] }} &middot; Post {{ $('Loop Over Due Posts').item.json['Post #'] }}</h1><div style='font-size:13px;color:#9fb0c3;margin-bottom:14px;'>Scheduled for {{ $('Loop Over Due Posts').item.json['Scheduled Time'] }}. The X API node exhausted all three retries. The row is marked FAILED in the sheet.</div><div style='border:1px solid #232830;border-radius:10px;padding:14px;background:#0e1116;font-size:14px;line-height:1.6;white-space:pre-wrap;'>{{ $('Loop Over Due Posts').item.json['Post Text'] }}</div><p style='font-size:12px;color:#7c8797;margin-top:16px;'>Error</p><pre style='background:#0e1116;border:1px solid #232830;border-radius:10px;padding:12px;font-size:12px;color:#f0a5a5;white-space:pre-wrap;'>{{ JSON.stringify($('Post Tweet').item.json).slice(0, 900) }}</pre></div></div>",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Strat AI Automation"
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "log-dispatch",
+      "name": "Log Dispatch Cycle",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [520, 1040],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "executeOnce": true,
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Dispatch Config').first().json.sheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Logs",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $now.setZone($('Dispatch Config').first().json.timezone).toISO() }}",
+            "Campaign Day": "={{ $('Find Due Posts').first().json['Campaign Day'] }}",
+            "Theme": "={{ $('Find Due Posts').first().json['Theme'] }}",
+            "Event": "DISPATCH",
+            "Model": "x-api-v2",
+            "Tokens": 0,
+            "Posts": "={{ $('Find Due Posts').all().length }}",
+            "Status": "CYCLE_COMPLETE",
+            "Error": ""
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CREDENTIAL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [-600, 1740],
+      "parameters": {}
+    },
+    {
+      "id": "format-error",
+      "name": "Format Error Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-380, 1740],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Turns the error trigger payload into an HTML incident mail.\nconst e = $input.first().json || {};\nconst wf = e.workflow || {};\nconst ex = e.execution || {};\nconst err = ex.error || e.error || {};\nconst stamp = $now.setZone('Asia/Kolkata').toFormat('dd LLL yyyy HH:mm') + ' IST';\n\nfunction esc(s) {\n  return String(s === null || s === undefined ? '' : s)\n    .split('&').join('&amp;')\n    .split('<').join('&lt;')\n    .split('>').join('&gt;');\n}\n\nconst node = err.node && err.node.name ? err.node.name : (ex.lastNodeExecuted || 'unknown node');\nconst message = err.message || 'No error message supplied';\nconst stack = err.stack || err.description || '';\n\nconst html = [\n  `<div style='font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#0b0d10;padding:28px;color:#e6e8eb;'>`,\n  `<div style='max-width:660px;margin:0 auto;background:#12151a;border:1px solid #3a2226;border-radius:16px;padding:26px;'>`,\n  `<div style='font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#f87171;'>Automation Incident</div>`,\n  `<h1 style='margin:10px 0 6px;font-size:21px;color:#ffffff;font-weight:600;'>${esc(wf.name || 'Strat AI X Marketing Automation')}</h1>`,\n  `<div style='font-size:13px;color:#9fb0c3;margin-bottom:20px;'>${esc(stamp)} &middot; execution ${esc(ex.id || 'n/a')} &middot; mode ${esc(ex.mode || 'n/a')}</div>`,\n  `<table style='width:100%;border-collapse:collapse;font-size:13px;'>`,\n  `<tr><td style='padding:8px 0;color:#7c8797;width:130px;'>Failed node</td><td style='padding:8px 0;color:#e6e8eb;'>${esc(node)}</td></tr>`,\n  `<tr><td style='padding:8px 0;color:#7c8797;'>Retries</td><td style='padding:8px 0;color:#e6e8eb;'>exhausted</td></tr>`,\n  `<tr><td style='padding:8px 0;color:#7c8797;'>Execution URL</td><td style='padding:8px 0;color:#7dd3fc;'>${esc(ex.url || 'n/a')}</td></tr>`,\n  `</table>`,\n  `<p style='font-size:12px;color:#7c8797;margin-top:18px;'>Message</p>`,\n  `<pre style='background:#0e1116;border:1px solid #232830;border-radius:10px;padding:14px;font-size:12px;color:#f0a5a5;white-space:pre-wrap;'>${esc(message)}</pre>`,\n  stack ? `<p style='font-size:12px;color:#7c8797;margin-top:14px;'>Detail</p><pre style='background:#0e1116;border:1px solid #232830;border-radius:10px;padding:14px;font-size:11px;color:#9fb0c3;white-space:pre-wrap;'>${esc(String(stack).slice(0, 2000))}</pre>` : '',\n  `</div></div>`\n].join('');\n\nreturn [{\n  json: {\n    subject: 'Strat AI automation failure — ' + node,\n    html,\n    node,\n    message,\n    executionId: ex.id || null\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "send-error",
+      "name": "Send Error Alert Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [-160, 1740],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "founder@stratai.live",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Strat AI Automation"
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily Trigger 0800 IST": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Load Campaign Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Campaign Database": {
+      "main": [
+        [
+          {
+            "node": "Determine Current Campaign Day",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Determine Current Campaign Day": {
+      "main": [
+        [
+          {
+            "node": "Already Generated Today",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already Generated Today": {
+      "main": [
+        [
+          {
+            "node": "Exit — Already Generated",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Tweets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Tweets": {
+      "main": [
+        [
+          {
+            "node": "Validate Tweets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Tweets": {
+      "main": [
+        [
+          {
+            "node": "Validation Passed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation Passed": {
+      "main": [
+        [
+          {
+            "node": "Create Schedule Rows",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Regenerate Invalid Tweets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Regenerate Invalid Tweets": {
+      "main": [
+        [
+          {
+            "node": "Re Validate Tweets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Re Validate Tweets": {
+      "main": [
+        [
+          {
+            "node": "Repair Passed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Repair Passed": {
+      "main": [
+        [
+          {
+            "node": "Create Schedule Rows",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Alert Generation Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Schedule Rows": {
+      "main": [
+        [
+          {
+            "node": "Save Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Posts": {
+      "main": [
+        [
+          {
+            "node": "Build Daily Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Daily Email": {
+      "main": [
+        [
+          {
+            "node": "Send Schedule Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Schedule Email": {
+      "main": [
+        [
+          {
+            "node": "Log Generation Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publisher Trigger Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Config": {
+      "main": [
+        [
+          {
+            "node": "Load Scheduled Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Scheduled Posts": {
+      "main": [
+        [
+          {
+            "node": "Find Due Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Due Posts": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Due Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Due Posts": {
+      "main": [
+        [
+          {
+            "node": "Log Dispatch Cycle",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Post Tweet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Tweet": {
+      "main": [
+        [
+          {
+            "node": "Mark Post As Posted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Post As Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Post As Posted": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Due Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Post As Failed": {
+      "main": [
+        [
+          {
+            "node": "Alert Tweet Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Tweet Failed": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Due Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Format Error Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Error Report": {
+      "main": [
+        [
+          {
+            "node": "Send Error Alert Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
