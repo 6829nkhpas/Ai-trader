@@ -106,6 +106,8 @@ pub struct KiteApiState {
     /// Prevents thundering herd: only one task can fetch instruments at a time.
     /// Others wait for the first to finish and then read from cache.
     fetch_lock: tokio::sync::Mutex<()>,
+    /// Prometheus handle, used to count upstream Kite failures by endpoint.
+    metrics: crate::metrics::AggregatorMetrics,
 }
 
 const CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60); // 24 hours
@@ -159,7 +161,7 @@ pub fn get_kite_credentials() -> (String, String) {
 }
 
 impl KiteApiState {
-    fn new() -> Self {
+    fn new(metrics: crate::metrics::AggregatorMetrics) -> Self {
         let (api_key, access_token) = get_kite_credentials();
 
         if api_key.is_empty() || access_token.is_empty() {
@@ -183,6 +185,7 @@ impl KiteApiState {
                 exchange: "NSE".to_string(),
             }),
             fetch_lock: tokio::sync::Mutex::new(()),
+            metrics,
         }
     }
 
@@ -518,6 +521,7 @@ async fn instruments_search(
     }
 
     let instruments = state.get_instruments(&exchange).await.map_err(|e| {
+        state.metrics.kite_api_failed("instruments");
         log::error!("[Kite instruments] {}", e);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -596,6 +600,7 @@ async fn quote_handler(
         .send()
         .await
         .map_err(|e| {
+            state.metrics.kite_api_failed("quote");
             log::error!("[Kite quote] HTTP error: {}", e);
             (
                 StatusCode::BAD_GATEWAY,
@@ -606,6 +611,7 @@ async fn quote_handler(
     if !response.status().is_success() {
         let status = response.status().as_u16();
         let body = response.text().await.unwrap_or_default();
+        state.metrics.kite_api_failed("quote");
         log::error!("[Kite quote] API returned {}: {}", status, body);
         return Err((
             StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
@@ -614,6 +620,7 @@ async fn quote_handler(
     }
 
     let json: serde_json::Value = response.json().await.map_err(|e| {
+        state.metrics.kite_api_failed("quote");
         log::error!("[Kite quote] JSON parse error: {}", e);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -680,6 +687,7 @@ async fn historical_handler(
         match state.resolve_token(&symbol).await {
             Some(t) => t,
             None => {
+                state.metrics.kite_api_failed("historical");
                 log::error!("[Kite historical] Could not resolve token for symbol '{}'", symbol);
                 return Err((
                     StatusCode::NOT_FOUND,
@@ -725,6 +733,7 @@ async fn historical_handler(
         .send()
         .await
         .map_err(|e| {
+            state.metrics.kite_api_failed("historical");
             log::error!("[Kite historical] HTTP error: {}", e);
             (
                 StatusCode::BAD_GATEWAY,
@@ -735,6 +744,7 @@ async fn historical_handler(
     if !response.status().is_success() {
         let status = response.status().as_u16();
         let body = response.text().await.unwrap_or_default();
+        state.metrics.kite_api_failed("historical");
         log::error!("[Kite historical] API returned {}: {}", status, body);
         return Err((
             StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
@@ -743,6 +753,7 @@ async fn historical_handler(
     }
 
     let json: serde_json::Value = response.json().await.map_err(|e| {
+        state.metrics.kite_api_failed("historical");
         log::error!("[Kite historical] JSON parse error: {}", e);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -799,8 +810,8 @@ async fn historical_handler(
 
 /// Build and start the Kite REST API server on the given port.
 /// Call this from main.rs via `tokio::spawn`.
-pub async fn run_kite_api_server(port: &str) {
-    let state = Arc::new(KiteApiState::new());
+pub async fn run_kite_api_server(port: &str, metrics: crate::metrics::AggregatorMetrics) {
+    let state = Arc::new(KiteApiState::new(metrics));
 
     let cors = CorsLayer::new()
         .allow_origin(Any)

@@ -56,6 +56,12 @@ urlencoding = "2"
 # Date/time handling — used for Kite historical API date parsing and range defaults
 chrono = "0.4"
 
+# Shared Prometheus instrumentation: /metrics + /health + /ready, the work
+# Heartbeat, and NSE session awareness. Path dependency on the sibling crate,
+# the same pattern tool-server uses for quant-core — the Dockerfile build
+# context is the monorepo root so `../service-metrics` resolves.
+service-metrics = { path = "../service-metrics" }
+
 
 # ===========================================================================
 # Build-time Dependencies (proto compilation)
