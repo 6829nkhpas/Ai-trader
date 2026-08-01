@@ -30,6 +30,12 @@ WORKDIR /app
 COPY agents/quant-rag/Cargo.toml agents/quant-rag/Cargo.lock* agents/quant-rag/build.rs ./
 COPY shared_protos/ ./shared_protos/
 
+# The shared metrics crate, at the absolute path its `path = "../../service-metrics"`
+# dependency resolves to from /app. Copied before the pre-cache build below,
+# which would otherwise fail to resolve the manifest and silently produce no
+# cached dependencies.
+COPY service-metrics/ /service-metrics/
+
 # Fix proto paths for Docker context (build.rs uses ../../shared_protos)
 RUN mkdir -p src && echo 'fn main() {}' > src/main.rs \
     && sed -i 's|../../shared_protos|./shared_protos|g' build.rs
@@ -60,6 +66,8 @@ COPY --from=builder /app/target/release/quant-rag /usr/local/bin/quant-rag
 RUN useradd -r -s /bin/false app_user
 USER app_user
 
-EXPOSE 8083
+# 8083 — insight WebSocket. 9106 — Prometheus /metrics, /health, /ready
+# (override with METRICS_PORT).
+EXPOSE 8083 9106
 
 ENTRYPOINT ["/usr/local/bin/quant-rag"]

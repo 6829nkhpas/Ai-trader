@@ -16,6 +16,7 @@
 #[cfg(feature = "kafka")]
 pub mod engine {
     use crate::llm::LlmClient;
+    use crate::metrics::QuantRagMetrics;
     use crate::proto::insight_data::MarketInsight;
     use crate::proto::market_data::OhlcCandle;
     use crate::patterns::{Candle, ExtremaEngine, PatternClassifier, RollingWindow};
@@ -84,7 +85,17 @@ pub mod engine {
 
     /// Encodes a [`MarketInsight`] and publishes it to the given topic,
     /// keyed by the insight's symbol for partition co-locality.
-    async fn publish_insight(producer: &FutureProducer, topic: &str, insight: &MarketInsight) {
+    ///
+    /// Returns whether the insight reached Kafka. Drop behaviour is unchanged —
+    /// a failure is still logged and swallowed — the bool exists only so the
+    /// caller can count the loss. An insight costs a real LLM call, so one that
+    /// is generated and then dropped in transit is the most expensive silent
+    /// failure this agent has.
+    async fn publish_insight(
+        producer: &FutureProducer,
+        topic: &str,
+        insight: &MarketInsight,
+    ) -> bool {
         let payload = insight.encode_to_vec();
         let key = insight.symbol.as_str();
 
@@ -103,6 +114,7 @@ pub mod engine {
                     offset,
                     insight.sentiment_score,
                 );
+                true
             }
             Err((kafka_err, _owned_msg)) => {
                 log::error!(
@@ -110,6 +122,7 @@ pub mod engine {
                     insight.symbol,
                     kafka_err,
                 );
+                false
             }
         }
     }
@@ -131,7 +144,11 @@ pub mod engine {
     /// is detected, the DeepSeek LLM is invoked, and the resulting insight is:
     ///   1. Published to Kafka `signals.insights` as Protobuf.
     ///   2. Serialized to JSON and sent through `ws_tx` for WebSocket fan-out on port 8083.
-    pub async fn run(llm_client: &LlmClient, ws_tx: broadcast::Sender<String>) {
+    pub async fn run(
+        llm_client: &LlmClient,
+        ws_tx: broadcast::Sender<String>,
+        metrics: QuantRagMetrics,
+    ) {
         // ── Configuration ────────────────────────────────────────────────
         let brokers = std::env::var("KAFKA_BROKER_URL")
             .or_else(|_| std::env::var("KAFKA_BROKERS"))
@@ -182,6 +199,7 @@ pub mod engine {
                         let candle = match OhlcCandle::decode(payload) {
                             Ok(c) => c,
                             Err(e) => {
+                                metrics.decode_failed();
                                 log::warn!(
                                     "[engine] Protobuf decode error (skipping): {}",
                                     e
@@ -238,6 +256,19 @@ pub mod engine {
                             cached_patterns.remove(&candle.symbol);
                         }
 
+                        // The work point, placed after the classifier rather
+                        // than at decode: this is where the candle has actually
+                        // been through the pipeline, so a wedge in the extrema
+                        // or pattern code stops the heartbeat instead of being
+                        // masked by a consumer that keeps draining the topic.
+                        //
+                        // Everything below — the threshold, both cooldowns, the
+                        // LLM — is legitimately allowed to produce nothing for
+                        // an entire session, so this is the only point that can
+                        // carry the beat.
+                        metrics.candle_consumed();
+                        metrics.set_active_patterns(cached_patterns.len());
+
                         // Broadcast latest pattern-only update to WebSocket so the frontend can visualize it
                         let current_pattern_val = cached_patterns.get(&candle.symbol).cloned().unwrap_or(serde_json::Value::Null);
                         let pattern_update_json = serde_json::json!({
@@ -255,10 +286,17 @@ pub mod engine {
                             continue;
                         }
 
+                        // Counted before the cooldown gates, so the ratio of
+                        // anomalies to insights exposes events found and then
+                        // dropped. Counting after would make suppression
+                        // invisible: the anomaly would simply never appear.
+                        metrics.anomaly_detected();
+
                         // ── Anomaly detected! Invoke DeepSeek LLM ─────────
                         // ── Cooldown gate ────────────────────────────────
                         // 1. Check global rate limit (to avoid API spam)
                         if last_global_call.elapsed() < GLOBAL_COOLDOWN {
+                            metrics.llm_suppressed("global_cooldown");
                             log::info!(
                                 "⏳ Global LLM cooldown active ({:.1}s remaining) — skipping anomaly for {}",
                                 (GLOBAL_COOLDOWN - last_global_call.elapsed()).as_secs_f64(),
@@ -271,6 +309,7 @@ pub mod engine {
                         let now = Instant::now();
                         if let Some(&last_symbol_call) = last_symbol_calls.get(&candle.symbol) {
                             if now.duration_since(last_symbol_call) < SYMBOL_COOLDOWN {
+                                metrics.llm_suppressed("symbol_cooldown");
                                 log::info!(
                                     "⏳ Per-symbol LLM cooldown active ({:.1}s remaining) — skipping anomaly for {}",
                                     (SYMBOL_COOLDOWN - now.duration_since(last_symbol_call)).as_secs_f64(),
@@ -297,8 +336,24 @@ pub mod engine {
 
                         let active_pattern_str = cached_patterns.get(&candle.symbol).map(|v| v.to_string());
 
-                        match llm_client.generate_insight(&candle.symbol, signed_change, active_pattern_str).await {
+                        // Timed here rather than inside the client so the span
+                        // covers the whole call including its 429 backoff
+                        // sleeps — that is the latency the pipeline actually
+                        // paid, and it is what makes a provider hanging until
+                        // timeout distinguishable from one refusing instantly.
+                        let llm_started = Instant::now();
+                        let llm_result = llm_client
+                            .generate_insight(&candle.symbol, signed_change, active_pattern_str)
+                            .await;
+                        metrics.llm_call_completed(
+                            llm_result.is_ok(),
+                            llm_started.elapsed().as_secs_f64(),
+                        );
+
+                        match llm_result {
                             Ok((headline, analysis, sentiment)) => {
+                                metrics.insight_emitted();
+
                                 let insight = MarketInsight {
                                     symbol: candle.symbol.clone(),
                                     timestamp_ms: now_ms(),
@@ -335,17 +390,31 @@ pub mod engine {
                                 // latency doesn't stall the consume loop.
                                 let producer_clone = producer.clone();
                                 let topic_clone = produce_topic.clone();
+                                let pub_metrics = metrics.clone();
 
                                 tokio::spawn(async move {
-                                    publish_insight(
+                                    let published = publish_insight(
                                         &producer_clone,
                                         &topic_clone,
                                         &insight,
                                     )
                                     .await;
+                                    if !published {
+                                        // Generated at real LLM cost and then
+                                        // lost — the aggregator never saw it.
+                                        // insights_total still climbs, so
+                                        // without this the loss is invisible.
+                                        pub_metrics.publish_failed();
+                                    }
                                 });
                             }
                             Err(e) => {
+                                // The specific failure kind was already counted
+                                // inside the client, where it is detectable.
+                                // This records only that a placeholder went out
+                                // in place of a real insight.
+                                metrics.fallback_emitted();
+
                                 // ── Error Visibility Engine ──────────────────
                                 // DO NOT fail silently.  Construct a fallback
                                 // MarketInsight carrying the error details and
@@ -385,14 +454,18 @@ pub mod engine {
                                 // ── Publish error insight to Kafka ───────────
                                 let producer_clone = producer.clone();
                                 let topic_clone = produce_topic.clone();
+                                let pub_metrics = metrics.clone();
 
                                 tokio::spawn(async move {
-                                    publish_insight(
+                                    let published = publish_insight(
                                         &producer_clone,
                                         &topic_clone,
                                         &fallback_insight,
                                     )
                                     .await;
+                                    if !published {
+                                        pub_metrics.publish_failed();
+                                    }
                                 });
                             }
                         }

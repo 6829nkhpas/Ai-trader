@@ -40,6 +40,9 @@ prost = "0.12"
 # WebSocket server — broadcasts JSON insight payloads to connected clients on port 8083
 tokio-tungstenite = "0.20"
 
+# Shared Prometheus surface: /metrics, /health, /ready + the work heartbeat.
+service-metrics = { path = "../../service-metrics" }
+
 # ===========================================================================
 # Build-time Dependencies (proto compilation)
 # ===========================================================================
