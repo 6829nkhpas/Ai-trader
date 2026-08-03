@@ -1,0 +1,27 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+#
+#   cp terraform.tfvars.example terraform.tfvars
+
+# Utho console -> API -> generate token (read/write).
+utho_token = "<your-utho-api-token>"
+
+# openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32
+# Stored in tfstate; bootstrap.sh disables SSH password auth afterwards.
+root_password = "<long-random-password>"
+
+# Numeric ID of the SSH key you created in the console from
+# keys/stratai_deploy.pub. The provider cannot upload it for you.
+ssh_key_ids = "<utho-ssh-key-id>"
+
+# REQUIRED, no default. Look up the real 16 GB plan ID first:
+#   curl -H "Authorization: Bearer $UTHO_TOKEN" https://api.utho.com/v2/cloud/getplans
+planid = "<16gb-plan-id>"
+
+# Confirm before apply:
+#   curl -H "Authorization: Bearer $UTHO_TOKEN" https://api.utho.com/v2/cloud/availabledczones
+dcslug = "inmumbaizone2"
+
+# image          = "ubuntu-22.04-x86_64"
+# instance_name  = "stratai-prod"
+# billingcycle   = "monthly"
+# enable_backups = true
