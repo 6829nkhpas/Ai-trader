@@ -57,9 +57,17 @@ variable "dcslug" {
     there, so this LOWERS market-data latency versus the current DigitalOcean
     blr1 (Bangalore) host.
 
-    CONFIRM the exact slug before apply — zone names change:
-      curl -H "Authorization: Bearer $UTHO_TOKEN" \
-        https://api.utho.com/v2/cloud/availabledczones
+    NOT API-VERIFIABLE — Utho's zone-list endpoints are broken. Every
+    unrecognised /v2/cloud/* path falls through to a catch-all returning HTTP 200
+    with a 1-byte body and the header `X-Debug-Marker: plans-handler-v2`
+    (confirmed by requesting a deliberately nonsense path, which behaves
+    identically). /cloud/availabledczones, /cloud/dcslug and /cloud/dczones all
+    "succeed" while returning nothing.
+
+    This value is the provider's own documented example. CONFIRM it against the
+    zone dropdown in the console before applying: for a latency-sensitive
+    market-data pipeline, silently landing in the wrong region defeats the point
+    of the move.
   EOT
   type        = string
   default     = "inmumbaizone2"
@@ -67,26 +75,36 @@ variable "dcslug" {
 
 variable "planid" {
   description = <<-EOT
-    Plan ID for the 16 GB instance. Utho plan IDs are opaque numeric strings
-    (the provider's own example uses "10045"), so this MUST be looked up — a
-    guessed ID either fails or silently provisions the wrong size.
+    Plan ID. Default 10316 = "basic-103": 6 vCPU, 16 GB RAM, 320 GB NVMe,
+    1000 GB bandwidth, INR 5514/mo. VERIFIED against GET /v2/pricing.
 
-      curl -H "Authorization: Bearer $UTHO_TOKEN" \
-        https://api.utho.com/v2/cloud/getplans
+    Chosen over the other two 16 GB plans that include disk because it is the
+    only one that is also a CPU *upgrade* on the 4-vCPU DigitalOcean box, and it
+    carries the largest disk — which matters because QuestDB history only grows:
 
-    No default on purpose: an accidental apply should error, not bill you for
-    whatever plan happened to be first in the list.
+      10325  Dedicated-Memory-102     2 vCPU  160 GB  INR 3420/mo  (2.9 mo credit)
+      10316  basic-103                6 vCPU  320 GB  INR 5514/mo  <- this (1.8 mo)
+      10364  Dedicated-CPU-4-16G-200  4 vCPU  240 GB  INR 7614/mo  (1.3 mo, dedicated)
+
+    2 vCPU was rejected despite the longer runway: redeploy.sh compiles six Rust
+    services on the host, and deploy-server.yml allows SSH only 40 minutes before
+    timing out.
+
+    Plans reporting disk=0 require a separately billed volume — avoid unless you
+    intend to attach one.
   EOT
   type        = string
+  default     = "10316"
 }
 
 variable "image" {
   description = <<-EOT
-    OS image slug. Matches the Ubuntu 22.04 x86_64 base the DigitalOcean droplet
-    uses, so every Dockerfile builds unchanged.
+    OS image slug. VERIFIED present with cost 0 via GET /v2/cloud/images
+    (which also offers ubuntu-20.04/24.04/25.04-x86_64).
 
-    Confirm available images with the utho_images data source (see images.tf) or:
-      curl -H "Authorization: Bearer $UTHO_TOKEN" https://api.utho.com/v2/cloud/images
+    Held at 22.04 to match infra/cloud-init.yaml and the current DigitalOcean
+    host, so bootstrap.sh follows the Docker install path already proven in
+    production. Moving to 24.04 should be a separate, deliberate change.
   EOT
   type        = string
   default     = "ubuntu-22.04-x86_64"
