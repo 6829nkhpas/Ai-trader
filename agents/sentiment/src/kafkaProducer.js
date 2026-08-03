@@ -26,6 +26,7 @@
 //   KAFKA_CLIENT_ID_SENTIMENT  — Kafka client ID  (default: sentiment-agent)
 
 import { Kafka, CompressionTypes } from 'kafkajs';
+import { metrics } from './metrics.js';
 
 // ── Module-level producer instance (initialised once) ────────────────────────
 
@@ -86,6 +87,7 @@ export async function connectProducer() {
 export async function publishSentiment(symbol, claudeJson, protoMessage) {
   if (!_producer) {
     console.error('[kafkaProducer] Producer not initialised — call connectProducer() first.');
+    metrics.publishCompleted('not_connected');
     return;
   }
 
@@ -115,6 +117,10 @@ export async function publishSentiment(symbol, claudeJson, protoMessage) {
     console.error(
       `[kafkaProducer] Protobuf encode failed for symbol='${symbol}': ${err.message}`
     );
+    // Classified at the point of detection rather than inferred downstream: an
+    // encode failure is proto/schema drift, which needs a code change, while a
+    // send failure is the broker and usually resolves itself.
+    metrics.publishCompleted('encode_error');
     return;
   }
 
@@ -132,6 +138,7 @@ export async function publishSentiment(symbol, claudeJson, protoMessage) {
     });
 
     const meta = result[0];
+    metrics.publishCompleted('ok');
     console.log(
       `\x1b[32m[kafkaProducer]\x1b[0m \x1b[32mPublished:\x1b[0m symbol=\x1b[1m${symbol}\x1b[0m  ` +
       `score=\x1b[33m${payload.claude_conviction_score}\x1b[0m  ` +
@@ -139,6 +146,12 @@ export async function publishSentiment(symbol, claudeJson, protoMessage) {
     );
   } catch (err) {
     // Non-fatal — log and continue; individual publish failures don't stop the loop.
+    //
+    // Worth counting precisely because it is non-fatal and invisible from
+    // outside: the verdict is still cached and still served over HTTP to the
+    // tool-server, so the agent looks entirely healthy while every Kafka
+    // consumer downstream goes blind.
+    metrics.publishCompleted('send_error');
     console.error(
       `\x1b[31m[kafkaProducer] Failed to publish for symbol='${symbol}': ${err.message}\x1b[0m`
     );

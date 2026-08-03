@@ -32,4 +32,10 @@ COPY shared_protos/ /app/shared_protos/
 # Run as the built-in non-root node user for hardening
 USER node
 
+# 8090 — on-demand sentiment HTTP API (read by the Rust tool-server's
+#        get_news_context proxy).
+# 9108 — Prometheus /metrics, /health and /ready.
+# Documentation only; docker-compose still has to publish or network these.
+EXPOSE 8090 9108
+
 CMD ["node", "src/index.js"]

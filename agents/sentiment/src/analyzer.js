@@ -24,6 +24,8 @@
 //   LLM_MODEL    — model ID (default: deepseek-ai/DeepSeek-V3-0324).
 //   LLM_API_URL  — endpoint URL (default: https://router.huggingface.co/v1/chat/completions).
 
+import { metrics } from './metrics.js';
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const DEFAULT_URL = 'https://api.freemodel.dev/v1/chat/completions';
@@ -211,9 +213,15 @@ async function callLlm(cfg, systemPrompt, userMessage, maxTokens) {
 
   if (!response.ok) {
     const errText = await response.text().catch(() => '');
-    throw new Error(
+    const err = new Error(
       `[analyzer] LLM API returned HTTP ${response.status}: ${errText.slice(0, 200)}`
     );
+    // Carried as a property so callers can tell "the provider answered and
+    // refused" from "the request never completed" without re-parsing this
+    // message. `fetch` rejects with a TypeError that has no status, so the
+    // presence of this field is the whole classification.
+    err.status = response.status;
+    throw err;
   }
 
   const data = await response.json();
@@ -301,7 +309,15 @@ export async function analyzeStrategicSentiment(symbol, ctx = {}) {
     return neutralVerdict(symbol);
   }
 
-  const cfg = resolveLlmConfig();
+  let cfg;
+  try {
+    cfg = resolveLlmConfig();
+  } catch (err) {
+    // No request was issued, so no latency is observed — a duration for a
+    // missing API key would measure nothing and skew the histogram toward zero.
+    metrics.llmCallCompleted('no_api_key');
+    throw err;
+  }
 
   const userMessage =
     `Symbol: ${symbol}\n\n` +
@@ -314,17 +330,36 @@ export async function analyzeStrategicSentiment(symbol, ctx = {}) {
     `with ${categorizedNews.length} categorized article(s)...`
   );
 
-  const rawText = await callLlm(cfg, STRATEGIC_SYSTEM_PROMPT, userMessage, STRATEGIC_MAX_TOKENS);
+  const startedAt = performance.now();
+  const elapsed = () => (performance.now() - startedAt) / 1000;
+
+  let rawText;
+  try {
+    rawText = await callLlm(cfg, STRATEGIC_SYSTEM_PROMPT, userMessage, STRATEGIC_MAX_TOKENS);
+  } catch (err) {
+    // `err.status` is set by callLlm only when the provider answered. Note that
+    // this fetch has no timeout, so a provider that simply hangs never lands
+    // here at all — it stalls the poll cycle, and the heartbeat is what surfaces
+    // that.
+    metrics.llmCallCompleted(err.status ? 'http_error' : 'network_error', elapsed());
+    throw err;
+  }
 
   let parsed;
   try {
     parsed = parseJsonResponse(rawText);
   } catch (parseErr) {
+    // Distinct from http_error on purpose: the provider was reachable and
+    // answered, just not with JSON. That is usually a model or prompt change,
+    // which needs a code fix rather than a retry.
+    metrics.llmCallCompleted('parse_error', elapsed());
     throw new Error(
       `[analyzer] Failed to parse strategic LLM response as JSON. ` +
       `Raw output: "${String(rawText).slice(0, 200)}"`
     );
   }
+
+  metrics.llmCallCompleted('ok', elapsed());
 
   // ── Validate + clamp every field ──────────────────────────────────────────
   const score = clampInt(parsed.conviction_score, 1, 100, 50);

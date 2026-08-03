@@ -38,6 +38,7 @@ import { analyzeStrategicSentiment }               from './analyzer.js';
 import { connectProducer, publishSentiment, disconnectProducer } from './kafkaProducer.js';
 import { createClient }                            from 'redis';
 import http                                        from 'node:http';
+import { metrics }                                 from './metrics.js';
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -120,6 +121,7 @@ async function getProfileContext(symbol, seed) {
       }
     } catch (err) {
       console.warn(`[index] Profile cache read failed for ${symbol}: ${err.message}`);
+      metrics.cacheError('profile_read');
     }
   }
 
@@ -147,6 +149,7 @@ async function getProfileContext(symbol, seed) {
       );
     } catch (err) {
       console.warn(`[index] Profile cache write failed for ${symbol}: ${err.message}`);
+      metrics.cacheError('profile_write');
     }
   }
 
@@ -201,8 +204,21 @@ async function processTicker(symbol, NewsSentiment) {
     verdict = await analyzeStrategicSentiment(symbol, { profile, financials, categorizedNews });
   } catch (err) {
     console.error(`[index] analyzeStrategicSentiment failed for ${symbol}: ${err.message}`);
+    // Not work — see metrics.js. Counting a failure as a beat would let an agent
+    // failing every symbol on every cycle report a perfectly fresh heartbeat.
+    metrics.classificationCompleted('failed');
     return; // Keep the last good verdict served by the HTTP API.
   }
+
+  // THE WORK POINT. A completed per-symbol classification is the finest-grained
+  // unit of real work this agent does, so it is what beats the monitoring
+  // heartbeat. `neutral_no_news` is the no-LLM path taken when a symbol has no
+  // fresh articles — with 10-minute polling that is the common case, and it does
+  // beat: the loop ran and produced a verdict. What it does NOT prove is that
+  // news is reaching the agent at all, which is why articles_total and
+  // news_fetches_total exist alongside it.
+  metrics.classificationCompleted(categorizedNews.length > 0 ? 'scored' : 'neutral_no_news');
+  metrics.verdictProduced(verdict.label);
 
   // ── Step 5: Cache the RICH verdict for the HTTP API ────────────────────────
   const headlines = categorizedNews.map((a) => a.title).filter(Boolean).slice(0, 5);
@@ -223,6 +239,10 @@ async function processTicker(symbol, NewsSentiment) {
     industry:          profile?.industry ?? seed.sector ?? null,
     updated_at:        Date.now(),
   });
+
+  // Set from the map's own size rather than incremented, so the gauge cannot
+  // drift from reality on a path that forgets to adjust it.
+  metrics.setCachedSymbols(latestSentiment.size);
 
   // ── Step 6: Publish a backward-compatible projection to Kafka ──────────────
   // Map the rich verdict onto the EXISTING proto fields — schema unchanged:
@@ -310,15 +330,18 @@ function startSentimentHttpServer(NewsSentiment) {
       const url = new URL(req.url, `http://localhost:${HTTP_PORT}`);
 
       if (req.method === 'GET' && url.pathname === '/health') {
+        metrics.httpRequestCompleted('/health', 200);
         return sendJson(200, { status: 'ok', symbols: [...latestSentiment.keys()] });
       }
 
       if (req.method === 'GET' && url.pathname === '/sentiment') {
         const symbol = (url.searchParams.get('symbol') ?? '').trim().toUpperCase();
         if (!symbol) {
+          metrics.httpRequestCompleted('/sentiment', 400);
           return sendJson(400, { error: 'symbol query parameter is required' });
         }
         let entry = latestSentiment.get(symbol);
+        const wasMiss = !entry;
         if (!entry) {
           // Cache miss → classify this symbol on demand rather than serving a
           // permanent 404 for every symbol outside the fixed polling set. Wait
@@ -337,11 +360,23 @@ function startSentimentHttpServer(NewsSentiment) {
         if (!entry) {
           // Still no classification (in flight or failed) — the proxy treats a
           // non-200 as "Unavailable" and reads the headlines directly.
+          //
+          // Which of the two it was is worth separating: a `timeout` means the
+          // work is still running and a later request will be served from cache,
+          // while `failed` means it finished with nothing and the next request
+          // will pay the same cost again. The in-flight map is the evidence —
+          // classifyOnDemand deletes the entry in its .finally.
+          metrics.onDemandCompleted(onDemandInFlight.has(symbol) ? 'timeout' : 'failed');
+          metrics.httpRequestCompleted('/sentiment', 404);
           return sendJson(404, { error: `no sentiment computed yet for ${symbol}` });
         }
+        if (wasMiss) metrics.onDemandCompleted('served');
+        metrics.httpRequestCompleted('/sentiment', 200);
         return sendJson(200, entry);
       }
 
+      // Unrouted paths are deliberately not counted: doing so would mint a
+      // metric series from arbitrary request URLs.
       return sendJson(404, { error: 'not found' });
     } catch (err) {
       return sendJson(500, { error: `internal error: ${err.message}` });
@@ -363,6 +398,7 @@ function startSentimentHttpServer(NewsSentiment) {
 
 /**
  * Main entry point:
+ *   0. Start the Prometheus surface (before anything that can block or fail).
  *   1. Load the Protobuf schema (once, shared across all publish calls).
  *   2. Connect to Kafka.
  *   3. Connect to Redis (for graceful-shutdown reference).
@@ -376,6 +412,17 @@ async function run() {
   console.log('║  Sentiment Agent — NLP Polling Loop (Subphases 34-36)    ║');
   console.log('║  LLM · Redis · Kafka Protobuf Pipeline                     ║');
   console.log('╚═══════════════════════════════════════════════════════════╝\n');
+
+  // ── 0. Prometheus surface (:9108) ─────────────────────────────────────────
+  // First, deliberately: kafkajs retries a broker connection with backoff before
+  // giving up, and during that window this is the difference between Prometheus
+  // scraping an honest `idle` and scraping nothing at all — and a failed scrape
+  // is indistinguishable from a service that was never deployed.
+  //
+  // On its own port rather than bolted onto the API below: that one is reachable
+  // through the tool-server, this one is for Prometheus alone, and a wedged API
+  // server must not take the monitoring surface down with it.
+  const metricsServer = metrics.serve();
 
   // ── 1. Load Protobuf schema ───────────────────────────────────────────────
   console.log('[index] Loading NewsSentiment Protobuf schema...');
@@ -434,7 +481,10 @@ async function run() {
     console.log(`\x1b[36m[index]\x1b[0m \x1b[32m══ Poll cycle complete. Next run in ${POLL_INTERVAL_MS / 1000}s ══\x1b[0m\n`);
   };
 
-  // Run immediately on startup, then on every interval.
+  // Run immediately on startup, then on every interval. Arming stall detection
+  // here rather than at construction means a process that dies during Kafka or
+  // Redis startup reports `idle`, not a stall it never had the chance to avoid.
+  metrics.markPollLoopRunning();
   await pollCycle();
   setInterval(pollCycle, POLL_INTERVAL_MS);
 
@@ -447,6 +497,13 @@ async function run() {
       console.log('[index] Sentiment HTTP API closed.');
     } catch (err) {
       console.error(`[index] Error closing HTTP server: ${err.message}`);
+    }
+
+    try {
+      metricsServer?.close();
+      console.log('[index] Metrics listener closed.');
+    } catch (err) {
+      console.error(`[index] Error closing metrics listener: ${err.message}`);
     }
 
     try {
