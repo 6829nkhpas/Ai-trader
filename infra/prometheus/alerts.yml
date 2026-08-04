@@ -1,0 +1,475 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Alerting + recording rules — Strat Ai service monitoring
+# ──────────────────────────────────────────────────────────────────────────────
+# Loaded by infra/prometheus/prometheus.yml via `rule_files`.
+#
+# Alertmanager delivery is out of scope for this phase (see the plan). These
+# rules still evaluate: they show on the Prometheus /alerts page and are read by
+# status-api's /api/alerts. Wiring a receiver is a later, separate change.
+#
+# ── Rule ordering discipline ─────────────────────────────────────────────────
+# Groups evaluate in file order and rules within a group evaluate in sequence,
+# so the normalization group MUST come first — the alert group reads the series
+# it records. A recording rule referenced before it is recorded silently
+# evaluates to an empty vector, which reads as "nothing is wrong".
+#
+# ── Every alert here fires on a metric that provably exists ──────────────────
+# An alert on a misspelled or not-yet-implemented metric never fires and looks
+# identical to a healthy system. Consumer-group lag is the one signal the plan
+# asked for that is NOT covered below: no service exports it, and Redpanda's own
+# lag metric names vary by version. Rather than ship a rule that silently never
+# fires, wedged consumers are caught by PipelineConsumerStalled (below), which
+# compares throughput between stages using counters that are known to exist.
+# See docs/MONITORING.md for the follow-up.
+# ──────────────────────────────────────────────────────────────────────────────
+
+groups:
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Normalization — one name per contract signal, across all services
+  # ════════════════════════════════════════════════════════════════════════════
+  # Each service prefixes its metrics with its own name (`ingestion_*`,
+  # `deep_quant_*`, ...), so there is no single series an alert can range over.
+  # These rules fold the shared-contract signals into one name each, keeping the
+  # `service` label that every exporter attaches as a const label.
+  #
+  # The selector is a regex on `__name__` rather than an enumerated `or` chain
+  # so that a service adopting the contract is picked up automatically — joining
+  # the fleet is "export the standard names", nothing more. The corollary is
+  # that a service which *renames* a metric drops out silently, which is exactly
+  # why the names are pinned by unit tests in each service.
+  - name: service_contract_normalization
+    interval: 30s
+    rules:
+
+      - record: service:last_work_age_seconds
+        expr: '{__name__=~".+_last_work_age_seconds"}'
+
+      - record: service:stall_threshold_seconds
+        expr: '{__name__=~".+_stall_threshold_seconds"}'
+
+      # 1 only while the service actually has something to do. The Rust services
+      # derive this from the market session; deep-quant derives it from runs in
+      # flight, because "nobody asked for an analysis" is its normal state for
+      # most of the day. Without this gate, WorkStalled would page every night.
+      - record: service:work_expected
+        expr: '{__name__=~".+_work_expected"}'
+
+      - record: service:work_completed_total
+        expr: '{__name__=~".+_work_completed_total"}'
+
+      - record: service:uptime_seconds
+        expr: '{__name__=~".+_uptime_seconds"}'
+
+      - record: service:market_session_open
+        expr: '{__name__=~".+_market_session_open"}'
+
+      # Throughput, for dashboards and for the status-api "is it moving" field.
+      - record: service:work_completed:rate5m
+        expr: rate(service:work_completed_total[5m])
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Availability
+  # ════════════════════════════════════════════════════════════════════════════
+  - name: availability
+    rules:
+
+      # The scrape itself failing is the unambiguous down signal — more reliable
+      # than any in-process gauge, because a gauge cannot report that its own
+      # process is gone. `*_up` inside each service only ever reads 1; its
+      # ABSENCE is the signal, and that is what `up == 0` captures.
+      - alert: ServiceDown
+        expr: up{tier=~"data-plane|agents|reasoning|monitoring"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} is not answering scrapes"
+          description: >-
+            Prometheus has failed to scrape {{ $labels.job }} at
+            {{ $labels.instance }} for over 2 minutes. The process is gone, the
+            metrics listener is wedged, or the container lost the network.
+            Check `docker compose logs {{ $labels.job }}` and
+            `docker compose ps` for a restart loop.
+          runbook: docs/MONITORING.md#servicedown
+
+      # ServiceDown only fires for targets Prometheus KNOWS about — it creates an
+      # `up` series (value 0) for every configured target, reachable or not. A
+      # job deleted from prometheus.yml, or misspelled into a job that matches
+      # nothing, produces no series at all and therefore no failing row. That
+      # silence reads exactly like health.
+      #
+      # The count is the guard. 10 = 9 instrumented services (9101-9109) plus
+      # Prometheus itself; status-api (:9110) raises this to 11 when it lands in
+      # Phase 4. The literal is intentionally not self-derived, since anything
+      # derived from the config cannot detect the config being wrong.
+      - alert: ServiceTargetsMissingFromConfig
+        expr: count(up{tier=~"data-plane|agents|reasoning|monitoring"}) < 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus is configured for fewer targets than expected"
+          description: >-
+            Expected 10 scrape targets (9 instrumented services + Prometheus
+            itself) but only {{ $value }} exist. A job was removed or renamed in
+            infra/prometheus/prometheus.yml, so some service is now unmonitored
+            and looks healthy purely because nothing is asking.
+          runbook: docs/MONITORING.md#servicetargetsmissingfromconfig
+
+      # cAdvisor sees restarts that a scrape cannot: a container that crashes and
+      # comes back inside one 30s interval never registers as down, but it also
+      # never does any work. A resetting *_uptime_seconds says the same thing
+      # from the inside; this catches it from the outside.
+      - alert: ContainerRestartLoop
+        expr: changes(container_start_time_seconds{name=~"stratai-.+"}[15m]) > 2
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.name }} has restarted more than twice in 15m"
+          description: >-
+            Crash loop. `docker compose logs --tail=200 {{ $labels.name }}`
+            usually shows the panic or the failed dependency. If the exit code
+            is 137 the kernel OOM-killed it — see ContainerNearMemoryLimit.
+          runbook: docs/MONITORING.md#containerrestartloop
+
+      # Reachability from inside the compose network, for surfaces with no
+      # metrics endpoint. Deliberately separate from ServiceDown: deep-quant's
+      # metrics listener runs on its own thread specifically so it survives a
+      # wedged event loop, which means a green :9109 says nothing about whether
+      # /run still answers. This probe is what closes that gap.
+      - alert: BlackboxProbeFailing
+        expr: probe_success == 0
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Probe to {{ $labels.instance }} is failing"
+          description: >-
+            {{ $labels.instance }} refused or timed out on a direct probe from
+            the monitoring container for 3 minutes. If the owning service is
+            simultaneously scraping green, the process is alive but its serving
+            path is wedged — the more serious of the two states.
+          runbook: docs/MONITORING.md#blackboxprobefailing
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Working vs merely alive — the point of the whole exercise
+  # ════════════════════════════════════════════════════════════════════════════
+  - name: liveness_of_work
+    rules:
+
+      # THE alert. Five of these services are Kafka/WS loops that can wedge on a
+      # poll and keep answering health checks forever while processing nothing.
+      #
+      # The comparison is against the service's OWN exported threshold, not a
+      # constant here, so each service owns the definition of "too long" next to
+      # the code that does the work — and the Rust services widen that threshold
+      # off-session automatically. The `work_expected == 1` gate is what stops
+      # an idle overnight pipeline reading as a failure.
+      - alert: WorkStalled
+        expr: >-
+          service:last_work_age_seconds > service:stall_threshold_seconds
+          and on(service) service:work_expected == 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} has done no work in {{ $value | humanizeDuration }}"
+          description: >-
+            {{ $labels.service }} is up and scraping green but has not completed
+            a unit of work for longer than its own stall threshold, while it
+            still expects work. This is the wedged-consumer case: the container
+            is healthy, the pipeline is not. Check its upstream first (Kafka
+            topic, WS peer, or the LLM provider) before restarting.
+          runbook: docs/MONITORING.md#workstalled
+
+      # Same signal, one tier softer and much earlier — useful during market
+      # hours when a two-minute gap already means missed ticks, without paging
+      # on it.
+      - alert: WorkSlowing
+        expr: >-
+          service:last_work_age_seconds
+            > (service:stall_threshold_seconds * 0.5)
+          and on(service) service:work_expected == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} work is slowing"
+          runbook: docs/MONITORING.md#workstalled
+
+      # The wedged-consumer case that a heartbeat alone cannot catch: ingestion
+      # is decoding ticks, so the pipeline HAS input, but a downstream stage is
+      # not consuming any of it. Written on counters that are known to exist,
+      # deliberately, in place of a consumer-group-lag rule (see the header).
+      - alert: PipelineConsumerStalled
+        expr: >-
+          rate(ingestion_ticks_total[5m]) > 0
+          and on() (
+            rate(technical_ticks_total[5m]) == 0
+            or rate(alpha_terminal_ticks_total[5m]) == 0
+          )
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "A tick consumer is not consuming while ingestion is producing"
+          description: >-
+            ingestion_ticks_total is rising but technical and/or alpha-terminal
+            processed nothing for 5 minutes. Ticks are reaching Kafka and being
+            dropped on the floor downstream — consumer wedged, rebalancing, or
+            stuck on a poison message.
+          runbook: docs/MONITORING.md#pipelineconsumerstalled
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Upstream dependencies
+  # ════════════════════════════════════════════════════════════════════════════
+  - name: upstream
+    rules:
+
+      # The single highest-value signal in the fleet. ingestion holds the Kite
+      # WebSocket; when it drops, every downstream service keeps running happily
+      # on nothing. Gated on the market session because a disconnect at 02:00 is
+      # not an incident.
+      - alert: KiteWsDisconnected
+        expr: ingestion_kite_ws_connected == 0 and ingestion_market_session_open == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kite WebSocket is down during market hours"
+          description: >-
+            No live market data is entering the platform. Everything downstream
+            will continue to look healthy while serving stale prices. Usually an
+            expired KITE_ACCESS_TOKEN (they expire daily) — check ingestion's
+            logs for the auth error before assuming a network fault.
+          runbook: docs/MONITORING.md#kitewsdisconnected
+
+      # Reconnects are normal in ones and twos; a sustained churn means the
+      # token is being rejected or the upstream is flapping.
+      - alert: KiteWsFlapping
+        expr: increase(ingestion_kite_ws_reconnects_total[15m]) > 5
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kite WebSocket reconnected {{ $value }} times in 15m"
+          runbook: docs/MONITORING.md#kitewsdisconnected
+
+      - alert: QuestDbWriteFailing
+        expr: rate(ingestion_write_errors_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ingestion is failing to write to QuestDB"
+          description: >-
+            Ticks are being decoded but not persisted, so history has a hole
+            that backfill will not automatically notice. Check QuestDB's memory
+            headroom first — on this box it is the component closest to its
+            limit.
+          runbook: docs/MONITORING.md#questdbwritefailing
+
+      - alert: ToolServerDbErrors
+        expr: rate(tool_server_db_errors_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "tool-server is failing QuestDB queries"
+          description: >-
+            The deep-quant agent's market-data tools are returning errors or
+            degraded answers. Analyses will still complete — on worse data.
+          runbook: docs/MONITORING.md#toolserverdberrors
+
+      - alert: KiteApiErrors
+        expr: rate(aggregator_kite_api_errors_total[5m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "aggregator's Kite REST proxy is erroring"
+          description: >-
+            Historical bars and quotes are failing. The chart will show gaps on
+            scroll-back. Often the same expired token as KiteWsDisconnected.
+          runbook: docs/MONITORING.md#kiteapierrors
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Degraded-but-running — the states that look fine on a dashboard
+  # ════════════════════════════════════════════════════════════════════════════
+  - name: silent_degradation
+    rules:
+
+      # The sentiment agent's worst state: with no NEWSDATA_API_KEY it keeps a
+      # perfectly fresh heartbeat, cycling through symbols and learning nothing.
+      # Every liveness signal reads green. This is the only thing that catches
+      # it, which is why it is a rule and not a dashboard panel.
+      - alert: SentimentLearningNothing
+        expr: increase(sentiment_news_fetches_total{outcome="no_api_key"}[15m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "sentiment agent has no NEWSDATA_API_KEY"
+          description: >-
+            The agent is running its full cycle and fetching zero articles, so
+            it will report a fresh heartbeat forever while producing no
+            verdicts. Set NEWSDATA_API_KEY in the server .env and redeploy.
+          runbook: docs/MONITORING.md#sentimentlearningnothing
+
+      # Quota exhaustion looks the same from the outside as an outage, but the
+      # free tier is ~200 credits/day so this is the more likely cause.
+      - alert: SentimentNewsFetchFailing
+        expr: >-
+          rate(sentiment_news_fetches_total{outcome="http_error"}[15m]) > 0
+          and rate(sentiment_articles_total[15m]) == 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "sentiment news fetches are failing and no articles are arriving"
+          runbook: docs/MONITORING.md#sentimentnewsfetchfailing
+
+      # quant-rag falls back to a template insight when the LLM fails. The
+      # service stays up, the WS keeps publishing, and the output quietly stops
+      # being AI-generated.
+      - alert: QuantRagFallingBackToTemplates
+        expr: >-
+          rate(quant_rag_fallback_insights_total[15m])
+            > rate(quant_rag_insights_total[15m]) * 0.5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "over half of quant-rag insights are template fallbacks"
+          description: >-
+            The LLM path is failing and insights are being served from the
+            fallback template. Users see plausible text with no model behind it.
+            Check quant_rag_llm_errors_total for the provider-side reason.
+          runbook: docs/MONITORING.md#quantragfallingbacktotemplates
+
+      - alert: QuantRagLlmErrors
+        expr: rate(quant_rag_llm_errors_total[10m]) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "quant-rag LLM calls are erroring"
+          runbook: docs/MONITORING.md#quantragllmerrors
+
+      # A run reaching the graph but never terminating cleanly. Distinct from a
+      # stall: these are runs that finished, badly.
+      - alert: DeepQuantRunsFailing
+        expr: >-
+          rate(deep_quant_runs_total{outcome=~"error|key_error|auth_error"}[15m]) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "deep-quant runs are failing ({{ $labels.outcome }})"
+          description: >-
+            auth_error/key_error point at the per-user OpenRouter key resolution
+            against the backend internal endpoint, not at the graph. Plain
+            `error` is the graph or a tool.
+          runbook: docs/MONITORING.md#deepquantrunsfailing
+
+      # Runs that start and never reach a terminal outcome pin runs_in_flight
+      # high. Since work_expected is gated on that gauge, a leak here would also
+      # keep WorkStalled armed — worth catching on its own.
+      - alert: DeepQuantRunsPilingUp
+        expr: deep_quant_runs_in_flight > 10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} deep-quant runs in flight for 15m"
+          runbook: docs/MONITORING.md#deepquantrunspilingup
+
+      - alert: ToolServerToolsUnavailable
+        expr: rate(tool_server_tool_unavailable_total[10m]) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "tool-server is reporting tools unavailable"
+          description: >-
+            The agent is analysing with a reduced toolset. Answers degrade
+            silently rather than failing, so nothing else surfaces this.
+          runbook: docs/MONITORING.md#toolservertoolsunavailable
+
+      # Publish failures are the classic silent break: the producing service is
+      # completely healthy and every consumer goes blind.
+      - alert: KafkaPublishFailing
+        expr: >-
+          rate(alpha_terminal_publish_errors_total[5m]) > 0
+          or rate(technical_publish_errors_total[5m]) > 0
+          or rate(predictive_publish_errors_total[5m]) > 0
+          or rate(quant_rag_publish_errors_total[5m]) > 0
+          or rate(aggregator_publish_errors_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} is failing to publish to Kafka"
+          runbook: docs/MONITORING.md#kafkapublishfailing
+
+      # Decode errors mean protobuf drift between a producer and a consumer —
+      # typically one service redeployed against an updated shared_protos and
+      # the other did not.
+      - alert: ProtobufDecodeErrors
+        expr: >-
+          rate(technical_decode_errors_total[10m]) > 0
+          or rate(predictive_decode_errors_total[10m]) > 0
+          or rate(quant_rag_decode_errors_total[10m]) > 0
+          or rate(alpha_terminal_decode_errors_total[10m]) > 0
+          or rate(aggregator_decode_errors_total[10m]) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} is failing to decode Kafka messages"
+          description: >-
+            Almost always shared_protos drift after a partial deploy. Redeploy
+            the producer and consumer together.
+          runbook: docs/MONITORING.md#protobufdecodeerrors
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Capacity — this box is committed tight enough that it needs its own group
+  # ════════════════════════════════════════════════════════════════════════════
+  - name: capacity
+    rules:
+
+      # Fires BEFORE the OOM killer, which is the only useful time. An
+      # OOM-killed container shows up as ContainerRestartLoop, by which point
+      # the data is already lost.
+      - alert: ContainerNearMemoryLimit
+        expr: >-
+          container_memory_working_set_bytes{name=~"stratai-.+"}
+            / container_spec_memory_limit_bytes{name=~"stratai-.+"} > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.name }} is at {{ $value | humanizePercentage }} of its memory limit"
+          description: >-
+            The monitoring stack itself added ~736 MB to an already tight box.
+            If this is QuestDB, the documented fix is moving to a 16 GB
+            instance rather than trimming the limit further.
+          runbook: docs/MONITORING.md#containernearmemorylimit
+
+      # Prometheus falling behind its own scrape budget makes every other rule
+      # here unreliable, so it is worth an alert of its own.
+      - alert: PrometheusScrapeBudgetExceeded
+        expr: >-
+          rate(prometheus_target_scrapes_exceeded_sample_limit_total[10m]) > 0
+          or rate(prometheus_rule_evaluation_failures_total[10m]) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus is dropping samples or failing rule evaluations"
+          description: >-
+            Monitoring is degraded, so the absence of other alerts no longer
+            means the fleet is healthy.
+          runbook: docs/MONITORING.md#prometheusscrapebudgetexceeded

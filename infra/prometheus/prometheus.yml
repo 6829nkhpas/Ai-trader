@@ -1,0 +1,222 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Prometheus scrape configuration — Strat Ai service monitoring
+# ──────────────────────────────────────────────────────────────────────────────
+# Mounted read-only into the `prometheus` container by docker-compose.prod.yml.
+# Every target below is a compose service name on the internal `stratai` bridge
+# network; none of these ports are published to the host, so this file is the
+# only thing that can reach them.
+#
+# The port allocation (9101-9110) is fixed and mirrored in CLAUDE.md §10 and
+# docs/MONITORING.md. Each service defaults to its slot and honours a
+# METRICS_PORT override, so if you change a port here you must also set
+# METRICS_PORT on that service in BOTH compose files.
+#
+# ── Why the `job` name is not the whole story ────────────────────────────────
+# Every first-party service exports its metrics with a const label
+# `service="<name>"` baked in at the source (service-metrics crate / metrics.js
+# / service_metrics.py). We deliberately set `job` to the SAME string. That
+# redundancy is on purpose: `job` tells you which scrape config produced the
+# sample, `service` tells you which process claims to have produced it. When
+# they disagree you have a misrouted target — e.g. two services accidentally on
+# one port — which is otherwise invisible.
+#
+# ── Scrape interval ──────────────────────────────────────────────────────────
+# 30s globally. Higher frequency would give prettier graphs and cost real memory
+# on an 8 GB box (see the budget table in the plan). 30s also sets the floor on
+# alert latency: an alert with `for: 2m` fires after at most 2m30s.
+# ──────────────────────────────────────────────────────────────────────────────
+
+global:
+  scrape_interval: 30s
+  scrape_timeout: 10s
+  evaluation_interval: 30s
+  external_labels:
+    monitor: stratai
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+# Alertmanager routing is deliberately out of scope (see the plan's "Out of
+# scope"). Rules still evaluate and fire — they are visible on the Prometheus
+# /alerts page and consumed by status-api's /api/alerts — they just aren't
+# delivered anywhere yet. Adding an `alerting:` block here is the whole change.
+
+scrape_configs:
+
+  # ── Prometheus itself ───────────────────────────────────────────────────────
+  # Self-scrape. If this is the ONLY job that is up, monitoring is healthy and
+  # the data plane is dead — a distinction status-api relies on to avoid
+  # reporting "everything is fine" when it simply cannot see anything.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          service: prometheus
+          tier: monitoring
+
+  # ── First-party services (the 9101-9110 block) ──────────────────────────────
+  # All expose the shared contract: /metrics, /health, /ready, with a
+  # `service` const label and `*_last_work_age_seconds` +
+  # `*_stall_threshold_seconds` driving the WorkStalled alert.
+  #
+  # These are listed one job per service rather than a single job with many
+  # targets. A shared job would need relabeling to recover the service name, and
+  # a typo'd target would silently inherit a neighbour's identity. One job per
+  # service means a broken entry shows up as its own DOWN row on the targets
+  # page, named after the thing that is broken.
+
+  - job_name: ingestion
+    static_configs:
+      - targets: ["ingestion:9101"]
+        labels:
+          service: ingestion
+          tier: data-plane
+
+  - job_name: aggregator
+    static_configs:
+      - targets: ["aggregator:9102"]
+        labels:
+          service: aggregator
+          tier: data-plane
+
+  - job_name: alpha-terminal
+    static_configs:
+      - targets: ["alpha-terminal:9103"]
+        labels:
+          service: alpha-terminal
+          tier: data-plane
+
+  - job_name: technical
+    static_configs:
+      - targets: ["technical:9104"]
+        labels:
+          service: technical
+          tier: agents
+
+  - job_name: predictive
+    static_configs:
+      - targets: ["predictive:9105"]
+        labels:
+          service: predictive
+          tier: agents
+
+  - job_name: quant-rag
+    static_configs:
+      - targets: ["quant-rag:9106"]
+        labels:
+          service: quant-rag
+          tier: agents
+
+  - job_name: tool-server
+    static_configs:
+      - targets: ["tool-server:9107"]
+        labels:
+          service: tool-server
+          tier: reasoning
+
+  - job_name: sentiment
+    static_configs:
+      - targets: ["sentiment:9108"]
+        labels:
+          service: sentiment
+          tier: agents
+
+  - job_name: deep-quant
+    static_configs:
+      - targets: ["deep-quant:9109"]
+        labels:
+          service: deep-quant
+          tier: reasoning
+
+  # NOTE: `status-api` (:9110) is the tenth slot in this block. Its scrape job is
+  # added in the same commit as the service itself — a target configured before
+  # the container exists scrapes DOWN and trains everyone to ignore a red row.
+  # When adding it, also bump the expected-target count in
+  # alerts.yml → ServiceTargetsMissingFromConfig from 10 to 11.
+
+  # ── Container-level metrics ─────────────────────────────────────────────────
+  # cAdvisor supplies what no in-process exporter can: restart counts, OOM kills,
+  # and actual cgroup memory usage against the mem_limit. On a box this tightly
+  # committed, `container_memory_working_set_bytes` vs the limit is the single
+  # most useful capacity signal, and restart counts are how a crash-loop is
+  # distinguished from a service that is merely slow to answer.
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+        labels:
+          tier: monitoring
+    # cAdvisor emits a very wide metric set; keeping all of it would dominate
+    # the 2 GB retention budget. Keep only what the dashboards and alerts read.
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "container_(cpu_usage_seconds_total|memory_working_set_bytes|memory_usage_bytes|spec_memory_limit_bytes|last_seen|start_time_seconds|network_receive_bytes_total|network_transmit_bytes_total|fs_usage_bytes)"
+        action: keep
+      # Drop the per-container cgroup noise (pause containers, the root cgroup)
+      # that carries no `name` label — those rows are not services.
+      - source_labels: [name]
+        regex: "^$"
+        action: drop
+
+  # ── Blackbox probes ─────────────────────────────────────────────────────────
+  # For the surfaces that have no HTTP metrics endpoint of their own, and for
+  # infrastructure we do not instrument. This answers "can it be reached from
+  # inside the compose network", which is a different question from "does the
+  # process think it is healthy" — both matter, and they disagree in exactly the
+  # interesting cases.
+  #
+  # NOTE the two-hop relabel dance: Prometheus scrapes the blackbox exporter,
+  # passing the real target as the `target` URL parameter. Without the
+  # relabeling the `instance` label would read `blackbox:9115` for every probe.
+  - job_name: blackbox-http
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          # QuestDB REST — a trivial SELECT 1, the same probe its own compose
+          # healthcheck uses.
+          - "http://questdb:9000/exec?query=SELECT%201"
+          # The deep-quant FastAPI app itself, NOT its :9109 metrics port. The
+          # metrics listener lives on its own thread precisely so it survives a
+          # wedged event loop — which means a green :9109 says nothing about
+          # whether /run still answers. This probe is what closes that gap.
+          - "http://deep-quant:8086/docs"
+          # Tool-server HTTP surface, likewise distinct from its :9107 metrics.
+          - "http://tool-server:8084/health"
+        labels:
+          tier: probe
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115
+
+  - job_name: blackbox-tcp
+    metrics_path: /probe
+    params:
+      module: [tcp_connect]
+    static_configs:
+      - targets:
+          # WebSocket feeds. A WS upgrade is not something blackbox speaks, but
+          # a refused TCP connect is unambiguous: the listener is gone. The
+          # in-process `*_ws_clients` gauge covers the richer question of
+          # whether anyone is actually attached.
+          - "aggregator:8080"        # decisions WS
+          - "alpha-terminal:8081"    # OHLC candle WS
+          - "predictive:8082"        # predictive signals WS (Ghost Line)
+          - "quant-rag:8083"         # market insights WS
+          - "ingestion:8085"         # TCP subscription-control port
+          - "redpanda:29092"         # Kafka API (internal listener)
+          - "questdb:8812"           # QuestDB PG wire
+          - "redis:6379"
+        labels:
+          tier: probe
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115

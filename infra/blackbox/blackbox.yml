@@ -1,0 +1,51 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Blackbox exporter modules — Strat Ai service monitoring
+# ──────────────────────────────────────────────────────────────────────────────
+# Mounted read-only at /etc/blackbox/blackbox.yml. Referenced by the
+# `blackbox-http` and `blackbox-tcp` jobs in infra/prometheus/prometheus.yml
+# via the `module` URL parameter.
+#
+# This exporter answers a question no in-process metric can: "can this be
+# reached, right now, from a container that is not it". The two disagree in the
+# cases that matter most — a process whose metrics thread is fine while its
+# serving path is wedged reports green on /metrics and fails here.
+#
+# All probes run inside the `stratai` bridge network, so nothing here is
+# reachable from the internet and no credentials are needed.
+# ──────────────────────────────────────────────────────────────────────────────
+
+modules:
+
+  # Plain HTTP reachability. Used for QuestDB's /exec, deep-quant's FastAPI app,
+  # and the tool-server's /health.
+  #
+  # `valid_status_codes` is left empty, which means the default 2xx. This is
+  # deliberate for these three targets — each returns a real 200 on success, so
+  # accepting 3xx/4xx would let a redirect-to-login or a 404 count as healthy.
+  http_2xx:
+    prober: http
+    timeout: 8s
+    http:
+      method: GET
+      # Only IPv4 exists on the compose bridge network; without this, a probe
+      # can waste its timeout on an AAAA lookup that will never resolve.
+      preferred_ip_protocol: ip4
+      ip_protocol_fallback: false
+      follow_redirects: false
+      fail_if_ssl: false
+      fail_if_not_ssl: false
+
+  # TCP connect only — no protocol negotiation. Used for the WebSocket feeds,
+  # Kafka, QuestDB's PG wire, and Redis.
+  #
+  # A WS upgrade handshake is not something this exporter speaks, so a passing
+  # probe here means only "something is listening on that port". That is still
+  # the unambiguous half of the question: a refused connect means the listener
+  # is gone. Whether anyone is actually attached is answered by each service's
+  # own `*_ws_clients` gauge.
+  tcp_connect:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: ip4
+      ip_protocol_fallback: false

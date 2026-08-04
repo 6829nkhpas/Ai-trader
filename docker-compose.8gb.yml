@@ -12,6 +12,23 @@
 #   - Do NOT enable the `platform` profile (auth/payment) on 8 GB — no headroom.
 #   - QuestDB at 2.5 GB is fine for a light beta but can pressure under heavy
 #     history backfills. If you see QuestDB OOM-restart, move to s-8vcpu-16gb.
+#
+# ── Monitoring stack (added by the service-monitoring work) ──────────────────
+# The base file allocates 672 MB to prometheus/grafana/cadvisor/blackbox. On an
+# 8 GB box that does not fit on top of the existing ~6.4 GB, so it is trimmed to
+# 464 MB here (prometheus 256 + grafana 112 + cadvisor 64 + blackbox 32) and
+# partly paid for by taking a further 256 MB off QuestDB.
+#
+# That trade is the honest one to make: QuestDB is the component closest to its
+# limit, but it degrades gracefully under memory pressure (slower queries, more
+# disk spill) whereas monitoring that OOMs stops answering the question "is
+# anything broken" — and it stops answering it precisely when the box is under
+# the load that would break something. If QuestDB starts OOM-restarting after
+# this lands, the documented fix remains moving to a 16 GB instance rather than
+# squeezing either side further.
+#
+# Running total: ~6.77 GB committed of 8 GB (6.56 existing + 0.46 new − 0.25
+# reclaimed), leaving ~1.4 GB for the OS + Docker daemon.
 # ──────────────────────────────────────────────────────────────────────────────
 
 services:
@@ -19,7 +36,8 @@ services:
     mem_limit: 1200m
 
   questdb:
-    mem_limit: 2560m
+    # 2560m in the base 8gb tuning; 256m of that now funds the monitoring stack.
+    mem_limit: 2304m
     environment:
       QDB_SHARED_WORKER_COUNT: "2"
 
@@ -56,3 +74,31 @@ services:
 
   deep-quant:
     mem_limit: 512m
+
+  # ── Monitoring stack ────────────────────────────────────────────────────────
+  # 672m in the base file → 424m here. Every one of these is trimmed rather than
+  # dropped: a monitoring stack that is partly deployed reports partial health,
+  # which is worse than none because the gaps are invisible.
+
+  prometheus:
+    # 384m → 256m. The binding constraint on Prometheus memory is active series
+    # count, not the retention window, and this fleet is small (10 services,
+    # ~30 series each, plus a whitelisted cAdvisor subset). The retention flags
+    # in the base file cap disk, not RAM — do not relax them to compensate.
+    mem_limit: 256m
+
+  grafana:
+    # 192m → 112m. Enough for the provisioned dashboards on the sqlite backend.
+    # Grafana's footprint scales with concurrent viewers, and this instance has
+    # at most a couple.
+    mem_limit: 112m
+
+  cadvisor:
+    # Unchanged. cAdvisor is already near its floor, and it is the only source of
+    # OOM-kill and restart data — the signals that matter most on the box where
+    # memory is tight enough to need them.
+    mem_limit: 64m
+
+  blackbox:
+    # Unchanged; already minimal.
+    mem_limit: 32m

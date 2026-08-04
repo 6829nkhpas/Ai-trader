@@ -1,0 +1,32 @@
+# Grafana datasource provisioning — Strat Ai service monitoring
+#
+# Provisioned as code rather than clicked in, so a rebuilt Grafana container
+# comes back with a working datasource and dashboards that resolve. Anything
+# configured through the UI lives only in Grafana's sqlite volume and is lost
+# the moment that volume is.
+#
+# Mounted read-only at /etc/grafana/provisioning/datasources/.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    # Compose service name on the internal `stratai` network. Grafana proxies
+    # queries server-side (access: proxy), so the browser never needs to reach
+    # Prometheus directly — which is what lets Prometheus stay bound to
+    # 127.0.0.1 behind Caddy.
+    url: http://prometheus:9090
+    isDefault: true
+    # The dashboards below reference the datasource by this fixed uid rather
+    # than by name. A provisioned dashboard whose datasource uid does not
+    # resolve renders every panel as an error, so pinning it is load-bearing.
+    uid: stratai-prometheus
+    editable: false
+    jsonData:
+      # Must match `global.scrape_interval` in prometheus.yml. Grafana uses it
+      # as the floor for `$__rate_interval`; setting it too low produces jagged
+      # rate() graphs that look like instability where there is none.
+      timeInterval: 30s
+      httpMethod: POST
