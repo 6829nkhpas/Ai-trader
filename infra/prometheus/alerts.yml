@@ -99,20 +99,29 @@ groups:
       # nothing, produces no series at all and therefore no failing row. That
       # silence reads exactly like health.
       #
-      # The count is the guard. 10 = 9 instrumented services (9101-9109) plus
-      # Prometheus itself; status-api (:9110) raises this to 11 when it lands in
-      # Phase 4. The literal is intentionally not self-derived, since anything
-      # derived from the config cannot detect the config being wrong.
+      # The count is the guard. 12 = 9 instrumented services (9101-9109), plus
+      # status-api (:9110), plus Prometheus itself, plus cAdvisor — which also
+      # carries tier=monitoring and so matches this selector. The blackbox jobs
+      # are tier=probe and are deliberately excluded: they scrape one target per
+      # probed URL, so folding them in would make this literal churn every time
+      # a probe is added.
+      #
+      # The literal is intentionally not self-derived, since anything derived
+      # from the config cannot detect the config being wrong. Verify it by
+      # counting the `static_configs` targets in prometheus.yml whose tier
+      # matches the regex below — setting it too low is the failure mode that
+      # hides a missing service, which is exactly what this rule is for.
       - alert: ServiceTargetsMissingFromConfig
-        expr: count(up{tier=~"data-plane|agents|reasoning|monitoring"}) < 10
+        expr: count(up{tier=~"data-plane|agents|reasoning|monitoring"}) < 12
         for: 10m
         labels:
           severity: warning
         annotations:
           summary: "Prometheus is configured for fewer targets than expected"
           description: >-
-            Expected 10 scrape targets (9 instrumented services + Prometheus
-            itself) but only {{ $value }} exist. A job was removed or renamed in
+            Expected 12 scrape targets (9 instrumented services + status-api +
+            Prometheus + cAdvisor) but only {{ $value }} exist. A job was
+            removed or renamed in
             infra/prometheus/prometheus.yml, so some service is now unmonitored
             and looks healthy purely because nothing is asking.
           runbook: docs/MONITORING.md#servicetargetsmissingfromconfig

@@ -128,11 +128,16 @@ scrape_configs:
           service: deep-quant
           tier: reasoning
 
-  # NOTE: `status-api` (:9110) is the tenth slot in this block. Its scrape job is
-  # added in the same commit as the service itself — a target configured before
-  # the container exists scrapes DOWN and trains everyone to ignore a red row.
-  # When adding it, also bump the expected-target count in
-  # alerts.yml → ServiceTargetsMissingFromConfig from 10 to 11.
+  # The admin panel's endpoint. Scraped like any other service — it exports the
+  # same contract, so a wedged status-api trips WorkStalled exactly as a wedged
+  # ingestion would. Note :9110 is both its API port and its metrics port; it is
+  # the only service in the fleet that shares one.
+  - job_name: status-api
+    static_configs:
+      - targets: ["status-api:9110"]
+        labels:
+          service: status-api
+          tier: monitoring
 
   # ── Container-level metrics ─────────────────────────────────────────────────
   # cAdvisor supplies what no in-process exporter can: restart counts, OOM kills,
