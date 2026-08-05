@@ -23,6 +23,16 @@ use sqlx::PgPool;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::services::history_loader;
+use crate::services::questdb_http;
+
+/// Minimum cached intraday rows before `get_historical_view` will serve from
+/// QuestDB and refresh in the background instead of blocking on Kite.
+///
+/// Set at one full trading session of 1-minute bars (NSE runs 09:15–15:30, so
+/// 375 candles). Below that the cache can't fill a chart on its own and the
+/// user is better served waiting for the backfill than seeing a near-empty
+/// pane; at or above it there is enough to render immediately.
+const MIN_RENDERABLE_CACHED_BARS: i64 = 375;
 
 pub fn get_kite_credentials() -> (String, String) {
     let mut api_key = std::env::var("KITE_API_KEY").unwrap_or_default();
@@ -96,6 +106,20 @@ pub struct BinaryCandle {
 ///   `load_historical`). Weekly bars are produced by sampling the daily
 ///   archive with `SAMPLE BY 7d`.
 ///
+/// # Transport
+/// Reads go through [`questdb_http`] — the authenticated HTTP(S) `/exec`
+/// endpoint behind the Caddy gateway — not the PostgreSQL wire protocol. That
+/// keeps QuestDB's `:8812` port off the public internet for the read path and
+/// stops shipped installers from needing raw database wire access. The Kite
+/// backfill still writes over PG wire (`/exec` has no bind parameters, so the
+/// batched multi-row INSERT can't move), and a missing write pool degrades to
+/// "no backfill" rather than failing the load.
+///
+/// Because `/exec` takes SQL as text, every interpolated value is escaped with
+/// [`questdb_http::sql_literal`]. The `SAMPLE BY` interval is still inlined
+/// unescaped — QuestDB's parser requires an identifier there, and the value is
+/// hard-coded above, never user-supplied.
+///
 /// # Returns
 /// `Vec<u8>` — bincode-serialized `Vec<BinaryCandle>`. Tauri automatically
 /// converts this to a `Uint8Array` on the JavaScript side.
@@ -106,7 +130,6 @@ pub struct BinaryCandle {
 #[tauri::command]
 pub async fn get_historical_view(
     app: AppHandle,
-    pool: tauri::State<'_, PgPool>,
     symbol: String,
     timeframe: Option<String>,
 ) -> Result<Vec<u8>, String> {
@@ -195,6 +218,14 @@ pub async fn get_historical_view(
     //   - User selects 2m → base_tf="1m" → fetches "minute" data from Kite
     //   - User switches to 4m → base_tf="1m" → data already cached, skip fetch!
     //   - User switches to 1m → base_tf="1m" → data already cached, skip fetch!
+    //
+    // ── Why this is conditional ──────────────────────────────────────────────
+    // Awaiting the backfill unconditionally made every chart load pay for the
+    // Kite round trip, a 350ms rate-limit sleep per chunk, and the QuestDB
+    // write — even when the cache could already answer in ~3ms. When the cache
+    // has usable rows we now spawn the refresh in the background and return
+    // immediately; only a genuinely cold cache still waits, because there the
+    // alternative is rendering an empty chart.
     if matches!(source, HistorySource::Intraday) {
         // Credentials may legitimately be EMPTY in a shipped thin client (no
         // `.env`, no baked Kite creds). That is no longer a reason to skip the
@@ -217,27 +248,113 @@ pub async fn get_historical_view(
 
             match local_token {
                 Some(token) => {
-                    info!(
-                        "Intraday fetch trigger: {} [tf={}, base={}] — token {}",
-                        symbol, tf, base_tf, token
-                    );
-                    // Fetch at the BASE interval — derived TFs reuse this cached data
-                    match history_loader::load_intraday_data(
-                        pool.inner(),
-                        token,
-                        &symbol,
-                        base_tf,
-                        &api_key,
-                        &access_token,
-                    ).await {
-                        Ok(count) => info!(
-                            "Intraday fetch complete: {} [base={}] — {} candles.",
-                            symbol, base_tf, count
+                    // The backfill WRITES, and writes still go over PG wire —
+                    // `/exec` has no bind parameters, so the batched multi-row
+                    // INSERT can't move to HTTP. Reads below no longer need the
+                    // pool, so a missing one degrades to "no backfill" rather
+                    // than failing the whole chart load.
+                    let write_pool = app.try_state::<PgPool>().map(|p| p.inner().clone());
+
+                    // Is the cache warm enough to render from right now? A cheap
+                    // COUNT decides whether the user waits on Kite or not.
+                    let cached_rows: i64 = questdb_http::query(&format!(
+                        "SELECT count() AS n FROM historical_intraday \
+                         WHERE symbol = {} AND timeframe = {}",
+                        questdb_http::sql_literal(&symbol),
+                        questdb_http::sql_literal(base_tf),
+                    ))
+                    .await
+                    .ok()
+                    .and_then(|r| r.rows.first().and_then(|row| r.i64(row, "n")))
+                    // A failed probe reads as cold, so the load blocks and
+                    // fills the cache rather than serving a chart from rows we
+                    // could not confirm exist.
+                    .unwrap_or(0);
+
+                    match write_pool {
+                        None => warn!(
+                            "QuestDB write pool unavailable — skipping intraday backfill for {} \
+                             [base={}]; serving whatever the read gateway already has.",
+                            symbol, base_tf
                         ),
-                        Err(e) => warn!(
-                            "Intraday fetch failed for {} [base={}]: {} — falling back to live ticks.",
-                            symbol, base_tf, e
-                        ),
+                        Some(pool) if cached_rows >= MIN_RENDERABLE_CACHED_BARS => {
+                            // Warm cache: refresh in the background and let the read
+                            // below serve the existing rows immediately. The spawned
+                            // task owns its data because it outlives this command.
+                            info!(
+                                "Intraday cache warm for {} [base={}] — {} rows; \
+                                 refreshing in background (non-blocking).",
+                                symbol, base_tf, cached_rows
+                            );
+
+                            let bg_pool = pool;
+                            let bg_symbol = symbol.clone();
+                            let bg_base_tf = base_tf.to_string();
+                            let bg_app = app.clone();
+
+                            tauri::async_runtime::spawn(async move {
+                                match history_loader::load_intraday_data(
+                                    &bg_pool,
+                                    token,
+                                    &bg_symbol,
+                                    &bg_base_tf,
+                                    &api_key,
+                                    &access_token,
+                                )
+                                .await
+                                {
+                                    Ok(count) => {
+                                        info!(
+                                            "Background intraday refresh complete: {} [base={}] — {} candles.",
+                                            bg_symbol, bg_base_tf, count
+                                        );
+                                        // Only signal when rows actually landed —
+                                        // an idempotent no-op should not make the
+                                        // frontend re-fetch for nothing.
+                                        if count > 0 {
+                                            let _ = bg_app.emit(
+                                                "historical-loaded",
+                                                serde_json::json!({
+                                                    "symbol": bg_symbol,
+                                                    "timeframe": bg_base_tf,
+                                                    "count": count,
+                                                }),
+                                            );
+                                        }
+                                    }
+                                    Err(e) => warn!(
+                                        "Background intraday refresh failed for {} [base={}]: {}",
+                                        bg_symbol, bg_base_tf, e
+                                    ),
+                                }
+                            });
+                        }
+                        Some(pool) => {
+                            // Cold cache — there is nothing worth rendering yet, so
+                            // waiting is strictly better than returning an empty chart.
+                            info!(
+                                "Intraday cache cold for {} [base={}] — {} rows; \
+                                 fetching synchronously (token {}).",
+                                symbol, base_tf, cached_rows, token
+                            );
+                            match history_loader::load_intraday_data(
+                                &pool,
+                                token,
+                                &symbol,
+                                base_tf,
+                                &api_key,
+                                &access_token,
+                            ).await {
+                                Ok(count) => info!(
+                                    "Intraday fetch complete: {} [base={}] — {} candles.",
+                                    symbol, base_tf, count
+                                ),
+                                Err(e) => warn!(
+                                    "Intraday fetch failed for {} [base={}]: {} — falling back to live ticks.",
+                                    symbol, base_tf, e
+                                ),
+                            }
+                        }
                     }
                 }
                 None => {
@@ -271,16 +388,16 @@ pub async fn get_historical_view(
     let rows = match source {
         HistorySource::Intraday => {
             // Query 1: Historical intraday candles from Kite API
-            let hist_query = "SELECT ts, open, high, low, close, volume \
-                              FROM historical_intraday \
-                              WHERE symbol = $1 AND timeframe = $2 \
-                              ORDER BY ts ASC";
+            let hist_query = format!(
+                "SELECT ts, open, high, low, close, volume \
+                 FROM historical_intraday \
+                 WHERE symbol = {} AND timeframe = {} \
+                 ORDER BY ts ASC",
+                questdb_http::sql_literal(&symbol),
+                questdb_http::sql_literal(base_tf),
+            );
 
-            let hist_rows = sqlx::query(hist_query)
-                .bind(&symbol)
-                .bind(base_tf)
-                .fetch_all(pool.inner())
-                .await;
+            let hist_rows = questdb_http::query(&hist_query).await;
 
             // Query 2: Today's live ticks aggregated to the requested interval
             //
@@ -297,21 +414,19 @@ pub async fn get_historical_view(
                         last(last_traded_price)  AS close, \
                         (last(volume) - first(volume)) AS volume \
                  FROM live_ticks \
-                 WHERE symbol = $1 \
+                 WHERE symbol = {} \
                    AND timestamp > dateadd('d', -1, now()) \
                  SAMPLE BY {} ALIGN TO CALENDAR",
+                questdb_http::sql_literal(&symbol),
                 sample_interval
             );
 
-            let live_rows = sqlx::query(&live_query)
-                .bind(&symbol)
-                .fetch_all(pool.inner())
-                .await;
+            let live_rows = questdb_http::query(&live_query).await;
 
             // Merge both result sets: historical rows first, then live rows
             match (hist_rows, live_rows) {
                 (Ok(mut hist), Ok(live)) => {
-                    hist.extend(live);
+                    hist.rows.extend(live.rows);
                     Ok(hist)
                 }
                 (Ok(hist), Err(e)) => {
@@ -336,25 +451,23 @@ pub async fn get_historical_view(
                         last(last_traded_price)  AS close, \
                         (last(volume) - first(volume)) AS volume \
                  FROM live_ticks \
-                 WHERE symbol = $1 \
+                 WHERE symbol = {} \
                  SAMPLE BY {} ALIGN TO CALENDAR",
+                questdb_http::sql_literal(&symbol),
                 sample_interval
             );
-            sqlx::query(&query)
-                .bind(&symbol)
-                .fetch_all(pool.inner())
-                .await
+            questdb_http::query(&query).await
         }
         HistorySource::Daily if sample_interval == "1d" => {
             // Pre-aggregated daily archive — no resampling needed.
-            let query = "SELECT ts, open, high, low, close, volume \
-                         FROM historical_candles \
-                         WHERE symbol = $1 \
-                         ORDER BY ts ASC";
-            sqlx::query(query)
-                .bind(&symbol)
-                .fetch_all(pool.inner())
-                .await
+            let query = format!(
+                "SELECT ts, open, high, low, close, volume \
+                 FROM historical_candles \
+                 WHERE symbol = {} \
+                 ORDER BY ts ASC",
+                questdb_http::sql_literal(&symbol),
+            );
+            questdb_http::query(&query).await
         }
         HistorySource::Daily => {
             let query = format!(
@@ -366,44 +479,34 @@ pub async fn get_historical_view(
                         last(close)  AS close, \
                         sum(volume)  AS volume \
                  FROM historical_candles \
-                 WHERE symbol = $1 \
+                 WHERE symbol = {} \
                  SAMPLE BY {} ALIGN TO CALENDAR",
+                questdb_http::sql_literal(&symbol),
                 sample_interval
             );
-            sqlx::query(&query)
-                .bind(&symbol)
-                .fetch_all(pool.inner())
-                .await
+            questdb_http::query(&query).await
         }
     };
 
     match rows {
         Ok(data) => {
-            use sqlx::Row;
             use std::collections::BTreeMap;
 
             let raw_candles: Vec<BinaryCandle> = data
+                .rows
                 .iter()
                 .filter_map(|row| {
-                    // QuestDB returns ts as TIMESTAMP which sqlx decodes as
-                    // chrono::NaiveDateTime, NOT i64. We must extract as
-                    // NaiveDateTime and convert to microseconds for bincode.
-                    let ts: i64 = row
-                        .try_get::<chrono::NaiveDateTime, _>("ts")
-                        .ok()
-                        .map(|dt| dt.and_utc().timestamp_micros())
-                        .or_else(|| {
-                            // Fallback: try as raw i64 in case QuestDB returns raw µs
-                            row.try_get::<i64, _>("ts").ok()
-                        })?;
-                    let open: f64 = row.try_get("open").ok()?;
-                    let high: f64 = row.try_get("high").ok()?;
-                    let low: f64 = row.try_get("low").ok()?;
-                    let close: f64 = row.try_get("close").ok()?;
-                    let volume: i64 = row
-                        .try_get::<i64, _>("volume")
-                        .or_else(|_| row.try_get::<i32, _>("volume").map(|v| v as i64))
-                        .unwrap_or(0);
+                    // Over `/exec`, TIMESTAMP arrives as an ISO-8601 string
+                    // rather than PG wire's NaiveDateTime; `timestamp_micros`
+                    // handles both encodings.
+                    let ts: i64 = data.timestamp_micros(row, "ts")?;
+                    let open: f64 = data.f64(row, "open")?;
+                    let high: f64 = data.f64(row, "high")?;
+                    let low: f64 = data.f64(row, "low")?;
+                    let close: f64 = data.f64(row, "close")?;
+                    // Volume may be absent (SAMPLE BY over an empty bucket) —
+                    // 0 is the honest value there, unlike for a price.
+                    let volume: i64 = data.i64(row, "volume").unwrap_or(0);
                     Some(BinaryCandle { ts, open, high, low, close, volume })
                 })
                 .collect();
