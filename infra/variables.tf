@@ -65,7 +65,7 @@ variable "ssh_ingress_cidrs" {
 }
 
 variable "app_ports" {
-  description = "Public TCP ports. 80/443 front the app.stratai.live TLS gateway (WSS feeds + /questdb + /deepquant). 8085 ingestion control, 8087 Kite OAuth, 8812 QuestDB PG wire (native auth) — raw TCP, not HTTP-frontable. The WS (8080-8083) and QuestDB/deep-quant HTTP (9000/8086) ports are no longer published; they are served over TLS via the domain."
+  description = "Public TCP ports. 80/443 front the app-api.stratai.live TLS gateway (WSS feeds + /questdb + /deepquant). 8085 ingestion control, 8087 Kite OAuth, 8812 QuestDB PG wire (native auth) — raw TCP, not HTTP-frontable. The WS (8080-8083) and QuestDB/deep-quant HTTP (9000/8086) ports are no longer published; they are served over TLS via the domain."
   type        = list(string)
   default     = ["80", "443", "8085", "8087", "8812"]
 }

@@ -22,7 +22,7 @@ Planning honestly requires separating the two.
 | Provider resources | `cloud_instance`, `firewall`, `vpc`, `domain`, `dns_record`, `loadbalancer`, `target_group`, `auto_scaling` |
 | Provider data sources | `account`, `images`, `object_storage_plan` |
 | Mumbai zone exists | `dcslug` examples in provider docs: `inmumbaizone2`, `innoida` |
-| Desktop clients target a **domain** | `wss://app.stratai.live/ws/*`, `https://app.stratai.live/*` — set in `desktop-release.yml` and `azure-pipelines.yml` |
+| Desktop clients target a **domain** | `wss://app-api.stratai.live/ws/*`, `https://app-api.stratai.live/*` — set in `desktop-release.yml` and `azure-pipelines.yml` |
 | CI deploy target is a **variable** | `vars.DEPLOY_HOST` in `deploy-server.yml` — repointable without code change |
 | Persistent volumes | `questdb_data`, `redis_data`, `caddy_data`, `caddy_config` |
 
@@ -121,7 +121,7 @@ new host's `.env`. Do **not** carry the old ones to Utho.
 
 ### 2b. Lower DNS TTL — 24–48 h before cutover
 
-The single highest-value preparatory step. Drop the `app.stratai.live` A record
+The single highest-value preparatory step. Drop the `app-api.stratai.live` A record
 TTL to **60 s** now. At cutover the switch propagates in a minute, and rollback is
 equally fast. Skip this and you are married to your cutover for hours.
 
@@ -268,7 +268,7 @@ VOL_PREFIX=ai-trader   # verify!
 docker run --rm -v ${VOL_PREFIX}_questdb_data:/data -v "$PWD":/backup alpine \
   tar czf /backup/questdb_data.tar.gz -C /data .
 
-# Copy caddy_data too — it holds the VALID app.stratai.live certificate.
+# Copy caddy_data too — it holds the VALID app-api.stratai.live certificate.
 # Preserving it means TLS works instantly at cutover with no ACME round-trip,
 # and no risk of hitting Let's Encrypt's 5-duplicate-certs-per-week limit
 # if you end up cutting over more than once.
@@ -382,7 +382,7 @@ ssh root@$IP "docker compose -f docker-compose.prod.yml logs kafka-init --tail=3
 ssh root@$IP "free -h && docker stats --no-stream --format '{{.Name}}\t{{.MemUsage}}'"
 
 # 5. TLS works via Host header, before DNS moves
-curl -sk https://$IP/questdb/exec?query=SELECT+1 -H 'Host: app.stratai.live' -u '<user>:<pass>'
+curl -sk https://$IP/questdb/exec?query=SELECT+1 -H 'Host: app-api.stratai.live' -u '<user>:<pass>'
 ```
 
 Compare the two row counts against the same queries on DO. **Do not cut over
@@ -393,7 +393,7 @@ until they match.**
 ## 9. Cutover
 
 1. **Confirm §8 is green.** DO stack still stopped, Utho stack verified.
-2. **Change the A record** for `app.stratai.live` → Utho IP. With the 60 s TTL
+2. **Change the A record** for `app-api.stratai.live` → Utho IP. With the 60 s TTL
    from §2b this propagates in about a minute.
    *(Optional: the provider does offer `utho_domain` + `utho_dns_record` if you
    want DNS in Terraform — but moving nameservers mid-migration adds a failure
@@ -401,15 +401,15 @@ until they match.**
 3. **Watch TLS.** Because you copied `caddy_data`, Caddy should serve the existing
    valid certificate immediately. Confirm:
    ```bash
-   curl -sI https://app.stratai.live | head -3
-   echo | openssl s_client -connect app.stratai.live:443 2>/dev/null \
+   curl -sI https://app-api.stratai.live | head -3
+   echo | openssl s_client -connect app-api.stratai.live:443 2>/dev/null \
      | openssl x509 -noout -dates
    ```
 4. **Repoint CI** — repo → Settings → Secrets and variables → Actions:
    set `DEPLOY_HOST` = Utho IP. `DEPLOY_SSH_KEY` and `DEPLOY_PATH` are unchanged
    (same keypair, same `/root/Ai-trader`).
 5. **Smoke-test a real client.** Launch the desktop app. Because it targets
-   `app.stratai.live` and not an IP, **no rebuild or re-release is required** —
+   `app-api.stratai.live` and not an IP, **no rebuild or re-release is required** —
    this is the reason the migration is a DNS change rather than a client rollout.
 6. **Watch a live session.** Keep the DO droplet powered off but *not destroyed*
    through the first full trading day.

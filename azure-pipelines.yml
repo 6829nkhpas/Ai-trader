@@ -70,13 +70,13 @@ steps:
       NEXT_PUBLIC_AUTH_SERVICE_URL: 'https://api-web.stratai.live'
       NEXT_PUBLIC_PROD: 'false'
       NEXT_PUBLIC_LLM_GATEWAY: 'omniroute'
-      NEXT_PUBLIC_AGGREGATOR_WS_URL: 'wss://app.stratai.live/ws/aggregator'
-      NEXT_PUBLIC_ALPHA_WS_URL: 'wss://app.stratai.live/ws/alpha'
-      NEXT_PUBLIC_PREDICTIVE_WS_URL: 'wss://app.stratai.live/ws/predictive'
-      NEXT_PUBLIC_INSIGHT_WS_URL: 'wss://app.stratai.live/ws/insight'
-      STRATAI_SERVER_HOST: 'app.stratai.live'
-      STRATAI_WS_BASE_URL: 'wss://app.stratai.live/ws'
-      STRATAI_HTTP_BASE_URL: 'https://app.stratai.live'
+      NEXT_PUBLIC_AGGREGATOR_WS_URL: 'wss://app-api.stratai.live/ws/aggregator'
+      NEXT_PUBLIC_ALPHA_WS_URL: 'wss://app-api.stratai.live/ws/alpha'
+      NEXT_PUBLIC_PREDICTIVE_WS_URL: 'wss://app-api.stratai.live/ws/predictive'
+      NEXT_PUBLIC_INSIGHT_WS_URL: 'wss://app-api.stratai.live/ws/insight'
+      STRATAI_SERVER_HOST: 'app-api.stratai.live'
+      STRATAI_WS_BASE_URL: 'wss://app-api.stratai.live/ws'
+      STRATAI_HTTP_BASE_URL: 'https://app-api.stratai.live'
       QUESTDB_USER: $(QUESTDB_USER)
       QUESTDB_PASSWORD: $(QUESTDB_PASSWORD)
       LLM_API_URL: $(LLM_API_URL)
