@@ -45,8 +45,27 @@ log "Redeploy start"
 log "Compose files: $COMPOSE_FILES"
 
 # ── 1. Sync to origin/main (preserves untracked .env) ────────────────────────
+#
+# This is a PRIVATE repo, so the fetch needs credentials. The droplet stores
+# none: CI passes a short-lived token in GITHUB_TOKEN and it is used for this
+# one fetch only, via `-c http.extraheader`. That keeps it out of the remote URL
+# (which git would otherwise persist into .git/config), out of `git remote -v`,
+# and out of the process list in a form that survives the run.
+#
+# Org policy has deploy keys disabled, so a server-side SSH key is not an
+# option here; a per-run token is also the better posture — nothing to rotate
+# or leak on the box, and it expires when the job ends.
+#
+# Running by hand on the droplet: export GITHUB_TOKEN=<a PAT with repo:read>
+# first, or the fetch will fail asking for a username.
 log "Syncing to origin/main"
-git fetch origin
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+  AUTH_HEADER="Authorization: Basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+  git -c http.extraheader="$AUTH_HEADER" fetch origin --prune
+else
+  log "WARNING: GITHUB_TOKEN unset — trying an unauthenticated fetch"
+  git fetch origin --prune
+fi
 git reset --hard origin/main
 git log --oneline -1
 
