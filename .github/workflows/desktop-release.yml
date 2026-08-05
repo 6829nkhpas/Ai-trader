@@ -136,7 +136,7 @@ jobs:
           # deployment. Set the repo variable to 'openrouter' for the prod build.
           NEXT_PUBLIC_LLM_GATEWAY: ${{ vars.NEXT_PUBLIC_LLM_GATEWAY || 'omniroute' }}
           # ── Live data-plane WebSocket feeds (baked into the static export) ──
-          # Routed through the single TLS gateway wss://app.stratai.live/ws/* (see
+          # Routed through the single TLS gateway wss://app-api.stratai.live/ws/* (see
           # infra/caddy/Caddyfile) so the shipped app never touches a raw droplet
           # IP:port. Only NEXT_PUBLIC_AGGREGATOR_WS_URL is actually consumed by the
           # Tauri build (the aggregator socket is opened from the webview); the
@@ -144,10 +144,10 @@ jobs:
           # STRATAI_WS_BASE_URL below (these three matter only for a plain-browser
           # `npm run dev`). All overridable via repo variables. To revert to
           # direct-IP: set the vars to ws://<host>:<port>.
-          NEXT_PUBLIC_AGGREGATOR_WS_URL: ${{ vars.NEXT_PUBLIC_AGGREGATOR_WS_URL || 'wss://app.stratai.live/ws/aggregator' }}
-          NEXT_PUBLIC_ALPHA_WS_URL: ${{ vars.NEXT_PUBLIC_ALPHA_WS_URL || 'wss://app.stratai.live/ws/alpha' }}
-          NEXT_PUBLIC_PREDICTIVE_WS_URL: ${{ vars.NEXT_PUBLIC_PREDICTIVE_WS_URL || 'wss://app.stratai.live/ws/predictive' }}
-          NEXT_PUBLIC_INSIGHT_WS_URL: ${{ vars.NEXT_PUBLIC_INSIGHT_WS_URL || 'wss://app.stratai.live/ws/insight' }}
+          NEXT_PUBLIC_AGGREGATOR_WS_URL: ${{ vars.NEXT_PUBLIC_AGGREGATOR_WS_URL || 'wss://app-api.stratai.live/ws/aggregator' }}
+          NEXT_PUBLIC_ALPHA_WS_URL: ${{ vars.NEXT_PUBLIC_ALPHA_WS_URL || 'wss://app-api.stratai.live/ws/alpha' }}
+          NEXT_PUBLIC_PREDICTIVE_WS_URL: ${{ vars.NEXT_PUBLIC_PREDICTIVE_WS_URL || 'wss://app-api.stratai.live/ws/predictive' }}
+          NEXT_PUBLIC_INSIGHT_WS_URL: ${{ vars.NEXT_PUBLIC_INSIGHT_WS_URL || 'wss://app-api.stratai.live/ws/insight' }}
           # ── Thin-client backend target (baked into the binary at compile time) ──
           # server.rs reads these via option_env! so shipped installers connect to
           # the droplet with the shared beta QuestDB credentials out of the box.
@@ -157,21 +157,21 @@ jobs:
           # QuestDB PG wire (:8812), ingestion control (:8085), Kite OAuth (:8087).
           # Points at the domain (resolves to the droplet) so shipped builds carry
           # NO raw IP. The HTTP/WS feeds use STRATAI_HTTP_BASE_URL / _WS_BASE_URL.
-          STRATAI_SERVER_HOST: ${{ secrets.STRATAI_SERVER_HOST || 'app.stratai.live' }}
+          STRATAI_SERVER_HOST: ${{ secrets.STRATAI_SERVER_HOST || 'app-api.stratai.live' }}
           # Public WSS gateway base for the Rust live-feed bridges (OHLC/predictive/
           # insight). When set, server::feed_ws_url routes them through the TLS
-          # domain (wss://app.stratai.live/ws/<feed>) instead of ws://<host>:<port>.
+          # domain (wss://app-api.stratai.live/ws/<feed>) instead of ws://<host>:<port>.
           # Baked via option_env! in server.rs. Clear the var to fall back to
           # direct-IP mode. QuestDB (:9000) + deep-quant (:8086) stay on
           # STRATAI_SERVER_HOST — only the live WS feeds move to the domain.
-          STRATAI_WS_BASE_URL: ${{ vars.STRATAI_WS_BASE_URL || 'wss://app.stratai.live/ws' }}
+          STRATAI_WS_BASE_URL: ${{ vars.STRATAI_WS_BASE_URL || 'wss://app-api.stratai.live/ws' }}
           # Public HTTPS gateway base for the request/response services. When set,
           # server::questdb_http_url + server::deep_quant_url route through the TLS
-          # domain (https://app.stratai.live/questdb, …/deepquant) instead of
+          # domain (https://app-api.stratai.live/questdb, …/deepquant) instead of
           # http://<host>:9000 / :8086. Baked via option_env! in server.rs. Clear
           # the var to fall back to direct-IP mode. PG wire (:8812) stays on
           # STRATAI_SERVER_HOST (raw TCP, not HTTP).
-          STRATAI_HTTP_BASE_URL: ${{ vars.STRATAI_HTTP_BASE_URL || 'https://app.stratai.live' }}
+          STRATAI_HTTP_BASE_URL: ${{ vars.STRATAI_HTTP_BASE_URL || 'https://app-api.stratai.live' }}
           QUESTDB_USER: ${{ secrets.QUESTDB_USER || 'admin' }}
           QUESTDB_PASSWORD: ${{ secrets.QUESTDB_PASSWORD }}
           # ── LLM / Sentiment / Deep Quant config (baked via option_env!) ──
@@ -182,7 +182,10 @@ jobs:
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           LLM_MODEL: ${{ secrets.LLM_MODEL || 'gpt-5.5' }}
           LLM_EFFORT: ${{ secrets.LLM_EFFORT || 'high' }}
-          LLM_EFFORT_FIELD: ${{ secrets.LLM_EFFORT_FIELD || 'high' }}
+          # The JSON body KEY that carries LLM_EFFORT — not the value. This
+          # defaulted to 'high', producing {"high":"high"}, which every gateway
+          # silently ignores, so reasoning effort was never actually applied.
+          LLM_EFFORT_FIELD: ${{ secrets.LLM_EFFORT_FIELD || 'reasoning_effort' }}
           # ── macOS code signing + notarization (OPTIONAL) ──
           # Uncomment and set these repo secrets to ship signed, notarized Macs
           # (removes the "unidentified developer" Gatekeeper warning):

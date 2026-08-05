@@ -28,6 +28,9 @@ import { metrics } from './metrics.js';
 
 const NEWSDATA_BASE_URL = 'https://newsdata.io/api/1/latest';
 
+// NewsData.io rejects `q` longer than this with HTTP 422. Build queries to fit.
+const MAX_QUERY_LEN = 100;
+
 // Articles requested per bucket query — kept small to conserve API credits.
 const PER_BUCKET_SIZE = 3;
 
@@ -51,19 +54,20 @@ const NEWSDATA_TIMEOUT_MS = 10_000;
 const MATERIALITY_BUCKETS = [
   {
     category: 'EARNINGS',
-    terms:    'results OR profit OR revenue OR earnings OR guidance OR dividend',
+    // Shortened to fit newsdata.io 100-char q limit (full name + AND + terms).
+    terms:    'earnings OR profit OR revenue OR dividend',
   },
   {
     category: 'CORPORATE_ACTIONS',
-    terms:    'order OR contract OR acquisition OR merger OR capex OR expansion OR stake OR deal',
+    terms:    'acquisition OR merger OR deal OR stake',
   },
   {
     category: 'REGULATORY',
-    terms:    'SEBI OR RBI OR probe OR penalty OR lawsuit OR ban OR approval OR investigation',
+    terms:    'SEBI OR RBI OR lawsuit OR ban OR probe',
   },
   {
     category: 'MANAGEMENT',
-    terms:    'CEO OR MD OR resignation OR appointment OR board',
+    terms:    'CEO OR resignation OR board',
   },
   {
     // SECTOR_MACRO substitutes the company's sector/industry as the term group.
@@ -94,10 +98,40 @@ function buildQuery(bucket, primaryAlias, sector) {
     // Use the first sector token (e.g. "Energy" from "Energy / Conglomerate").
     const sectorTerm = sector.split('/')[0].trim();
     if (!sectorTerm) return null;
-    return `${name} AND ${sectorTerm}`;
+    return fitQuery(`${name} AND ${sectorTerm}`, name);
   }
 
-  return `${name} AND (${bucket.terms})`;
+  return fitQuery(`${name} AND (${bucket.terms})`, name, bucket.terms);
+}
+
+/**
+ * NewsData.io rejects a `q` longer than {@link MAX_QUERY_LEN} with HTTP 422
+ * ("Query length cannot be greater than 100"), which silently killed whole
+ * buckets for companies with long names. Drop trailing OR-terms until the query
+ * fits rather than letting the request fail.
+ *
+ * @param {string} query - The assembled query.
+ * @param {string} name - The quoted company name (never dropped).
+ * @param {string} [terms] - The OR'd term group, when present.
+ * @returns {(string|null)} A query within the limit, or null if even the bare
+ *   name doesn't fit (in which case no useful query exists).
+ */
+function fitQuery(query, name, terms) {
+  if (query.length <= MAX_QUERY_LEN) return query;
+
+  // Without a term group there is nothing to trim.
+  if (!terms) return name.length <= MAX_QUERY_LEN ? name : null;
+
+  const parts = terms.split(' OR ');
+  // Drop the least-important (trailing) terms one at a time.
+  while (parts.length > 1) {
+    parts.pop();
+    const candidate = `${name} AND (${parts.join(' OR ')})`;
+    if (candidate.length <= MAX_QUERY_LEN) return candidate;
+  }
+
+  // Even a single term overflows — fall back to the bare name if it fits.
+  return name.length <= MAX_QUERY_LEN ? name : null;
 }
 
 // ── fetchStrategicNews ───────────────────────────────────────────────────────
