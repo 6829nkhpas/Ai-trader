@@ -330,14 +330,54 @@ async function fetchKiteBatch(
 //
 // The Tauri `get_historical_view` command returns ALL bars in QuestDB for a
 // (symbol, timeframe) pair — typically the full 30-day intraday lookback.
-// Calling it on every `getBars` is expensive because the backend re-runs the
-// Kite intraday loader each time (~1.4s). We cache the result per
+// Calling it on every `getBars` is expensive, so we cache the result per
 // (symbol, timeframe) and deduplicate concurrent calls via an inflight map.
+//
+// The backend no longer blocks that call on the Kite backfill when the cache is
+// already warm — it refreshes in the background and emits `historical-loaded`.
+// Without the listener below, those fresh bars would sit in QuestDB unseen
+// until this 60s cache expired.
 
 const tauriBarCache = new Map<string, { bars: Bar[]; fetchedAt: number }>();
 const tauriBarInflight = new Map<string, Promise<Bar[]>>();
 
 let tauriPoolReady = false;
+
+/**
+ * Drop cached bars for a symbol so the next `getBars` re-reads QuestDB.
+ *
+ * The event carries the BASE timeframe the loader fetched (e.g. "1m"), but
+ * several UI timeframes derive from one base (1m/2m/4m all share "1m"), so
+ * every entry for the symbol is invalidated rather than just the exact key.
+ */
+function invalidateTauriBarCache(symbol: string): void {
+  // Keys are built by `scrollBackKey`, which uppercases the symbol.
+  const prefix = `${symbol.toUpperCase()}::`;
+  for (const key of tauriBarCache.keys()) {
+    if (key.startsWith(prefix)) tauriBarCache.delete(key);
+  }
+}
+
+// Registered once per module load; `listen` is only available under Tauri.
+if (isTauri()) {
+  void (async () => {
+    try {
+      const { listen } = await import('@tauri-apps/api/event');
+      await listen<{ symbol?: string; timeframe?: string; count?: number }>(
+        'historical-loaded',
+        (event) => {
+          const symbol = event.payload?.symbol;
+          if (!symbol) return;
+          invalidateTauriBarCache(symbol);
+        },
+      );
+    } catch (err) {
+      // A missing listener only costs freshness (bars appear within 60s), so
+      // this must never break chart loading.
+      console.warn('[Datafeed] historical-loaded listener unavailable:', err);
+    }
+  })();
+}
 
 async function fetchTauriBars(
   symbol: string,
