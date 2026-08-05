@@ -48,16 +48,27 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # The droplet's `git fetch` needs read access to this private repo. The
+    # job's own short-lived GITHUB_TOKEN is forwarded over the SSH session and
+    # used for that single fetch, so no long-lived credential is stored on the
+    # server. Deploy keys are disabled org-wide, so this is also the only route
+    # available.
+    permissions:
+      contents: read
     steps:
       - name: Redeploy on the droplet over SSH
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          GH_DEPLOY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           host: ${{ vars.DEPLOY_HOST }}
           username: ${{ vars.DEPLOY_USER || 'root' }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           # Rust rebuilds on a cold cache can take a while; give it headroom.
           command_timeout: "40m"
+          envs: GH_DEPLOY_TOKEN
           script: |
             set -e
             cd "${{ vars.DEPLOY_PATH || '/root/Ai-trader' }}"
+            export GITHUB_TOKEN="$GH_DEPLOY_TOKEN"
             bash redeploy.sh
