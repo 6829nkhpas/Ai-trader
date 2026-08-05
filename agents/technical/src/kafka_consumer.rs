@@ -66,7 +66,15 @@ pub mod kafka_consumer {
     ///
     /// Returns the receiver end of the channel. Dropping the receiver will
     /// cause the background task to exit cleanly on the next send attempt.
-    pub async fn run_listener(consumer: StreamConsumer) -> mpsc::Receiver<Tick> {
+    ///
+    /// `metrics` counts decode failures here — this is the only place a
+    /// malformed payload is observable. Ticks themselves are counted in the main
+    /// event loop rather than here, so that a wedged consumer of this channel
+    /// registers as a stall even while this listener keeps draining the topic.
+    pub async fn run_listener(
+        consumer: StreamConsumer,
+        metrics: crate::metrics::TechnicalMetrics,
+    ) -> mpsc::Receiver<Tick> {
         // Buffer up to 1 024 decoded ticks before back-pressure kicks in.
         let (tx, rx) = mpsc::channel::<Tick>(1_024);
 
@@ -88,6 +96,11 @@ pub mod kafka_consumer {
                                     }
                                 }
                                 Err(e) => {
+                                    // Deliberately not work: a stream of
+                                    // undecodable ticks is a producer/schema
+                                    // mismatch, and counting it as progress
+                                    // would make that look healthy.
+                                    metrics.decode_failed();
                                     log::warn!("Protobuf decode error (skipping message): {}", e);
                                 }
                             }

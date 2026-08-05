@@ -30,6 +30,11 @@ WORKDIR /app
 COPY agents/predictive/Cargo.toml agents/predictive/Cargo.lock* agents/predictive/build.rs ./
 COPY shared_protos/ ./shared_protos/
 
+# Path dependency: Cargo.toml declares service-metrics = { path = "../../service-metrics" },
+# which resolves to /service-metrics from this crate's /app workdir. Copied before
+# the pre-cache build so the dependency graph resolves in that layer too.
+COPY service-metrics/ /service-metrics/
+
 # Fix proto paths for Docker context (build.rs uses ../../shared_protos)
 RUN mkdir -p src && echo 'fn main() {}' > src/main.rs \
     && sed -i 's|../../shared_protos|./shared_protos|g' build.rs
@@ -60,6 +65,8 @@ COPY --from=builder /app/target/release/predictive /usr/local/bin/predictive
 RUN useradd -r -s /bin/false app_user
 USER app_user
 
-EXPOSE 8082
+# 8082 = Ghost Candle WebSocket.
+# 9105 = Prometheus surface (/metrics, /health, /ready). Override METRICS_PORT.
+EXPOSE 8082 9105
 
 ENTRYPOINT ["/usr/local/bin/predictive"]

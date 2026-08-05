@@ -39,6 +39,12 @@ WORKDIR /app
 COPY ingestion/Cargo.toml ingestion/Cargo.lock* ingestion/build.rs ./
 COPY shared_protos/ ./shared_protos/
 
+# The `service-metrics` path dependency (../service-metrics in Cargo.toml).
+# This crate is flattened into /app, so the sibling must sit at /service-metrics
+# for that relative path to resolve — unlike tool-server, which keeps both
+# crates side by side under /build.
+COPY service-metrics/ /service-metrics/
+
 # Create a minimal fake main so cargo build --release has something to compile.
 # Also rewrite the proto path: build.rs uses ../shared_protos, but in this build
 # context shared_protos is copied to ./shared_protos.
@@ -77,5 +83,9 @@ COPY --from=builder /app/target/release/ingestion /usr/local/bin/ingestion
 # Run as a non-root user for security hardening
 RUN useradd -r -s /bin/false ingestion_user
 USER ingestion_user
+
+# 8085 — TCP control port (subscription commands from desktop clients)
+# 9101 — Prometheus /metrics + /health + /ready
+EXPOSE 8085 9101
 
 ENTRYPOINT ["/usr/local/bin/ingestion"]

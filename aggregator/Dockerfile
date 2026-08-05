@@ -30,6 +30,11 @@ WORKDIR /app
 COPY aggregator/Cargo.toml aggregator/Cargo.lock* aggregator/build.rs ./
 COPY shared_protos/ ./shared_protos/
 
+# The `service-metrics` path dependency (../service-metrics in Cargo.toml).
+# This crate is flattened into /app, so the sibling must sit at /service-metrics
+# for that relative path to resolve — the same arrangement ingestion uses.
+COPY service-metrics/ /service-metrics/
+
 RUN mkdir -p src && echo 'fn main() {}' > src/main.rs \
     && sed -i 's|\.\./shared_protos|./shared_protos|g' build.rs
 
@@ -59,6 +64,7 @@ COPY --from=builder /app/target/release/aggregator /usr/local/bin/aggregator
 RUN useradd -r -s /bin/false app_user
 USER app_user
 
-EXPOSE 8080
+# 8080 decisions WS · 8081 OHLC WS · 8084 Kite REST proxy · 9102 Prometheus
+EXPOSE 8080 8081 8084 9102
 
 ENTRYPOINT ["/usr/local/bin/aggregator"]

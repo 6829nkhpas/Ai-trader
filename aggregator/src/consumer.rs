@@ -20,6 +20,7 @@
 pub mod consumer {
     use crate::engine;
     use crate::kafka_producer::producer as kprod;
+    use crate::metrics::AggregatorMetrics;
     use crate::proto::decision::ActionType;
     use crate::proto::sentiment_data::NewsSentiment;
     use crate::proto::technical_data::TechSignal;
@@ -105,11 +106,18 @@ pub mod consumer {
     ///
     /// This function runs indefinitely until the consumer is shut down or
     /// the stream is closed.
+    ///
+    /// `metrics` records input per topic, decisions per action, and decode and
+    /// publish failures. The work heartbeat beats on any successfully processed
+    /// message from either topic — not only on emitted decisions — because
+    /// `technical` going quiet is an upstream fault and beating only on output
+    /// would raise the alarm against this service instead.
     pub async fn run_consumer_loop(
         consumer: StreamConsumer,
         state: &AggregatorState,
         producer: FutureProducer,
         tx: tokio::sync::broadcast::Sender<String>,
+        metrics: AggregatorMetrics,
     ) {
         let mut stream = consumer.stream();
 
@@ -131,6 +139,8 @@ pub mod consumer {
                         TOPIC_TECHNICAL => {
                             match TechSignal::decode(payload) {
                                 Ok(signal) => {
+                                    metrics.message_processed(TOPIC_TECHNICAL);
+
                                     log::debug!(
                                         "[TECH] symbol={:<20} rsi={:>6.2}  vwap_dist={:>8.4}%  \
                                          score={:>3}  ts={}",
@@ -161,6 +171,8 @@ pub mod consumer {
                                             Err(_) => "UNKNOWN",
                                         };
 
+                                    metrics.decision_emitted(action_label);
+
                                     // log::debug!(
                                     //     "[DECISION] symbol={:<20} action={:<4}  \
                                     //      final_score={:>3}  tech_w={:.2}  sent_w={:.2}  \
@@ -183,13 +195,17 @@ pub mod consumer {
                                     // the consumer loop. FutureProducer is Arc-backed.
                                     let prod_clone = producer.clone();
                                     let decision_clone = decision.clone();
+                                    let pub_metrics = metrics.clone();
                                     tokio::spawn(async move {
-                                        kprod::publish_decision(
+                                        let published = kprod::publish_decision(
                                             &prod_clone,
                                             TOPIC_DECISIONS,
                                             &decision_clone,
                                         )
                                         .await;
+                                        if !published {
+                                            pub_metrics.publish_failed();
+                                        }
                                     });
 
                                     // ── SP45: WebSocket Broadcast (JSON) ─────────
@@ -211,6 +227,7 @@ pub mod consumer {
                                     let _ = tx.send(json_string);
                                 }
                                 Err(e) => {
+                                    metrics.decode_failed(TOPIC_TECHNICAL);
                                     log::warn!(
                                         "TechSignal decode error on topic '{}': {}",
                                         topic, e
@@ -221,6 +238,8 @@ pub mod consumer {
                         TOPIC_SENTIMENT => {
                             match NewsSentiment::decode(payload) {
                                 Ok(sentiment) => {
+                                    metrics.message_processed(TOPIC_SENTIMENT);
+
                                     println!(
                                         "[SENT] symbol={:<20} score={:>3}  headline=\"{}\"  \
                                          reason=\"{}\"  ts={}",
@@ -238,6 +257,7 @@ pub mod consumer {
                                     state.update_sentiment(symbol, sentiment).await;
                                 }
                                 Err(e) => {
+                                    metrics.decode_failed(TOPIC_SENTIMENT);
                                     log::warn!(
                                         "NewsSentiment decode error on topic '{}': {}",
                                         topic, e

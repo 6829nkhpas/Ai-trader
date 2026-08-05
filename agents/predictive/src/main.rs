@@ -11,6 +11,7 @@
 
 mod engine;
 mod math;
+mod metrics;
 mod proto;
 mod ws_server;
 
@@ -28,13 +29,22 @@ async fn main() {
     log::info!("║  Phase 6.3 — Ghost Candle WS Broadcast (8082)    ║");
     log::info!("╚══════════════════════════════════════════════════╝");
 
+    // ── Metrics ──────────────────────────────────────────────────────────
+    // Started before the WS server and the Kafka loop so that /health answers
+    // during boot. If the agent then wedges while connecting to Kafka, the
+    // probe reports an unready service rather than a connection refused —
+    // the difference between a diagnosable state and a blank panel.
+    let metrics = metrics::PredictiveMetrics::new();
+    metrics.serve();
+
     // ── Broadcast channel for WebSocket fan-out ──────────────────────────
     let (ws_tx, _) = tokio::sync::broadcast::channel::<String>(100);
 
     // ── Spawn the WebSocket server on port 8082 ──────────────────────────
     let ws_tx_clone = ws_tx.clone();
+    let ws_metrics = metrics.clone();
     tokio::spawn(async move {
-        ws_server::start_server(8082, ws_tx_clone.subscribe()).await;
+        ws_server::start_server(8082, ws_tx_clone.subscribe(), ws_metrics).await;
     });
 
     // ── Instantiate the math engine ──────────────────────────────────────
@@ -43,7 +53,7 @@ async fn main() {
     // ── Kafka-gated block ────────────────────────────────────────────────
     #[cfg(feature = "kafka")]
     {
-        engine::engine::run(&mut prediction_engine, ws_tx).await;
+        engine::engine::run(&mut prediction_engine, ws_tx, metrics).await;
     }
 
     #[cfg(not(feature = "kafka"))]

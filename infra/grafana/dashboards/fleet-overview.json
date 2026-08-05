@@ -1,0 +1,387 @@
+{
+  "__comment": "Strat Ai — Fleet Overview. Provisioned from infra/grafana/dashboards/, read-only in the UI (see ../provisioning/dashboards/stratai.yml); edit this file in git, not the browser. Panels are ordered by the question they answer: is it up, is it WORKING, is the pipeline flowing, is the box coping. The 'working' row is the point of the whole stack — five of these services are Kafka/WS loops that can wedge on a poll and look perfectly healthy while processing nothing.",
+  "uid": "stratai-fleet",
+  "title": "Strat Ai — Fleet Overview",
+  "tags": ["stratai", "monitoring"],
+  "timezone": "Asia/Kolkata",
+  "editable": false,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "stratai-prometheus" },
+        "query": "label_values(service:last_work_age_seconds, service)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Is it up?",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Scrape status",
+      "description": "up == 0 is the unambiguous down signal — more reliable than any in-process gauge, since a gauge cannot report that its own process is gone. Each service's *_up metric only ever reads 1; its ABSENCE is the signal.",
+      "datasource": { "type": "prometheus", "uid": "stratai-prometheus" },
+      "gridPos": { "h": 5, "w": 12, "x": 0, "y": 1 },
+      "targets": [
+        {
+          "expr": "up{tier=~\"data-plane|agents|reasoning\"}",
+          "legendFormat": "{{job}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red", "index": 0 } } },
+            { "type": "value", "options": { "1": { "text": "UP", "color": "green", "index": 1 } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Container restarts (15m)",
+      "description": "A container that crashes and returns inside one 30s scrape interval never registers as down — but it also never does any work. This catches it from the outside; a resetting *_uptime_seconds says the same thing from the inside.",
+      "datasource": { "type": "prometheus", "uid": "stratai-prometheus" },
+      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 1 },
+      "targets": [
+        {
+          "expr": "changes(container_start_time_seconds{name=~\"stratai-.+\"}[15m])",
+          "legendFormat": "{{name}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 3 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "title": "Is it WORKING? (the point of this stack)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Work age vs each service's own stall threshold",
+      "description": "The central panel. Age above the dashed threshold line, while work_expected is 1, means the service is up and scraping green but has processed nothing — the wedged-consumer case. The threshold comes from each service rather than a constant here, so the Rust services' off-session widening is visible as the line stepping up after 15:30 IST.",
+      "datasource": { "type": "prometheus", "uid": "stratai-prometheus" },
+      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 7 },
+      "targets": [
+        {
+          "expr": "service:last_work_age_seconds{service=~\"$service\"}",
+          "legendFormat": "{{service}} age",
+          "refId": "A"
+        },
+        {
+          "expr": "service:stall_threshold_seconds{service=~\"$service\"}",
+          "legendFormat": "{{service}} threshold",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": ".*threshold.*" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+              { "id": "custom.lineWidth", "value": 1 }
+            ]
+          }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Work expected",
+      "description": "1 only while the service actually has something to do. The Rust services derive this from the market session; deep-quant derives it from runs in flight, because 'nobody asked for an analysis' is its normal state for most of the day. When this reads 0, a high work age is idleness, not failure.",
+      "datasource": { "type": "prometheus", "uid": "stratai-prometheus" },
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 7 },
+      "targets": [
+        {
+          "expr": "service:work_expected{service=~\"$service\"}",
+          "legendFormat": "{{service}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "idle", "color": "blue", "index": 0 } } },
+            { "type": "value", "options": { "1": { "text": "expected", "color": "green", "index": 1 } } }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Throughput — completed work per second",
+      "description": "Each service's own definition of a unit of real work: a decoded tick, an aggregated candle, a published signal, a served tool call, a graph node advance. A flat line here with a green scrape status is precisely the state this stack exists to surface.",
+      "datasource": { "type": "prometheus", "uid": "stratai-prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "service:work_completed:rate5m{service=~\"$service\"}",
+          "legendFormat": "{{service}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "lineWidth": 2, "fillOpacity": 8, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "mean"] } }
+    },
+    {
+      "type": "row",
+      "title": "Market data pipeline",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Kite WebSocket",
+      "description": "The single highest-value signal in the fleet. ingestion holds the upstream Kite WS; when it drops, every downstream service keeps running happily on nothing. Usually an expired KITE_ACCESS_TOKEN — they expire daily.",
+      "datasource": { "type": "prometheus", "uid": "stratai-prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 25 },
+      "targets": [{ "expr": "ingestion_kite_ws_connected", "instant": true, "refId": "A" }],
+      "options": {
+        "colorMode": "background",
+        "textMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DISCONNECTED", "color": "red", "index": 0 } } },
+            { "type": "value", "options": { "1": { "text": "CONNECTED", "color": "green", "index": 1 } } }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Market session",
+      "description": "09:15-15:30 IST on weekdays. Off-session, staleness thresholds widen and 'no ticks' is the correct state — which is why alerts are gated on this rather than paging every night.",
+      "datasource": { "type": "prometheus", "uid": "stratai-prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 25 },
+      "targets": [{ "expr": "max(service:market_session_open)", "instant": true, "refId": "A" }],
+      "options": {
+        "colorMode": "background",
+        "textMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "CLOSED", "color": "blue", "index": 0 } } },
+            { "type": "value", "options": { "1": { "text": "OPEN", "color": "green", "index": 1 } } }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Tick flow through the pipeline",
+      "description": "Producer against consumers. ingestion rising while technical or alpha-terminal sit at zero means ticks are reaching Kafka and being dropped on the floor downstream — a wedged consumer, which no per-service heartbeat can catch alone.",
+      "datasource": { "type": "prometheus", "uid": "stratai-prometheus" },
+      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 25 },
+      "targets": [
+        { "expr": "rate(ingestion_ticks_total[5m])", "legendFormat": "ingestion (produced)", "refId": "A" },
+        { "expr": "rate(technical_ticks_total[5m])", "legendFormat": "technical (consumed)", "refId": "B" },
+        { "expr": "rate(alpha_terminal_ticks_total[5m])", "legendFormat": "alpha-terminal (consumed)", "refId": "C" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "lineWidth": 2, "fillOpacity": 5, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Error rates — the silent failures",
+      "description": "Publish and write errors are the classic silent break: the producing service stays completely healthy while every consumer goes blind. Decode errors are almost always shared_protos drift after a partial deploy.",
+      "datasource": { "type": "prometheus", "uid": "stratai-prometheus" },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 30 },
+      "targets": [
+        { "expr": "rate(ingestion_write_errors_total[5m])", "legendFormat": "ingestion questdb writes", "refId": "A" },
+        { "expr": "sum(rate({__name__=~\".+_publish_errors_total\"}[5m])) by (service)", "legendFormat": "{{service}} kafka publish", "refId": "B" },
+        { "expr": "sum(rate({__name__=~\".+_decode_errors_total\"}[5m])) by (service)", "legendFormat": "{{service}} proto decode", "refId": "C" },
+        { "expr": "rate(aggregator_kite_api_errors_total[5m])", "legendFormat": "aggregator kite REST", "refId": "D" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Connected WebSocket clients",
+      "description": "How many desktop terminals are actually attached to each feed. A blackbox TCP probe only proves something is listening; this is whether anyone is on the other end.",
+      "datasource": { "type": "prometheus", "uid": "stratai-prometheus" },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 30 },
+      "targets": [
+        { "expr": "{__name__=~\".+_ws_clients\"}", "legendFormat": "{{service}}", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 8, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "row",
+      "title": "Reasoning plane (deep-quant + tool-server + sentiment)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 37 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "deep-quant runs by outcome",
+      "description": "auth_error/key_error point at per-user OpenRouter key resolution against the backend internal endpoint, not at the graph. `paused` is normal — watch_price_condition can wait hours and is a terminal outcome, not a stuck run. `disconnected` means the client hung up mid-stream.",
+      "datasource": { "type": "prometheus", "uid": "stratai-prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 38 },
+      "targets": [
+        { "expr": "sum(rate(deep_quant_runs_total[15m])) by (outcome)", "legendFormat": "{{outcome}}", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "lineWidth": 2, "fillOpacity": 12, "stacking": { "mode": "normal" }, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "tool-server calls by status",
+      "description": "The market-data tools the agent depends on. `unavailable` is the interesting status: the agent analyses with a reduced toolset and answers degrade silently rather than failing.",
+      "datasource": { "type": "prometheus", "uid": "stratai-prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 38 },
+      "targets": [
+        { "expr": "sum(rate(tool_server_tool_calls_total[5m])) by (status)", "legendFormat": "{{status}}", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "lineWidth": 2, "fillOpacity": 12, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "sentiment — articles vs LLM calls",
+      "description": "Read these together. Articles arriving with no LLM calls means a broken analyzer; neither moving is just a quiet news day; and a fresh heartbeat with zero articles forever is the no-API-key state, which every liveness signal reports as green.",
+      "datasource": { "type": "prometheus", "uid": "stratai-prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 38 },
+      "targets": [
+        { "expr": "rate(sentiment_articles_total[15m])", "legendFormat": "articles accepted", "refId": "A" },
+        { "expr": "sum(rate(sentiment_llm_calls_total[15m]))", "legendFormat": "llm calls", "refId": "B" },
+        { "expr": "sum(rate(sentiment_news_fetches_total{outcome=\"no_api_key\"}[15m]))", "legendFormat": "NO API KEY", "refId": "C" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "lineWidth": 2, "fillOpacity": 8, "showPoints": "never" } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "NO API KEY" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+          }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "row",
+      "title": "Capacity (this box is committed tight)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 45 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory usage against each container's limit",
+      "description": "The monitoring stack itself added ~736 MB to an already tight 8 GB box. Anything sustained above 90% is heading for an OOM kill, which arrives as a restart with exit code 137. If it is QuestDB, the documented fix is a 16 GB instance rather than trimming the limit further.",
+      "datasource": { "type": "prometheus", "uid": "stratai-prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 46 },
+      "targets": [
+        {
+          "expr": "container_memory_working_set_bytes{name=~\"stratai-.+\"} / container_spec_memory_limit_bytes{name=~\"stratai-.+\"}",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "max": 1,
+          "custom": { "lineWidth": 2, "fillOpacity": 5, "showPoints": "never", "thresholdsStyle": { "mode": "dashed" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.8 },
+              { "color": "red", "value": 0.9 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] } }
+    }
+  ]
+}

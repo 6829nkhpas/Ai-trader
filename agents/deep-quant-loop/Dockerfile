@@ -29,7 +29,11 @@ ENV DEEP_QUANT_HOST=0.0.0.0 \
     DEEP_QUANT_PORT=8086 \
     PYTHONUNBUFFERED=1
 
-EXPOSE 8086
+# 8086 — the LangGraph SSE API (/run, /resume, /qa, /options/snapshot).
+# 9109 — Prometheus /metrics, /health and /ready, served from a dedicated thread
+#        so a wedged asyncio loop can still be scraped and reported.
+# Documentation only; docker-compose still has to publish or network these.
+EXPOSE 8086 9109
 
 # Run uvicorn directly (NOT `python main.py`, which enables --reload for dev).
 # reload watches the source tree and is unsafe/wasteful in production.

@@ -73,7 +73,12 @@ impl QuestDbWriter {
     ///
     /// Timestamp is sent as nanoseconds (QuestDB ILP requirement).
     /// All field names match the planned `market_data` table schema.
-    pub async fn write_tick(&mut self, tick: &ParsedTick) {
+    ///
+    /// Returns `false` if the socket write failed, so the caller can count the
+    /// loss into `ingestion_write_errors_total{sink="questdb_ilp"}`. A failure
+    /// triggers a reconnect and the line is dropped rather than retried — the
+    /// same lossy-but-non-blocking policy the PG sink uses.
+    pub async fn write_tick(&mut self, tick: &ParsedTick) -> bool {
         // Escape commas and spaces in the symbol tag value per ILP spec
         let escaped_symbol = tick.symbol.replace(',', "\\,").replace(' ', "\\ ");
 
@@ -98,6 +103,8 @@ impl QuestDbWriter {
         if let Err(e) = self.stream.write_all(line.as_bytes()).await {
             error!("QuestDB write error: {}", e);
             self.reconnect().await;
+            return false;
         }
+        true
     }
 }

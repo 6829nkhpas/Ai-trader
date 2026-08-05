@@ -1,0 +1,24 @@
+[package]
+name = "service-metrics"
+version = "0.1.0"
+edition = "2021"
+description = "Shared Prometheus instrumentation for the Strat Ai services: a /metrics + /health listener, a work Heartbeat that distinguishes 'alive' from 'actually processing', and NSE session awareness so idle-out-of-hours is not mistaken for failure."
+
+[lib]
+name = "service_metrics"
+path = "src/lib.rs"
+
+# Versions deliberately match the rest of the monorepo (aggregator, tool-server)
+# so adding this crate does not pull a second copy of tokio/axum/chrono into a
+# service's dependency graph.
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+chrono = "0.4"
+log = "0.4"
+
+# default-features = false drops the protobuf exposition format and the
+# Linux-only procfs process collector. We only ever serve the text format, and
+# per-container CPU/memory comes from cAdvisor — so neither is needed, and
+# disabling them keeps Windows dev builds working.
+prometheus = { version = "0.13", default-features = false }

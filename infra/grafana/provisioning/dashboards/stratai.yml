@@ -1,0 +1,26 @@
+# Grafana dashboard provisioning — Strat Ai service monitoring
+#
+# Loads every dashboard JSON under /var/lib/grafana/dashboards (mounted from
+# infra/grafana/dashboards/) at startup and on change.
+#
+# Mounted read-only at /etc/grafana/provisioning/dashboards/.
+
+apiVersion: 1
+
+providers:
+  - name: stratai
+    orgId: 1
+    folder: Strat Ai
+    type: file
+    # Provisioned dashboards are read-only in the UI. Edits made in the browser
+    # would be silently reverted on the next restart, so blocking them here
+    # makes that explicit rather than surprising. To change a panel, edit the
+    # JSON in git.
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      # Mirror the directory tree into Grafana folders, so adding a
+      # subdirectory here is enough to create a new folder.
+      foldersFromFilesStructure: false

@@ -12,7 +12,14 @@ pub fn init_producer(brokers: &str) -> FutureProducer {
         .expect("Producer creation error")
 }
 
-pub async fn publish_candle(producer: &FutureProducer, topic: &str, candle: &OhlcCandle) {
+/// Publishes a completed candle to `topic`.
+///
+/// Returns `true` if the broker acknowledged the record. The candle is still
+/// dropped on failure, exactly as before; the bool exists only so the caller can
+/// count the loss into `alpha_terminal_publish_errors_total`. Without it a
+/// broker outage silently discards every candle this service closes and the only
+/// trace is the log stream.
+pub async fn publish_candle(producer: &FutureProducer, topic: &str, candle: &OhlcCandle) -> bool {
     let mut encoded = Vec::new();
     candle.encode(&mut encoded).expect("Failed to encode OhlcCandle");
 
@@ -28,9 +35,11 @@ pub async fn publish_candle(producer: &FutureProducer, topic: &str, candle: &Ohl
                 partition,
                 offset
             );
+            true
         }
         Err((e, _)) => {
             log::error!("Failed to publish OhlcCandle for {}: {:?}", candle.symbol, e);
+            false
         }
     }
 }

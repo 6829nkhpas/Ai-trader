@@ -90,7 +90,7 @@ pub fn questdb_pg_url() -> String {
 }
 
 /// Optional public HTTPS gateway base for the request/response services
-/// (e.g. `https://app.stratai.live`).
+/// (e.g. `https://app-api.stratai.live`).
 ///
 /// When set (runtime or baked at compile time via `STRATAI_HTTP_BASE_URL`),
 /// QuestDB HTTP and the deep-quant service are reached through this single TLS
@@ -219,7 +219,7 @@ pub fn ws_url(port: u16) -> String {
     format!("ws://{}:{}", host(), port)
 }
 
-/// Optional public WebSocket gateway base (e.g. `wss://app.stratai.live/ws`).
+/// Optional public WebSocket gateway base (e.g. `wss://app-api.stratai.live/ws`).
 ///
 /// When set (runtime or baked at compile time via `STRATAI_WS_BASE_URL`), the
 /// live data-plane feeds are routed through this single TLS domain by path
@@ -236,7 +236,7 @@ pub fn ws_base() -> String {
 /// Resolve the live-feed WebSocket URL for a named stream.
 ///
 /// Prefers the public WSS gateway (`ws_base()/<name>`, e.g.
-/// `wss://app.stratai.live/ws/alpha`) when `STRATAI_WS_BASE_URL` is configured;
+/// `wss://app-api.stratai.live/ws/alpha`) when `STRATAI_WS_BASE_URL` is configured;
 /// otherwise falls back to the direct `ws://<host>:<port>` form used for local
 /// dev and raw-IP deployments. `name` MUST match the gateway route (see
 /// infra/caddy/Caddyfile): `aggregator`, `alpha`, `predictive`, `insight`.

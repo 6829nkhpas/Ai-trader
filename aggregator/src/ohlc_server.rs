@@ -196,7 +196,13 @@ pub mod ohlc_server {
     /// tick-to-candle aggregation loop.
     ///
     /// Call this from `main.rs` to wire up the OHLC pipeline.
-    pub async fn run_ohlc_pipeline(brokers: &str) {
+    ///
+    /// `metrics` counts *completed* candles only — the bucket rollover below.
+    /// The loop also rebroadcasts the in-progress candle on every tick and on a
+    /// 5s timer, and counting those would turn `aggregator_candles_total` into a
+    /// tick counter that reads as healthy throughput while no candle ever
+    /// actually closes.
+    pub async fn run_ohlc_pipeline(brokers: &str, metrics: crate::metrics::AggregatorMetrics) {
         let ohlc_port = std::env::var("OHLC_WEBSOCKET_PORT")
             .unwrap_or_else(|_| "8081".to_string());
 
@@ -260,6 +266,7 @@ pub mod ohlc_server {
                                         // New bucket — flush the completed candle first.
                                         let json = acc.to_json();
                                         let _ = ohlc_tx.send(json);
+                                        metrics.candle_emitted();
                                         // Start the fresh candle for the new window.
                                         *acc = CandleAccumulator::new(
                                             symbol.clone(), timestamp_ms, price, volume,

@@ -7,3 +7,4 @@ httpx>=0.24.0
 pydantic>=2.0
 hypothesis>=6.0
 tzdata>=2024.1
+prometheus-client>=0.20.0

@@ -34,6 +34,11 @@ WORKDIR /app
 COPY agents/technical/Cargo.toml agents/technical/Cargo.lock* agents/technical/build.rs ./
 COPY shared_protos/ ./shared_protos/
 
+# Path dependency: Cargo.toml declares service-metrics = { path = "../../service-metrics" },
+# which resolves to /service-metrics from this crate's /app workdir. Copied before
+# the pre-cache build so the dependency graph resolves in that layer too.
+COPY service-metrics/ /service-metrics/
+
 # Fix proto paths for Docker context (build.rs uses ../../shared_protos)
 RUN mkdir -p src && echo 'fn main() {}' > src/main.rs \
     && sed -i 's|../../shared_protos|./shared_protos|g' build.rs
@@ -63,5 +68,8 @@ COPY --from=builder /app/target/release/technical /usr/local/bin/technical
 
 RUN useradd -r -s /bin/false app_user
 USER app_user
+
+# Prometheus surface: /metrics, /health, /ready. Override with METRICS_PORT.
+EXPOSE 9104
 
 ENTRYPOINT ["/usr/local/bin/technical"]

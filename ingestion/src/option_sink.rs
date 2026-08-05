@@ -200,7 +200,10 @@ pub async fn create_option_tables(pool: &PgPool) {
 /// Failures are logged as warnings and the tick is dropped — consistent with
 /// the equity sink's lossy-but-non-blocking policy, and so an option-side
 /// insert error never disturbs the equity path (R7.1).
-pub async fn insert_option_tick(pool: &PgPool, tick: &Tick, meta: &OptionMeta) {
+///
+/// Returns `true` if the row landed, so the caller can count drops into
+/// `ingestion_write_errors_total{sink="option_pg"}`.
+pub async fn insert_option_tick(pool: &PgPool, tick: &Tick, meta: &OptionMeta) -> bool {
     let row = build_option_tick_row(tick, meta);
 
     let result = sqlx::query(
@@ -224,12 +227,18 @@ pub async fn insert_option_tick(pool: &PgPool, tick: &Tick, meta: &OptionMeta) {
     .await;
 
     match result {
-        Ok(_) => log::trace!(
-            "QuestDB option_ticks insert OK — symbol={} ts_µs={}",
-            row.symbol,
-            row.timestamp_micros
-        ),
-        Err(e) => warn!("QuestDB option_ticks insert failed for {}: {}", row.symbol, e),
+        Ok(_) => {
+            log::trace!(
+                "QuestDB option_ticks insert OK — symbol={} ts_µs={}",
+                row.symbol,
+                row.timestamp_micros
+            );
+            true
+        }
+        Err(e) => {
+            warn!("QuestDB option_ticks insert failed for {}: {}", row.symbol, e);
+            false
+        }
     }
 }
 
@@ -239,7 +248,13 @@ pub async fn insert_option_tick(pool: &PgPool, tick: &Tick, meta: &OptionMeta) {
 ///
 /// Rows are inserted individually; a single-row failure is logged and the rest
 /// of the batch continues, so a bad row never aborts the whole snapshot.
-pub async fn write_chain_snapshot(pool: &PgPool, rows: &[SnapshotRow]) {
+///
+/// Returns the number of rows that failed, so the caller can count them into
+/// `ingestion_write_errors_total{sink="snapshot"}`. A batch is partially lossy
+/// rather than all-or-nothing, so a bool would hide how much was lost.
+pub async fn write_chain_snapshot(pool: &PgPool, rows: &[SnapshotRow]) -> usize {
+    let mut failed = 0usize;
+
     for row in rows {
         let result = sqlx::query(
             "INSERT INTO option_chain_snapshots \
@@ -263,13 +278,17 @@ pub async fn write_chain_snapshot(pool: &PgPool, rows: &[SnapshotRow]) {
                 "QuestDB option_chain_snapshots insert failed for {}: {}",
                 row.symbol, e
             );
+            failed += 1;
         }
     }
 
     log::trace!(
-        "QuestDB option_chain_snapshots wrote {} row(s).",
+        "QuestDB option_chain_snapshots wrote {} of {} row(s).",
+        rows.len() - failed,
         rows.len()
     );
+
+    failed
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────

@@ -12,14 +12,16 @@
 // reaches it at http://tool-server:8084. Not exposed publicly.
 
 mod candles;
+mod metrics;
 mod news;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
-    extract::State,
+    extract::{MatchedPath, Request, State},
     http::StatusCode,
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
@@ -35,6 +37,7 @@ use quant_core::{
 use tokio::sync::RwLock;
 
 use candles::{load_candles, load_candles_with_ts, CandleLoadError};
+use metrics::ToolServerMetrics;
 
 // ── Server State ─────────────────────────────────────────────────────────────
 
@@ -42,6 +45,11 @@ use candles::{load_candles, load_candles_with_ts, CandleLoadError};
 pub struct ServerState {
     pub pool: sqlx::PgPool,
     pub watchers: Arc<RwLock<HashMap<String, Watcher>>>,
+    /// Prometheus handle. Carried in state so handlers can record the outcomes
+    /// only they can see — chiefly the `unavailable` markers, which the
+    /// middleware below cannot distinguish from a successful answer without
+    /// buffering and parsing every response body.
+    pub metrics: ToolServerMetrics,
 }
 
 // ── Request / payload contracts (identical to the desktop tool_server) ────────
@@ -181,7 +189,16 @@ fn sort_candles_ascending(mut candles: Vec<CandleWithTs>) -> Vec<CandleWithTs> {
 /// contract: an Availability_Shortfall degrades to a graceful 200
 /// `{"unavailable": true, ...}` marker (the agent treats it as a missing input,
 /// not an error), while an Infrastructure_Fault is a 503 naming the cause.
-fn candle_load_error_response(e: CandleLoadError) -> Response {
+///
+/// `tool` and `metrics` are threaded in so the two branches land in different
+/// series. They are the same thing to a status-code dashboard — one is a 200 —
+/// but opposite things to an operator: a shortfall means backfill the history, a
+/// fault means QuestDB is unreachable.
+fn candle_load_error_response(
+    e: CandleLoadError,
+    tool: &str,
+    metrics: &ToolServerMetrics,
+) -> Response {
     match e {
         CandleLoadError::Shortfall {
             symbol,
@@ -189,26 +206,97 @@ fn candle_load_error_response(e: CandleLoadError) -> Response {
             available,
             needed,
             detail,
-        } => (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "unavailable": true,
-                "reason": detail,
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "available": available,
-                "needed": needed,
-            })),
-        )
-            .into_response(),
-        CandleLoadError::Fault { source, detail } => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({
-                "error": format!("candle store fault: {}: {}", source, detail),
-            })),
-        )
-            .into_response(),
+        } => {
+            metrics.tool_unavailable(tool);
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "unavailable": true,
+                    "reason": detail,
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "available": available,
+                    "needed": needed,
+                })),
+            )
+                .into_response()
+        }
+        CandleLoadError::Fault { source, detail } => {
+            metrics.db_error("candle_load");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": format!("candle store fault: {}: {}", source, detail),
+                })),
+            )
+                .into_response()
+        }
     }
+}
+
+/// Records tool/status/latency for every `/tools/*` request in one place, rather
+/// than at nine handler exits with four or more return paths each.
+///
+/// The tool name comes from `MatchedPath` — the route pattern axum matched, not
+/// the raw URI — so an unrouted path cannot invent a label series and blow up
+/// cardinality. Anything outside `/tools/` is skipped outright: this layer also
+/// wraps `/health`, and letting probes through would both add a bogus series and
+/// beat the heartbeat every scrape interval, so "time since last real use" would
+/// report the probe cadence rather than actual usage.
+///
+/// What this layer deliberately cannot see is the `unavailable` marker: it is a
+/// 200 whose body says the data was not there, and distinguishing it would mean
+/// buffering and parsing every response body on the hot path. The handlers
+/// record that themselves.
+async fn track_tool_call(
+    State(state): State<ServerState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let tool = request
+        .extensions()
+        .get::<MatchedPath>()
+        .and_then(|p| p.as_str().strip_prefix("/tools/"))
+        .map(str::to_string);
+
+    let started = std::time::Instant::now();
+    let response = next.run(request).await;
+
+    if let Some(tool) = tool {
+        state.metrics.tool_call_completed(
+            &tool,
+            response.status().as_u16(),
+            started.elapsed().as_secs_f64(),
+        );
+    }
+
+    response
+}
+
+/// Builds the route table. Split out of `main` so tests can exercise the real
+/// router — chiefly to prove the metrics middleware ignores `/health`, which is
+/// a property of how the layer and the routes are composed and cannot be checked
+/// by testing either in isolation.
+fn build_router(state: ServerState) -> Router {
+    Router::new()
+        .route("/tools/get_candles", post(get_candles))
+        .route("/tools/get_consensus", post(get_consensus))
+        .route("/tools/watch_condition", post(watch_condition))
+        .route("/tools/get_multi_tf_trend", post(get_multi_tf_trend_handler))
+        .route("/tools/declare_trade", post(declare_trade))
+        .route("/tools/get_chart_patterns", post(get_chart_patterns_handler))
+        .route("/tools/get_support_resistance", post(get_support_resistance))
+        .route("/tools/get_prediction", post(get_prediction))
+        .route("/tools/get_news_context", post(get_news_context))
+        .route("/health", axum::routing::get(|| async { "ok" }))
+        // Layered after every route so `MatchedPath` is populated by the time the
+        // middleware runs — it reads the route *pattern*, not the request URI, so
+        // an unrouted path cannot invent a `{tool}` series.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            track_tool_call,
+        ))
+        .with_state(state)
 }
 
 async fn get_candles(
@@ -233,31 +321,10 @@ async fn get_candles(
                 .collect();
             (StatusCode::OK, Json(sort_candles_ascending(result))).into_response()
         }
-        Err(CandleLoadError::Shortfall {
-            symbol,
-            timeframe,
-            available,
-            needed,
-            detail,
-        }) => (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "unavailable": true,
-                "reason": detail,
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "available": available,
-                "needed": needed,
-            })),
-        )
-            .into_response(),
-        Err(CandleLoadError::Fault { source, detail }) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({
-                "error": format!("candle store fault: {}: {}", source, detail),
-            })),
-        )
-            .into_response(),
+        // Was an inlined copy of candle_load_error_response's two arms; folded
+        // into the shared helper so the unavailable/fault split is recorded in
+        // exactly one place and cannot drift between call sites.
+        Err(e) => candle_load_error_response(e, "get_candles", &state.metrics),
     }
 }
 
@@ -271,7 +338,7 @@ async fn get_consensus(
     let tf = payload.timeframe.unwrap_or_else(|| "10m".to_string());
     let candles = match load_candles(&state.pool, &payload.symbol, &tf, limit).await {
         Ok(c) => c,
-        Err(e) => return candle_load_error_response(e),
+        Err(e) => return candle_load_error_response(e, "get_consensus", &state.metrics),
     };
 
     let indicators = IndicatorState::from_candles_basic(&candles);
@@ -296,7 +363,7 @@ async fn get_support_resistance(
     let limit = payload.limit.unwrap_or(200);
     let candles = match load_candles(&state.pool, &payload.symbol, &tf, limit).await {
         Ok(c) => c,
-        Err(e) => return candle_load_error_response(e),
+        Err(e) => return candle_load_error_response(e, "get_support_resistance", &state.metrics),
     };
 
     let sr = quant_core::compute_sr(&candles, &tf);
@@ -320,7 +387,7 @@ async fn get_chart_patterns_handler(
     let tf = payload.timeframe.unwrap_or_else(|| "10m".to_string());
     let candles = match load_candles(&state.pool, &payload.symbol, &tf, limit).await {
         Ok(c) => c,
-        Err(e) => return candle_load_error_response(e),
+        Err(e) => return candle_load_error_response(e, "get_chart_patterns", &state.metrics),
     };
 
     let patterns = ChartPatternEngine::analyze(&candles);
@@ -360,9 +427,18 @@ async fn get_multi_tf_trend_handler(
     Json(payload): Json<MultiTfRequest>,
 ) -> Result<Json<MultiTfResponse>, (StatusCode, Json<serde_json::Value>)> {
     let symbol = &payload.symbol;
+    // Each horizon degrades independently to an empty series, so a missing 4h
+    // history still yields 1h and 1d trends. The cost is that a total QuestDB
+    // outage returns three "Neutral" trends with a 200, which is why the empty
+    // case is recorded: with no history at any horizon there is nothing behind
+    // the answer, and the status code cannot say so.
     let candles_1h = load_candles(&state.pool, symbol, "1h", 200).await.unwrap_or_default();
     let candles_4h = load_candles(&state.pool, symbol, "4h", 200).await.unwrap_or_default();
     let candles_1d = load_candles(&state.pool, symbol, "1d", 200).await.unwrap_or_default();
+
+    if candles_1h.is_empty() && candles_4h.is_empty() && candles_1d.is_empty() {
+        state.metrics.tool_unavailable("get_multi_tf_trend");
+    }
 
     let ema_9_1h = IndicatorState::compute_ema(&candles_1h, 9);
     let ema_21_1h = IndicatorState::compute_ema(&candles_1h, 21);
@@ -483,7 +559,15 @@ async fn get_prediction(
     let candles = match load_candles(&state.pool, &payload.symbol, &tf, limit).await {
         Ok(c) => c,
         Err(e) => {
-            return Ok(Json(serde_json::json!({ "unavailable": true, "reason": e.to_string() })))
+            // This handler flattens both CandleLoadError variants into one 200
+            // marker, so a QuestDB fault is attributed here as well as counted
+            // as unavailable — otherwise an outage reaching only this tool would
+            // be indistinguishable from missing history.
+            if matches!(e, CandleLoadError::Fault { .. }) {
+                state.metrics.db_error("candle_load");
+            }
+            state.metrics.tool_unavailable("get_prediction");
+            return Ok(Json(serde_json::json!({ "unavailable": true, "reason": e.to_string() })));
         }
     };
     let interval_sec = timeframe_interval_sec(&tf);
@@ -495,10 +579,16 @@ async fn get_prediction(
             "projected_value": value,
             "confidence": confidence,
         }))),
-        None => Ok(Json(serde_json::json!({
-            "unavailable": true,
-            "reason": "insufficient data to compute projection",
-        }))),
+        None => {
+            // Candles loaded but the projection could not be computed. Same
+            // marker as a load failure from the agent's point of view, so it
+            // belongs in the same series.
+            state.metrics.tool_unavailable("get_prediction");
+            Ok(Json(serde_json::json!({
+                "unavailable": true,
+                "reason": "insufficient data to compute projection",
+            })))
+        }
     }
 }
 
@@ -616,15 +706,24 @@ fn unavailable_news(reason: &str) -> serde_json::Value {
 }
 
 async fn get_news_context(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
     Json(payload): Json<GetNewsContextRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let url = sentiment_service_url();
     let client = reqwest::Client::new();
     let rss_headlines: Vec<String> = news::fetch_news_headlines(&payload.symbol).await;
 
+    // Every degraded path in this handler funnels through here, so the marker
+    // goes in the closure rather than at each of the four return sites.
+    //
+    // Only the empty branch counts as unavailable: with RSS headlines in hand
+    // the agent still has something to read, and only the sentiment label is
+    // missing. Counting that as unavailable would conflate a partial answer with
+    // no answer, and the sentiment service being down is already visible in its
+    // own metrics on :9108.
     let headlines_only_fallback = |reason: String| -> serde_json::Value {
         if rss_headlines.is_empty() {
+            state.metrics.tool_unavailable("get_news_context");
             unavailable_news(&reason)
         } else {
             serde_json::json!({
@@ -941,6 +1040,11 @@ async fn watch_condition(
     {
         let mut map = state.watchers.write().await;
         map.insert(watcher.thread_id.clone(), watcher.clone());
+        // Reported from inside the lock, from the map's own length, so the gauge
+        // is the registry's size rather than a running tally. A tally would drift
+        // permanently on any path that removes a watcher without decrementing —
+        // and there are three such paths below.
+        state.metrics.set_active_watchers(map.len());
     }
     info!(
         "[tool-server] Registered watcher thread_id={} symbol={} level={:.2} dir={} ref={:.2} inv={:?}",
@@ -952,6 +1056,7 @@ async fn watch_condition(
     // candle every few seconds — low-latency enough for price-level triggers.
     let pool = state.pool.clone();
     let watchers = state.watchers.clone();
+    let watch_metrics = state.metrics.clone();
     tokio::spawn(async move {
         // 20-period baseline average volume.
         let mut avg_volume = 1.0;
@@ -1011,9 +1116,20 @@ async fn watch_condition(
                 {
                     let mut map = watchers.write().await;
                     map.remove(&watcher.thread_id);
+                    watch_metrics.set_active_watchers(map.len());
                 }
+                watch_metrics.watcher_triggered();
                 let tk = serde_json::to_value(trigger_kind).unwrap_or(serde_json::json!("target"));
-                let _ = post_resume(&watcher.thread_id, &candle, tk, None, watcher.user_id.as_deref()).await;
+                // The watcher is already deregistered, so a failed resume is not
+                // retried by anything. Counted here because this is the one
+                // failure where the user was explicitly waiting for the answer
+                // and simply never receives it.
+                if post_resume(&watcher.thread_id, &candle, tk, None, watcher.user_id.as_deref())
+                    .await
+                    .is_err()
+                {
+                    watch_metrics.resume_failed();
+                }
                 break;
             }
 
@@ -1031,6 +1147,7 @@ async fn watch_condition(
                             Ok(false) => {
                                 let mut map = watchers.write().await;
                                 map.remove(&watcher.thread_id);
+                                watch_metrics.set_active_watchers(map.len());
                                 break;
                             }
                             Err(_) => {
@@ -1052,6 +1169,15 @@ async fn watch_condition(
 async fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
+    // ── Metrics ──────────────────────────────────────────────────────────────
+    // Started before the pool connect, which `exit(1)`s on failure. A service
+    // that cannot reach QuestDB is the single most useful thing this surface can
+    // report, and it can only report it if the listener is already up when the
+    // exit happens — otherwise the scrape simply fails and the state is
+    // indistinguishable from "never deployed".
+    let metrics = ToolServerMetrics::new();
+    metrics.serve();
+
     let db_url = std::env::var("QUESTDB_POSTGRES_URL")
         .unwrap_or_else(|_| "postgresql://admin:quest@127.0.0.1:8812/qdb".to_string());
 
@@ -1072,25 +1198,35 @@ async fn main() {
 
     // Ensure the historical candle tables exist (idempotent) so first-run queries
     // return a graceful empty result rather than a "table does not exist" fault.
-    candles::migrate(&pool).await;
+    //
+    // A failure here is not fatal, and that is exactly why it is counted: every
+    // later read of the missing table degrades to a graceful "no history" answer,
+    // so the service goes on returning 200s with empty bodies forever.
+    for _ in 0..candles::migrate(&pool).await {
+        metrics.db_error("migrate");
+    }
+
+    // ── Pool sampler ─────────────────────────────────────────────────────────
+    // Sampled on a timer rather than inside a handler: exhaustion matters most
+    // when every request is parked waiting for a connection, and in that state no
+    // handler is running to report it.
+    let pool_metrics = metrics.clone();
+    let sampled_pool = pool.clone();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(10));
+        loop {
+            ticker.tick().await;
+            pool_metrics.set_pool_state(sampled_pool.size(), sampled_pool.num_idle());
+        }
+    });
 
     let state = ServerState {
         pool,
         watchers: Arc::new(RwLock::new(HashMap::new())),
+        metrics,
     };
 
-    let router = Router::new()
-        .route("/tools/get_candles", post(get_candles))
-        .route("/tools/get_consensus", post(get_consensus))
-        .route("/tools/watch_condition", post(watch_condition))
-        .route("/tools/get_multi_tf_trend", post(get_multi_tf_trend_handler))
-        .route("/tools/declare_trade", post(declare_trade))
-        .route("/tools/get_chart_patterns", post(get_chart_patterns_handler))
-        .route("/tools/get_support_resistance", post(get_support_resistance))
-        .route("/tools/get_prediction", post(get_prediction))
-        .route("/tools/get_news_context", post(get_news_context))
-        .route("/health", axum::routing::get(|| async { "ok" }))
-        .with_state(state);
+    let router = build_router(state);
 
     let addr = std::env::var("QUANT_TOOL_SERVER_ADDR").unwrap_or_else(|_| {
         let port = std::env::var("QUANT_TOOL_SERVER_PORT").unwrap_or_else(|_| "8084".to_string());
@@ -1108,5 +1244,92 @@ async fn main() {
             error!("[tool-server] failed to bind {}: {}", addr, e);
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod router_tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request as HttpRequest;
+    use tower::ServiceExt;
+
+    /// A lazily-connected pool. Never dialled: the routes exercised here do not
+    /// touch the database, and the point is to test route/middleware composition
+    /// without standing up QuestDB.
+    fn state() -> ServerState {
+        ServerState {
+            pool: sqlx::postgres::PgPoolOptions::new()
+                .connect_lazy("postgresql://unused:unused@127.0.0.1:1/none")
+                .expect("lazy pool"),
+            watchers: Arc::new(RwLock::new(HashMap::new())),
+            metrics: ToolServerMetrics::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_health_probe_is_not_a_tool_call() {
+        // Docker and Prometheus hit /health on a fixed interval. If the metrics
+        // layer counted those, `last_work_age_seconds` would track the probe
+        // cadence instead of real usage — the gauge would read "busy" on a
+        // completely unused server, which is the exact opposite of its purpose.
+        let st = state();
+        let metrics = st.metrics.clone();
+
+        let response = build_router(st)
+            .oneshot(
+                HttpRequest::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let out = metrics.render_for_test();
+        assert!(
+            !out.contains(r#"tool="/health""#) && !out.contains(r#"tool="health""#),
+            "a probe must not create a tool series:\n{out}"
+        );
+        assert!(
+            out.contains(r#"tool_server_work_completed_total{service="tool-server"} 0"#),
+            "a probe must not beat the heartbeat:\n{out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_tool_call_is_labelled_by_route_pattern() {
+        // The other half of the same property: a real /tools/* request is
+        // recorded, under the bare tool name rather than the full path.
+        let st = state();
+        let metrics = st.metrics.clone();
+
+        let response = build_router(st)
+            .oneshot(
+                HttpRequest::builder()
+                    .method("POST")
+                    .uri("/tools/declare_trade")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"action":"BUY","entry":100.0,"stop_loss":99.0,
+                            "take_profit":103.0,"conviction_score":80,
+                            "setup_validation":"ok","execution_plan":"plan"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let out = metrics.render_for_test();
+        assert!(
+            out.contains(r#"tool_server_tool_calls_total{outcome="success",tool="declare_trade"} 1"#),
+            "expected a labelled success:\n{out}"
+        );
+        assert!(
+            out.contains(r#"tool_server_work_completed_total{service="tool-server"} 1"#),
+            "a real tool call must beat the heartbeat:\n{out}"
+        );
     }
 }

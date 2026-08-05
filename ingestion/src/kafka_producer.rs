@@ -151,11 +151,14 @@ pub fn init_producer(brokers: &str) -> FutureProducer {
 ///
 /// Failures are logged as warnings — a dropped tick is preferable to stalling
 /// the hot WebSocket ingestion path.
+///
+/// Returns `true` if the broker acknowledged the record, so the caller can count
+/// drops into `ingestion_write_errors_total{sink="kafka"}`.
 pub async fn publish_tick(
     producer: &FutureProducer,
     topic: &str,
     tick: &crate::proto::market_data::Tick,
-) {
+) -> bool {
     // Protobuf → bytes
     let payload = prost::Message::encode_to_vec(tick);
 
@@ -172,9 +175,11 @@ pub async fn publish_tick(
                 "→ Kafka [{}] partition={} offset={} symbol={}",
                 topic, partition, offset, tick.symbol
             );
+            true
         }
         Err((e, _)) => {
             warn!("Kafka publish_tick failed for {}: {}", tick.symbol, e);
+            false
         }
     }
 }

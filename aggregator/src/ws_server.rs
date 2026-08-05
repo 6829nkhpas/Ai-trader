@@ -15,6 +15,8 @@ use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tokio_tungstenite::tungstenite::Message;
 
+use crate::metrics::AggregatorMetrics;
+
 /// Starts the WebSocket broadcast server.
 ///
 /// Binds to `0.0.0.0:{port}` and accepts incoming TCP connections. Each
@@ -30,7 +32,15 @@ use tokio_tungstenite::tungstenite::Message;
 /// * `rx` — A broadcast receiver carrying JSON decision strings from the
 ///   main consumer loop. Each spawned connection task subscribes independently
 ///   via `rx.resubscribe()`.
-pub async fn start_server(port: &str, rx: broadcast::Receiver<String>) {
+/// * `metrics` — Prometheus handle. Client count is tracked from the point the
+///   handshake succeeds, not from `accept()`: a TCP connection that never
+///   upgrades is not a subscriber, and counting it would leak the gauge upward
+///   every time a port scanner or health probe touched this socket.
+pub async fn start_server(
+    port: &str,
+    rx: broadcast::Receiver<String>,
+    metrics: AggregatorMetrics,
+) {
     let addr = format!("0.0.0.0:{}", port);
 
     let listener = TcpListener::bind(&addr)
@@ -49,6 +59,7 @@ pub async fn start_server(port: &str, rx: broadcast::Receiver<String>) {
 
                 // Each client gets its own receiver clone from the broadcast channel.
                 let mut client_rx = rx.resubscribe();
+                let client_metrics = metrics.clone();
 
                 tokio::spawn(async move {
                     // Upgrade raw TCP stream to WebSocket.
@@ -64,6 +75,7 @@ pub async fn start_server(port: &str, rx: broadcast::Receiver<String>) {
                     };
 
                     log::info!("[WS] Handshake complete for {}", peer_addr);
+                    client_metrics.ws_client_connected();
 
                     // Split to get only the write half — we don't read from clients.
                     let (mut write, _read) = futures_util::StreamExt::split(ws_stream);
@@ -85,6 +97,7 @@ pub async fn start_server(port: &str, rx: broadcast::Receiver<String>) {
                                     "[WS] Client {} lagged — skipped {} messages",
                                     peer_addr, n
                                 );
+                                client_metrics.ws_client_lagged(n);
                                 // Continue; client will catch up from the next message.
                             }
                             Err(broadcast::error::RecvError::Closed) => {
@@ -97,7 +110,11 @@ pub async fn start_server(port: &str, rx: broadcast::Receiver<String>) {
                         }
                     }
 
+                    // Paired with the ws_client_connected() above. Every path out
+                    // of the forward loop — send failure, channel closed — falls
+                    // through here, so the gauge cannot drift upward on any exit.
                     log::info!("[WS] Connection closed for {}", peer_addr);
+                    client_metrics.ws_client_disconnected();
                 });
             }
             Err(e) => {

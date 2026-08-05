@@ -12,6 +12,12 @@ description = "High-performance Rust service: Kite WebSocket → Protobuf → Ka
 # Async runtime — full feature set (io, time, sync, macros, rt-multi-thread)
 tokio = { version = "1", features = ["full"] }
 
+# Shared Prometheus instrumentation: /metrics + /health + /ready, the work
+# Heartbeat, and NSE session awareness. Path dependency on the sibling crate,
+# the same pattern tool-server uses for quant-core — the Dockerfile build
+# context is the monorepo root so `../service-metrics` resolves.
+service-metrics = { path = "../service-metrics" }
+
 # WebSocket transport — raw + async wrappers
 tungstenite = "0.20"
 tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
