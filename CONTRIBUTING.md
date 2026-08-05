@@ -126,25 +126,99 @@ TradingView codegen assets. `tools/load_tester` also does not currently compile.
 
 ## Enforcement
 
-GitHub branch protection is **not currently active** on this repository — it is
-private on a free plan, and the protection API returns:
+Server-side enforcement is **not available on this repository.** It is private
+under a Free organization, and *both* mechanisms are gated behind a paid plan:
 
-```
-403 Upgrade to GitHub Pro or make this repository public to enable this feature.
-```
+| Attempted | Result |
+|-----------|--------|
+| `gh api repos/thestratai/Ai-trader/branches/main/protection` | `403 Upgrade to GitHub Pro or make this repository public` |
+| `gh api repos/thestratai/Ai-trader/rulesets` (GET and POST) | `403 Upgrade to GitHub Pro or make this repository public` |
+| `gh api orgs/thestratai/rulesets` | needs `admin:org`; org-level rulesets require **Team** regardless |
 
-So the rules above are **policy, not physics.** Two things partially compensate:
+Per GitHub's docs, rulesets and protected branches cover private repos only on
+**Pro / Team / Enterprise**; org-wide rulesets need **Team**. `thestratai` is on
+`free`. So the rules above are **policy, not physics.** Three things compensate:
 
-- [`branch-guard.yml`](.github/workflows/branch-guard.yml) fails on any direct
-  (non-merge) push to `main` or `staging`, and on any PR into `main` that does
-  not come from `staging` or a `hotfix/*` branch. It reports the violation after
-  the fact; it cannot prevent it.
-- Review discipline. Until protection is available, this is the real gate.
+1. **[`.githooks/pre-push`](.githooks/pre-push) — the only real prevention.**
+   Refuses to push (or delete) `main` and `staging` from your machine, before
+   anything reaches GitHub. Install it once per clone:
+
+   ```bash
+   git config core.hooksPath .githooks
+   ```
+
+   It is per-clone and bypassable (`--no-verify`, or the explicit
+   `ALLOW_PROTECTED_PUSH=1`). It is a seatbelt against the accidental push on
+   the wrong branch, not a security control — someone who wants to push to
+   `main` still can.
+
+2. **[`branch-guard.yml`](.github/workflows/branch-guard.yml)** — reports a
+   direct push to `main`/`staging`, and fails any PR into `main` not from
+   `staging` or `hotfix/*`. It runs *after* the push lands, so it documents a
+   violation rather than stopping it.
+
+3. **Review discipline.** Until the plan allows protection, this is the real
+   gate. Nothing above can stop a determined `git push`.
 
 ### Turning on real protection
 
-Once the repo is on GitHub Pro (or made public), run these to enforce the model
-properly:
+Once the org is on **Team** (or the repo is made public), enforce the model for
+real. A **ruleset** is the current mechanism and is preferred over classic
+branch protection — it is evaluated as a unit, can target several branches at
+once, and reports which rule rejected a push.
+
+```bash
+REPO=thestratai/Ai-trader
+
+# One ruleset covering both protected branches: PR-only, no force-push,
+# no deletion, and CI must be green. The status context is "CI" — the
+# `name:` of the ci-ok job, which aggregates every other CI job. Point at
+# that one rather than each job, so path-filtered skips don't wedge a merge.
+gh api -X POST "repos/$REPO/rulesets" --input - <<'JSON'
+{
+  "name": "protected-branches",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": { "include": ["refs/heads/main", "refs/heads/staging"], "exclude": [] }
+  },
+  "rules": [
+    { "type": "deletion" },
+    { "type": "non_fast_forward" },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 1,
+        "dismiss_stale_reviews_on_push": true,
+        "require_last_push_approval": true,
+        "require_code_owner_review": false,
+        "required_review_thread_resolution": false,
+        "allowed_merge_methods": ["merge", "squash", "rebase"]
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": true,
+        "required_status_checks": [{ "context": "CI" }]
+      }
+    }
+  ],
+  "bypass_actors": []
+}
+JSON
+
+# Verify it took effect, then confirm a direct push is actually refused:
+gh api "repos/$REPO/rulesets" --jq '.[] | "\(.id) \(.name) \(.enforcement)"'
+gh api "repos/$REPO/rules/branches/main" --jq '.[].type'
+```
+
+`bypass_actors: []` means the rules apply to admins too. To let repo admins
+bypass in a genuine emergency, add
+`{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}`.
+
+<details>
+<summary>Classic branch protection (alternative, if you prefer it)</summary>
 
 ```bash
 REPO=thestratai/Ai-trader
@@ -153,7 +227,7 @@ REPO=thestratai/Ai-trader
 gh api -X PUT "repos/$REPO/branches/main/protection" \
   --input - <<'JSON'
 {
-  "required_status_checks": null,
+  "required_status_checks": { "strict": true, "contexts": ["CI"] },
   "enforce_admins": true,
   "required_pull_request_reviews": {
     "required_approving_review_count": 1,
@@ -171,7 +245,7 @@ JSON
 gh api -X PUT "repos/$REPO/branches/staging/protection" \
   --input - <<'JSON'
 {
-  "required_status_checks": null,
+  "required_status_checks": { "strict": true, "contexts": ["CI"] },
   "enforce_admins": false,
   "required_pull_request_reviews": {
     "required_approving_review_count": 0,
@@ -184,8 +258,14 @@ gh api -X PUT "repos/$REPO/branches/staging/protection" \
 JSON
 ```
 
-After enabling protection, `branch-guard.yml` becomes a redundant second layer —
-harmless to keep as defence in depth.
+</details>
+
+⚠️ Do **not** enable *Automatically delete head branches* on this repo. In this
+model the head of a promotion PR is `develop` or `staging` — long-lived branches
+that must survive the merge. It is currently off; leave it off.
+
+After enabling either mechanism, `branch-guard.yml` becomes a redundant second
+layer — harmless to keep as defence in depth.
 
 ## Commit messages
 

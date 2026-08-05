@@ -59,7 +59,7 @@ pub fn ensure_bootstrapped(app: &AppHandle) {
 /// Spawn one WS → Tauri-event forwarding task.
 ///
 /// The bridge connects to the resolved feed URL — either the public WSS gateway
-/// (`wss://app.stratai.live/ws/<feed>`) when `STRATAI_WS_BASE_URL` is set, or the
+/// (`wss://app-api.stratai.live/ws/<feed>`) when `STRATAI_WS_BASE_URL` is set, or the
 /// direct `ws://<host>:<port>` fallback — parses each text frame as JSON, and
 /// re-emits it on `<event_name>` for the React layer.
 ///

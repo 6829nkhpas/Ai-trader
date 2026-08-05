@@ -20,6 +20,7 @@ mod consumer;
 mod engine;
 mod kafka_producer;
 mod kite_api;
+mod metrics;
 mod ohlc_server;
 mod proto;
 mod quant;
@@ -61,6 +62,14 @@ async fn main() {
     log::info!("WebSocket port : {}", ws_port);
     log::info!("Kite API port  : {}", kite_api_port);
 
+    // ── Prometheus instrumentation (:9102) ───────────────────────────────────
+    // Started before any subsystem so /health answers during boot and a startup
+    // failure below is visible as an unhealthy service rather than as a scrape
+    // timeout with no explanation. AggregatorMetrics degrades to an inert handle
+    // on registry failure, so instrumentation can never take down the service.
+    let metrics = metrics::AggregatorMetrics::new();
+    metrics.serve();
+
     // ── Aggregator State (SP40) ──────────────────────────────────────────────
     // Shared sentiment cache: updated by sentiment consumer, read by tech consumer.
     let agg_state = AggregatorState::new();
@@ -76,16 +85,18 @@ async fn main() {
     // Spawn in a background task — runs forever, accepting WS connections.
     // Receives a subscriber from the broadcast channel to forward JSON decisions.
     let ws_rx = tx.subscribe();
+    let ws_metrics = metrics.clone();
     tokio::spawn(async move {
-        ws_server::start_server(&ws_port, ws_rx).await;
+        ws_server::start_server(&ws_port, ws_rx, ws_metrics).await;
     });
     log::info!("WebSocket server spawned (background task)");
 
     // ── Kite REST API Server ──────────────────────────────────────────────────
     // Serves instrument search + quote proxy for the frontend watchlist panel.
     // Runs on a separate port (default 8084) to avoid conflicts.
+    let kite_metrics = metrics.clone();
     tokio::spawn(async move {
-        kite_api::run_kite_api_server(&kite_api_port).await;
+        kite_api::run_kite_api_server(&kite_api_port, kite_metrics).await;
     });
     log::info!("Kite REST API server spawned (background task)");
 
@@ -107,15 +118,16 @@ async fn main() {
         // 10s OHLC candles, and broadcasts them via WebSocket on port 8081.
         // The Tauri frontend connects here for live candlestick chart data.
         let ohlc_brokers = brokers.clone();
+        let ohlc_metrics = metrics.clone();
         tokio::spawn(async move {
-            ohlc_server::ohlc_server::run_ohlc_pipeline(&ohlc_brokers).await;
+            ohlc_server::ohlc_server::run_ohlc_pipeline(&ohlc_brokers, ohlc_metrics).await;
         });
         log::info!("OHLC candle pipeline spawned (market.ticks → :8081)");
 
         log::info!("All subsystems initialised. Entering aggregator consumer loop...");
         log::info!("─────────────────────────────────────────────────────────");
 
-        run_consumer_loop(consumer, &agg_state, producer, tx).await;
+        run_consumer_loop(consumer, &agg_state, producer, tx, metrics).await;
     }
 
     #[cfg(not(feature = "kafka"))]

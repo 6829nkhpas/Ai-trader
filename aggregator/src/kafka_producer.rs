@@ -44,11 +44,17 @@ pub mod producer {
     /// - Uses `prost::Message::encode_to_vec` for serialisation.
     /// - Delivery is awaited with a 5-second timeout.
     /// - Errors are logged but non-fatal — the consumer loop continues.
+    ///
+    /// Returns `true` if the broker acknowledged the record. The decision is
+    /// still dropped on failure, exactly as before; the bool exists only so the
+    /// caller can count the loss into `aggregator_publish_errors_total`. Without
+    /// it, a broker outage silently discards every decision this service
+    /// computes and the only trace is the log stream.
     pub async fn publish_decision(
         producer: &FutureProducer,
         topic: &str,
         decision: &AggregatedDecision,
-    ) {
+    ) -> bool {
         let payload = decision.encode_to_vec();
 
         let record = FutureRecord::to(topic)
@@ -63,6 +69,7 @@ pub mod producer {
                     partition,
                     offset,
                 );
+                true
             }
             Err((kafka_err, _)) => {
                 log::error!(
@@ -70,6 +77,7 @@ pub mod producer {
                     decision.symbol,
                     kafka_err,
                 );
+                false
             }
         }
     }

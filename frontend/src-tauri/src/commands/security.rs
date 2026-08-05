@@ -126,7 +126,7 @@ pub async fn api_fetch(
     })
 }
 
-/// Proxy a Kite REST call through the app.stratai.live gateway.
+/// Proxy a Kite REST call through the app-api.stratai.live gateway.
 ///
 /// The aggregator's Kite proxy (historical candles, quotes, instrument search)
 /// is served by the ingestion container and fronted by Caddy at

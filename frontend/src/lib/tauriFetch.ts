@@ -68,7 +68,7 @@ export async function tauriFetch(url: string, init: RequestInit = {}): Promise<R
  * Fetch a Kite REST endpoint (historical candles, quotes, instrument search).
  *
  * In the packaged Tauri app a relative `/kite/*` URL resolves to
- * `tauri.localhost` and 404s; the real proxy lives behind the app.stratai.live
+ * `tauri.localhost` and 404s; the real proxy lives behind the app-api.stratai.live
  * gateway under basic-auth. This routes through the Rust `kite_fetch` command,
  * which prefixes the gateway base and injects the gateway credentials
  * server-side (neither leaks into the JS bundle).

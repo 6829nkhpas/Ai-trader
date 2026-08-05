@@ -1,4 +1,5 @@
 import asyncio
+import time
 import uvicorn
 import os
 from fastapi import FastAPI, HTTPException, Request
@@ -6,8 +7,24 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from langgraph.types import Command
 
+# ── Prometheus surface (:9109) — started FIRST, deliberately ──────────────────
+# This import and the serve() below sit above `from graph import ...` because
+# graph.py is a ~345 KB module that pulls in langgraph, langchain and the whole
+# tool layer. Importing it takes real time, and a failure inside it (a missing
+# dependency, a bad env var read at import time) kills the process before uvicorn
+# ever binds. With the listener already up, that window is the difference between
+# scraping an honest `idle` and scraping nothing at all — and "nothing at all"
+# looks exactly like a container that was never deployed.
+#
+# The listener runs on its own thread rather than as a FastAPI route: the failure
+# worth catching here is a wedged event loop, and an `@app.get("/metrics")` route
+# would be starved by the very stall it is meant to report. See service_metrics.py.
+from service_metrics import metrics as svc_metrics
+
+_metrics_server = svc_metrics.serve()
+
 # Import the compiled LangGraph state machine + the per-run LLM credential hook.
-from graph import graph, set_run_llm_credentials
+from graph import graph, set_run_llm_credentials  # noqa: E402 - see the note above
 
 # Per-user OpenRouter key resolution (backend internal endpoint, droplet
 # IP-whitelisted). Each run binds the requesting user's key instead of a shared
@@ -46,6 +63,9 @@ from stream_events import (
     RUN_STARTED,
     RUN_FINISHED,
     ERROR,
+    # Imported for instrumentation only: the tool's terminal event is where its
+    # success/failure verdict already exists.
+    TOOL_CALL_END,
 )
 
 # Session Telemetry (measurement-only, best-effort). Imported defensively so a
@@ -60,6 +80,11 @@ except Exception as _telemetry_import_error:  # noqa: BLE001 - never block the a
         f"[main] WARN: session telemetry unavailable ({_telemetry_import_error}); "
         "run/resume will stream without telemetry."
     )
+
+# The telemetry layer degrades silently by design, which means a deployment can
+# lose all trade-outcome recording with no other outward sign. Export the fact so
+# the absence is at least visible on a dashboard.
+svc_metrics.set_telemetry_available(telemetry is not None)
 
 app = FastAPI(title="LangGraph Deep Quant Loop Service")
 
@@ -167,6 +192,19 @@ _CANCELLED: set[str] = set()
 # race-free (all mutations happen on the event loop).
 _SUBSCRIBERS: dict[str, set[asyncio.Queue]] = {}
 
+
+def _refresh_subscriber_gauge() -> None:
+    """Republish the total attached-subscriber count.
+
+    Derived from the hub itself rather than incremented/decremented alongside it,
+    so the gauge cannot drift out of step with reality on a disconnect path that
+    misses its decrement — the number is only useful if it is exactly right. Zero
+    while a thread is paused means a watcher resume would reach nobody and the
+    terminal sits in WATCHING forever, which is precisely the bug this hub exists
+    to prevent.
+    """
+    svc_metrics.set_stream_subscribers(sum(len(s) for s in _SUBSCRIBERS.values()))
+
 def _publish_frame(thread_id: str, frame: str) -> None:
     """Best-effort fan-out of one already-formatted SSE frame to all subscribers
     attached to ``thread_id``. Never raises and never blocks the producing run —
@@ -182,7 +220,39 @@ def _publish_frame(thread_id: str, frame: str) -> None:
 
 # ── SSE Generator ────────────────────────────────────────────────────────────
 
-async def event_generator(thread_id: str, graph_input=None, resume_command=None, user_id=None):
+async def event_generator(thread_id: str, graph_input=None, resume_command=None, user_id=None, kind: str = "run"):
+    """Stream the run as ordered glass-box SSE, tracked for monitoring.
+
+    A thin wrapper around :func:`_run_events` that owns the run's lifecycle in
+    the metrics surface. It exists as a separate function purely so the ``finally``
+    below cannot be skipped: an SSE consumer that hangs up mid-run closes this
+    generator, and without a guaranteed terminal record the run would stay counted
+    in ``runs_in_flight`` forever — pinning ``work_expected`` to 1 and reporting a
+    permanent stall on a service that is working fine.
+
+    ``kind`` is the entry point (``run`` / ``resume`` / ``qa``), which is the axis
+    that makes the run counters readable: a watcher-triggered ``resume`` failing
+    while fresh ``run``s succeed is a completely different problem from the
+    reverse.
+    """
+    tracker = svc_metrics.run_started(kind)
+    try:
+        async for frame in _run_events(
+            thread_id,
+            tracker,
+            graph_input=graph_input,
+            resume_command=resume_command,
+            user_id=user_id,
+        ):
+            yield frame
+    finally:
+        # Idempotent — a run that reached a terminal event has already recorded
+        # its own outcome, so this only takes effect when the client dropped the
+        # stream before the run finished.
+        tracker.finish("disconnected")
+
+
+async def _run_events(thread_id: str, tracker, graph_input=None, resume_command=None, user_id=None):
     """Stream the run as ordered glass-box Server-Sent Events.
 
     Ordering and resilience guarantees (Requirement 17):
@@ -201,8 +271,13 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None,
         (R17.5, R5.5).
       * Every payload is framed through ``format_sse``, which normalizes it to a
         valid JSON object (R17.7).
+
+    ``tracker`` records progress for the metrics surface. Every call on it is
+    best-effort and non-throwing by construction, so the stream's guarantees above
+    are unaffected by instrumentation.
     """
     # R17.1: RUN_STARTED is always the first event of the run.
+    tracker.stream_event(RUN_STARTED)
     yield format_sse(RUN_STARTED, build_run_started_event(thread_id))
 
     # ── Bind the per-user OpenRouter key for this run (REQUIRED) ─────────────
@@ -223,8 +298,12 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None,
     _shared_key = (os.getenv("LLM_API_KEY") or "").strip()
     if _shared_key:
         set_run_llm_credentials(_shared_key, openrouter_base_url())
+        svc_metrics.key_resolution("shared")
     else:
         if not (user_id and str(user_id).strip()):
+            svc_metrics.key_resolution("missing_user")
+            tracker.stream_event(ERROR)
+            tracker.finish("auth_error")
             yield format_sse(
                 ERROR,
                 build_error_event("authentication required: no user_id supplied for LLM access"),
@@ -233,8 +312,12 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None,
         try:
             _run_key = resolve_openrouter_key(user_id)
             set_run_llm_credentials(_run_key, openrouter_base_url())
+            svc_metrics.key_resolution("resolved")
         except ApiKeyResolutionError as _key_err:
             print(f"[main] LLM key resolution failed for user {user_id}: {_key_err}")
+            svc_metrics.key_resolution("failed")
+            tracker.stream_event(ERROR)
+            tracker.finish("key_error")
             yield format_sse(ERROR, build_error_event(f"LLM key unavailable: {_key_err}"))
             return
 
@@ -265,6 +348,13 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None,
     try:
         # Iterate over the async updates generator, preserving step order (R17.4).
         async for event in graph.astream(target_input, config, stream_mode="updates"):
+            # THE BEAT SITE. One completed node advance is the unit of real work
+            # for this service. Beating here rather than at run completion is what
+            # separates a healthy ten-minute FIND run from one wedged on a hung
+            # provider call for the same ten minutes — the first keeps the age near
+            # zero, the second lets it grow past the threshold.
+            tracker.graph_step()
+
             # Check cancel flag at each step boundary — breaks the loop without
             # waiting for the next LLM/tool round-trip to complete.
             if thread_id in _CANCELLED:
@@ -275,6 +365,18 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None,
                 # DECISION for the update, keeping TOOL_CALL_START ahead of its
                 # RESULT/END (R17.3) and surfacing events in step order (R17.4).
                 for name, payload in node_update_events(node_data):
+                    tracker.stream_event(name)
+                    # A tool's terminal event carries its success/failure verdict.
+                    # Counted here rather than at the tool layer because this is
+                    # where the classification already exists — and because a tool
+                    # that fails every call still lets the run COMPLETE with a
+                    # degraded analysis, so the run outcome alone would never
+                    # show it.
+                    if name == TOOL_CALL_END and isinstance(payload, dict):
+                        tracker.tool_call(
+                            payload.get("tool") or "unknown",
+                            payload.get("status") or "failure",
+                        )
                     # Stamp EVERY event with the run's thread_id so a multi-run
                     # frontend can route each event to the correct session even
                     # when several symbols/profiles are analyzed concurrently
@@ -288,12 +390,20 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None,
         if cancelled:
             # User-requested stop: emit a clean terminal event so the frontend
             # always transitions out of 'running'. No DECISION is emitted.
+            tracker.stream_event(RUN_FINISHED)
+            tracker.finish("cancelled")
             yield format_sse(RUN_FINISHED, build_run_finished_event(thread_id, "cancelled"))
         else:
             # R17.2/R17.6: a completed or paused run ends with a single terminal
             # RUN_FINISHED event stating which it was.
             state = graph.get_state(config)
             status = "paused" if state.next else "completed"
+            tracker.stream_event(RUN_FINISHED)
+            # `paused` is a normal outcome, not a failure: the graph is waiting at
+            # watch_price_condition for a price that may be hours away. Recording
+            # it as terminal is what stops a watching thread from counting as an
+            # in-flight run and reporting a stall for the whole wait.
+            tracker.finish(status)
             yield format_sse(RUN_FINISHED, build_run_finished_event(thread_id, status))
 
     except Exception as e:
@@ -303,6 +413,8 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None,
         # R17.5/R5.5: a failed LLM stream surfaces a clean ERROR and emits no
         # DECISION (and no RUN_FINISHED) for the run. We rely exclusively on the
         # live LLM analysis backed by real market data — never a fabricated plan.
+        tracker.stream_event(ERROR)
+        tracker.finish("error")
         yield format_sse(ERROR, build_error_event(err_msg))
     finally:
         # Always discard the cancel flag so the set never leaks across runs.
@@ -334,7 +446,7 @@ async def run_agent(payload: RunRequest):
         "fno_expiry": payload.fno_expiry,
         "model": payload.model,
     }
-    gen = event_generator(payload.thread_id, graph_input=initial_state, user_id=payload.user_id)
+    gen = event_generator(payload.thread_id, graph_input=initial_state, user_id=payload.user_id, kind="run")
     # Best-effort telemetry tee (passthrough; falls back to bare gen on any failure).
     gen = _observe(
         payload.thread_id,
@@ -370,6 +482,7 @@ async def resume_agent(payload: ResumeRequest):
             "trigger_kind": payload.trigger_kind,
         }),
         user_id=payload.user_id,
+        kind="resume",
     )
     # Best-effort telemetry tee. ResumeRequest carries no symbol/timeframe/mode
     # (those belong to the originating /run and are folded into the same Session
@@ -402,6 +515,7 @@ async def stream_thread(thread_id: str, request: Request):
     pruned so the hub never leaks."""
     queue: asyncio.Queue = asyncio.Queue(maxsize=256)
     _SUBSCRIBERS.setdefault(thread_id, set()).add(queue)
+    _refresh_subscriber_gauge()
 
     async def relay():
         try:
@@ -421,6 +535,7 @@ async def stream_thread(thread_id: str, request: Request):
                 subs.discard(queue)
                 if not subs:
                     _SUBSCRIBERS.pop(thread_id, None)
+            _refresh_subscriber_gauge()
 
     return StreamingResponse(relay(), media_type="text/event-stream")
 
@@ -452,7 +567,7 @@ async def qa_agent(payload: QARequest):
         "model": payload.model,
     }
     return StreamingResponse(
-        event_generator(payload.thread_id, graph_input=qa_input, user_id=payload.user_id),
+        event_generator(payload.thread_id, graph_input=qa_input, user_id=payload.user_id, kind="qa"),
         media_type="text/event-stream"
     )
 
@@ -470,6 +585,7 @@ async def cancel_agent(payload: CancelRequest):
     streaming task, so this endpoint is the cooperative half of a two-sided stop.
     """
     _CANCELLED.add(payload.thread_id)
+    svc_metrics.cancellation_requested()
     print(f"[cancel] Cancellation requested for thread={payload.thread_id}")
     return {"status": "cancelling", "thread_id": payload.thread_id}
 
@@ -614,6 +730,33 @@ def _build_chain_rows(latest, analytics: dict) -> list:
 
 @app.get("/options/snapshot")
 def options_snapshot(underlying: str, expiry: str = ""):
+    """Time and classify a snapshot assembly, delegating the work unchanged.
+
+    The outcome label is read back off the payload's own ``reason_code`` rather
+    than tallied alongside it, so the metric cannot disagree with what the F&O
+    panel actually received. Everything other than ``ok`` is an honest unavailable
+    marker, not an exception — the panel renders empty and the cause is visible
+    only here.
+
+    This endpoint is a synchronous ``def``, so FastAPI runs it on the threadpool;
+    a slow QuestDB read shows up as latency here rather than blocking the event
+    loop and stalling live runs with it.
+    """
+    started = time.monotonic()
+    try:
+        payload = _build_options_snapshot(underlying, expiry)
+    except Exception:
+        # The helper is written not to raise, but an exception escaping it would
+        # be exactly the failure worth seeing. Recorded, then re-raised unchanged
+        # so behaviour is identical to before instrumentation.
+        svc_metrics.options_snapshot("error", time.monotonic() - started)
+        raise
+    outcome = payload.get("reason_code", "ok") if payload.get("unavailable") else "ok"
+    svc_metrics.options_snapshot(outcome, time.monotonic() - started)
+    return payload
+
+
+def _build_options_snapshot(underlying: str, expiry: str = ""):
     """Return the assembled F&O snapshot for a chain, or an Unavailable_Marker.
 
     Composes the existing F1/F2/F3 layers (no new analytics — Requirements 9.1,

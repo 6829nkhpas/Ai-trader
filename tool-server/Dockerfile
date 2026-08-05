@@ -20,8 +20,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-# Copy the two crates (tool-server + its quant-core path dependency).
+# Copy the three crates (tool-server + its quant-core and service-metrics path
+# dependencies).
 COPY quant-core/ ./quant-core/
+COPY service-metrics/ ./service-metrics/
 COPY tool-server/ ./tool-server/
 
 WORKDIR /build/tool-server
@@ -43,6 +45,7 @@ RUN useradd -r -s /bin/false tool_server_user
 USER tool_server_user
 
 ENV QUANT_TOOL_SERVER_PORT=8084
-EXPOSE 8084
+# 8084 — the tool API. 9107 — the Prometheus surface (/metrics, /health, /ready).
+EXPOSE 8084 9107
 
 ENTRYPOINT ["/usr/local/bin/tool-server"]

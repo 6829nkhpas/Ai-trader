@@ -1,0 +1,25 @@
+[package]
+name = "status-api"
+version = "0.1.0"
+edition = "2021"
+description = "Admin-panel status endpoint for the Strat Ai fleet. Reads Prometheus, falls back to probing services directly when Prometheus is unreachable, and reduces both to one JSON contract so the panel never learns PromQL."
+
+[[bin]]
+name = "status-api"
+path = "src/main.rs"
+
+# Versions deliberately match the rest of the monorepo (tool-server, aggregator)
+# so this crate does not pull a second copy of tokio/axum/reqwest into a build.
+[dependencies]
+service-metrics = { path = "../service-metrics" }
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+# rustls, not native-tls: the runtime image carries ca-certificates but no
+# OpenSSL, matching tool-server's Dockerfile.
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
+env_logger = "0.11"
+tower-http = { version = "0.5", features = ["cors"] }

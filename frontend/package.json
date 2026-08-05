@@ -12,9 +12,9 @@
     "test:watch": "vitest",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:dev:remote": "cross-env STRATAI_SERVER_HOST=app.stratai.live STRATAI_HTTP_BASE_URL=https://app.stratai.live STRATAI_WS_BASE_URL=wss://app.stratai.live/ws QUESTDB_USER=admin tauri dev",
+    "tauri:dev:remote": "cross-env STRATAI_SERVER_HOST=app-api.stratai.live STRATAI_HTTP_BASE_URL=https://app-api.stratai.live STRATAI_WS_BASE_URL=wss://app-api.stratai.live/ws QUESTDB_USER=admin tauri dev",
     "tauri:build": "tauri build",
-    "tauri:build:remote": "cross-env STRATAI_SERVER_HOST=app.stratai.live STRATAI_HTTP_BASE_URL=https://app.stratai.live STRATAI_WS_BASE_URL=wss://app.stratai.live/ws QUESTDB_USER=admin tauri build"
+    "tauri:build:remote": "cross-env STRATAI_SERVER_HOST=app-api.stratai.live STRATAI_HTTP_BASE_URL=https://app-api.stratai.live STRATAI_WS_BASE_URL=wss://app-api.stratai.live/ws QUESTDB_USER=admin tauri build"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

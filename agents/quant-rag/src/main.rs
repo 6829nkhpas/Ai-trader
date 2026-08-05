@@ -11,6 +11,7 @@
 
 mod engine;
 mod llm;
+mod metrics;
 mod patterns;
 mod proto;
 mod ws_server;
@@ -33,8 +34,21 @@ async fn main() {
     info!("║  Perfection Phase 1 — Insight Pipeline (8083)    ║");
     info!("╚══════════════════════════════════════════════════╝");
 
+    // ── Metrics ──────────────────────────────────────────────────────────
+    // Started before everything else, including the LLM client. A missing
+    // LLM_API_KEY exits the process below, and the whole point of a monitoring
+    // surface is that a service which refuses to start is distinguishable from
+    // one that was never deployed — that only holds if the listener is already
+    // up when the exit happens.
+    let metrics = metrics::QuantRagMetrics::new();
+    metrics.serve();
+
     // ── Initialise the LLM client ────────────────────────────────────────
-    let llm_client = match LlmClient::new() {
+    // The metrics handle is held by the client so each LLM failure is recorded
+    // at the point it is detected — network, HTTP status, envelope JSON,
+    // missing content, malformed model output — rather than being guessed at
+    // from the text of the resulting error.
+    let llm_client = match LlmClient::new(metrics.clone()) {
         Ok(c) => {
             info!("✅ LlmClient initialized — LLM_API_KEY loaded");
             c
@@ -50,14 +64,15 @@ async fn main() {
 
     // ── Spawn the WebSocket server on port 8083 ──────────────────────────
     let ws_tx_clone = ws_tx.clone();
+    let ws_metrics = metrics.clone();
     tokio::spawn(async move {
-        ws_server::start_server(8083, ws_tx_clone.subscribe()).await;
+        ws_server::start_server(8083, ws_tx_clone.subscribe(), ws_metrics).await;
     });
 
     // ── Kafka-gated block ────────────────────────────────────────────────
     #[cfg(feature = "kafka")]
     {
-        engine::engine::run(&llm_client, ws_tx).await;
+        engine::engine::run(&llm_client, ws_tx, metrics).await;
     }
 
     #[cfg(not(feature = "kafka"))]

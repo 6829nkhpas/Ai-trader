@@ -1,4 +1,5 @@
 use crate::engine::OhlcEngine;
+use crate::metrics::AlphaMetrics;
 use crate::proto::market_data::Tick;
 use futures_util::stream::StreamExt;
 use prost::Message as ProstMessage;
@@ -8,7 +9,7 @@ use rdkafka::ClientConfig;
 use rdkafka::producer::FutureProducer;
 use serde_json::json;
 
-pub async fn run_consumer(brokers: &str, topic: &str, producer: FutureProducer, ohlc_topic: &str, tx: tokio::sync::broadcast::Sender<String>) {
+pub async fn run_consumer(brokers: &str, topic: &str, producer: FutureProducer, ohlc_topic: &str, tx: tokio::sync::broadcast::Sender<String>, metrics: AlphaMetrics) {
     let consumer: StreamConsumer = ClientConfig::new()
         .set("group.id", "alpha-terminal-group")
         .set("bootstrap.servers", brokers)
@@ -25,6 +26,11 @@ pub async fn run_consumer(brokers: &str, topic: &str, producer: FutureProducer, 
 
     let mut engine = OhlcEngine::new();
 
+    // The engine only grows — a symbol is never dropped once seen — so the count
+    // is pushed to the gauge on change rather than on every tick, keeping the
+    // hot path free of a redundant atomic store per message.
+    let mut last_tracked = 0usize;
+
     log::info!("Starting to consume from topic: {}", topic);
 
     let mut message_stream = consumer.stream();
@@ -38,10 +44,20 @@ pub async fn run_consumer(brokers: &str, topic: &str, producer: FutureProducer, 
                 };
 
                 if let Ok(tick) = Tick::decode(payload) {
+                    metrics.tick_decoded();
+
                     let closed = engine.process_tick(&tick);
+
+                    let tracked = engine.tracked_symbols();
+                    if tracked != last_tracked {
+                        metrics.set_tracked_symbols(tracked);
+                        last_tracked = tracked;
+                    }
 
                     // If a candle closed, publish the completed candle to Kafka
                     if let Some(ref closed_candle) = closed {
+                        metrics.candle_closed();
+
                         log::info!(
                             "[CANDLE CLOSED] {} | O: {} H: {} L: {} C: {} | Vol: {}",
                             closed_candle.symbol,
@@ -55,9 +71,13 @@ pub async fn run_consumer(brokers: &str, topic: &str, producer: FutureProducer, 
                         let producer_clone = producer.clone();
                         let ohlc_topic_clone = ohlc_topic.to_string();
                         let candle_for_kafka = closed_candle.clone();
-                        
+                        let pub_metrics = metrics.clone();
+
                         tokio::spawn(async move {
-                            crate::kafka_producer::publish_candle(&producer_clone, &ohlc_topic_clone, &candle_for_kafka).await;
+                            let published = crate::kafka_producer::publish_candle(&producer_clone, &ohlc_topic_clone, &candle_for_kafka).await;
+                            if !published {
+                                pub_metrics.publish_failed();
+                            }
                         });
 
                         // Broadcast the closed candle to WebSocket clients
@@ -89,6 +109,7 @@ pub async fn run_consumer(brokers: &str, topic: &str, producer: FutureProducer, 
                         let _ = tx.send(live_json.to_string());
                     }
                 } else {
+                    metrics.decode_failed();
                     log::warn!("Error parsing Protobuf tick");
                 }
             }

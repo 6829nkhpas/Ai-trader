@@ -63,6 +63,12 @@ jobs:
               - 'tool-server/**'
               - 'quant-core/**'
               - 'shared_protos/**'
+              # service-metrics is a path dependency of all seven instrumented
+              # services, so a change to it can break any of them. Without it
+              # here, editing service-metrics alone matched NO filter, skipped
+              # every job, and reported green — and its own tests/listener.rs
+              # never ran.
+              - 'service-metrics/**'
             python:
               - 'agents/deep-quant-loop/**'
 
@@ -148,6 +154,10 @@ jobs:
           - agents/quant-rag
           - tool-server
           - quant-core
+          # Shared instrumentation crate. Built on its own so a break here is
+          # attributed to service-metrics rather than surfacing as six
+          # unrelated service failures.
+          - service-metrics
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -155,10 +165,32 @@ jobs:
         with:
           workspaces: ${{ matrix.crate }}
 
-      - name: protoc
+      # Six of these crates depend on rdkafka with the `cmake-build` feature,
+      # which compiles librdkafka from source rather than linking a system copy.
+      # That build needs C headers the GitHub runner does not ship, and without
+      # them it dies with:
+      #
+      #   rdkafka_conf.c:60:10: fatal error: curl/curl.h: No such file or directory
+      #
+      # This list mirrors the builder stage of the service Dockerfiles (see
+      # ingestion/Dockerfile), which is why the Docker builds always worked while
+      # CI did not. protoc is here too — several crates compile shared_protos.
+      #
+      # Note: rdkafka-sys is invoked with -DWITH_CURL=0 yet still includes
+      # curl/curl.h, so the header is required regardless of the feature flags.
+      - name: System deps (librdkafka + protoc)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends protobuf-compiler
+          sudo apt-get install -y --no-install-recommends \
+            protobuf-compiler \
+            cmake \
+            build-essential \
+            pkg-config \
+            libcurl4-openssl-dev \
+            libsasl2-dev \
+            libssl-dev \
+            zlib1g-dev \
+            libzstd-dev
 
       - name: Check
         working-directory: ${{ matrix.crate }}

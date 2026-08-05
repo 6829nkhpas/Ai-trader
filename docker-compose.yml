@@ -9,6 +9,25 @@
 # Prerequisites:
 #   - Docker Engine 24+ / Docker Desktop
 #   - .env file at monorepo root with required keys (see PRODUCTION_SETUP.md)
+#
+# ── Monitoring ────────────────────────────────────────────────────────────────
+# This is the LOCAL/dev topology and is deliberately partial — it predates
+# several services and uses different names for others (`predictive-agent` vs
+# the prod `predictive`). The Prometheus/Grafana/cAdvisor/blackbox stack lives
+# in docker-compose.prod.yml + docker-compose.8gb.yml, whose service names are
+# what infra/prometheus/prometheus.yml targets; standing it up here would scrape
+# names that do not exist.
+#
+# What IS wired here is each service's metrics port, published to the host so
+# you can verify instrumentation directly:
+#
+#   curl -s localhost:9101/metrics | grep ingestion_work_completed_total
+#   curl -s localhost:9101/ready          # {"status":"ok|stalled|idle", ...}
+#
+# METRICS_PORT is set explicitly rather than left to each binary's default
+# because every service here shares `env_file: .env` and they all read the SAME
+# variable name — one stray METRICS_PORT in .env would collapse them onto a
+# single port. A value in `environment:` overrides env_file.
 # ──────────────────────────────────────────────────────────────────────────────
 
 services:
@@ -74,7 +93,10 @@ services:
     environment:
       KAFKA_BROKERS: redpanda:29092
       QUESTDB_URL: postgresql://questdb:8812/qdb
+      METRICS_PORT: "9101"
       RUST_LOG: info
+    ports:
+      - "9101:9101"     # Prometheus /metrics, /health, /ready
     depends_on:
       redpanda:
         condition: service_healthy
@@ -91,9 +113,11 @@ services:
     env_file: .env
     environment:
       KAFKA_BROKERS: redpanda:29092
+      METRICS_PORT: "9103"
       RUST_LOG: info
     ports:
       - "8081:8081"
+      - "9103:9103"     # Prometheus /metrics, /health, /ready
     depends_on:
       redpanda:
         condition: service_healthy
@@ -108,9 +132,11 @@ services:
     env_file: .env
     environment:
       KAFKA_BROKERS: redpanda:29092
+      METRICS_PORT: "9102"
       RUST_LOG: info
     ports:
       - "8080:8080"
+      - "9102:9102"     # Prometheus /metrics, /health, /ready
     depends_on:
       redpanda:
         condition: service_healthy
@@ -125,9 +151,11 @@ services:
     env_file: .env
     environment:
       KAFKA_BROKERS: redpanda:29092
+      METRICS_PORT: "9105"
       RUST_LOG: info
     ports:
       - "8082:8082"
+      - "9105:9105"     # Prometheus /metrics, /health, /ready
     depends_on:
       redpanda:
         condition: service_healthy
@@ -142,9 +170,11 @@ services:
     env_file: .env
     environment:
       KAFKA_BROKERS: redpanda:29092
+      METRICS_PORT: "9106"
       RUST_LOG: info
     ports:
       - "8083:8083"
+      - "9106:9106"     # Prometheus /metrics, /health, /ready
     depends_on:
       redpanda:
         condition: service_healthy

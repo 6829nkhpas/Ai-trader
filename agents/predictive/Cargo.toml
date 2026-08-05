@@ -18,6 +18,9 @@ futures-util = "0.3"
 serde_json = "1.0"
 tokio-tungstenite = "0.20"
 
+# Shared Prometheus surface: /metrics, /health, /ready + the work heartbeat.
+service-metrics = { path = "../../service-metrics" }
+
 [build-dependencies]
 prost-build = "0.12"
 protoc-bin-vendored = "3"

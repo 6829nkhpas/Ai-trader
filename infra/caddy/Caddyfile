@@ -9,34 +9,37 @@
 #                            caddy hash-password --plaintext '<password>'`)
 #
 # TLS certificates are provisioned automatically by Let's Encrypt for
-# app.stratai.live and persisted in the caddy_data volume across restarts.
+# app-api.stratai.live and persisted in the caddy_data volume across restarts.
 
 {
 	admin off
-	# `disable_redirects` keeps automatic HTTPS (so app.stratai.live gets a real
+	# `disable_redirects` keeps automatic HTTPS (so app-api.stratai.live gets a real
 	# certificate) without adding a global HTTP->HTTPS redirect. Port 80 is still
 	# used for the ACME challenge.
 	auto_https disable_redirects
 }
 
-# ── Public gateway for the whole desktop-facing data plane (app.stratai.live) ─
+# ── Public gateway for the whole desktop-facing data plane (app-api.stratai.live) ─
 # Automatic TLS fronts every endpoint the shipped desktop app talks to, so the
 # installer carries NO raw droplet IP. Caddy detects `Upgrade: websocket` and
 # proxies WS connections transparently; `handle_path` strips each route prefix
 # so every upstream receives the exact path it already serves.
 #
-#   wss://app.stratai.live/ws/aggregator  -> aggregator:8080     (decisions)
-#   wss://app.stratai.live/ws/alpha       -> alpha-terminal:8081 (OHLC candles)
-#   wss://app.stratai.live/ws/predictive  -> predictive:8082     (ghost line)
-#   wss://app.stratai.live/ws/insight     -> quant-rag:8083      (market insight)
-#   https://app.stratai.live/questdb/*    -> questdb:9000        (HTTP /exec, basic-auth)
-#   https://app.stratai.live/deepquant/*  -> deep-quant:8086     (glass-box SSE, basic-auth)
+#   wss://app-api.stratai.live/ws/aggregator  -> aggregator:8080     (decisions)
+#   wss://app-api.stratai.live/ws/alpha       -> alpha-terminal:8081 (OHLC candles)
+#   wss://app-api.stratai.live/ws/predictive  -> predictive:8082     (ghost line)
+#   wss://app-api.stratai.live/ws/insight     -> quant-rag:8083      (market insight)
+#   https://app-api.stratai.live/questdb/*    -> questdb:9000        (HTTP /exec, basic-auth)
+#   https://app-api.stratai.live/deepquant/*  -> deep-quant:8086     (glass-box SSE, basic-auth)
+#   https://app-api.stratai.live/status/*     -> status-api:9110     (fleet health JSON, basic-auth)
+#   https://app-api.stratai.live/prometheus/* -> prometheus:9090     (TSDB console, basic-auth)
+#   https://app-api.stratai.live/grafana/*    -> grafana:3000        (dashboards, basic-auth)
 #
-# Requires: a DNS A/AAAA record for app.stratai.live -> this droplet, and the
+# Requires: a DNS A/AAAA record for app-api.stratai.live -> this droplet, and the
 # firewall open on 80 (ACME challenge) + 443 (see infra/variables.tf and the
 # compose gateway port mappings). Internal containers reach QuestDB/deep-quant
 # directly by service name, so no host ports are published for them.
-app.stratai.live {
+app-api.stratai.live {
 	handle_path /ws/aggregator* {
 		reverse_proxy aggregator:8080
 	}
@@ -89,6 +92,54 @@ app.stratai.live {
 		}
 		rewrite * /api/kite{uri}
 		reverse_proxy aggregator:8087
+	}
+
+	# ── Status API (/status/* -> status-api:9110) ──────────────────────────────
+	# The admin panel at dashboard.stratai.live calls /status/api/status to poll
+	# fleet health. handle_path strips /status, so the upstream receives
+	# /api/status exactly as it serves it.
+	#
+	# The OPTIONS carve-out is load-bearing, not a loophole. The panel sends an
+	# Authorization header, which makes the browser fire a CORS preflight — and a
+	# preflight is sent WITHOUT credentials by specification. With basic_auth
+	# applied to every method, Caddy would 401 that preflight and the real request
+	# would never leave the browser, so the endpoint would be unreachable from the
+	# panel while working perfectly under curl. A preflight carries no request body
+	# and returns no data; only the CORS headers status-api itself emits, which are
+	# already pinned to the dashboard origin. Every method that can actually read
+	# anything still requires the password.
+	handle_path /status/* {
+		@authenticated not method OPTIONS
+		basic_auth @authenticated {
+			{$QUESTDB_USER} {$QUESTDB_PASSWORD_HASH}
+		}
+		reverse_proxy status-api:9110
+	}
+
+	# ── Prometheus (/prometheus/* -> prometheus:9090) ──────────────────────────
+	# The engineer-facing TSDB console. Prometheus itself is configured with
+	# --web.external-url so its own redirects and alert "Source" links point back
+	# through this gateway rather than at the unreachable internal service name.
+	handle_path /prometheus/* {
+		basic_auth {
+			{$QUESTDB_USER} {$QUESTDB_PASSWORD_HASH}
+		}
+		reverse_proxy prometheus:9090
+	}
+
+	# ── Grafana (/grafana/* -> grafana:3000) ───────────────────────────────────
+	# `handle`, NOT `handle_path` — the prefix is deliberately NOT stripped here.
+	# The compose file sets GF_SERVER_SERVE_FROM_SUB_PATH=true, which means
+	# Grafana routes on paths that still carry /grafana. Stripping it (as the
+	# Prometheus route above correctly does, because Prometheus runs with
+	# --web.route-prefix=/) would give Grafana a path it does not serve and the
+	# app would 404 on every asset. These two upstreams genuinely differ; the
+	# asymmetry below is not an oversight.
+	handle /grafana/* {
+		basic_auth {
+			{$QUESTDB_USER} {$QUESTDB_PASSWORD_HASH}
+		}
+		reverse_proxy grafana:3000
 	}
 
 	# Friendly root / health probe (returns 200 for a plain GET).

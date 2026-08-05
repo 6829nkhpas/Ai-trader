@@ -67,12 +67,26 @@ fn is_missing_table_error(e: &sqlx::Error) -> bool {
 /// whether the desktop or the tool-server creates them. `live_ticks` is owned
 /// by the ingestion service (auto-created via the ILP write path) and is not
 /// created here; a missing `live_ticks` is treated as an empty source.
-pub async fn migrate(pool: &PgPool) {
+///
+/// Returns the number of `CREATE TABLE` statements that failed. Reported rather
+/// than recorded here so this module stays free of the metrics registry — the
+/// caller owns classification, exactly as it does for `CandleLoadError`. A
+/// non-zero count is worth counting because every subsequent read of that table
+/// degrades to a graceful "no history" answer, which is indistinguishable from
+/// a genuinely quiet symbol unless the migration failure itself is visible.
+///
+/// The two `ALTER TABLE ... DEDUP` statements are deliberately excluded: they
+/// fail on QuestDB builds that predate upsert keys, and the tables are usable
+/// without them.
+pub async fn migrate(pool: &PgPool) -> usize {
+    let mut failures = 0usize;
+
     let ddl_daily = "CREATE TABLE IF NOT EXISTS historical_candles (\
         symbol SYMBOL, ts TIMESTAMP, open DOUBLE, high DOUBLE, low DOUBLE, \
         close DOUBLE, volume LONG) timestamp(ts) PARTITION BY YEAR;";
     if let Err(e) = sqlx::query(ddl_daily).execute(pool).await {
         log::error!("[tool-server] migration historical_candles failed: {}", e);
+        failures += 1;
     }
     let _ = sqlx::query("ALTER TABLE historical_candles DEDUP ENABLE UPSERT KEYS(ts, symbol);")
         .execute(pool)
@@ -83,6 +97,7 @@ pub async fn migrate(pool: &PgPool) {
         low DOUBLE, close DOUBLE, volume LONG) timestamp(ts) PARTITION BY MONTH;";
     if let Err(e) = sqlx::query(ddl_intraday).execute(pool).await {
         log::error!("[tool-server] migration historical_intraday failed: {}", e);
+        failures += 1;
     }
     let _ = sqlx::query(
         "ALTER TABLE historical_intraday DEDUP ENABLE UPSERT KEYS(ts, symbol, timeframe);",
@@ -91,6 +106,7 @@ pub async fn migrate(pool: &PgPool) {
     .await;
 
     log::info!("[tool-server] QuestDB historical table migration complete.");
+    failures
 }
 
 const PRIO_DAILY: u8 = 1;

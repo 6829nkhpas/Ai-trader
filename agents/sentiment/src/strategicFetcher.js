@@ -22,10 +22,14 @@
 
 import axios from 'axios';
 import { isArticleProcessed, markArticleProcessed } from './cache.js';
+import { metrics } from './metrics.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const NEWSDATA_BASE_URL = 'https://newsdata.io/api/1/latest';
+
+// NewsData.io rejects `q` longer than this with HTTP 422. Build queries to fit.
+const MAX_QUERY_LEN = 100;
 
 // Articles requested per bucket query — kept small to conserve API credits.
 const PER_BUCKET_SIZE = 3;
@@ -50,19 +54,20 @@ const NEWSDATA_TIMEOUT_MS = 10_000;
 const MATERIALITY_BUCKETS = [
   {
     category: 'EARNINGS',
-    terms:    'results OR profit OR revenue OR earnings OR guidance OR dividend',
+    // Shortened to fit newsdata.io 100-char q limit (full name + AND + terms).
+    terms:    'earnings OR profit OR revenue OR dividend',
   },
   {
     category: 'CORPORATE_ACTIONS',
-    terms:    'order OR contract OR acquisition OR merger OR capex OR expansion OR stake OR deal',
+    terms:    'acquisition OR merger OR deal OR stake',
   },
   {
     category: 'REGULATORY',
-    terms:    'SEBI OR RBI OR probe OR penalty OR lawsuit OR ban OR approval OR investigation',
+    terms:    'SEBI OR RBI OR lawsuit OR ban OR probe',
   },
   {
     category: 'MANAGEMENT',
-    terms:    'CEO OR MD OR resignation OR appointment OR board',
+    terms:    'CEO OR resignation OR board',
   },
   {
     // SECTOR_MACRO substitutes the company's sector/industry as the term group.
@@ -93,10 +98,40 @@ function buildQuery(bucket, primaryAlias, sector) {
     // Use the first sector token (e.g. "Energy" from "Energy / Conglomerate").
     const sectorTerm = sector.split('/')[0].trim();
     if (!sectorTerm) return null;
-    return `${name} AND ${sectorTerm}`;
+    return fitQuery(`${name} AND ${sectorTerm}`, name);
   }
 
-  return `${name} AND (${bucket.terms})`;
+  return fitQuery(`${name} AND (${bucket.terms})`, name, bucket.terms);
+}
+
+/**
+ * NewsData.io rejects a `q` longer than {@link MAX_QUERY_LEN} with HTTP 422
+ * ("Query length cannot be greater than 100"), which silently killed whole
+ * buckets for companies with long names. Drop trailing OR-terms until the query
+ * fits rather than letting the request fail.
+ *
+ * @param {string} query - The assembled query.
+ * @param {string} name - The quoted company name (never dropped).
+ * @param {string} [terms] - The OR'd term group, when present.
+ * @returns {(string|null)} A query within the limit, or null if even the bare
+ *   name doesn't fit (in which case no useful query exists).
+ */
+function fitQuery(query, name, terms) {
+  if (query.length <= MAX_QUERY_LEN) return query;
+
+  // Without a term group there is nothing to trim.
+  if (!terms) return name.length <= MAX_QUERY_LEN ? name : null;
+
+  const parts = terms.split(' OR ');
+  // Drop the least-important (trailing) terms one at a time.
+  while (parts.length > 1) {
+    parts.pop();
+    const candidate = `${name} AND (${parts.join(' OR ')})`;
+    if (candidate.length <= MAX_QUERY_LEN) return candidate;
+  }
+
+  // Even a single term overflows — fall back to the bare name if it fits.
+  return name.length <= MAX_QUERY_LEN ? name : null;
 }
 
 // ── fetchStrategicNews ───────────────────────────────────────────────────────
@@ -126,6 +161,11 @@ export async function fetchStrategicNews(symbol, seed, count) {
   const apiKey = process.env.NEWSDATA_API_KEY;
   if (!apiKey) {
     console.warn('[strategicFetcher] NEWSDATA_API_KEY is not set — skipping news fetch.');
+    // The single most important thing to count here. Every symbol then takes the
+    // analyzer's no-news path and returns a neutral verdict, so the poll loop
+    // keeps beating and the service reports perfect health while learning
+    // nothing at all. This counter is the only evidence of that state.
+    metrics.newsFetchCompleted('no_api_key');
     return [];
   }
 
@@ -141,10 +181,17 @@ export async function fetchStrategicNews(symbol, seed, count) {
   /** @type {Array<{category: string, title: string, description: string, url: string, published_at: string}>} */
   const collected = [];
 
+  // Articles dropped as already-seen, in-cycle or via the 24h Redis window.
+  // Tracked so `articles_deduped_total` can be read against `articles_total`: if
+  // dedup silently breaks, this flatlines while LLM spend quietly doubles.
+  let dedupedCount = 0;
+
   for (const bucket of buckets) {
     const q = buildQuery(bucket, primaryAlias, sector);
     if (!q) {
       console.log(`[strategicFetcher] ${symbol} bucket=${bucket.category}: no query (skipped).`);
+      // Normal, not a failure: SECTOR_MACRO has no query without a known sector.
+      metrics.newsFetchCompleted('skipped');
       continue;
     }
 
@@ -169,12 +216,18 @@ export async function fetchStrategicNews(symbol, seed, count) {
         timeout: NEWSDATA_TIMEOUT_MS,
       });
       articles = response.data?.results ?? [];
+      metrics.newsFetchCompleted('ok');
     } catch (err) {
       const status = err.response?.status ?? 'network error';
       const errorMsg = err.response?.data?.results?.message ?? err.message;
       console.error(
         `\x1b[31m[strategicFetcher] ${symbol} bucket=${bucket.category} failed: HTTP ${status} — ${errorMsg}\x1b[0m`
       );
+      // Split at the point of detection: an HTTP status means NewsData.io
+      // answered and refused — on the ~200 credits/day free tier a sustained
+      // http_error rate is almost always exhausted quota rather than an outage,
+      // and the two want opposite responses.
+      metrics.newsFetchCompleted(err.response ? 'http_error' : 'network_error');
       continue; // One bad bucket shouldn't abort the rest.
     }
 
@@ -194,6 +247,7 @@ export async function fetchStrategicNews(symbol, seed, count) {
 
       // In-cycle dedup across buckets.
       if (seenKeys.has(cacheKey)) {
+        dedupedCount += 1;
         continue;
       }
 
@@ -203,10 +257,14 @@ export async function fetchStrategicNews(symbol, seed, count) {
         alreadyProcessed = await isArticleProcessed(cacheKey);
       } catch (err) {
         // Treat cache failure as "not processed" so infra blips don't drop news.
+        // The trade is duplicate LLM spend, which is why it is counted: this
+        // counter rising is the leading indicator, doubled spend the lagging one.
+        metrics.cacheError('dedup_check');
         console.error(`\x1b[31m[strategicFetcher] dedup check error: ${err.message}\x1b[0m`);
       }
 
       if (alreadyProcessed) {
+        dedupedCount += 1;
         console.log(
           `\x1b[35m[strategicFetcher]\x1b[0m \x1b[90mSKIP (cached):\x1b[0m "${normalized.title.slice(0, 60)}"`
         );
@@ -220,10 +278,13 @@ export async function fetchStrategicNews(symbol, seed, count) {
       try {
         await markArticleProcessed(cacheKey);
       } catch (err) {
+        metrics.cacheError('dedup_mark');
         console.error(`\x1b[31m[strategicFetcher] markArticleProcessed error: ${err.message}\x1b[0m`);
       }
     }
   }
+
+  metrics.articlesCollected(collected.length, dedupedCount);
 
   console.log(
     `\x1b[35m[strategicFetcher]\x1b[0m symbol=\x1b[1m${symbol}\x1b[0m  new_articles=\x1b[32m${collected.length}\x1b[0m  ` +
