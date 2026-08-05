@@ -89,17 +89,22 @@ jobs:
         working-directory: frontend
         run: npm ci
 
-      # NOTE: tsc surfaces pre-existing errors in WatchlingPanel.tsx and the
+      # NOTE: tsc surfaces pre-existing errors in WatchlistPanel.tsx and the
       # TradingView codegen assets that fail on a clean tree too (see
       # CONTRIBUTING.md). They are filtered out so this job reports only
       # regressions introduced by the change under review.
+      #
+      # tsc and grep both exit non-zero in the *passing* case here — tsc when
+      # any error exists (even a filtered one), grep when the filter leaves
+      # nothing to print. So each is run on its own with its status discarded,
+      # and the verdict comes solely from whether tsc.log has content.
       - name: Typecheck
         working-directory: frontend
         run: |
-          set -o pipefail
-          npx tsc --noEmit 2>&1 \
-            | grep -v 'WatchlistPanel\|charting_library\|datafeeds/udf' \
-            | tee tsc.log
+          npx tsc --noEmit > tsc-raw.log 2>&1 || true
+          grep -v 'WatchlistPanel\|charting_library\|datafeeds/udf' \
+            tsc-raw.log > tsc.log || true
+          cat tsc.log
           if [ -s tsc.log ]; then
             echo "::error::tsc reported errors outside the known-failing files."
             exit 1
