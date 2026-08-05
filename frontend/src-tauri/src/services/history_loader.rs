@@ -19,8 +19,10 @@
 //   We chunk into appropriate windows based on the interval.
 //
 // ── Rate Limiting ───────────────────────────────────────────────────────────
-//   Kite rate-limits historical requests to 3/sec. We insert a 350ms delay
-//   between chunk fetches to stay safely under the limit.
+//   Kite rate-limits historical requests to 3/sec. `KiteRatePacer` spaces
+//   outbound requests 350ms apart, measured from the START of the previous
+//   request — so time already spent fetching and inserting counts toward the
+//   interval instead of being paid twice, and no sleep trails the final chunk.
 //
 // ── Deduplication ───────────────────────────────────────────────────────────
 //   Before fetching, we query QuestDB for the existing data range for the
@@ -405,6 +407,10 @@ pub async fn load_historical_data(
     }
     let mut total_inserted: u64 = 0;
     let client = reqwest::Client::new();
+    // Spacing is applied before each request, not after (see `KiteRatePacer`),
+    // so already-covered chunks cost nothing and the last chunk isn't followed
+    // by a pointless sleep.
+    let mut pacer = KiteRatePacer::new(KITE_MIN_REQUEST_INTERVAL);
 
     while chunk_start < today {
         let chunk_end = std::cmp::min(chunk_start + chrono::Duration::days(365), today);
@@ -424,6 +430,10 @@ pub async fn load_historical_data(
         info!("Fetching chunk: {} → {}", chunk_start, chunk_end);
 
         // ── 3. Fetch from Kite API (daily interval) ─────────────────────
+        // Rate-limit gate: sleeps only the time still owed since the previous
+        // request, and only when a request is genuinely about to be sent.
+        pacer.acquire().await;
+
         match fetch_kite_candles(
             &client,
             instrument_token,
@@ -454,9 +464,7 @@ pub async fn load_historical_data(
             }
         }
 
-        // ── 5. Rate-limit delay (Kite: 3 req/sec max) ──────────────────
-        tokio::time::sleep(std::time::Duration::from_millis(350)).await;
-
+        // ── 5. Next chunk ───────────────────────────────────────────────
         chunk_start = chunk_end + chrono::Duration::days(1);
     }
 
@@ -539,9 +547,11 @@ pub async fn load_intraday_data(
 
     let mut total_inserted: u64 = 0;
     let client = reqwest::Client::new();
+    let mut pacer = KiteRatePacer::new(KITE_MIN_REQUEST_INTERVAL);
 
     // ── 3-5. Fetch each planned window (forward top-up + Depth_Gap) ─────
-    // Same KiteIntervalConfig chunk size, same 350ms rate-limit, and same
+    // Same KiteIntervalConfig chunk size, same 3 req/s rate limit (now paced
+    // before each request instead of slept after each chunk), and same
     // `historical_intraday` write path as the prior forward fetch. Per-chunk
     // errors are logged (never raised into the caller) exactly as before, so
     // an overall backfill error still surfaces to the caller as it does today
@@ -556,6 +566,8 @@ pub async fn load_intraday_data(
         );
 
         // ── 3. Fetch from Kite API ──────────────────────────────────────
+        pacer.acquire().await;
+
         match fetch_kite_candles(
             &client,
             instrument_token,
@@ -591,9 +603,6 @@ pub async fn load_intraday_data(
                 );
             }
         }
-
-        // ── 5. Rate-limit delay (Kite: 3 req/sec max) ──────────────────
-        tokio::time::sleep(std::time::Duration::from_millis(350)).await;
     }
 
     info!(
@@ -836,10 +845,95 @@ async fn fetch_kite_candles_via_proxy(
     Ok(candles)
 }
 
+/// Minimum spacing between two outbound Kite historical requests.
+///
+/// Kite rate-limits the historical endpoints to 3 requests/second (a 333 ms
+/// floor); 350 ms keeps a small margin.
+const KITE_MIN_REQUEST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(350);
+
+/// Paces outbound Kite requests so a backfill stays inside the rate limit
+/// without paying for time it already spent working.
+///
+/// The previous code slept a flat 350 ms *after* every chunk. That was wrong in
+/// two ways: it ignored the time the fetch and insert had already consumed (a
+/// chunk taking 600 ms of real work still paid the full extra sleep, even though
+/// the limit was long since satisfied), and it slept after the **final** chunk
+/// too — dead time charged directly to the user's first chart render.
+///
+/// This sleeps only the remainder, `interval - elapsed_since_last_request`, and
+/// only immediately before a request that actually needs it. The 3 req/s ceiling
+/// is honoured more precisely than before, because spacing is now measured from
+/// one request's start to the next rather than from the end of the preceding
+/// chunk's database write.
+///
+/// Uses [`tokio::time::Instant`] rather than [`std::time::Instant`] so tests can
+/// drive it with a paused clock.
+struct KiteRatePacer {
+    interval: std::time::Duration,
+    last_request: Option<tokio::time::Instant>,
+}
+
+impl KiteRatePacer {
+    fn new(interval: std::time::Duration) -> Self {
+        Self { interval, last_request: None }
+    }
+
+    /// Wait until the next request may be issued, then record it as issued.
+    ///
+    /// The first call never sleeps. Later calls sleep only if less than
+    /// `interval` has passed since the previous request began — `sleep_until`
+    /// with a deadline already in the past returns immediately.
+    async fn acquire(&mut self) {
+        if let Some(last) = self.last_request {
+            tokio::time::sleep_until(last + self.interval).await;
+        }
+        self.last_request = Some(tokio::time::Instant::now());
+    }
+}
+
+/// Maximum rows per batched INSERT statement.
+///
+/// Each batch costs exactly one network round trip, so bigger is faster — but
+/// every row contributes 7-8 bind parameters and the PG wire protocol caps a
+/// single statement at 65535 of them. 500 rows x 8 params = 4000, comfortably
+/// inside the limit while cutting round trips by 500x.
+const INSERT_BATCH_ROWS: usize = 500;
+
+/// Build a multi-row `VALUES (...),(...)` placeholder list.
+///
+/// Emits `cols`-wide tuples of 1-indexed `$n` placeholders — e.g. for
+/// `rows=2, cols=3`: `($1,$2,$3),($4,$5,$6)`. Callers bind in the same order.
+fn values_placeholders(rows: usize, cols: usize) -> String {
+    let mut out = String::with_capacity(rows * cols * 5);
+    for r in 0..rows {
+        if r > 0 {
+            out.push(',');
+        }
+        out.push('(');
+        for c in 0..cols {
+            if c > 0 {
+                out.push(',');
+            }
+            out.push('$');
+            // Placeholders are 1-indexed in the PG wire protocol.
+            out.push_str(&(r * cols + c + 1).to_string());
+        }
+        out.push(')');
+    }
+    out
+}
+
 /// Bulk-insert a batch of candles into QuestDB's `historical_candles` table.
 ///
-/// Uses individual parameterised INSERT statements over the PG wire protocol.
-/// QuestDB does not support multi-row VALUES or COPY, so we iterate.
+/// Rows are sent in multi-row `INSERT ... VALUES (...),(...)` batches of
+/// [`INSERT_BATCH_ROWS`]. This matters far more than it looks: the desktop app
+/// talks to QuestDB's PG-wire port across the public internet (~80 ms RTT), and
+/// the previous one-INSERT-per-candle loop paid that latency per row — a 2250
+/// candle backfill spent ~3 minutes purely waiting on round trips. Batching
+/// turns that into ~5 round trips.
+///
+/// (An earlier comment here claimed QuestDB rejects multi-row VALUES. It does
+/// not — verified against the deployed instance before this was written.)
 ///
 /// Timestamp conversion:
 ///   Kite returns ISO 8601 strings like "2024-01-15T00:00:00+0530".
@@ -850,24 +944,37 @@ async fn bulk_insert(
     symbol: &str,
     candles: &[HistoricalCandle],
 ) -> Result<(), String> {
-    for candle in candles {
-        // Parse the Kite timestamp — try multiple formats
-        let ts_micros = parse_kite_timestamp(&candle.timestamp)?;
+    const COLS: usize = 7;
 
-        sqlx::query(
-            "INSERT INTO historical_candles (symbol, ts, open, high, low, close, volume) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
-        )
-        .bind(symbol)
-        .bind(ts_micros)
-        .bind(candle.open)
-        .bind(candle.high)
-        .bind(candle.low)
-        .bind(candle.close)
-        .bind(candle.volume)
-        .execute(pool)
-        .await
-        .map_err(|e| format!("Insert failed for ts={}: {}", candle.timestamp, e))?;
+    for chunk in candles.chunks(INSERT_BATCH_ROWS) {
+        // Parse every timestamp up front so a malformed row fails the batch
+        // before any of it is sent, rather than half-way through.
+        let mut parsed = Vec::with_capacity(chunk.len());
+        for candle in chunk {
+            parsed.push((parse_kite_timestamp(&candle.timestamp)?, candle));
+        }
+
+        let sql = format!(
+            "INSERT INTO historical_candles (symbol, ts, open, high, low, close, volume) VALUES {}",
+            values_placeholders(parsed.len(), COLS)
+        );
+
+        let mut query = sqlx::query(&sql);
+        for (ts_micros, candle) in &parsed {
+            query = query
+                .bind(symbol)
+                .bind(*ts_micros)
+                .bind(candle.open)
+                .bind(candle.high)
+                .bind(candle.low)
+                .bind(candle.close)
+                .bind(candle.volume);
+        }
+
+        query
+            .execute(pool)
+            .await
+            .map_err(|e| format!("Insert failed for {} rows: {}", parsed.len(), e))?;
     }
 
     Ok(())
@@ -877,31 +984,43 @@ async fn bulk_insert(
 ///
 /// Similar to `bulk_insert()` but includes the `timeframe` column to distinguish
 /// between different intraday resolutions (e.g., "5m", "15m", "1H") for the
-/// same symbol.
+/// same symbol. Batched identically — see `bulk_insert` for why that matters.
 async fn bulk_insert_intraday(
     pool: &PgPool,
     symbol: &str,
     timeframe: &str,
     candles: &[HistoricalCandle],
 ) -> Result<(), String> {
-    for candle in candles {
-        let ts_micros = parse_kite_timestamp(&candle.timestamp)?;
+    const COLS: usize = 8;
 
-        sqlx::query(
-            "INSERT INTO historical_intraday (symbol, timeframe, ts, open, high, low, close, volume) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-        )
-        .bind(symbol)
-        .bind(timeframe)
-        .bind(ts_micros)
-        .bind(candle.open)
-        .bind(candle.high)
-        .bind(candle.low)
-        .bind(candle.close)
-        .bind(candle.volume)
-        .execute(pool)
-        .await
-        .map_err(|e| format!("Intraday insert failed for ts={}: {}", candle.timestamp, e))?;
+    for chunk in candles.chunks(INSERT_BATCH_ROWS) {
+        let mut parsed = Vec::with_capacity(chunk.len());
+        for candle in chunk {
+            parsed.push((parse_kite_timestamp(&candle.timestamp)?, candle));
+        }
+
+        let sql = format!(
+            "INSERT INTO historical_intraday (symbol, timeframe, ts, open, high, low, close, volume) VALUES {}",
+            values_placeholders(parsed.len(), COLS)
+        );
+
+        let mut query = sqlx::query(&sql);
+        for (ts_micros, candle) in &parsed {
+            query = query
+                .bind(symbol)
+                .bind(timeframe)
+                .bind(*ts_micros)
+                .bind(candle.open)
+                .bind(candle.high)
+                .bind(candle.low)
+                .bind(candle.close)
+                .bind(candle.volume);
+        }
+
+        query
+            .execute(pool)
+            .await
+            .map_err(|e| format!("Intraday insert failed for {} rows: {}", parsed.len(), e))?;
     }
 
     Ok(())
@@ -1138,5 +1257,115 @@ mod intraday_fetch_windows_tests {
              got {:?}",
             windows
         );
+    }
+}
+
+#[cfg(test)]
+mod values_placeholders_tests {
+    use super::*;
+
+    /// The daily shape: 7 columns per row, numbered continuously across rows.
+    #[test]
+    fn builds_continuous_1_indexed_tuples() {
+        assert_eq!(values_placeholders(2, 3), "($1,$2,$3),($4,$5,$6)");
+    }
+
+    /// A single row must not emit a leading or trailing comma.
+    #[test]
+    fn single_row_has_no_separator() {
+        assert_eq!(values_placeholders(1, 4), "($1,$2,$3,$4)");
+    }
+
+    /// Placeholder numbering must not restart per row — binds are positional
+    /// across the whole statement, so a restart would silently misalign columns.
+    #[test]
+    fn numbering_spans_all_rows() {
+        let sql = values_placeholders(3, 8);
+        assert!(sql.starts_with("($1,$2,$3,$4,$5,$6,$7,$8),"), "got {sql}");
+        assert!(sql.ends_with(",($17,$18,$19,$20,$21,$22,$23,$24)"), "got {sql}");
+    }
+
+    /// A full batch must stay inside the PG wire protocol's 65535-parameter
+    /// ceiling — this is the invariant that makes INSERT_BATCH_ROWS safe.
+    #[test]
+    fn full_batch_stays_under_pg_parameter_limit() {
+        for cols in [7usize, 8] {
+            let params = INSERT_BATCH_ROWS * cols;
+            assert!(
+                params <= u16::MAX as usize,
+                "{INSERT_BATCH_ROWS} rows x {cols} cols = {params} params, over the 65535 limit"
+            );
+        }
+    }
+
+    /// Degenerate input yields an empty list rather than malformed SQL. The
+    /// insert helpers never call it this way (`chunks()` yields no empty
+    /// slices), but a stray `VALUES` with a dangling comma would be worse.
+    #[test]
+    fn zero_rows_is_empty() {
+        assert_eq!(values_placeholders(0, 7), "");
+    }
+}
+
+#[cfg(test)]
+mod kite_rate_pacer_tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// The first request must go out immediately — a cold chart load should not
+    /// open with a 350ms stall.
+    #[tokio::test(start_paused = true)]
+    async fn first_acquire_does_not_sleep() {
+        let start = tokio::time::Instant::now();
+        let mut pacer = KiteRatePacer::new(Duration::from_millis(350));
+
+        pacer.acquire().await;
+
+        assert_eq!(start.elapsed(), Duration::ZERO);
+    }
+
+    /// Back-to-back requests (nothing else happening between them) must be
+    /// spaced by the full interval to respect Kite's 3 req/s ceiling.
+    #[tokio::test(start_paused = true)]
+    async fn back_to_back_requests_are_spaced_by_the_interval() {
+        let start = tokio::time::Instant::now();
+        let mut pacer = KiteRatePacer::new(Duration::from_millis(350));
+
+        pacer.acquire().await;
+        pacer.acquire().await;
+        pacer.acquire().await;
+
+        // Requests at t=0, 350, 700 — the interval applies between them, not
+        // after the last one.
+        assert_eq!(start.elapsed(), Duration::from_millis(700));
+    }
+
+    /// The point of the change: work already done counts toward the interval.
+    /// A chunk whose fetch+insert took 200ms should wait only the remaining
+    /// 150ms, not a fresh 350ms.
+    #[tokio::test(start_paused = true)]
+    async fn elapsed_work_counts_toward_the_interval() {
+        let start = tokio::time::Instant::now();
+        let mut pacer = KiteRatePacer::new(Duration::from_millis(350));
+
+        pacer.acquire().await;
+        tokio::time::sleep(Duration::from_millis(200)).await; // simulated fetch + insert
+        pacer.acquire().await;
+
+        assert_eq!(start.elapsed(), Duration::from_millis(350));
+    }
+
+    /// When a chunk takes longer than the interval, the limit is already
+    /// satisfied and the next request must not be delayed at all.
+    #[tokio::test(start_paused = true)]
+    async fn slow_chunk_incurs_no_extra_delay() {
+        let start = tokio::time::Instant::now();
+        let mut pacer = KiteRatePacer::new(Duration::from_millis(350));
+
+        pacer.acquire().await;
+        tokio::time::sleep(Duration::from_millis(900)).await; // slow chunk
+        pacer.acquire().await;
+
+        assert_eq!(start.elapsed(), Duration::from_millis(900));
     }
 }
