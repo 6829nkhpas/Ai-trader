@@ -110,8 +110,15 @@ jobs:
             exit 1
           fi
 
+      # `src/lib/env.ts` throws at import time when these are unset, which takes
+      # down every suite that transitively imports a store. Both are public
+      # URLs, not secrets — the same values `.env.example` ships. Vitest does
+      # not read `.env.local`, so the job has to supply them itself.
       - name: Tests
         working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_BASE_URL: https://api-web.stratai.live
+          NEXT_PUBLIC_DASHBOARD_URL: https://dashboard.stratai.live
         run: npx vitest run --reporter=dot
 
   tauri-backend:
