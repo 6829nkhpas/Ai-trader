@@ -80,6 +80,15 @@ export const RESOLUTION_TO_TIMEFRAME: Record<string, string> = {
   '1M':  '1M',  'M':   '1M',
 };
 
+/**
+ * How many Kite history pages to request at once.
+ *
+ * Kite rate-limits historical requests to 3/sec, so this stays at 3 — enough to
+ * collapse a serial chain of round trips into a third of the wall time without
+ * tripping the limit.
+ */
+const KITE_PAGE_CONCURRENCY = 3;
+
 /** All supported resolutions for the symbol info. */
 const SUPPORTED_RESOLUTIONS: ResolutionString[] = [
   '1', '2', '3', '4', '5', '10', '15', '30',
@@ -292,35 +301,46 @@ async function fetchKiteBatch(
 
   // ── Kite Historical REST pages (equity symbols only) ────────────────────
   const all: Bar[] = [...tauriBars];
-  for (const page of pages) {
+
+  /** Fetch one page, falling back to a token lookup when the symbol form is empty. */
+  const fetchPage = async (page: { from: Date; to: Date }): Promise<Bar[]> => {
     const dateParams = `&from=${fmt(page.from)}&to=${fmt(page.to)}`;
-
     try {
-      let candles: Bar[] = [];
-
       const url = `/historical?symbol=${encodeURIComponent(symbol)}&interval=${interval}${dateParams}`;
       const response = await kiteFetch(url);
       if (response.ok) {
-        const data = await response.json();
-        candles = parseCandles(data);
+        const candles = parseCandles(await response.json());
+        if (candles.length > 0) return candles;
       }
 
-      if (candles.length === 0) {
-        const token = await resolveInstrumentToken(symbol, exchange);
-        if (!token) break;
-        const tokenUrl = `/historical?instrument_token=${token}&interval=${interval}${dateParams}`;
-        const tokenResponse = await kiteFetch(tokenUrl);
-        if (!tokenResponse.ok) break;
-        const tokenData = await tokenResponse.json();
-        candles = parseCandles(tokenData);
-      }
-
-      if (candles.length === 0) break;
-      all.push(...candles);
+      const token = await resolveInstrumentToken(symbol, exchange);
+      if (!token) return [];
+      const tokenUrl = `/historical?instrument_token=${token}&interval=${interval}${dateParams}`;
+      const tokenResponse = await kiteFetch(tokenUrl);
+      if (!tokenResponse.ok) return [];
+      return parseCandles(await tokenResponse.json());
     } catch (err) {
       console.warn('[Datafeed] Kite page fetch failed:', err);
-      break;
+      return [];
     }
+  };
+
+  // Pages used to be walked STRICTLY one at a time, each awaiting the previous
+  // one's full round trip (plus a possible second token-resolution request). A
+  // 1m chart pages in 7-day slices, so a wide initial TradingView window meant a
+  // long serial chain of gateway round trips before the first bar rendered.
+  //
+  // They are independent requests, so they run in small concurrent batches now.
+  // Batching rather than one big Promise.all does two things: it stays polite to
+  // Kite's 3 req/s ceiling, and it preserves the original "stop once a page
+  // comes back empty" early exit (at batch granularity) so we don't fan out
+  // requests for history that does not exist.
+  for (let i = 0; i < pages.length; i += KITE_PAGE_CONCURRENCY) {
+    const batch = pages.slice(i, i + KITE_PAGE_CONCURRENCY);
+    const settled = await Promise.all(batch.map(fetchPage));
+    const got = settled.flat();
+    if (got.length === 0) break;
+    all.push(...got);
   }
 
   return all;
@@ -340,8 +360,6 @@ async function fetchKiteBatch(
 
 const tauriBarCache = new Map<string, { bars: Bar[]; fetchedAt: number }>();
 const tauriBarInflight = new Map<string, Promise<Bar[]>>();
-
-let tauriPoolReady = false;
 
 /**
  * Drop cached bars for a symbol so the next `getBars` re-reads QuestDB.
@@ -368,7 +386,19 @@ if (isTauri()) {
         (event) => {
           const symbol = event.payload?.symbol;
           if (!symbol) return;
+
+          // Clearing the caches is necessary but NOT sufficient: it only means
+          // "the next getBars will re-read QuestDB". TradingView has no reason to
+          // issue another getBars on its own, so freshly backfilled bars would
+          // sit invisible until the user scrolled or switched timeframe.
+          //
+          // This matters much more now that the Rust side never blocks on the
+          // Kite backfill: a cold symbol legitimately returns few or no bars on
+          // first read and fills in a second or two afterwards. Firing TV's own
+          // reset callback is what turns that into a visible refresh.
           invalidateTauriBarCache(symbol);
+          invalidateScrollBackCache(symbol);
+          requestChartReset(symbol);
         },
       );
     } catch (err) {
@@ -377,6 +407,24 @@ if (isTauri()) {
       console.warn('[Datafeed] historical-loaded listener unavailable:', err);
     }
   })();
+}
+
+/**
+ * Ask TradingView to re-request bars for every live subscription on `symbol`.
+ *
+ * TV hands each subscription an `onResetCacheNeededCallback`; calling it makes
+ * the widget drop its own bar cache and call `getBars` again.
+ */
+function requestChartReset(symbol: string): void {
+  const upper = symbol.toUpperCase();
+  for (const sub of activeSubscriptions.values()) {
+    if (sub.symbol.toUpperCase() !== upper) continue;
+    try {
+      sub.onResetCacheNeeded?.();
+    } catch (err) {
+      console.warn('[Datafeed] chart reset callback failed:', err);
+    }
+  }
 }
 
 async function fetchTauriBars(
@@ -401,18 +449,17 @@ async function fetchTauriBars(
     try {
       const tauri = await import('@tauri-apps/api/core');
 
-      if (!tauriPoolReady) {
-        const start = Date.now();
-        while (Date.now() - start < 8000) {
-          try {
-            tauriPoolReady = await tauri.invoke<boolean>('get_pool_status');
-            if (tauriPoolReady) break;
-          } catch { /* pool not ready yet */ }
-          await new Promise((r) => setTimeout(r, 500));
-        }
-        if (!tauriPoolReady) return [];
-      }
-
+      // NOTE: there used to be a `get_pool_status` wait loop here — up to 8s of
+      // 500ms sleeps before the first bar could be requested. It was both
+      // obsolete and actively harmful:
+      //   • Obsolete: `get_pool_status` reports the QuestDB *PG write* pool, but
+      //     `get_historical_view` reads over the HTTP /exec gateway and no
+      //     longer needs that pool at all (a missing pool now only means "no
+      //     backfill", not "no data").
+      //   • Harmful: success was cached in a module flag but FAILURE was not, so
+      //     if the pool never registered, every single call burned a fresh 8s and
+      //     then returned []. TradingView paginates several windows per load, so
+      //     that alone could account for most of a minute-long chart load.
       const response = await tauri.invoke<number[] | Uint8Array>(
         'get_historical_view',
         { symbol, timeframe },
@@ -463,6 +510,8 @@ interface LiveSubscription {
   symbol: string;
   resolution: string;
   onTick: SubscribeBarsCallback;
+  /** TV's "drop your bar cache and re-request" hook — see `requestChartReset`. */
+  onResetCacheNeeded?: () => void;
   unsubscribe: () => void;
 }
 
@@ -473,6 +522,7 @@ function startLiveSubscription(
   resolution: string,
   onTick: SubscribeBarsCallback,
   listenerGuid: string,
+  onResetCacheNeeded?: () => void,
 ): void {
   const symbolUpper = symbol.toUpperCase();
   let lastBarTime = 0;
@@ -499,15 +549,27 @@ function startLiveSubscription(
   };
 
   // ── Path 1: Zustand store subscription ────────────────────────────────
-  // Fires whenever ohlcCandles changes (works for both browser WS and Tauri IPC paths).
-  const unsub = useTradeStore.subscribe((state) => {
-    const candles = state.ohlcCandles;
-    const matching = candles.filter(
-      (c) => c.symbol.toUpperCase() === symbolUpper,
-    );
-    if (matching.length === 0) return;
-    forwardCandle(matching[matching.length - 1]);
-  });
+  // Browser-only fallback. Under Tauri the direct `ohlc-tick` listener below
+  // already delivers every candle with lower latency, and registering BOTH meant
+  // each tick was forwarded to TradingView twice (the `barTimeMs >= lastBarTime`
+  // guard admits both copies of the same bar).
+  //
+  // The duplication was not just redundant, it was expensive: this callback runs
+  // on EVERY store write — including the large `setHistoricalCache` writes the
+  // datafeed itself makes — and each run scans the whole `ohlcCandles` array
+  // (capped at 3 000). So loading history triggered full-array scans in the tick
+  // path. Registering it only outside Tauri keeps the browser path working
+  // without paying that cost in the desktop app.
+  const unsub = isTauri()
+    ? () => {}
+    : useTradeStore.subscribe((state) => {
+        const candles = state.ohlcCandles;
+        const matching = candles.filter(
+          (c) => c.symbol.toUpperCase() === symbolUpper,
+        );
+        if (matching.length === 0) return;
+        forwardCandle(matching[matching.length - 1]);
+      });
 
   // ── Path 2: Direct Tauri IPC listener (lower latency) ─────────────────
   // Listens for ohlc-tick events directly from the Rust backend, bypassing
@@ -530,7 +592,7 @@ function startLiveSubscription(
   console.log(`[Datafeed] subscribeBars: ${symbolUpper} (resolution=${resolution}, guid=${listenerGuid.slice(0, 8)}…, tauri=${isTauri()})`);
 
   activeSubscriptions.set(listenerGuid, {
-    symbol, resolution, onTick,
+    symbol, resolution, onTick, onResetCacheNeeded,
     unsubscribe: () => {
       unsub();
       unlistenTauri?.();
@@ -910,9 +972,17 @@ export function createDatafeed(): IBasicDatafeed {
       resolution: ResolutionString,
       onTick: SubscribeBarsCallback,
       listenerGuid: string,
-      _onResetCacheNeededCallback: () => void,
+      onResetCacheNeededCallback: () => void,
     ): void {
-      startLiveSubscription(symbolInfo.name, resolution, onTick, listenerGuid);
+      // The reset callback is retained (it used to be ignored) so a background
+      // Kite backfill can trigger a repaint — see `requestChartReset`.
+      startLiveSubscription(
+        symbolInfo.name,
+        resolution,
+        onTick,
+        listenerGuid,
+        onResetCacheNeededCallback,
+      );
     },
 
     unsubscribeBars(listenerGuid: string): void {
