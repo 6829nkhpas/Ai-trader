@@ -341,6 +341,26 @@ pub(crate) struct BackfillFlight {
 pub(crate) static BACKFILL_FLIGHTS: Lazy<AsyncMutex<HashMap<BackfillKey, Arc<BackfillFlight>>>> =
     Lazy::new(|| AsyncMutex::new(HashMap::new()));
 
+/// How long a completed backfill is considered fresh enough to skip re-running.
+///
+/// The forward top-up window a backfill fetches is `[max_ts - 1 day, today]`, so
+/// repeating it within seconds re-fetches an identical tail. 60s is short enough
+/// that a genuinely stale store still heals promptly on the next request and long
+/// enough to collapse the burst of same-key candle loads a single analysis run
+/// produces (regime, RS symbol, RS benchmark, session, order flow).
+pub(crate) const BACKFILL_FRESH_TTL: std::time::Duration =
+    std::time::Duration::from_secs(60);
+
+/// Last completed backfill per [`BackfillKey`], for the freshness gate above.
+///
+/// Complements [`BACKFILL_FLIGHTS`] rather than replacing it: that registry
+/// coalesces callers overlapping IN TIME, this one suppresses redundant fetches
+/// ACROSS time. A `std::sync::Mutex` is fine here because it is only ever held
+/// for a map lookup or insert, never across an await.
+pub(crate) static BACKFILL_LAST_DONE: Lazy<
+    std::sync::Mutex<HashMap<BackfillKey, std::time::Instant>>,
+> = Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
+
 /// RAII cleanup for the single-flight leader. Removing the key drops the
 /// registry's `Arc<BackfillFlight>`, and once every clone is gone the flight's
 /// `broadcast::Sender` is dropped — releasing all followers via
@@ -542,7 +562,41 @@ pub(crate) async fn load_candles_with_ts(
             // arms) so both roles set it — R2's retry gate requires it.
             token_resolved = local_token.is_some();
 
-            if let Some(token) = local_token {
+            // ── Freshness gate: skip a backfill we just did ───────────────────
+            //
+            // This block had NO cache-awareness of any kind: every call to
+            // load_candles_with_ts ran a full Kite backfill and, worse, awaited
+            // it BEFORE issuing its own SELECTs. The single-flight coordinator
+            // below only collapses callers that overlap in time — two sequential
+            // calls seconds apart each paid a complete fetch, and a radar sweep
+            // over M symbols paid M of them back to back.
+            //
+            // A backfill's own forward top-up window is `[max_ts - 1 day, today]`,
+            // so re-running it inside a few seconds cannot discover new bars —
+            // it just re-fetches and re-upserts the same tail. Remembering the
+            // last completed backfill per key and skipping inside the TTL turns
+            // that repeated work into a no-op while leaving the first call, and
+            // anything older than the TTL, exactly as before.
+            let fresh_key: BackfillKey =
+                (symbol.to_uppercase(), backfill_family(timeframe));
+            let recently_done = BACKFILL_LAST_DONE
+                .lock()
+                .ok()
+                .and_then(|map| map.get(&fresh_key).copied())
+                .map_or(false, |at| at.elapsed() < BACKFILL_FRESH_TTL);
+
+            if recently_done {
+                info!(
+                    "[deep_quant] backfill_skipped_fresh symbol={} timeframe={} — a backfill for \
+                     this key completed within {:?}; reading the existing store instead of \
+                     re-fetching.",
+                    symbol, timeframe, BACKFILL_FRESH_TTL
+                );
+                // A backfill genuinely applied to this key recently, so the
+                // false-zero read-retry stays armed exactly as if we had just
+                // run one.
+                backfill_ran = local_token.is_some();
+            } else if let Some(token) = local_token {
                 // ── Single-flight Proactive_Backfill coordinator (R3) ────────
                 // Concurrent callers for the SAME (symbol, timeframe family)
                 // share ONE backfill instead of each launching a competing Kite
@@ -656,6 +710,13 @@ pub(crate) async fn load_candles_with_ts(
                 // arms R2's read-retry so a union that comes back empty here is
                 // re-read once before concluding a Shortfall.
                 backfill_ran = true;
+
+                // Stamp completion so callers arriving within the TTL read the
+                // store instead of re-fetching the same tail from Kite. Recorded
+                // for followers too: the data landed for this key either way.
+                if let Ok(mut map) = BACKFILL_LAST_DONE.lock() {
+                    map.insert(fresh_key.clone(), std::time::Instant::now());
+                }
             } else {
                 // R3.2: the instrument token did NOT resolve, so NO proactive
                 // backfill runs for this key. Log it as a distinct, named

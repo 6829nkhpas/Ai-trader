@@ -31,8 +31,25 @@
 
 use chrono::NaiveDate;
 use log::{info, warn, error};
+use once_cell::sync::Lazy;
 use serde::Deserialize;
 use sqlx::PgPool;
+
+/// One process-wide HTTP client for every Kite fetch.
+///
+/// Each loader invocation used to build its own `reqwest::Client`, so every
+/// backfill paid a fresh TLS handshake to `api.kite.trade` (or to the gateway
+/// proxy) before its first chunk, and connections were never reused between
+/// invocations. Sharing one pooled client removes that per-backfill setup cost
+/// and lets consecutive chunk requests ride the same connection.
+static KITE_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
+        .pool_max_idle_per_host(4)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+});
 
 // ── Kite API Response Types ─────────────────────────────────────────────────
 
@@ -406,7 +423,7 @@ pub async fn load_historical_data(
         }
     }
     let mut total_inserted: u64 = 0;
-    let client = reqwest::Client::new();
+    let client = KITE_CLIENT.clone();
     // Spacing is applied before each request, not after (see `KiteRatePacer`),
     // so already-covered chunks cost nothing and the last chunk isn't followed
     // by a pointless sleep.
@@ -546,7 +563,7 @@ pub async fn load_intraday_data(
     }
 
     let mut total_inserted: u64 = 0;
-    let client = reqwest::Client::new();
+    let client = KITE_CLIENT.clone();
     let mut pacer = KiteRatePacer::new(KITE_MIN_REQUEST_INTERVAL);
 
     // ── 3-5. Fetch each planned window (forward top-up + Depth_Gap) ─────

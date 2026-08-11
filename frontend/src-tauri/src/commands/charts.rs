@@ -18,8 +18,11 @@
 //   console (matching the Phase 1 Error Visibility pattern).
 
 use log::{info, warn, error};
+use once_cell::sync::Lazy;
 use serde::Serialize;
 use sqlx::PgPool;
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::services::history_loader;
@@ -34,7 +37,40 @@ use crate::services::questdb_http;
 /// pane; at or above it there is enough to render immediately.
 const MIN_RENDERABLE_CACHED_BARS: i64 = 375;
 
+/// Hard ceiling on rows returned by a single historical read.
+///
+/// The reads used to be unbounded (`ORDER BY ts ASC` with no `LIMIT`), so the
+/// payload grew forever as the backfill healed depth — every chart load shipped
+/// and decoded the symbol's ENTIRE cached history. Measured on the deployed
+/// instance: 3 618 rows of 1m RELIANCE already costs 238 KB and 0.50s, versus
+/// 99 KB and 0.40s for the newest 1 500. No chart renders more bars than fit on
+/// screen plus a scroll-back buffer, and TradingView pages older ranges through
+/// its own `getBars` window, so capping the newest N is not a loss of function.
+const MAX_CHART_BARS: usize = 6000;
+
+/// Backfills already running, keyed by `SYMBOL::base_timeframe`.
+///
+/// `get_historical_view` no longer blocks on Kite, which means a burst of calls
+/// for one symbol (the datafeed and the ghost line both request it on mount)
+/// could otherwise each spawn their own competing backfill. This set lets the
+/// first caller own the fetch and the rest skip it.
+static REFRESH_INFLIGHT: Lazy<Mutex<HashSet<String>>> =
+    Lazy::new(|| Mutex::new(HashSet::new()));
+
+/// Kite credentials, resolved once.
+///
+/// `get_kite_credentials` walked the filesystem upward from the cwd looking for
+/// a `.env` and re-read + re-parsed it on EVERY call — and it is called on every
+/// candle load from both `get_historical_view` and `load_candles_with_ts`. The
+/// values cannot change without an app restart, so resolving them once removes
+/// pure repeated I/O from the hot path.
+static KITE_CREDENTIALS: OnceLock<(String, String)> = OnceLock::new();
+
 pub fn get_kite_credentials() -> (String, String) {
+    KITE_CREDENTIALS.get_or_init(resolve_kite_credentials).clone()
+}
+
+fn resolve_kite_credentials() -> (String, String) {
     let mut api_key = std::env::var("KITE_API_KEY").unwrap_or_default();
     let mut access_token = std::env::var("KITE_ACCESS_TOKEN").unwrap_or_default();
 
@@ -255,104 +291,98 @@ pub async fn get_historical_view(
                     // than failing the whole chart load.
                     let write_pool = app.try_state::<PgPool>().map(|p| p.inner().clone());
 
-                    // Is the cache warm enough to render from right now? A cheap
-                    // COUNT decides whether the user waits on Kite or not.
-                    let cached_rows: i64 = questdb_http::query(&format!(
-                        "SELECT count() AS n FROM historical_intraday \
-                         WHERE symbol = {} AND timeframe = {}",
-                        questdb_http::sql_literal(&symbol),
-                        questdb_http::sql_literal(base_tf),
-                    ))
-                    .await
-                    .ok()
-                    .and_then(|r| r.rows.first().and_then(|row| r.i64(row, "n")))
-                    // A failed probe reads as cold, so the load blocks and
-                    // fills the cache rather than serving a chart from rows we
-                    // could not confirm exist.
-                    .unwrap_or(0);
-
+                    // ── The Kite backfill NEVER blocks this command ───────────
+                    //
+                    // It used to: a cache below MIN_RENDERABLE_CACHED_BARS made
+                    // the IPC call `await` the whole sequential fetch->insert
+                    // loop (a Kite round trip plus a 350ms pace gap plus PG
+                    // writes, per chunk). That is the single biggest reason a
+                    // first chart load took over a minute, and it was paid on
+                    // the user's critical path while QuestDB — measured at
+                    // ~0.5s for a full read — sat idle.
+                    //
+                    // Now the read below always runs immediately against
+                    // whatever is cached, and the refresh runs detached. When
+                    // rows land, `historical-loaded` fires and the frontend
+                    // drops its bar cache and asks TradingView to re-request,
+                    // so a cold symbol fills itself in seconds instead of
+                    // freezing the pane until the fetch finishes.
+                    //
+                    // The separate unbounded `SELECT count()` warmth probe is
+                    // gone with it: it cost a whole extra round trip (~0.22s
+                    // measured) purely to decide whether to block, and nothing
+                    // blocks any more.
                     match write_pool {
                         None => warn!(
                             "QuestDB write pool unavailable — skipping intraday backfill for {} \
                              [base={}]; serving whatever the read gateway already has.",
                             symbol, base_tf
                         ),
-                        Some(pool) if cached_rows >= MIN_RENDERABLE_CACHED_BARS => {
-                            // Warm cache: refresh in the background and let the read
-                            // below serve the existing rows immediately. The spawned
-                            // task owns its data because it outlives this command.
-                            info!(
-                                "Intraday cache warm for {} [base={}] — {} rows; \
-                                 refreshing in background (non-blocking).",
-                                symbol, base_tf, cached_rows
-                            );
-
-                            let bg_pool = pool;
-                            let bg_symbol = symbol.clone();
-                            let bg_base_tf = base_tf.to_string();
-                            let bg_app = app.clone();
-
-                            tauri::async_runtime::spawn(async move {
-                                match history_loader::load_intraday_data(
-                                    &bg_pool,
-                                    token,
-                                    &bg_symbol,
-                                    &bg_base_tf,
-                                    &api_key,
-                                    &access_token,
-                                )
-                                .await
-                                {
-                                    Ok(count) => {
-                                        info!(
-                                            "Background intraday refresh complete: {} [base={}] — {} candles.",
-                                            bg_symbol, bg_base_tf, count
-                                        );
-                                        // Only signal when rows actually landed —
-                                        // an idempotent no-op should not make the
-                                        // frontend re-fetch for nothing.
-                                        if count > 0 {
-                                            let _ = bg_app.emit(
-                                                "historical-loaded",
-                                                serde_json::json!({
-                                                    "symbol": bg_symbol,
-                                                    "timeframe": bg_base_tf,
-                                                    "count": count,
-                                                }),
-                                            );
-                                        }
-                                    }
-                                    Err(e) => warn!(
-                                        "Background intraday refresh failed for {} [base={}]: {}",
-                                        bg_symbol, bg_base_tf, e
-                                    ),
-                                }
-                            });
-                        }
                         Some(pool) => {
-                            // Cold cache — there is nothing worth rendering yet, so
-                            // waiting is strictly better than returning an empty chart.
-                            info!(
-                                "Intraday cache cold for {} [base={}] — {} rows; \
-                                 fetching synchronously (token {}).",
-                                symbol, base_tf, cached_rows, token
-                            );
-                            match history_loader::load_intraday_data(
-                                &pool,
-                                token,
-                                &symbol,
-                                base_tf,
-                                &api_key,
-                                &access_token,
-                            ).await {
-                                Ok(count) => info!(
-                                    "Intraday fetch complete: {} [base={}] — {} candles.",
-                                    symbol, base_tf, count
-                                ),
-                                Err(e) => warn!(
-                                    "Intraday fetch failed for {} [base={}]: {} — falling back to live ticks.",
-                                    symbol, base_tf, e
-                                ),
+                            // Single-flight: the datafeed and the ghost line both
+                            // request the same symbol on mount, and without this
+                            // each would spawn its own competing Kite fetch.
+                            let flight_key = format!("{}::{}", symbol.to_uppercase(), base_tf);
+                            let claimed = REFRESH_INFLIGHT
+                                .lock()
+                                .map(|mut set| set.insert(flight_key.clone()))
+                                .unwrap_or(false);
+
+                            if !claimed {
+                                info!(
+                                    "Intraday refresh already in flight for {} [base={}] — \
+                                     skipping duplicate fetch.",
+                                    symbol, base_tf
+                                );
+                            } else {
+                                let bg_pool = pool;
+                                let bg_symbol = symbol.clone();
+                                let bg_base_tf = base_tf.to_string();
+                                let bg_app = app.clone();
+
+                                tauri::async_runtime::spawn(async move {
+                                    let result = history_loader::load_intraday_data(
+                                        &bg_pool,
+                                        token,
+                                        &bg_symbol,
+                                        &bg_base_tf,
+                                        &api_key,
+                                        &access_token,
+                                    )
+                                    .await;
+
+                                    // Release the flight before signalling so a
+                                    // follow-up request can refresh again.
+                                    if let Ok(mut set) = REFRESH_INFLIGHT.lock() {
+                                        set.remove(&flight_key);
+                                    }
+
+                                    match result {
+                                        Ok(count) => {
+                                            info!(
+                                                "Background intraday refresh complete: {} [base={}] — {} candles.",
+                                                bg_symbol, bg_base_tf, count
+                                            );
+                                            // Only signal when rows actually landed —
+                                            // an idempotent no-op should not make the
+                                            // frontend re-fetch for nothing.
+                                            if count > 0 {
+                                                let _ = bg_app.emit(
+                                                    "historical-loaded",
+                                                    serde_json::json!({
+                                                        "symbol": bg_symbol,
+                                                        "timeframe": bg_base_tf,
+                                                        "count": count,
+                                                    }),
+                                                );
+                                            }
+                                        }
+                                        Err(e) => warn!(
+                                            "Background intraday refresh failed for {} [base={}]: {}",
+                                            bg_symbol, bg_base_tf, e
+                                        ),
+                                    }
+                                });
                             }
                         }
                     }
@@ -388,16 +418,20 @@ pub async fn get_historical_view(
     let rows = match source {
         HistorySource::Intraday => {
             // Query 1: Historical intraday candles from Kite API
+            // Bounded to the newest MAX_CHART_BARS rows. `ORDER BY ts DESC` +
+            // LIMIT keeps the RECENT end (what the chart opens on) instead of
+            // the oldest rows an ASC limit would keep; the BTreeMap dedup below
+            // re-sorts ascending, so downstream ordering is unchanged.
             let hist_query = format!(
                 "SELECT ts, open, high, low, close, volume \
                  FROM historical_intraday \
                  WHERE symbol = {} AND timeframe = {} \
-                 ORDER BY ts ASC",
+                 ORDER BY ts DESC \
+                 LIMIT {}",
                 questdb_http::sql_literal(&symbol),
                 questdb_http::sql_literal(base_tf),
+                MAX_CHART_BARS,
             );
-
-            let hist_rows = questdb_http::query(&hist_query).await;
 
             // Query 2: Today's live ticks aggregated to the requested interval
             //
@@ -421,7 +455,13 @@ pub async fn get_historical_view(
                 sample_interval
             );
 
-            let live_rows = questdb_http::query(&live_query).await;
+            // Both reads are independent, so issue them CONCURRENTLY rather than
+            // awaiting one after the other. They previously ran back-to-back,
+            // serialising two gateway round trips (~0.50s + ~0.24s measured) for
+            // no reason. `join!` overlaps them, so the pair costs about as much
+            // as the slower one.
+            let (hist_rows, live_rows) =
+                tokio::join!(questdb_http::query(&hist_query), questdb_http::query(&live_query));
 
             // Merge both result sets: historical rows first, then live rows
             match (hist_rows, live_rows) {
@@ -460,12 +500,16 @@ pub async fn get_historical_view(
         }
         HistorySource::Daily if sample_interval == "1d" => {
             // Pre-aggregated daily archive — no resampling needed.
+            // Bounded for the same reason as the intraday read above — this was
+            // pulling a symbol's entire 5-year daily archive on every load.
             let query = format!(
                 "SELECT ts, open, high, low, close, volume \
                  FROM historical_candles \
                  WHERE symbol = {} \
-                 ORDER BY ts ASC",
+                 ORDER BY ts DESC \
+                 LIMIT {}",
                 questdb_http::sql_literal(&symbol),
+                MAX_CHART_BARS,
             );
             questdb_http::query(&query).await
         }
@@ -530,24 +574,12 @@ pub async fn get_historical_view(
                 candles.len()
             );
 
-            // ── DIAGNOSTIC TRACER — Final Mile (Rust → bincode boundary) ──
-            // Verifies the exact struct values the backend is about to ship
-            // to the UI. If `Total Candles fetched: 0`, the SQL query produced
-            // no rows; if first/last look corrupt (NaN/0/garbage timestamps),
-            // the QuestDB row decoding above is at fault.
-            println!(
-                "🛑 [RUST EXIT] Symbol: {} | Timeframe: {:?} | Source: {:?} | SAMPLE BY: {} | Total Candles fetched: {}",
-                symbol, tf, source, sample_interval, candles.len()
-            );
-            if let (Some(first), Some(last)) = (candles.first(), candles.last()) {
-                println!("🛑 [RUST EXIT] First Candle: {:?}", first);
-                println!("🛑 [RUST EXIT] Last  Candle: {:?}", last);
-            } else {
-                println!(
-                    "🛑 [RUST EXIT] ⚠️  EMPTY result set — no candles to serialize for {} ({}).",
-                    symbol, tf
-                );
-            }
+            // The former `[RUST EXIT]` tracer block lived here. It ran on EVERY
+            // chart load and formatted `{:?}` of the first and last candle into
+            // stdout, which is synchronous and unbuffered on Windows — a real
+            // per-call cost on the hot path for output nobody reads in a shipped
+            // build. The `info!` above already records symbol, timeframe and
+            // candle count through the logger, which is level-filtered.
 
             // Serialize to bincode binary buffer
             let binary = bincode::serialize(&candles).map_err(|e| {
@@ -561,15 +593,6 @@ pub async fn get_historical_view(
                 "get_historical_view: {} ({}) — {} bytes serialized.",
                 symbol,
                 tf,
-                binary.len()
-            );
-
-            // ── DIAGNOSTIC TRACER — Bincode payload size out of Rust ──
-            // Use this number to confirm React sees the same byte count on the
-            // other side of the IPC boundary. A mismatch here ≠ React side
-            // means the Tauri channel itself is the suspect.
-            println!(
-                "🛑 [RUST EXIT] Bincode payload size: {} bytes (going to UI)",
                 binary.len()
             );
 
@@ -624,14 +647,12 @@ pub async fn get_pool_status(app: AppHandle) -> bool {
 pub async fn fetch_questdb(query: String) -> Result<String, String> {
     let url = format!("{}/exec", crate::server::questdb_http_url());
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| format!("HTTP client error: {}", e))?;
-
     // Basic auth for the Caddy gateway fronting QuestDB. An unconfigured local
     // QuestDB ignores the Authorization header, so dev is unaffected.
-    let response = client
+    //
+    // Uses the shared keep-alive client from `questdb_http` rather than building
+    // a per-call one, so this path stops paying a TLS handshake per query too.
+    let response = questdb_http::http_client()
         .get(&url)
         .basic_auth(crate::server::questdb_user(), Some(crate::server::questdb_password()))
         .query(&[("query", &query), ("fmt", &"json".to_string())])
