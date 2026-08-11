@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # redeploy.sh — one-shot full redeploy on the droplet.
 #
-# Syncs the repo to origin/main, rebuilds every service, and (re)starts the whole
-# stack so any pushed change takes effect. Safe to run repeatedly.
+# Syncs the repo to origin/$DEPLOY_BRANCH (default: main), rebuilds every
+# service, and (re)starts the whole stack so any pushed change takes effect.
+# Safe to run repeatedly.
 #
 #   • Untracked files (notably the gitignored .env) are PRESERVED by the hard
 #     reset, so server secrets/config survive.
@@ -12,9 +13,12 @@
 #     swaps them — minimal downtime.
 #
 # Usage (on the droplet):
-#   bash /root/Ai-trader/redeploy.sh            # sync + build changed + restart
+#   GITHUB_TOKEN=$(gh auth token) bash /root/Ai-trader/redeploy.sh
+#   DEPLOY_BRANCH=develop GITHUB_TOKEN=... bash redeploy.sh   # deploy a branch
 #   bash /root/Ai-trader/redeploy.sh --force    # also force-recreate ALL containers
 #   FORCE_RECREATE=1 bash redeploy.sh           # same as --force
+#
+# GITHUB_TOKEN is REQUIRED (private repo). In CI it is injected automatically.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -58,15 +62,32 @@ log "Compose files: $COMPOSE_FILES"
 #
 # Running by hand on the droplet: export GITHUB_TOKEN=<a PAT with repo:read>
 # first, or the fetch will fail asking for a username.
-log "Syncing to origin/main"
+# Which branch to deploy. CI passes the branch that triggered the run
+# (`github.ref_name`), so a push to develop deploys develop and a push to main
+# deploys main — the droplet is no longer pinned to whatever branch it happened
+# to be checked out on. Defaults to main for a bare manual invocation.
+DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
+
+log "Syncing to origin/$DEPLOY_BRANCH"
+
+# Never let git block on an interactive credential prompt. Without this, missing
+# or unusable auth surfaces as:
+#   fatal: could not read Username for 'https://github.com': No such device or address
+# which reads like a broken remote when the real cause is absent credentials.
+# With it, the failure names itself and the run stops immediately.
+export GIT_TERMINAL_PROMPT=0
+
 if [ -n "${GITHUB_TOKEN:-}" ]; then
   AUTH_HEADER="Authorization: Basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
   git -c http.extraheader="$AUTH_HEADER" fetch origin --prune
 else
-  log "WARNING: GITHUB_TOKEN unset — trying an unauthenticated fetch"
-  git fetch origin --prune
+  log "ERROR: GITHUB_TOKEN is unset. This is a PRIVATE repo, so the fetch cannot"
+  log "       succeed without it. CI supplies it automatically; when running by"
+  log "       hand use:  GITHUB_TOKEN=\$(gh auth token) bash redeploy.sh"
+  exit 1
 fi
-git reset --hard origin/main
+
+git reset --hard "origin/$DEPLOY_BRANCH"
 git log --oneline -1
 
 # ── 2. Build every service (sequential — keeps concurrent Rust compiles from

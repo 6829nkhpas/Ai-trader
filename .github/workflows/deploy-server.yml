@@ -2,27 +2,28 @@ name: deploy-server
 
 # Continuous deployment for the DROPLET backend stack.
 #
-# main is the PRODUCTION branch. Code reaches it only through an approved PR
-# from staging (see CONTRIBUTING.md), so every run of this workflow is a
-# production deploy of already-reviewed, already-CI-verified code.
+# main is the PRODUCTION branch; develop is the integration branch and deploys
+# to the same droplet so changes can be exercised against the real stack before
+# they are promoted.
 #
-# On every push to main that touches server code (or manually), SSH into the
-# droplet and run redeploy.sh, which syncs the repo to origin/main, rebuilds the
-# affected services (Docker layer cache keeps unchanged ones fast), and restarts
-# the stack. The runner does NOT check out or build anything — it only triggers
-# the server to pull + rebuild itself, so the droplet is the single build host.
+# On every push to main or develop that touches server code (or manually), SSH
+# into the droplet and run redeploy.sh, which syncs the repo to the branch that
+# triggered the run, rebuilds the affected services (Docker layer cache keeps
+# unchanged ones fast), and restarts the stack. The runner does NOT check out or
+# build anything — it only triggers the server to pull + rebuild itself, so the
+# droplet is the single build host.
 #
 # One-time setup (repo → Settings → Secrets and variables → Actions):
 #   Secrets:
 #     DEPLOY_SSH_KEY   — the PRIVATE deploy key (contents of keys/stratai_deploy)
 #   Variables:
-#     DEPLOY_HOST      — droplet IP/host (e.g. 168.144.86.130)
+#     DEPLOY_HOST      — droplet IP/host (currently 142.93.208.51)
 #     DEPLOY_USER      — SSH user (optional; defaults to root)
 #     DEPLOY_PATH      — repo path on the droplet (optional; defaults to /root/Ai-trader)
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - "ingestion/**"
       - "alpha-terminal/**"
@@ -60,15 +61,21 @@ jobs:
         uses: appleboy/ssh-action@v1.2.0
         env:
           GH_DEPLOY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Deploy the branch that triggered this run. Previously redeploy.sh
+          # hard-coded `git reset --hard origin/main`, so a push to develop
+          # deployed main's code — the droplet would rebuild without the change
+          # that triggered the run.
+          GH_DEPLOY_BRANCH: ${{ github.ref_name }}
         with:
           host: ${{ vars.DEPLOY_HOST }}
           username: ${{ vars.DEPLOY_USER || 'root' }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           # Rust rebuilds on a cold cache can take a while; give it headroom.
           command_timeout: "40m"
-          envs: GH_DEPLOY_TOKEN
+          envs: GH_DEPLOY_TOKEN,GH_DEPLOY_BRANCH
           script: |
             set -e
             cd "${{ vars.DEPLOY_PATH || '/root/Ai-trader' }}"
             export GITHUB_TOKEN="$GH_DEPLOY_TOKEN"
+            export DEPLOY_BRANCH="$GH_DEPLOY_BRANCH"
             bash redeploy.sh
