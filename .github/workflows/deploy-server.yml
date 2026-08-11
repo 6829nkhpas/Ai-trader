@@ -2,16 +2,19 @@ name: deploy-server
 
 # Continuous deployment for the DROPLET backend stack.
 #
-# main is the PRODUCTION branch; develop is the integration branch and deploys
-# to the same droplet so changes can be exercised against the real stack before
-# they are promoted.
+# main is the PRODUCTION branch and the ONLY branch that deploys. Code reaches
+# it through an approved PR (see CONTRIBUTING.md), so every run of this workflow
+# is a production deploy of already-reviewed, already-CI-verified code.
 #
-# On every push to main or develop that touches server code (or manually), SSH
-# into the droplet and run redeploy.sh, which syncs the repo to the branch that
-# triggered the run, rebuilds the affected services (Docker layer cache keeps
-# unchanged ones fast), and restarts the stack. The runner does NOT check out or
-# build anything — it only triggers the server to pull + rebuild itself, so the
-# droplet is the single build host.
+# On every push to main that touches server code (or manually), SSH into the
+# droplet and run redeploy.sh, which syncs the repo to the branch that triggered
+# the run, rebuilds the affected services (Docker layer cache keeps unchanged
+# ones fast), and restarts the stack. The runner does NOT check out or build
+# anything — it only triggers the server to pull + rebuild itself, so the droplet
+# is the single build host.
+#
+# `workflow_dispatch` still honours whichever branch you dispatch from, which is
+# what makes DEPLOY_BRANCH below worth forwarding.
 #
 # One-time setup (repo → Settings → Secrets and variables → Actions):
 #   Secrets:
@@ -23,7 +26,7 @@ name: deploy-server
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
     paths:
       - "ingestion/**"
       - "alpha-terminal/**"
@@ -61,10 +64,11 @@ jobs:
         uses: appleboy/ssh-action@v1.2.0
         env:
           GH_DEPLOY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Deploy the branch that triggered this run. Previously redeploy.sh
-          # hard-coded `git reset --hard origin/main`, so a push to develop
-          # deployed main's code — the droplet would rebuild without the change
-          # that triggered the run.
+          # Deploy the ref that triggered this run. For a push this is always
+          # main; for a manual `workflow_dispatch` it is whichever branch you
+          # dispatched from, so a one-off deploy of a branch no longer requires
+          # editing the script on the box. redeploy.sh previously hard-coded
+          # `git reset --hard origin/main` regardless of the trigger.
           GH_DEPLOY_BRANCH: ${{ github.ref_name }}
         with:
           host: ${{ vars.DEPLOY_HOST }}
