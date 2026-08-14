@@ -12,3 +12,4 @@ pub mod radar;
 pub mod security;
 pub mod sentiment;
 pub mod ticker;
+pub mod updater;

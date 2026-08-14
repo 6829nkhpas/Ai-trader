@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { DataRange } from '../utils/chartTypes';
+import { isFnoSymbol } from '../charting/symbolUtils';
 
 export type TradeProfile = 'INTRADAY' | 'SWING' | 'INVESTOR' | 'FNO';
 
@@ -145,6 +146,22 @@ interface TradeStore {
   fnoUnderlying: string;
   /** Selected expiry for the F&O section ('' => bridge's nearest available). */
   fnoExpiry: string;
+  /**
+   * The equity/index symbol the user was charting immediately before entering
+   * F&O mode, so leaving F&O can put it back.
+   *
+   * Entering F&O auto-substitutes `selectedSymbol` with the nearest tradable
+   * contract (see `useFnoAutoContract`). That substitution used to be permanent:
+   * `selectedSymbol` is global, so returning to INTRADAY/SWING/INVESTOR left the
+   * chart on e.g. `RELIANCE26AUGFUT` instead of `RELIANCE`. The hook that makes
+   * the substitution lives in `FnoChartPanel`, which only mounts in F&O mode, so
+   * it unmounts before it can undo anything — the round trip has to be closed
+   * here, where the mode transition is actually observed.
+   *
+   * Empty when there is nothing to restore (never entered F&O, or entered it
+   * with a contract already explicitly selected).
+   */
+  preFnoSymbol: string;
   setActiveProfile: (profile: TradeProfile) => void;
   setActiveTimeframe: (tf: ChartTimeframe) => void;
   setActiveRange: (range: DataRange) => void;
@@ -376,6 +393,7 @@ export const useTradeStore = create<TradeStore>((set) => {
     chartMode: 'STANDARD',
     orderFlowData: [],
     fnoUnderlying: '',
+    preFnoSymbol: '',
     fnoExpiry: '',
     clearAgentChatLog: () => set({ agentChatLog: [], finalTradePlan: null }),
 
@@ -391,7 +409,47 @@ export const useTradeStore = create<TradeStore>((set) => {
     },
 
     setActiveProfile: (profile: TradeProfile) => {
-      set({ activeProfile: profile });
+      set((state) => {
+        const wasFno = state.activeProfile === 'FNO';
+        const isFno = profile === 'FNO';
+
+        // ── Entering F&O: remember what to come back to ──────────────────
+        // `useFnoAutoContract` is about to replace `selectedSymbol` with the
+        // nearest CE/PE/FUT contract for this underlying. Capture the symbol
+        // first so the exit path below can restore it.
+        //
+        // If a contract is ALREADY selected, the user chose it deliberately, so
+        // there is nothing to restore — clear the slot rather than leaving a
+        // stale symbol that a later exit would spuriously restore.
+        if (!wasFno && isFno) {
+          return {
+            activeProfile: profile,
+            preFnoSymbol: isFnoSymbol(state.selectedSymbol) ? '' : state.selectedSymbol,
+          };
+        }
+
+        // ── Leaving F&O: undo the auto-substitution ──────────────────────
+        // Only when the chart is actually sitting on a contract AND we recorded
+        // where we came from. Both guards matter: they keep this from touching
+        // `selectedSymbol` in every other case, which is what the mode-isolation
+        // property (switching modes must not disturb chart state) depends on.
+        // A symbol the user picked by hand while in F&O is not a contract, so it
+        // survives the switch untouched.
+        if (wasFno && !isFno && state.preFnoSymbol && isFnoSymbol(state.selectedSymbol)) {
+          return {
+            activeProfile: profile,
+            selectedSymbol: state.preFnoSymbol,
+            preFnoSymbol: '',
+            // The buffered ticks belong to the contract we are leaving; drop
+            // them so they can't be stitched onto the restored equity chart.
+            // Mirrors what `setSelectedSymbol` does on any symbol change.
+            ohlcCandles: [],
+            predictiveSignals: [],
+          };
+        }
+
+        return { activeProfile: profile };
+      });
     },
 
     setActiveTimeframe: (tf: ChartTimeframe) => {

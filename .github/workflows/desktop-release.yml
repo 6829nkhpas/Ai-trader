@@ -186,6 +186,16 @@ jobs:
           # defaulted to 'high', producing {"high":"high"}, which every gateway
           # silently ignores, so reasoning effort was never actually applied.
           LLM_EFFORT_FIELD: ${{ secrets.LLM_EFFORT_FIELD || 'reasoning_effort' }}
+          # ── Updater signing (REQUIRED for auto-update) ──
+          # Signs the updater artifacts with the private half of the keypair whose
+          # public key is pinned in tauri.conf.json (plugins.updater.pubkey). An
+          # installed app only accepts an update whose signature verifies against
+          # that pinned key, so these MUST stay in sync: rotating the key means
+          # every already-installed client stops updating until it is reinstalled.
+          # The password secret is intentionally EMPTY (the key has no passphrase);
+          # it must still exist, or signing prompts and the build hangs.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # ── macOS code signing + notarization (OPTIONAL) ──
           # Uncomment and set these repo secrets to ship signed, notarized Macs
           # (removes the "unidentified developer" Gatekeeper warning):
@@ -212,5 +222,119 @@ jobs:
             shows a security warning.
           releaseDraft: true
           prerelease: false
+          # We publish our OWN per-platform manifest to the self-hosted feed (see
+          # the next step), so tauri-action's combined latest.json is not used.
+          # Each matrix leg would otherwise emit its own copy and the second to
+          # finish would clobber the first.
           includeUpdaterJson: false
           args: ${{ matrix.args }}
+
+      # ── Publish the signed build to the self-hosted update feed ─────────────
+      #
+      # The updater cannot read GitHub Release assets: this repo is PRIVATE, so
+      # every asset URL requires an Authorization header that we would then have
+      # to ship inside the client. Instead the signed installer and a manifest go
+      # to the droplet, served behind the gateway's existing basic-auth at
+      # /updates/* — the same credential the app already carries.
+      #
+      # Runs per matrix leg and writes into a platform-scoped directory, so the
+      # Windows and macOS legs never overwrite each other's manifest.
+      - name: Publish update to the self-hosted feed
+        if: ${{ success() }}
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER || 'root' }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DEPLOY_HOST:-}" ] || [ -z "${DEPLOY_SSH_KEY:-}" ]; then
+            echo "::warning::DEPLOY_HOST or DEPLOY_SSH_KEY not set — skipping update-feed publish. The GitHub Release asset is still produced, but installed apps will NOT see this version."
+            exit 0
+          fi
+
+          # Platform key must match what the updater requests. tauri.conf.json
+          # points at /updates/{{target}}-{{arch}}/latest.json, and the plugin
+          # substitutes Rust's target_os / target_arch.
+          # Platform keys must match what the updater ASKS FOR. tauri.conf.json
+          # points at /updates/{{target}}-{{arch}}/latest.json, and the plugin
+          # substitutes Rust's target_os and target_arch of the RUNNING build.
+          #
+          # That last part is the subtle one for macOS: this job produces a
+          # UNIVERSAL binary, but `{{arch}}` is resolved on the client and is
+          # never "universal" — an Apple Silicon Mac asks for darwin-aarch64 and
+          # an Intel Mac asks for darwin-x86_64. Publishing to a single
+          # "darwin-universal" directory would 404 for every Mac. So the one
+          # universal artifact is published under BOTH arch keys.
+          case "${{ matrix.platform }}" in
+            windows-latest)
+              PLATFORM_DIRS="windows-x86_64"
+              # NSIS is the Windows updater format. The .msi is published to the
+              # GitHub Release for fresh installs but is not an update target.
+              BUNDLE_GLOB="frontend/src-tauri/target/release/bundle/nsis/*-setup.exe"
+              ;;
+            macos-latest)
+              PLATFORM_DIRS="darwin-aarch64 darwin-x86_64"
+              # macOS updates ship as the tarred .app, never the .dmg.
+              BUNDLE_GLOB="frontend/src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz"
+              ;;
+            *)
+              echo "::error::Unhandled platform ${{ matrix.platform }}"; exit 1 ;;
+          esac
+
+          ARTIFACT="$(ls -1 $BUNDLE_GLOB 2>/dev/null | head -1 || true)"
+          if [ -z "$ARTIFACT" ]; then
+            echo "::error::No updater artifact matched $BUNDLE_GLOB. Is bundle.createUpdaterArtifacts still true in tauri.conf.json?"
+            exit 1
+          fi
+          SIG_FILE="${ARTIFACT}.sig"
+          if [ ! -f "$SIG_FILE" ]; then
+            echo "::error::Missing $SIG_FILE — the build was not signed. Check TAURI_SIGNING_PRIVATE_KEY."
+            exit 1
+          fi
+
+          VERSION="${RELEASE_TAG#v}"
+          BASENAME="$(basename "$ARTIFACT")"
+          SIGNATURE="$(cat "$SIG_FILE")"
+
+          # URL-encode spaces in the filename ("Strat Ai_…"); the updater fetches
+          # this URL verbatim, so an unencoded space yields a 404.
+          ENCODED_NAME="$(printf '%s' "$BASENAME" | sed 's/ /%20/g')"
+
+          install -m 600 /dev/null deploy_key
+          printf '%s\n' "$DEPLOY_SSH_KEY" > deploy_key
+          SSH_OPTS="-i deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
+          for PLATFORM_DIR in $PLATFORM_DIRS; do
+            TARGET="/srv/updates/$PLATFORM_DIR"
+
+            # The `platforms` key must equal the "<target>-<arch>" the client
+            # computes for itself, or the updater treats the manifest as having
+            # no build for this machine.
+            cat > latest.json <<JSON
+          {
+            "version": "$VERSION",
+            "notes": "Strat Ai $RELEASE_TAG",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "$PLATFORM_DIR": {
+                "signature": "$SIGNATURE",
+                "url": "https://app-api.stratai.live/updates/$PLATFORM_DIR/$ENCODED_NAME"
+              }
+            }
+          }
+          JSON
+
+            echo "Publishing $BASENAME (v$VERSION) -> $PLATFORM_DIR"
+            ssh $SSH_OPTS "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$TARGET'"
+            scp $SSH_OPTS "$ARTIFACT" "$DEPLOY_USER@$DEPLOY_HOST:'$TARGET/'"
+            # Manifest LAST: until it names the new file, clients keep resolving
+            # the previous version, so there is never a window in which the feed
+            # advertises a build whose upload has not finished.
+            scp $SSH_OPTS latest.json "$DEPLOY_USER@$DEPLOY_HOST:'$TARGET/latest.json'"
+            echo "  -> https://app-api.stratai.live/updates/$PLATFORM_DIR/latest.json"
+          done
+
+          rm -f deploy_key latest.json

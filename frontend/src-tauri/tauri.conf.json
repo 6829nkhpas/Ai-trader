@@ -36,11 +36,18 @@
           "strat"
         ]
       }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI5MEFFM0IzOEFGQ0M2NkEKUldScXh2eUtzK01LS1EzeWwxVjJiRHVBV3B2NTZ4UTdrbHdIRTRQN290MGg0KzIzL2h4Q280eFUK",
+      "endpoints": [
+        "https://app-api.stratai.live/updates/{{target}}-{{arch}}/latest.json"
+      ]
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "publisher": "Strat AI",
     "homepage": "https://stratai.live",
     "copyright": "© 2026 Strat AI. All rights reserved.",

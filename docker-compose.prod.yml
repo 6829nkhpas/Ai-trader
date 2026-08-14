@@ -30,6 +30,8 @@ volumes:
   questdb_data:
   redis_data:
   caddy_data:      # Caddy TLS certs + ACME account (app-api.stratai.live gateway)
+  # NOTE: the desktop update feed is a HOST BIND (/srv/updates), not a named
+  # volume — CI writes into it over SSH. See the questdb-gateway volumes block.
   caddy_config:    # Caddy autosave config
   prometheus_data: # TSDB — capped at 7d / 2GB by the prometheus command flags
   grafana_data:    # Grafana's sqlite backend (users, prefs; dashboards are in git)
@@ -117,6 +119,11 @@ services:
       # does NOT re-issue on every redeploy (avoids Let's Encrypt rate limits).
       - caddy_data:/data
       - caddy_config:/config
+      # Desktop auto-update feed (signed installers + latest.json manifests).
+      # A host bind, not a named volume: the release workflow writes these over
+      # SSH, so the path has to be reachable from outside the container. Served
+      # read-only behind basic-auth at /updates/* (see infra/caddy/Caddyfile).
+      - /srv/updates:/srv/updates:ro
     mem_limit: 128m
     restart: unless-stopped
 
