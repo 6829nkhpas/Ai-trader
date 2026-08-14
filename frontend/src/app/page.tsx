@@ -17,6 +17,7 @@ import RightSidebar from '../components/panels/RightSidebar';
 import ToastContainer from '../components/common/ToastContainer';
 import AuthOverlay from '../components/auth/AuthOverlay';
 import ConnectionLost from '../components/common/ConnectionLost';
+import UpdateNotifier from '../components/common/UpdateNotifier';
 
 import { useTradeStore, hydratePaperPortfolio } from '../store/useTradeStore';
 import { useQuantStore } from '../store/useQuantStore';
@@ -199,6 +200,7 @@ export default function Home() {
       </div>
 
       <ToastContainer toasts={toasts} />
+      <UpdateNotifier />
       {isResizingSidebar && <div className="fixed inset-0 z-9999 cursor-col-resize select-none pointer-events-auto bg-white/0" />}
       {isDraggingRight && <div className="fixed inset-0 z-9999 cursor-row-resize select-none pointer-events-auto bg-white/0" />}
     </div>

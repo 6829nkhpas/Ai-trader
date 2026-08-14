@@ -142,6 +142,34 @@ app-api.stratai.live {
 		reverse_proxy grafana:3000
 	}
 
+	# ── Desktop auto-update feed (/updates/* -> static files) ─────────────────
+	# Serves the signed installers and their per-platform `latest.json` manifests
+	# that the Tauri updater polls. Layout, written by the desktop-release
+	# workflow over SSH:
+	#
+	#   /srv/updates/windows-x86_64/latest.json
+	#   /srv/updates/windows-x86_64/Strat Ai_<ver>_x64-setup.exe
+	#   /srv/updates/darwin-universal/latest.json
+	#   /srv/updates/darwin-universal/Strat Ai_<ver>_universal.app.tar.gz
+	#
+	# basic_auth is NOT optional here. The installers have credentials compiled
+	# into them (QuestDB password, LLM key — see server.rs / services/llm.rs), so
+	# an open feed would hand those to anyone who fetched a build. The desktop
+	# sends this header from its already-baked credential
+	# (commands/updater.rs::authenticated_updater), so no new secret exists.
+	#
+	# Auth only proves the feed is ours; payload authenticity is enforced
+	# independently by the updater's minisign check against the pubkey in
+	# tauri.conf.json, so a valid-looking response still cannot ship code we did
+	# not sign.
+	handle_path /updates/* {
+		basic_auth {
+			{$QUESTDB_USER} {$QUESTDB_PASSWORD_HASH}
+		}
+		root * /srv/updates
+		file_server
+	}
+
 	# Friendly root / health probe (returns 200 for a plain GET).
 	respond / "Strat Ai gateway" 200
 }

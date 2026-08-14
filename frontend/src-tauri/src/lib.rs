@@ -1,5 +1,5 @@
 use tauri::{Manager, Emitter};
-use log::{info, error};
+use log::{info, warn, error};
 
 pub mod commands;
 pub mod db;
@@ -192,6 +192,10 @@ pub fn run() {
         }
     }))
     .plugin(tauri_plugin_deep_link::init())
+    // Auto-update support. `updater` performs the signed check/download/install;
+    // `process` supplies the relaunch the UI triggers once an update is staged.
+    .plugin(tauri_plugin_updater::Builder::new().build())
+    .plugin(tauri_plugin_process::init())
     .manage(active_symbol_state)
     .manage(tx.clone())
     .manage(quant::radar::RadarRegistry::new())
@@ -269,6 +273,40 @@ pub fn run() {
           }
       }
 
+      // ── Auto-update check (background, non-blocking) ────────────────
+      //
+      // Runs once shortly after boot on its own task so a slow or unreachable
+      // update feed can never delay the window appearing or the market feeds
+      // connecting. The delay lets the terminal finish its own startup first —
+      // a chart that paints late is a worse first impression than an update
+      // notice that arrives a few seconds in.
+      //
+      // Emits `update-available` for the UI; it does NOT download or restart on
+      // its own. Downloading is user-initiated (`install_update`) and the
+      // relaunch is a separate explicit action, because silently restarting a
+      // terminal that may be holding a live position is not acceptable.
+      #[cfg(desktop)]
+      {
+          let app_handle_updater = app.handle().clone();
+          tauri::async_runtime::spawn(async move {
+              tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+              match commands::updater::check_for_update(app_handle_updater.clone()).await {
+                  Ok(Some(info)) => {
+                      info!(
+                          "Update available: {} (running {}) — notifying UI.",
+                          info.version, info.current_version
+                      );
+                      if let Err(e) = app_handle_updater.emit("update-available", &info) {
+                          warn!("Could not emit update-available: {}", e);
+                      }
+                  }
+                  Ok(None) => info!("Auto-update: already on the latest version."),
+                  // Never surfaced to the user: being offline at launch is normal.
+                  Err(e) => warn!("Auto-update check skipped: {}", e),
+              }
+          });
+      }
+
       // ── Quant Radar: User-Driven Live Market Scanner (FEAT-037) ────
       // Spawns an async background worker that evaluates the located
       // pattern/strategy scanner across the user's chosen radar symbols
@@ -340,6 +378,9 @@ pub fn run() {
         commands::charts::load_historical,
         commands::charts::fetch_questdb,
         commands::charts::get_pool_status,
+        commands::updater::check_for_update,
+        commands::updater::install_update,
+        commands::updater::relaunch_app,
         commands::deep_quant::run_deep_quant_analysis,
         commands::deep_quant::run_ai_analysis,
         commands::deep_quant::run_deep_quant_agent,

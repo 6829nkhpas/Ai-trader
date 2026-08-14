@@ -30,6 +30,16 @@ tauri = { version = "2.11.0", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-deep-link = "2.0.0"
 tauri-plugin-single-instance = "2.0.0"
+# ── Auto-update ─────────────────────────────────────────────────────────
+# `updater` checks a signed manifest and swaps the installer in place;
+# `process` provides the relaunch used after an update is staged. The update
+# feed is authenticated (the installers carry baked credentials, so it must not
+# be public), which is why the check is driven from Rust via
+# `updater_builder().header(...)` rather than declaratively from tauri.conf.json.
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+# Encodes the basic-auth header for the authenticated update feed.
+base64 = "0.22"
 tokio = { version = "1", features = ["full"] }
 # `rustls-tls-webpki-roots` enables wss:// (the app-api.stratai.live gateway); pure
 # Rust, cross-platform, bundles Mozilla roots that trust Let's Encrypt.
