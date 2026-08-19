@@ -3,6 +3,7 @@ use log::{info, warn, error};
 
 pub mod commands;
 pub mod db;
+pub mod providers;
 pub mod quant;
 pub mod services;
 pub mod execution;

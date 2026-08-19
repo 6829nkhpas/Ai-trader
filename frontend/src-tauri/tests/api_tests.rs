@@ -1,7 +1,7 @@
 // ── Strat Ai — External API Contract Tests ───────────────────────────
 //
 // Strict data-contract testing for every outbound API the Tauri backend
-// touches (DeepSeek LLM today; News API & Market Data follow the same
+// touches (the LLM endpoint today; News API & Market Data follow the same
 // pattern). These tests stand up a `mockito::Server`, redirect the real
 // reqwest client at it, and verify two opposing axes:
 //
@@ -22,7 +22,7 @@ use serde_json::json;
 use std::sync::Mutex;
 
 // All tests in this file mutate process-wide environment variables
-// (`DEEPSEEK_API_KEY`, `ALPHA_TEST_MODE`, …). Cargo runs `#[tokio::test]`
+// (`LLM_API_KEY`, `ALPHA_TEST_MODE`, …). Cargo runs `#[tokio::test]`
 // cases in parallel by default, so we serialise execution through a
 // global lock to keep env state deterministic.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -71,22 +71,30 @@ const FIXTURE_NEWS: &str = "Reliance posts strong Q3 earnings; refining margins 
 
 // Ensure the live env doesn't leak into the test (audit log + key fallback).
 fn isolate_env() {
-    // Remove production keys if exported in the dev shell so tests
-    // exercise the fallback path with a deterministic TEST_KEY.
+    // The implementation reads exactly three names — see `resolve_endpoint`,
+    // `resolve_model` and `resolve_api_key` in `src/services/llm.rs`.
+    std::env::remove_var("LLM_API_URL");
+    std::env::set_var("LLM_API_KEY", "TEST_KEY");
+    std::env::set_var("LLM_MODEL", "deepseek-chat");
+
+    // Everything below is a LEGACY name that NO code path reads. It is cleared
+    // only because a developer's shell may still export it from an older setup.
+    // Do not read this list as an inventory of providers we call — it is not
+    // one, and two of these were never called at all. The real inventory is
+    // `docs/compliance/AI_MODEL_GOVERNANCE.md` §2, which is the only place a
+    // provider or model name may be quoted from.
+    //
+    // Setting one of these instead of `LLM_API_KEY` is silently ignored:
+    // `resolve_api_key()` would return None and every live-path test would
+    // fail before the HTTP send.
     std::env::remove_var("HF_API_KEY");
     std::env::remove_var("HUGGINGFACE_API_KEY");
     std::env::remove_var("HUGGING_FACE_API_KEY");
     std::env::remove_var("NVIDIA_API_KEY");
-    std::env::remove_var("LLM_API_URL");
     std::env::remove_var("HF_API_URL");
     std::env::remove_var("DEEPSEEK_API_URL");
     std::env::remove_var("NVIDIA_NIM_API_URL");
-    // NOTE: The implementation uses LLM_API_KEY / LLM_MODEL (unified provider-agnostic names).
-    // The old DEEPSEEK_API_KEY / DEEPSEEK_MODEL env vars are no longer read by resolve_api_key()
-    // or resolve_model() and must NOT be used here — they would be silently ignored, causing
-    // resolve_api_key() to return None and all live-path tests to fail before the HTTP send.
-    std::env::set_var("LLM_API_KEY", "TEST_KEY");
-    std::env::set_var("LLM_MODEL", "deepseek-chat");
+
     std::env::remove_var("ALPHA_TEST_MODE"); // we want the real code path
 }
 
@@ -381,17 +389,16 @@ async fn test_audit_logger_writes_to_disk_in_test_mode() {
 
     let _env_guard = lock_env();
 
-    // Activate the audit logger.
+    // Same isolation as every other test, then re-enable test mode — the
+    // helper clears it, and this test needs it on to activate the audit logger.
+    //
+    // This used to inline a copy of `isolate_env`'s body ending in
+    // `set_var("DEEPSEEK_API_KEY", …)`, which resolve_api_key() does not read:
+    // the test only passed because `is_test_mode()` supplies a fallback key.
+    // Dropping that fallback would have failed this test for a reason that had
+    // nothing to do with the audit logger it exists to cover.
+    isolate_env();
     std::env::set_var("ALPHA_TEST_MODE", "1");
-    std::env::remove_var("HF_API_KEY");
-    std::env::remove_var("HUGGINGFACE_API_KEY");
-    std::env::remove_var("HUGGING_FACE_API_KEY");
-    std::env::remove_var("NVIDIA_API_KEY");
-    std::env::remove_var("LLM_API_URL");
-    std::env::remove_var("HF_API_URL");
-    std::env::remove_var("DEEPSEEK_API_URL");
-    std::env::remove_var("NVIDIA_NIM_API_URL");
-    std::env::set_var("DEEPSEEK_API_KEY", "TEST_KEY");
 
     // Clean any prior report so the assertion isn't fooled by stale data.
     let report_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("api_audit_report.log");
