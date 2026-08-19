@@ -70,6 +70,21 @@ impl LlmClient {
         })
     }
 
+    /// The model identifier actually in use, after `LLM_MODEL` resolution.
+    ///
+    /// Exposed so the process can log what it resolved to at startup. A
+    /// configurable model is only auditable if the resolved value is recorded
+    /// somewhere — see `docs/compliance/AI_MODEL_GOVERNANCE.md` §2.
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    /// The endpoint actually in use, after `LLM_API_URL` resolution. Never
+    /// includes the API key.
+    pub fn endpoint(&self) -> &str {
+        &self.api_url
+    }
+
     /// Invokes the LLM to generate a market insight for a detected anomaly.
     ///
     /// Returns `(headline, analysis_text, sentiment_score)` on success.

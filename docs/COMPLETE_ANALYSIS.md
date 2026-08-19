@@ -34,7 +34,7 @@ graph TB
         TA["📊 Technical Agent<br/>RSI/VWAP/Patterns"]
         SA["📰 Sentiment Agent<br/>News + Claude/LLM"]
         PA["🔮 Predictive Agent<br/>Linear Regression · WS:8082"]
-        QR["🧠 Quant-RAG Agent<br/>DeepSeek v4 Pro · WS:8083"]
+        QR["🧠 Quant-RAG Agent<br/>LLM Insights · WS:8083"]
     end
 
     subgraph "Layer 4: Decision Fusion"
@@ -162,7 +162,7 @@ Kite WS (binary) → parser.rs → ParsedTick
 | File | Role |
 |------|------|
 | `engine.rs` | Monitors `market.ohlc.10m` for **≥2% price swings** (`|close-open|/open × 100`) |
-| `llm.rs` | REST client for **DeepSeek v4 Pro** via NVIDIA NIM API — generates headline, analysis, sentiment score |
+| `llm.rs` | Provider-agnostic OpenAI-compatible REST client — generates headline, analysis, sentiment score. Model/endpoint per `compliance/AI_MODEL_GOVERNANCE.md` §2 |
 | `ws_server.rs` | Broadcasts `MarketInsight` on **port 8083** |
 
 **Error Visibility:** If DeepSeek API fails, a fallback insight with `headline: "LLM API Failure"` is broadcast — the frontend never silently loses data.
@@ -277,7 +277,7 @@ The frontend runs as a **native desktop app** via Tauri (Rust). The Tauri layer 
 | `live_bridges.rs` | WS→IPC bridge for OHLC (8081), Predictive (8082), Insight (8083) |
 | `history_loader.rs` | Chunked 5yr backfill from Kite API (365-day windows, 350ms rate limit) |
 | `instrument_master.rs` | Daily NSE instrument CSV sync into SQLite |
-| `llm.rs` | DeepSeek v4 Pro API client for deep quant analysis |
+| `llm.rs` | Provider-agnostic LLM client for the Tauri backend (not the only one — see `compliance/AI_MODEL_GOVERNANCE.md` §2) |
 | `audit_logger.rs` | Trade audit logging |
 
 ### 7.4 — Quant Engine (`/frontend/src-tauri/src/quant/`)

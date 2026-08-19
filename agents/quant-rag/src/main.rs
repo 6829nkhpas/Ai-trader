@@ -1,13 +1,16 @@
 // main.rs — Quant-RAG Agent entry point.
 //
-// Perfection Phase 1 — Anomaly Detection + DeepSeek v4 Pro + WS Broadcast (8083).
+// Perfection Phase 1 — Anomaly Detection + LLM Insight + WS Broadcast (8083).
 //
 // Pipeline:
 //   1. Consume Protobuf-encoded OHLCCandle messages from `market.ohlc.10m`
 //   2. Detect anomalies (>= 2% absolute price change)
-//   3. Invoke DeepSeek v4 Pro for AI-generated insight
+//   3. Invoke the configured LLM for an AI-generated insight
 //   4. Publish MarketInsight to Kafka `signals.insights`
 //   5. Broadcast the same insight as JSON over WebSocket on port 8083
+//
+// The model and endpoint are configurable (`LLM_MODEL`, `LLM_API_URL`), so this
+// header names neither — the resolved values are logged at startup instead.
 
 mod engine;
 mod llm;
@@ -30,8 +33,8 @@ async fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     info!("╔══════════════════════════════════════════════════╗");
-    info!("║  Quant-RAG Agent — NVIDIA NIM × DeepSeek v4 Pro  ║");
-    info!("║  Perfection Phase 1 — Insight Pipeline (8083)    ║");
+    info!("║  Quant-RAG Agent — Anomaly Insight Pipeline      ║");
+    info!("║  Perfection Phase 1 — WS :8083                   ║");
     info!("╚══════════════════════════════════════════════════╝");
 
     // ── Metrics ──────────────────────────────────────────────────────────
@@ -50,7 +53,16 @@ async fn main() {
     // from the text of the resulting error.
     let llm_client = match LlmClient::new(metrics.clone()) {
         Ok(c) => {
-            info!("✅ LlmClient initialized — LLM_API_KEY loaded");
+            // Log the resolved model and endpoint, not just "a key loaded".
+            // The model is configurable, so the only way to answer "which model
+            // produced this insight" for a given process is to record what that
+            // process resolved to — docs/compliance/AI_MODEL_GOVERNANCE.md §2.
+            // Never log the key itself.
+            info!(
+                "✅ LlmClient initialized — model={} endpoint={}",
+                c.model(),
+                c.endpoint()
+            );
             c
         }
         Err(e) => {

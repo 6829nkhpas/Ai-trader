@@ -137,7 +137,7 @@ Three independent intelligence agents contribute signals:
 
 2. **Sentiment Agent**: Continuously polls financial news from RSS feeds, NewsData.io, and Finnhub company profiles. Each headline is classified by an LLM into a sentiment score (0–100). Results are cached to avoid processing the same headline twice.
 
-3. **Anomaly Agent**: Monitors live price streams for sudden moves (≥2% absolute candle swing). When detected, it invokes a separate LLM (DeepSeek v4 Pro) to generate a headline, detailed market commentary, and a sentiment assessment. This catches breaking developments that haven't appeared in news feeds yet.
+3. **Anomaly Agent**: Monitors live price streams for sudden moves (≥2% absolute candle swing). When detected, it invokes a separate LLM to generate a headline, detailed market commentary, and a sentiment assessment. This catches breaking developments that haven't appeared in news feeds yet.
 
 **How fusion works:**
 
@@ -166,7 +166,7 @@ Different traders have different needs. The terminal offers three one-click work
 
 - **Intraday (Scalping)**: Optimized for fast trades with 1-minute and 5-minute charts, a live Level-2 order book showing bid/ask depth, and volatility heatmaps.
 - **Swing Trading**: Multi-day positions with multi-timeframe trend alignment (1H, 4H, 1D, 1W views), a Fear & Greed sentiment gauge, and a scrollable news feed with per-headline sentiment scores.
-- **Investor Mode**: Long-term allocation with macro indicators (Fed funds rate, CPI, 10-year Treasury, Dollar Index, VIX), portfolio risk metrics (Sharpe Ratio, Max Drawdown, Beta, Alpha), and AI-generated sector outlooks.
+- **Investor Mode**: Long-term allocation with macro indicators (Fed funds rate, CPI, 10-year Treasury, Dollar Index, VIX), discipline metrics (setups audited, setups rejected, forced HOLDs, plan adherence), and AI-generated sector outlooks.
 
 ### Native Desktop Application
 
@@ -204,6 +204,8 @@ When technical and sentiment signals conflict, the system defaults to HOLD. It d
 ### 4. Self-Improving Track Record
 
 The SQLite-backed trade journal records every committed trade, tracks whether it hit the target or stop, and computes win rate and expectancy (in R-multiples) per setup type. When the AI encounters a similar setup in the future, it checks this track record. If comparable setups have historically lost money, conviction is automatically reduced. The system learns from its own mistakes.
+
+*These figures are internal model calibration and are never surfaced to users or used in marketing — see `docs/compliance/BRAND_GUIDELINES.md` §1 rule 2 and `docs/compliance/AI_MODEL_GOVERNANCE.md` §6.*
 
 ### 5. Full Glass-Box Transparency
 

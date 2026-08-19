@@ -1,12 +1,12 @@
-// claude.js — HuggingFace LLM conviction scorer for the Sentiment Agent.
+// claude.js — LLM conviction scorer for the Sentiment Agent.
 //
-// Takes a raw news article, sends its headline + description to the
-// HuggingFace Inference Router (OpenAI-compatible), and extracts a numeric
+// Takes a raw news article, sends its headline + description to an
+// OpenAI-compatible chat/completions endpoint, and extracts a numeric
 // conviction score (1-100) plus a short reasoning snippet that will be
 // published in the NewsSentiment Protobuf.
 //
 // Design decisions:
-//   • Uses HuggingFace Inference Router with DeepSeek model for speed + cost.
+//   • Provider-agnostic: any OpenAI-compatible endpoint, chosen for speed + cost.
 //   • Temperature = 0 — deterministic scoring for backtesting reproducibility.
 //   • Asks the model to respond ONLY with a JSON object — easy machine parsing.
 //   • If parsing fails the article is skipped (non-fatal).
@@ -16,7 +16,11 @@
 //
 // Optional env vars:
 //   LLM_MODEL    — model ID (default: deepseek-ai/DeepSeek-V3-0324)
-//   LLM_API_URL  — endpoint URL (default: https://router.huggingface.co/v1/chat/completions)
+//   LLM_API_URL  — endpoint URL (default: https://api.freemodel.dev/v1/chat/completions)
+//
+// The filename and the old header both said "Claude" / "HuggingFace"; neither has
+// ever been what this file calls. Kept the filename to avoid churning imports,
+// corrected the header — see docs/compliance/BRAND_GUIDELINES.md §4.0.
 
 // ── Constants ────────────────────────────────────────────────────────────────
 

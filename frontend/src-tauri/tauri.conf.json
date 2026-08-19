@@ -25,7 +25,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:* wss://*.stratai.live https://*.stratai.live https://integrate.api.nvidia.com https://api.kite.trade; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; frame-src 'self' https://tauri.localhost blob:; worker-src blob:",
+      "csp": "default-src 'self'; connect-src 'self' ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:* wss://*.stratai.live https://*.stratai.live https://api.kite.trade; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; frame-src 'self' https://tauri.localhost blob:; worker-src blob:",
       "dangerousDisableAssetCspModification": ["script-src", "style-src"]
     }
   },
@@ -74,7 +74,7 @@
       }
     },
     "category": "Finance",
-    "shortDescription": "AI-Powered Institutional Trading Terminal",
-    "longDescription": "Strat Ai — A real-time AI trading terminal powered by DeepSeek v4 Pro, Zerodha Kite integration, and Kafka-driven market data pipelines. Features institutional-grade charting with EMA ribbons, volume histograms, predictive ghost lines, and modular workspace management."
+    "shortDescription": "AI-Assisted Market Analysis Terminal",
+    "longDescription": "Strat Ai — a real-time market analysis terminal for NSE and NFO. Live tick data and historical candles via Zerodha Kite, advanced charting with EMA ribbons and volume histograms, F&O options analytics, predictive ghost lines, and AI-assisted analysis of individual setups. It analyses instruments and produces research: it cannot place, modify or cancel an order."
   }
 }

@@ -1,7 +1,7 @@
 {
   "name": "sentiment",
   "version": "1.0.0",
-  "description": "NLP/Sentiment Agent — polls NewsData.io for financial news, scores with HuggingFace LLM, publishes NewsSentiment Protobuf to Kafka",
+  "description": "NLP/Sentiment Agent — polls NewsData.io for financial news, scores with a configurable OpenAI-compatible LLM, publishes NewsSentiment Protobuf to Kafka",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
@@ -13,7 +13,7 @@
     "sentiment",
     "nlp",
     "kafka",
-    "huggingface",
+    "llm",
     "ai-trade"
   ],
   "author": "",

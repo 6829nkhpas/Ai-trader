@@ -1,11 +1,11 @@
 // engine.rs — Kafka Consumer & Producer loop for the Quant-RAG Agent.
 //
-// Perfection Phase 1 — Anomaly Detection & DeepSeek v4 Pro Insight Pipeline.
+// Perfection Phase 1 — Anomaly Detection & LLM Insight Pipeline.
 //
 // Pipeline:
 //   1. Consume Protobuf-encoded OHLCCandle messages from `market.ohlc.10m`.
 //   2. For each candle, compute absolute % change: |close − open| / open × 100.
-//   3. If change_pct >= 2.0% (anomaly threshold), invoke the DeepSeek LLM client.
+//   3. If change_pct >= 2.0% (anomaly threshold), invoke the LLM client.
 //   4. Construct a MarketInsight Protobuf payload and publish to `signals.insights`.
 //   5. Serialize the insight to JSON and broadcast over the WS channel (port 8083).
 //
@@ -178,8 +178,12 @@ pub mod engine {
         log::info!("Anomaly detection loop started — waiting for OHLC candles...");
         log::info!("─────────────────────────────────────────────────────");
 
-        // ── LLM Rate Limiting (NVIDIA NIM) ───────────────────────────────
+        // ── LLM Rate Limiting ─────────────────────────────────────────────
         // Enforce strict rate limiting to avoid HTTP 429 Too Many Requests.
+        // Provider-independent by design: the endpoint is whatever `LLM_API_URL`
+        // points at (default `api.freemodel.dev`, see llm.rs:20), so these
+        // cooldowns are set for the tightest free-tier quota rather than tuned
+        // to one vendor's published limits.
         // - Global cooldown: minimum 15 seconds between ANY LLM calls
         // - Per-symbol cooldown: minimum 5 minutes between LLM calls for the SAME symbol
         const GLOBAL_COOLDOWN: Duration = Duration::from_secs(15);
@@ -421,7 +425,7 @@ pub mod engine {
                                 // broadcast it over Kafka + WebSocket so the
                                 // frontend can display the failure.
                                 log::error!(
-                                    "❌ DeepSeek LLM call failed for symbol={}: {}",
+                                    "❌ LLM call failed for symbol={}: {}",
                                     candle.symbol,
                                     e,
                                 );
@@ -430,7 +434,14 @@ pub mod engine {
                                     symbol: candle.symbol.clone(),
                                     timestamp_ms: now_ms(),
                                     headline: "LLM API Failure".to_string(),
-                                    analysis_text: format!("DeepSeek Error: {}", e),
+                                    // `analysis_text` is RENDERED IN THE UI, so it
+                                    // must not name a model. The endpoint is
+                                    // configurable (llm.rs), so "DeepSeek Error"
+                                    // — which this used to say — was wrong for any
+                                    // deployment that set LLM_MODEL to anything
+                                    // else. See docs/compliance/BRAND_GUIDELINES.md
+                                    // §1.1 and §4.0.
+                                    analysis_text: format!("LLM Error: {}", e),
                                     sentiment_score: 50,
                                     anomaly_pct: change_pct,
                                 };
