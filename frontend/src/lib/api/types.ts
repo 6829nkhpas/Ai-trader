@@ -22,6 +22,16 @@ export interface AccessFlags {
   canAccessTopup: boolean;
   canSeeInstantNewsSantiments: boolean;
   canGetAdvanceChartAccess: boolean;
+  /**
+   * RESEARCH SKU entitlement — grants the regulated recommendation surface
+   * (FIND, DEBATE, QA, conviction score, journal). See `lib/sku.ts`.
+   *
+   * Optional because the remote credit API does not emit it yet. Absent or
+   * anything other than boolean `true` resolves to the TERMINAL SKU, so the
+   * default is fail-closed. The authoritative check is server-side in
+   * `agents/deep-quant-loop/entitlements.py`; this flag drives UI state only.
+   */
+  canAccessResearch?: boolean;
 }
 
 export interface CreditLog {

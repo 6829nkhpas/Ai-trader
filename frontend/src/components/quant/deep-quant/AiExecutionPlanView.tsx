@@ -1,7 +1,8 @@
 'use client';
 
 import React from 'react';
-import { Shield, Target, Zap, Rocket, CheckCircle2, RotateCcw } from 'lucide-react';
+import { Shield, Target, Zap, Rocket, CheckCircle2, RotateCcw, Lock } from 'lucide-react';
+import { ResearchGate } from '../../common/FeatureGate';
 
 interface AiPlanShape {
   // May be undefined when the committed decision emitted no conviction — the
@@ -67,7 +68,26 @@ export default function AiExecutionPlanView({
 
   return (
     <div className="flex flex-col gap-0">
-      {/* Conviction Score */}
+      {/* Conviction Score — RESEARCH-gated (compliance blocker P1). The score is
+          a directional-quality signal on a recommendation, so it is regulated
+          research output rather than neutral analytics. */}
+      <ResearchGate
+        capability="convictionScore"
+        inline
+        fallback={
+          <div className="px-3 py-3 border-b border-border-default">
+            <div className="flex items-center gap-1.5 mb-1">
+              <Lock size={11} className="text-text-muted" />
+              <h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">
+                AI Conviction
+              </h3>
+            </div>
+            <p className="text-[11px] text-text-secondary">
+              Available on the Research plan.
+            </p>
+          </div>
+        }
+      >
       <div className="px-3 py-3 border-b border-border-default">
         <div className="flex items-center gap-1.5 mb-2">
           <Shield size={11} className="text-text-muted" />
@@ -102,6 +122,7 @@ export default function AiExecutionPlanView({
           </div>
         </div>
       </div>
+      </ResearchGate>
 
       {/* Setup Validation */}
       <div className="px-3 py-2.5 border-b border-border-default">

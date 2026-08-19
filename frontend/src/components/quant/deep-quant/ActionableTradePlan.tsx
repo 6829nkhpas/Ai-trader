@@ -48,7 +48,7 @@ export default function ActionableTradePlan({
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error('Failed to execute paper trade:', err);
-      useTradeStore.getState().addSystemLog('ERROR', `Failed to execute trade: ${errMsg}`);
+      useTradeStore.getState().addSystemLog('ERROR', `Failed to execute paper trade: ${errMsg}`);
     } finally {
       setIsExecuting(false);
     }
