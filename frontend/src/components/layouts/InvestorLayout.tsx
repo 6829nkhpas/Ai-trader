@@ -105,17 +105,19 @@ export function MacroSentimentPanel() {
         )}
       </div>
 
-      {/* ── Portfolio Risk Metrics (Live from Store) ─────────────── */}
+      {/* ── Discipline Metrics (Live from Store) ──────────────────
+          Compliance blocker P6: this block reported Total Return / Win Rate /
+          Max Drawdown / Avg Conviction. Those are performance representations
+          and are gone — see `computeDisciplineMetrics` in
+          `hooks/useMacroIndicators.ts`. The bull/bear ± colouring went with
+          them: a green "+12" next to a discipline count reads as profit. */}
       <div className="flex flex-col border-b border-border-default">
-        <div className="px-3 pt-2 pb-1"><h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Portfolio Metrics</h3></div>
+        <div className="px-3 pt-2 pb-1"><h3 className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Discipline Metrics</h3></div>
         <div className="grid grid-cols-2 gap-x-2 gap-y-1 px-3 pb-2">
           {portfolioMetrics.map((m) => (
             <div key={m.label} className="flex items-center justify-between" title={m.tooltip}>
               <span className="text-[10px] text-text-muted">{m.label}</span>
-              <span className={`text-[11px] font-semibold tabular-nums ${m.value.startsWith('+') ? 'text-bull' :
-                  m.value.startsWith('-') ? 'text-bear' :
-                    'text-text-primary'
-                }`}>{m.value}</span>
+              <span className="text-[11px] font-semibold tabular-nums text-text-primary">{m.value}</span>
             </div>
           ))}
         </div>

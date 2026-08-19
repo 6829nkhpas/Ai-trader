@@ -263,13 +263,6 @@ pub async fn get_historical_view(
     // immediately; only a genuinely cold cache still waits, because there the
     // alternative is rendering an empty chart.
     if matches!(source, HistorySource::Intraday) {
-        // Credentials may legitimately be EMPTY in a shipped thin client (no
-        // `.env`, no baked Kite creds). That is no longer a reason to skip the
-        // backfill: `fetch_kite_candles` routes through the server-side Kite
-        // proxy behind the gateway when they are absent. They are passed
-        // through as-is so the direct path is still used in local dev.
-        let (api_key, access_token) = get_kite_credentials();
-
         {
             // Resolve instrument token from the local SQLite cache
             let local_token: Option<u32> = {
@@ -341,13 +334,20 @@ pub async fn get_historical_view(
                                 let bg_app = app.clone();
 
                                 tauri::async_runtime::spawn(async move {
+                                    // Credentials are NOT resolved here: the
+                                    // market-data provider owns them. They may
+                                    // legitimately be empty in a shipped thin
+                                    // client (no `.env`, no baked Kite creds),
+                                    // which is not a reason to skip the backfill —
+                                    // `providers::kite` routes through the
+                                    // server-side proxy behind the gateway when
+                                    // they are absent, and uses the direct path in
+                                    // local dev.
                                     let result = history_loader::load_intraday_data(
                                         &bg_pool,
                                         token,
                                         &bg_symbol,
                                         &bg_base_tf,
-                                        &api_key,
-                                        &access_token,
                                     )
                                     .await;
 
@@ -695,6 +695,12 @@ pub async fn load_historical(
 
     info!("load_historical: starting ingestion for {} (token {})", symbol, instrument_token);
 
+    // Credential pre-check, kept as-is. Note the inconsistency with the intraday
+    // path above: since the provider falls back to the server-side proxy when no
+    // direct credentials exist, this command would now SUCCEED in a shipped thin
+    // client if the guard were dropped. Removing it is a behaviour change to an
+    // explicit user-triggered 5-year backfill, so it is flagged here rather than
+    // changed as a side effect of the P14 refactor.
     let (api_key, access_token) = get_kite_credentials();
     if api_key.is_empty() {
         return Err("KITE_API_KEY not set in .env".to_string());
@@ -703,15 +709,7 @@ pub async fn load_historical(
         return Err("KITE_ACCESS_TOKEN not set in .env".to_string());
     }
 
-    match history_loader::load_historical_data(
-        pool.inner(),
-        instrument_token,
-        &symbol,
-        &api_key,
-        &access_token,
-    )
-    .await
-    {
+    match history_loader::load_historical_data(pool.inner(), instrument_token, &symbol).await {
         Ok(count) => {
             info!("load_historical: {} — {} candles ingested successfully.", symbol, count);
 

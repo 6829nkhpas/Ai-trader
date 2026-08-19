@@ -1,12 +1,16 @@
-// src/services/history_loader.rs — Zerodha Kite Historical Data Ingestion
+// src/services/history_loader.rs — Historical Data Ingestion
 //
-// Fetches daily AND intraday OHLCV candles from the Kite Historical API
-// and bulk-inserts them into QuestDB tables via the Postgres wire protocol.
+// Fetches daily AND intraday OHLCV candles through the configured market-data
+// provider and bulk-inserts them into QuestDB tables via the Postgres wire
+// protocol.
 //
-// ── API Endpoint ────────────────────────────────────────────────────────────
-//   GET https://api.kite.trade/instruments/historical/{token}/{interval}
-//   Query params: from (yyyy-mm-dd), to (yyyy-mm-dd)
-//   Auth header:  Authorization: token {api_key}:{access_token}
+// ── Where the fetch lives ───────────────────────────────────────────────────
+//   Since P14 the HTTP call, the credentials, and the direct-vs-proxy choice all
+//   belong to `providers::kite`; this module asks
+//   `providers::registry::market_data().historical(token, interval, from, to)`
+//   for one provider-sized window at a time. What stays here is everything the
+//   provider deliberately does NOT do: chunking, rate pacing, dedup and the
+//   QuestDB write.
 //
 // ── Interval Support ────────────────────────────────────────────────────────
 //   Daily:    "day"      → stored in `historical_candles`  (PARTITION BY YEAR)
@@ -31,51 +35,21 @@
 
 use chrono::NaiveDate;
 use log::{info, warn, error};
-use once_cell::sync::Lazy;
-use serde::Deserialize;
 use sqlx::PgPool;
 
-/// One process-wide HTTP client for every Kite fetch.
+// ── Candle type ─────────────────────────────────────────────────────────────
+
+/// A single parsed candle row, as the market-data provider returns it.
 ///
-/// Each loader invocation used to build its own `reqwest::Client`, so every
-/// backfill paid a fresh TLS handshake to `api.kite.trade` (or to the gateway
-/// proxy) before its first chunk, and connections were never reused between
-/// invocations. Sharing one pooled client removes that per-backfill setup cost
-/// and lets consecutive chunk requests ride the same connection.
-static KITE_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .pool_idle_timeout(std::time::Duration::from_secs(90))
-        .pool_max_idle_per_host(4)
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
-});
-
-// ── Kite API Response Types ─────────────────────────────────────────────────
-
-/// Top-level response from the Kite Historical API.
-#[derive(Debug, Deserialize)]
-pub struct KiteHistoricalResponse {
-    pub status: String,
-    pub data: KiteHistoricalData,
-}
-
-/// The `data` object containing the candle array.
-#[derive(Debug, Deserialize)]
-pub struct KiteHistoricalData {
-    pub candles: Vec<Vec<serde_json::Value>>,
-}
-
-/// A single parsed candle row from the Kite API response.
-#[derive(Debug, Clone)]
-pub struct HistoricalCandle {
-    pub timestamp: String, // ISO 8601 string from Kite, e.g. "2024-01-15T00:00:00+0530"
-    pub open: f64,
-    pub high: f64,
-    pub low: f64,
-    pub close: f64,
-    pub volume: i64,
-}
+/// An alias rather than a distinct struct since P14: the transport (direct Kite
+/// vs. the server-side proxy, credentials, retries) now lives in
+/// `providers::kite`, and this module's job starts at the point where bars have to
+/// be chunked, paced and written to QuestDB. Keeping one type means no conversion
+/// layer where a field could quietly be dropped.
+///
+/// `timestamp` is an ISO-8601 string (e.g. `"2024-01-15T00:00:00+0530"`), which is
+/// what `parse_kite_timestamp` below accepts — see [`crate::providers::Candle`].
+pub type HistoricalCandle = crate::providers::Candle;
 
 /// Date range of existing data in QuestDB for a given symbol.
 #[derive(Debug)]
@@ -376,14 +350,16 @@ pub async fn run_migration(pool: &PgPool) {
     }
 }
 
-/// Fetch 5 years of daily candles from Kite and store in QuestDB.
+/// Fetch 5 years of daily candles from the market-data provider and store in QuestDB.
 ///
 /// # Arguments
 /// * `pool`             — QuestDB connection pool (PG wire, port 8812)
 /// * `instrument_token` — Kite instrument token (e.g., 738561 for RELIANCE)
 /// * `symbol`           — Human-readable symbol name (e.g., "RELIANCE")
-/// * `api_key`          — Kite Connect API key
-/// * `access_token`     — Kite OAuth access token (resets daily at midnight IST)
+///
+/// Broker credentials are no longer parameters: since P14 the provider resolves and
+/// applies them itself (`providers::kite`), and taking them here would let a caller
+/// pass credentials that are silently ignored.
 ///
 /// # Chunking
 /// Loops in 365-day windows starting from `today - 5 years` up to `today`.
@@ -392,8 +368,6 @@ pub async fn load_historical_data(
     pool: &PgPool,
     instrument_token: u32,
     symbol: &str,
-    api_key: &str,
-    access_token: &str,
 ) -> Result<u64, String> {
     let today = chrono::Local::now().date_naive();
     let five_years_ago = today - chrono::Duration::days(365 * 5);
@@ -423,7 +397,7 @@ pub async fn load_historical_data(
         }
     }
     let mut total_inserted: u64 = 0;
-    let client = KITE_CLIENT.clone();
+    let provider = crate::providers::registry::market_data();
     // Spacing is applied before each request, not after (see `KiteRatePacer`),
     // so already-covered chunks cost nothing and the last chunk isn't followed
     // by a pointless sleep.
@@ -446,21 +420,14 @@ pub async fn load_historical_data(
 
         info!("Fetching chunk: {} → {}", chunk_start, chunk_end);
 
-        // ── 3. Fetch from Kite API (daily interval) ─────────────────────
+        // ── 3. Fetch from the provider (daily interval) ─────────────────────
         // Rate-limit gate: sleeps only the time still owed since the previous
         // request, and only when a request is genuinely about to be sent.
         pacer.acquire().await;
 
-        match fetch_kite_candles(
-            &client,
-            instrument_token,
-            "day",
-            &chunk_start,
-            &chunk_end,
-            api_key,
-            access_token,
-        )
-        .await
+        match provider
+            .historical(instrument_token, "day", &chunk_start, &chunk_end)
+            .await
         {
             Ok(candles) => {
                 let count = candles.len() as u64;
@@ -504,8 +471,9 @@ pub async fn load_historical_data(
 /// * `instrument_token` — Kite instrument token
 /// * `symbol`           — Human-readable symbol name
 /// * `timeframe`        — UI timeframe string (e.g., "5m", "15m", "1H")
-/// * `api_key`          — Kite Connect API key
-/// * `access_token`     — Kite OAuth access token
+///
+/// Broker credentials are the provider's business since P14 — see
+/// [`load_historical_data`].
 ///
 /// # Deduplication
 /// Checks existing data range in `historical_intraday` for this symbol+timeframe.
@@ -515,8 +483,6 @@ pub async fn load_intraday_data(
     instrument_token: u32,
     symbol: &str,
     timeframe: &str,
-    api_key: &str,
-    access_token: &str,
 ) -> Result<u64, String> {
     let config = map_timeframe_to_kite_interval(timeframe)
         .ok_or_else(|| format!("No intraday mapping for timeframe: {}", timeframe))?;
@@ -563,7 +529,7 @@ pub async fn load_intraday_data(
     }
 
     let mut total_inserted: u64 = 0;
-    let client = KITE_CLIENT.clone();
+    let provider = crate::providers::registry::market_data();
     let mut pacer = KiteRatePacer::new(KITE_MIN_REQUEST_INTERVAL);
 
     // ── 3-5. Fetch each planned window (forward top-up + Depth_Gap) ─────
@@ -582,19 +548,17 @@ pub async fn load_intraday_data(
             chunk_start, chunk_end, config.kite_interval
         );
 
-        // ── 3. Fetch from Kite API ──────────────────────────────────────
+        // ── 3. Fetch from the provider ──────────────────────────────────────
         pacer.acquire().await;
 
-        match fetch_kite_candles(
-            &client,
-            instrument_token,
-            config.kite_interval,
-            &chunk_start,
-            &chunk_end,
-            api_key,
-            access_token,
-        )
-        .await
+        match provider
+            .historical(
+                instrument_token,
+                config.kite_interval,
+                &chunk_start,
+                &chunk_end,
+            )
+            .await
         {
             Ok(candles) => {
                 let count = candles.len() as u64;
@@ -678,189 +642,11 @@ async fn query_existing_range(pool: &PgPool, symbol: &str) -> ExistingRange {
     }
 }
 
-/// Fetch candles from the Kite Historical API for a single chunk.
-///
-/// Two transports, chosen by whether direct Kite credentials are available:
-///
-/// 1. **Direct** (local dev): `GET https://api.kite.trade/instruments/historical/
-///    {token}/{interval}` with `Authorization: token {api_key}:{access_token}`.
-///    Used whenever both credentials are non-empty.
-/// 2. **Server proxy** (shipped thin client): `GET {kite_url()}/historical?
-///    instrument_token=…`, which reaches the aggregator's Kite REST proxy through
-///    the authenticated gateway. The server holds the Kite credentials.
-///
-/// WHY the fallback exists: `get_kite_credentials()` resolves from env vars or a
-/// `.env` walked up from the cwd. An INSTALLED app has neither, and the release
-/// pipeline deliberately bakes no Kite creds (the access token is per-user and
-/// expires daily). So in production both were empty and every backfill failed —
-/// leaving `historical_intraday` / `historical_candles` unwritten, since nothing
-/// server-side populates them either. That starved downstream consumers (e.g.
-/// the technical consensus 30-candle floor) with only a warn in the log.
-///
-/// The `interval` parameter controls the bar size:
-///   "day", "minute", "5minute", "10minute", "15minute", "30minute", "60minute"
-async fn fetch_kite_candles(
-    client: &reqwest::Client,
-    instrument_token: u32,
-    interval: &str,
-    from: &NaiveDate,
-    to: &NaiveDate,
-    api_key: &str,
-    access_token: &str,
-) -> Result<Vec<HistoricalCandle>, String> {
-    // Thin-client production mode: no direct Kite credentials, so route the
-    // fetch through the server-side proxy behind the gateway instead.
-    if api_key.trim().is_empty() || access_token.trim().is_empty() {
-        return fetch_kite_candles_via_proxy(client, instrument_token, interval, from, to).await;
-    }
-
-    let url = format!(
-        "https://api.kite.trade/instruments/historical/{}/{}",
-        instrument_token, interval
-    );
-
-    let response = client
-        .get(&url)
-        .query(&[
-            ("from", from.format("%Y-%m-%d").to_string()),
-            ("to", to.format("%Y-%m-%d").to_string()),
-        ])
-        .header(
-            "Authorization",
-            format!("token {}:{}", api_key, access_token),
-        )
-        .header("X-Kite-Version", "3")
-        .send()
-        .await
-        .map_err(|e| format!("HTTP request failed: {}", e))?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "unable to read body".into());
-        return Err(format!("Kite API error {} for interval '{}': {}", status, interval, body));
-    }
-
-    let api_response: KiteHistoricalResponse = response
-        .json()
-        .await
-        .map_err(|e| format!("JSON parse failed: {}", e))?;
-
-    // Parse candle arrays: [timestamp, open, high, low, close, volume]
-    let candles: Vec<HistoricalCandle> = api_response
-        .data
-        .candles
-        .iter()
-        .filter_map(|row| {
-            if row.len() < 6 {
-                warn!("Skipping malformed candle row: {:?}", row);
-                return None;
-            }
-            Some(HistoricalCandle {
-                timestamp: row[0].as_str().unwrap_or_default().to_string(),
-                open: row[1].as_f64().unwrap_or(0.0),
-                high: row[2].as_f64().unwrap_or(0.0),
-                low: row[3].as_f64().unwrap_or(0.0),
-                close: row[4].as_f64().unwrap_or(0.0),
-                volume: row[5].as_i64().unwrap_or(0),
-            })
-        })
-        .collect();
-
-    Ok(candles)
-}
-
-/// Fetch candles via the server-side Kite REST proxy (thin-client transport).
-///
-/// `GET {kite_url()}/historical?instrument_token=…&interval=…&from=…&to=…`
-/// → `{ "candles": [ { "time": <unix_sec>, "open", "high", "low", "close",
-/// "volume" } ] }` (see `aggregator/src/kite_api.rs::historical_handler`).
-///
-/// NOTE on timestamps: the proxy returns `time` as UNIX SECONDS, whereas the
-/// direct Kite API returns an ISO-8601 string. `HistoricalCandle.timestamp` is a
-/// String that `parse_kite_timestamp` later parses, and it accepts ONLY the two
-/// ISO-8601 shapes — a bare epoch integer would fail to parse and every row
-/// would be dropped at insert time. So the epoch seconds are formatted back into
-/// `%Y-%m-%dT%H:%M:%S%z` here, keeping the downstream contract unchanged.
-async fn fetch_kite_candles_via_proxy(
-    client: &reqwest::Client,
-    instrument_token: u32,
-    interval: &str,
-    from: &NaiveDate,
-    to: &NaiveDate,
-) -> Result<Vec<HistoricalCandle>, String> {
-    let base = crate::server::kite_url();
-    let url = format!("{}/historical", base.trim_end_matches('/'));
-
-    let mut req = client.get(&url).query(&[
-        ("instrument_token", instrument_token.to_string()),
-        ("interval", interval.to_string()),
-        ("from", from.format("%Y-%m-%d").to_string()),
-        ("to", to.format("%Y-%m-%d").to_string()),
-    ]);
-
-    // The gateway route is behind basic auth; a direct-IP proxy is not.
-    let user = crate::server::questdb_user();
-    let pass = crate::server::questdb_password();
-    if !user.is_empty() && !crate::server::http_base().is_empty() {
-        req = req.basic_auth(&user, Some(&pass));
-    }
-
-    let response = req
-        .send()
-        .await
-        .map_err(|e| format!("Kite proxy request failed: {}", e))?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "unable to read body".into());
-        return Err(format!(
-            "Kite proxy error {} for interval '{}': {}",
-            status, interval, body
-        ));
-    }
-
-    let json: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("Kite proxy JSON parse failed: {}", e))?;
-
-    let rows = json
-        .get("candles")
-        .and_then(|c| c.as_array())
-        .ok_or_else(|| "Kite proxy response missing 'candles' array".to_string())?;
-
-    let candles: Vec<HistoricalCandle> = rows
-        .iter()
-        .filter_map(|row| {
-            let time_sec = row.get("time").and_then(|t| t.as_i64())?;
-            // Epoch seconds → the ISO-8601 form parse_kite_timestamp expects.
-            let dt = chrono::DateTime::from_timestamp(time_sec, 0)?;
-            Some(HistoricalCandle {
-                timestamp: dt.format("%Y-%m-%dT%H:%M:%S%z").to_string(),
-                open: row.get("open").and_then(|v| v.as_f64()).unwrap_or(0.0),
-                high: row.get("high").and_then(|v| v.as_f64()).unwrap_or(0.0),
-                low: row.get("low").and_then(|v| v.as_f64()).unwrap_or(0.0),
-                close: row.get("close").and_then(|v| v.as_f64()).unwrap_or(0.0),
-                volume: row.get("volume").and_then(|v| v.as_i64()).unwrap_or(0),
-            })
-        })
-        .collect();
-
-    info!(
-        "[history_loader] Kite proxy: {} candles (token {}, interval {})",
-        candles.len(),
-        instrument_token,
-        interval
-    );
-
-    Ok(candles)
-}
+// NOTE: the two Kite fetch transports that used to live here (direct
+// `api.kite.trade` with credentials, and the server-side proxy fallback for a
+// shipped thin client) moved to `providers::kite` under P14. This module keeps
+// what is genuinely its own: chunking, rate pacing, QuestDB dedup and the write
+// path. The provider is reached through `providers::registry::market_data()`.
 
 /// Minimum spacing between two outbound Kite historical requests.
 ///

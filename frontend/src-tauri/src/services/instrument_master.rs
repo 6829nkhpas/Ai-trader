@@ -1,9 +1,13 @@
-// services/instrument_master.rs — Kite Instrument Master (Daily CSV Downloader)
+// services/instrument_master.rs — Instrument Master (Daily CSV Downloader)
 //
-// Downloads the full NSE instrument list from https://api.kite.trade/instruments/NSE,
-// parses the CSV, and stores instrument_token, tradingsymbol, and name into the
-// local workspace SQLite database. Cached daily — only re-downloads if the
-// instruments table is empty or the last download was >24h ago.
+// Downloads the full NSE instrument list from the configured market-data provider
+// (`providers::registry::market_data().instrument_dump("NSE")`), parses the CSV,
+// and stores instrument_token, tradingsymbol, and name into the local workspace
+// SQLite database. Cached daily — only re-downloads if the instruments table is
+// empty or the last download was >24h ago.
+//
+// Since P14 the URL and HTTP client live in the provider; this module owns the
+// *parsing*, which is where the column-order tolerance and the property tests are.
 //
 // Runs non-blocking on Tauri startup via `spawn_instrument_sync()`.
 
@@ -12,8 +16,6 @@ use rusqlite::params;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::db::DbState;
-
-const KITE_INSTRUMENTS_URL: &str = "https://api.kite.trade/instruments/NSE";
 
 /// Spawn the instrument sync task on Tauri startup.
 /// Non-blocking — runs in a background tokio task.
@@ -126,31 +128,24 @@ pub async fn run_instrument_sync(app: tauri::AppHandle) {
         return;
     }
 
-    // Step 2: Download the CSV from Kite
-    info!("[InstrumentMaster] Downloading NSE instruments from Kite...");
+    // Step 2: Download the CSV through the market-data provider (P14).
+    //
+    // The three warn arms this replaces (non-2xx / transport failure / unreadable
+    // body) collapse into one, but nothing is lost: the provider puts the cause in
+    // the error string, so the log still says which of the three happened. Every
+    // failure still returns WITHOUT touching existing rows.
+    info!("[InstrumentMaster] Downloading NSE instruments...");
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .unwrap_or_default();
-
-    let csv_text = match client.get(KITE_INSTRUMENTS_URL).send().await {
-        Ok(resp) if resp.status().is_success() => match resp.text().await {
-            Ok(text) => text,
-            Err(e) => {
-                error!("[InstrumentMaster] Failed to read response body: {}", e);
-                return;
-            }
-        },
-        Ok(resp) => {
-            warn!(
-                "[InstrumentMaster] Kite API returned HTTP {}. Will retry next boot.",
-                resp.status()
-            );
-            return;
-        }
+    let csv_text = match crate::providers::registry::market_data()
+        .instrument_dump("NSE")
+        .await
+    {
+        Ok(text) => text,
         Err(e) => {
-            warn!("[InstrumentMaster] HTTP request failed: {}. Will retry next boot.", e);
+            warn!(
+                "[InstrumentMaster] Instrument dump failed: {}. Will retry next boot.",
+                e
+            );
             return;
         }
     };
@@ -269,17 +264,16 @@ pub async fn run_instrument_sync(app: tauri::AppHandle) {
 // ════════════════════════════════════════════════════════════════════════
 // NFO Derivatives Segment Ingestion (Options Data Foundation — Phase F1)
 //
-// Downloads the Kite NFO instrument list from https://api.kite.trade/instruments/NFO,
-// parses the option/future contracts (capturing strike, expiry, instrument type,
-// lot size, segment, and the derived underlying), and upserts them into a separate
-// `nfo_instruments` SQLite table — without ever touching the existing `instruments`
-// (NSE equity) table. Refreshed on the same 24h cache schedule as the NSE sync.
+// Downloads the NFO instrument list from the market-data provider
+// (`instrument_dump("NFO")`), parses the option/future contracts (capturing
+// strike, expiry, instrument type, lot size, segment, and the derived underlying),
+// and upserts them into a separate `nfo_instruments` SQLite table — without ever
+// touching the existing `instruments` (NSE equity) table. Refreshed on the same
+// 24h cache schedule as the NSE sync.
 //
 // The pure parsing helpers (`parse_nfo_row`, `derive_underlying`) perform no I/O so
 // they can be unit- and property-tested without a live feed.
 // ════════════════════════════════════════════════════════════════════════
-
-const KITE_NFO_INSTRUMENTS_URL: &str = "https://api.kite.trade/instruments/NFO";
 
 /// A parsed NFO derivatives contract (option or future).
 ///
@@ -526,32 +520,19 @@ pub async fn run_nfo_sync(app: tauri::AppHandle) {
         return;
     }
 
-    // Step 2: Download the NFO CSV from Kite. A failure here returns without touching data.
-    info!("[NfoMaster] Downloading NFO instruments from Kite...");
+    // Step 2: Download the NFO CSV through the market-data provider (P14).
+    // A failure here returns without touching data — unchanged from before.
+    info!("[NfoMaster] Downloading NFO instruments...");
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .unwrap_or_default();
-
-    let csv_text = match client.get(KITE_NFO_INSTRUMENTS_URL).send().await {
-        Ok(resp) if resp.status().is_success() => match resp.text().await {
-            Ok(text) => text,
-            Err(e) => {
-                warn!("[NfoMaster] Failed to read response body: {}. Existing data left intact.", e);
-                return;
-            }
-        },
-        Ok(resp) => {
-            warn!(
-                "[NfoMaster] Kite API returned HTTP {}. Existing data left intact. Will retry next boot.",
-                resp.status()
-            );
-            return;
-        }
+    let csv_text = match crate::providers::registry::market_data()
+        .instrument_dump("NFO")
+        .await
+    {
+        Ok(text) => text,
         Err(e) => {
             warn!(
-                "[NfoMaster] HTTP request failed: {}. Existing data left intact. Will retry next boot.",
+                "[NfoMaster] Instrument dump failed: {}. Existing data left intact. \
+                 Will retry next boot.",
                 e
             );
             return;

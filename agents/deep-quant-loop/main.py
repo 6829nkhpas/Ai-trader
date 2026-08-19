@@ -36,6 +36,22 @@ from api_key_resolver import (
 )
 from run_context import set_run_user_id
 
+# RESEARCH SKU entitlement gate (compliance blocker P1). Imported eagerly and
+# NOT defensively: unlike telemetry, this is a regulatory control, so an import
+# failure must break the service loudly rather than silently disable the gate.
+from entitlements import (
+    EntitlementError,
+    ENTITLEMENT_ERROR_CODE,
+    require_research_entitlement,
+)
+
+# Tamper-evident interaction log (compliance blocker P5): what was published, to
+# whom, and when. Imported eagerly for the same reason as the entitlement gate —
+# a silently disabled audit log is worse than a crash, because it looks like
+# compliance. It depends only on the standard library, so there is nothing here
+# that can realistically fail to import.
+import interaction_log
+
 # F&O read layer + analytics (F1/F2) and the agent options-bias classifier (F3).
 # The /options/snapshot endpoint (F4 transport seam) strictly COMPOSES these
 # existing functions and adds no analytics of its own (see the F4 design, AD-2).
@@ -89,6 +105,34 @@ svc_metrics.set_telemetry_available(telemetry is not None)
 app = FastAPI(title="LangGraph Deep Quant Loop Service")
 
 
+def _ensure_compliance_stores() -> None:
+    """Create the P2/P5 tables and their append-only triggers at startup.
+
+    Both stores create themselves on first write, so this is not required for
+    correctness — it is required for the guarantee to hold from the first
+    interaction rather than from the first successful one. Without it, the window
+    between process start and the first write is a window in which the tables do
+    not exist and an ``UPDATE`` would be refused by nothing.
+
+    Guarded: an unwritable store must not stop the service from starting, because
+    the endpoints already degrade to a WARN per unwritten row. A failure here is
+    the loudest available warning that the compliance record is not working.
+    """
+    import reco_store
+
+    for label, ensure in (
+        ("recommendations (P2)", reco_store.ensure_store),
+        ("interactions (P5)", interaction_log.ensure_store),
+    ):
+        try:
+            ensure()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[compliance] WARN: could not initialise {label}: {exc}")
+
+
+_ensure_compliance_stores()
+
+
 def _observe(thread_id: str, entry_kind: str, gen, **entry_kwargs):
     """Wrap ``gen`` (an ``event_generator`` SSE iterator) in the telemetry tee.
 
@@ -109,7 +153,101 @@ def _observe(thread_id: str, entry_kind: str, gen, **entry_kwargs):
         print(f"[main] WARN: telemetry wrap failed ({exc}); streaming without telemetry.")
         return gen
 
+
+# ── Interaction log (compliance blocker P5) ──────────────────────────────────
+# Every request that reaches a research surface, and how it ended, appended to the
+# tamper-evident store in `interaction_log.py`. The two wrappers below own the
+# failure posture: the STORE raises (a dropped audit row is the defect it exists to
+# prevent) and these swallow it with a WARN, because an endpoint that 500s on an
+# unwritable log trades a compliance gap for an outage. The WARN is the operator's
+# signal that an interaction went unrecorded.
+
+
+def _log_request(kind: str, **fields) -> None:
+    """Append an inbound-request row. Never raises into the request path."""
+    try:
+        interaction_log.record_request(kind=kind, **fields)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[interaction_log] WARN: request row for kind={kind} not written: {exc}")
+
+
+def _log_outcome(kind: str, status: str, **fields) -> None:
+    """Append a terminal-outcome row. Never raises into the request path."""
+    try:
+        interaction_log.record_outcome(kind=kind, status=status, **fields)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[interaction_log] WARN: outcome row for kind={kind} not written: {exc}")
+
+
+class _InteractionOutcome:
+    """One-shot terminal-outcome recorder for one interaction.
+
+    Deliberately shaped like the metrics ``tracker``: the terminal branches inside
+    ``_run_events`` record the real outcome, and ``event_generator``'s ``finally``
+    records ``disconnected`` only if nothing did. Without the one-shot guard a
+    client that hangs up right after a completed run would produce two contradictory
+    outcome rows for one interaction — and in an append-only store, neither could
+    afterwards be marked as the wrong one.
+    """
+
+    def __init__(self, kind: str, thread_id: str, user_id=None, mode=None, model=None):
+        self.kind = kind
+        self.thread_id = thread_id
+        self.user_id = user_id
+        self.mode = mode
+        self.model = model
+        self._recorded = False
+
+    def record(self, status: str, content=None, detail=None, refusal_category=None) -> None:
+        if self._recorded:
+            return
+        self._recorded = True
+        _log_outcome(
+            self.kind,
+            status,
+            thread_id=self.thread_id,
+            user_id=self.user_id,
+            mode=self.mode,
+            model=self.model,
+            content=content,
+            detail=detail,
+            refusal_category=refusal_category,
+        )
+
+
+def _final_answer_and_refusal(state):
+    """Extract the answer text and any personalisation-refusal category from state.
+
+    For a Q&A turn the last message is the answer the client actually received, so
+    it is what the log must store — the P5 record has to answer "what did you tell
+    them?", which a status alone does not.
+
+    ``_personalisation_refusal`` is the category the P8a guardrail stamped on a
+    refusal it generated WITHOUT calling the model. Recording it turns the
+    guardrail from an assertion into evidence: the log shows the RA/IA boundary
+    being enforced, per-turn, rather than merely claimed.
+
+    Total by construction — a shape it does not recognise yields ``(None, None)``
+    rather than raising into a terminal stream branch.
+    """
+    try:
+        values = getattr(state, "values", None)
+        messages = values.get("messages") if isinstance(values, dict) else None
+        if not messages:
+            return None, None
+        last = messages[-1]
+        content = getattr(last, "content", None)
+        text = content if isinstance(content, str) else None
+        extra = getattr(last, "additional_kwargs", None)
+        category = extra.get("_personalisation_refusal") if isinstance(extra, dict) else None
+        return text, (category if isinstance(category, str) and category else None)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[interaction_log] WARN: could not read the final answer: {exc}")
+        return None, None
+
+
 # ── Pydantic Request Models ──────────────────────────────────────────────────
+
 
 from typing import Optional
 
@@ -234,8 +372,16 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None,
     that makes the run counters readable: a watcher-triggered ``resume`` failing
     while fresh ``run``s succeed is a completely different problem from the
     reverse.
+
+    The same ``finally`` also guarantees the interaction log gets a terminal row
+    (compliance blocker P5). A client that drops the stream mid-analysis is a real
+    outcome for the record — the interaction happened — so it is logged as
+    ``disconnected`` rather than left with a request row and no ending.
     """
     tracker = svc_metrics.run_started(kind)
+    mode = graph_input.get("mode") if isinstance(graph_input, dict) else None
+    model = graph_input.get("model") if isinstance(graph_input, dict) else None
+    outcome = _InteractionOutcome(kind, thread_id, user_id=user_id, mode=mode, model=model)
     try:
         async for frame in _run_events(
             thread_id,
@@ -243,16 +389,25 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None,
             graph_input=graph_input,
             resume_command=resume_command,
             user_id=user_id,
+            outcome=outcome,
         ):
             yield frame
     finally:
-        # Idempotent — a run that reached a terminal event has already recorded
-        # its own outcome, so this only takes effect when the client dropped the
-        # stream before the run finished.
+        # Both idempotent — a run that reached a terminal event has already
+        # recorded its own outcome, so these only take effect when the client
+        # dropped the stream before the run finished.
         tracker.finish("disconnected")
+        outcome.record("disconnected")
 
 
-async def _run_events(thread_id: str, tracker, graph_input=None, resume_command=None, user_id=None):
+async def _run_events(
+    thread_id: str,
+    tracker,
+    graph_input=None,
+    resume_command=None,
+    user_id=None,
+    outcome=None,
+):
     """Stream the run as ordered glass-box Server-Sent Events.
 
     Ordering and resilience guarantees (Requirement 17):
@@ -304,6 +459,8 @@ async def _run_events(thread_id: str, tracker, graph_input=None, resume_command=
             svc_metrics.key_resolution("missing_user")
             tracker.stream_event(ERROR)
             tracker.finish("auth_error")
+            if outcome is not None:
+                outcome.record("auth_error", detail="no user_id supplied for LLM access")
             yield format_sse(
                 ERROR,
                 build_error_event("authentication required: no user_id supplied for LLM access"),
@@ -318,6 +475,8 @@ async def _run_events(thread_id: str, tracker, graph_input=None, resume_command=
             svc_metrics.key_resolution("failed")
             tracker.stream_event(ERROR)
             tracker.finish("key_error")
+            if outcome is not None:
+                outcome.record("key_error", detail=str(_key_err))
             yield format_sse(ERROR, build_error_event(f"LLM key unavailable: {_key_err}"))
             return
 
@@ -392,6 +551,8 @@ async def _run_events(thread_id: str, tracker, graph_input=None, resume_command=
             # always transitions out of 'running'. No DECISION is emitted.
             tracker.stream_event(RUN_FINISHED)
             tracker.finish("cancelled")
+            if outcome is not None:
+                outcome.record("cancelled")
             yield format_sse(RUN_FINISHED, build_run_finished_event(thread_id, "cancelled"))
         else:
             # R17.2/R17.6: a completed or paused run ends with a single terminal
@@ -404,6 +565,15 @@ async def _run_events(thread_id: str, tracker, graph_input=None, resume_command=
             # it as terminal is what stops a watching thread from counting as an
             # in-flight run and reporting a stall for the whole wait.
             tracker.finish(status)
+            # P5: the terminal row carries the answer text the client received and
+            # the personalisation category if the P8a guardrail refused the turn.
+            if outcome is not None:
+                answer, refusal_category = _final_answer_and_refusal(state)
+                outcome.record(
+                    status,
+                    content=answer,
+                    refusal_category=refusal_category,
+                )
             yield format_sse(RUN_FINISHED, build_run_finished_event(thread_id, status))
 
     except Exception as e:
@@ -415,12 +585,76 @@ async def _run_events(thread_id: str, tracker, graph_input=None, resume_command=
         # live LLM analysis backed by real market data — never a fabricated plan.
         tracker.stream_event(ERROR)
         tracker.finish("error")
+        # P5: a failed interaction is still an interaction, and the reason it
+        # failed is what someone reading the log months later needs.
+        if outcome is not None:
+            outcome.record("error", detail=err_msg)
         yield format_sse(ERROR, build_error_event(err_msg))
     finally:
         # Always discard the cancel flag so the set never leaks across runs.
         _CANCELLED.discard(thread_id)
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
+
+async def _entitlement_refusal_stream(exc: EntitlementError):
+    """One-shot SSE stream for a request refused by the RESEARCH SKU gate.
+
+    Follows the same terminal convention as an LLM failure (see R17.5/R5.5 in
+    ``event_generator``): a single ``ERROR`` frame and nothing after it — no
+    ``DECISION`` and no ``RUN_FINISHED``. Critically, no graph node runs, no LLM
+    is called and no market data is fetched, so an unentitled caller receives no
+    research output whatsoever.
+
+    The payload carries ``code`` so the desktop can render an upgrade prompt
+    instead of a retry prompt — this is a policy refusal, not a transient fault.
+    """
+    yield format_sse(
+        ERROR,
+        {"error": str(exc), "code": exc.code, "entitlement_required": True},
+    )
+
+
+def _guard_research(user_id, mode, *, kind=None, thread_id=None):
+    """Apply the RESEARCH entitlement gate, returning a refusal response or None.
+
+    Returns a ``StreamingResponse`` carrying the refusal when the request is not
+    entitled, or ``None`` when it may proceed. Callers must return the response
+    immediately — before constructing graph input.
+
+    A refusal is logged to the interaction log as its own terminal outcome
+    (compliance blocker P5) when ``kind`` is supplied. That row is what turns Gate
+    0→1's "no recommendation surface reachable by an unlicensed user" from a claim
+    into evidence: the log shows the gate refusing, with the user and the time.
+    """
+    try:
+        require_research_entitlement(user_id, mode)
+    except EntitlementError as exc:
+        print(f"[entitlements] REFUSED mode={mode} user={user_id or '<none>'}: {exc}")
+        svc_metrics_entitlement_refused()
+        if kind is not None:
+            _log_outcome(
+                kind,
+                "refused_entitlement",
+                thread_id=thread_id,
+                user_id=user_id,
+                mode=mode,
+                detail=str(exc),
+            )
+        return StreamingResponse(
+            _entitlement_refusal_stream(exc), media_type="text/event-stream"
+        )
+    return None
+
+
+def svc_metrics_entitlement_refused() -> None:
+    """Best-effort refusal counter. Never raises into the request path."""
+    try:
+        counter = getattr(svc_metrics, "entitlement_refused", None)
+        if callable(counter):
+            counter()
+    except Exception:  # noqa: BLE001
+        pass
+
 
 async def _tee_publish(thread_id: str, gen):
     """Wrap an ``event_generator`` SSE iterator so every frame it yields is ALSO
@@ -435,7 +669,35 @@ async def _tee_publish(thread_id: str, gen):
 async def run_agent(payload: RunRequest):
     """
     Start or continue the Deep Quant LLM ReAct loop, returning an SSE stream.
+
+    Gated by the RESEARCH SKU entitlement (compliance blocker P1) for every mode
+    except VERIFY. The check runs first, before any graph input is built, so an
+    unentitled caller triggers no analysis at all.
+
+    The request is logged to the tamper-evident interaction log (compliance
+    blocker P5) BEFORE the gate, so a refused request leaves a trace too — a log
+    that recorded only permitted traffic could not show the gate working.
     """
+    _log_request(
+        interaction_log.KIND_RUN,
+        thread_id=payload.thread_id,
+        user_id=payload.user_id,
+        content=payload.message,
+        mode=payload.mode,
+        symbol=payload.symbol,
+        timeframe=payload.timeframe,
+        profile=payload.profile,
+        model=payload.model,
+    )
+    refusal = _guard_research(
+        payload.user_id,
+        payload.mode,
+        kind=interaction_log.KIND_RUN,
+        thread_id=payload.thread_id,
+    )
+    if refusal is not None:
+        return refusal
+
     initial_state = {
         "messages": [("user", payload.message)],
         "mode": payload.mode,
@@ -466,7 +728,33 @@ async def run_agent(payload: RunRequest):
 async def resume_agent(payload: ResumeRequest):
     """
     Resumes a paused state graph run and returns the subsequent execution as an SSE stream.
+
+    Gated as RESEARCH (compliance blocker P1). ``ResumeRequest`` carries no mode,
+    but only a run that armed a ``watch_price_condition`` can be paused, and that
+    tool is available solely to the analysis modes — VERIFY does not arm watches
+    and QA has it disabled outright. A resume therefore always continues a
+    RESEARCH run, so it is gated unconditionally rather than inferring a mode.
+
+    Logged to the interaction log (compliance blocker P5) before the gate. A
+    watcher-triggered resume is a communication to the client that the client did
+    not ask for, which makes it exactly the kind of event the distribution record
+    needs to contain: ``trigger_kind`` says what woke it.
     """
+    _log_request(
+        interaction_log.KIND_RESUME,
+        thread_id=payload.thread_id,
+        user_id=payload.user_id,
+        content=f"trigger_kind={payload.trigger_kind}",
+    )
+    refusal = _guard_research(
+        payload.user_id,
+        "FIND",
+        kind=interaction_log.KIND_RESUME,
+        thread_id=payload.thread_id,
+    )
+    if refusal is not None:
+        return refusal
+
     config = {"configurable": {"thread_id": payload.thread_id}}
     state = graph.get_state(config)
     if not state.next:
@@ -560,7 +848,34 @@ async def qa_agent(payload: QARequest):
     answers identically to run transparency (R18.7). The Q&A nodes never emit a
     ``decision`` update, so the committed Declared_Trade is left untouched
     (R18.6).
+
+    Q&A is a RESEARCH-SKU surface: answering questions about a committed trade
+    elaborates a recommendation, so it is gated on the entitlement before any
+    graph work begins (compliance blocker P1).
+
+    Both halves of the turn are logged (compliance blocker P5): the question here,
+    and the answer at the terminal branch of ``_run_events`` — including the
+    personalisation category when the P8a guardrail refused the turn without
+    calling the model. A Q&A record with only the question would be the half that
+    matters least.
     """
+    _log_request(
+        interaction_log.KIND_QA,
+        thread_id=payload.thread_id,
+        user_id=payload.user_id,
+        content=payload.question,
+        mode="QA",
+        model=payload.model,
+    )
+    refusal = _guard_research(
+        payload.user_id,
+        "QA",
+        kind=interaction_log.KIND_QA,
+        thread_id=payload.thread_id,
+    )
+    if refusal is not None:
+        return refusal
+
     qa_input = {
         "messages": [("user", payload.question)],
         "mode": "QA",
@@ -583,7 +898,16 @@ async def cancel_agent(payload: CancelRequest):
     consumes it — the set is cleared in the generator's ``finally``; a stale flag
     for a thread that never runs is harmless). The Rust proxy also aborts its own
     streaming task, so this endpoint is the cooperative half of a two-sided stop.
+
+    Logged to the interaction log (compliance blocker P5) as a request row. The
+    matching terminal row is written by the run's own generator when it breaks out,
+    so a cancelled interaction reads as: request → cancel request → outcome
+    ``cancelled``. There is no entitlement gate here: stopping is always allowed.
     """
+    _log_request(
+        interaction_log.KIND_CANCEL,
+        thread_id=payload.thread_id,
+    )
     _CANCELLED.add(payload.thread_id)
     svc_metrics.cancellation_requested()
     print(f"[cancel] Cancellation requested for thread={payload.thread_id}")

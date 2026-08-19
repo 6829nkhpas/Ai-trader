@@ -16,9 +16,9 @@
   - **Confidence Score:** Calculated using the $R^2$ (Coefficient of Determination) mapped to a 1-100 scale.
   - **WebSocket:** Port 8082 — broadcasts PredictiveSignal JSON for frontend Ghost Line rendering.
 - `/agents/quant-rag` - Serverless AI insights agent (Rust)
-  - **LLM Backend:** DeepSeek v4 Pro via NVIDIA NIM REST API (`https://integrate.api.nvidia.com/v1/chat/completions`). OpenAI-compatible `chat/completions` endpoint with `NVIDIA_API_KEY` authentication.
+  - **LLM Backend:** Provider-agnostic OpenAI-compatible `chat/completions` client (`llm.rs`). Endpoint and model come from `LLM_API_URL` / `LLM_MODEL`, defaulting to `https://api.freemodel.dev/v1/chat/completions` with `deepseek-ai/DeepSeek-V3-0324` (`agents/quant-rag/src/llm.rs:20-23`), authenticated with `LLM_API_KEY`. The resolved pair is logged at startup. **Do not restate model or provider names from this file** — `docs/compliance/AI_MODEL_GOVERNANCE.md` §2 is the only source of truth for those, because an earlier version of this line named a vendor the code has never called and that error reached both shipped installer metadata and a publication-bound compliance page (`BRAND_GUIDELINES.md` §4.0).
   - **Anomaly Trigger:** Monitors `market.ohlc.10m` for absolute price swings >= 2.0%. Computes `|close − open| / open × 100` per candle.
-  - **Pipeline:** Anomaly detected → DeepSeek v4 Pro LLM generates headline, analysis_text, and sentiment_score (1–100) → publishes `MarketInsight` Protobuf to Kafka `signals.insights` → broadcasts JSON via WebSocket port 8083.
+  - **Pipeline:** Anomaly detected → LLM generates headline, analysis_text, and sentiment_score (1–100) → publishes `MarketInsight` Protobuf to Kafka `signals.insights` → broadcasts JSON via WebSocket port 8083.
   - **WebSocket:** Port 8083 — broadcasts MarketInsight JSON for Swing/Investor HUD rendering.
   - **JSON Mode:** System prompt enforces structured JSON output with keys: `headline`, `analysis_text`, `sentiment_score`. Code-fence stripping handles edge cases.
   - **Error Visibility:** LLM API failures are caught and broadcast to the frontend as system-level anomalies to prevent silent UI failures. When the DeepSeek API returns an error, a fallback `MarketInsight` with `headline: "LLM API Failure"` and the error details in `analysis_text` is published to Kafka and broadcast over WebSocket, ensuring the frontend always receives actionable data.
@@ -125,16 +125,16 @@ Features a `SwingConfluencePanel` alongside the predictive chart in a 12-column 
 
 Features a `MacroSentimentPanel` alongside the predictive chart in a 12-column grid layout (`InvestorLayout.tsx`). The macro panel provides:
   - **Macro Indicators:** Real-time display of key economic metrics (Fed Funds Rate, Core CPI, 10Y Treasury, DXY, VIX, GDP) with directional change indicators.
-  - **Portfolio Risk Metrics:** Key quantitative portfolio measures (Sharpe Ratio, Max Drawdown, Beta, Alpha).
+  - **Discipline Metrics:** Process counts describing how the terminal has been used — setups audited, setups rejected by the risk validator, forced HOLDs, and plan adherence (`computeDisciplineMetrics`). Deliberately not performance figures; an unmeasured metric renders `—` rather than `0`. See `docs/compliance/BRAND_GUIDELINES.md` §4.2.
   - **Quant-RAG Outlook:** AI-generated long-term sectoral analysis and allocation recommendations with probability-weighted scenario forecasting. Powered by DeepSeek AI.
 
 ## Phase 9: Serverless AI (Quant-RAG)
 
-### Phase 9.1 — DeepSeek v4 Pro API Client (via NVIDIA NIM)
-DeepSeek v4 Pro REST API client (`llm.rs`) using NVIDIA NIM's OpenAI-compatible `chat/completions` endpoint. System prompt enforces structured JSON output. Replaces Google Gemini for the quant-rag agent.
+### Phase 9.1 — LLM API Client
+Provider-agnostic REST client (`llm.rs`) over an OpenAI-compatible `chat/completions` endpoint. System prompt enforces structured JSON output. Replaces Google Gemini for the quant-rag agent. Endpoint and model per `AI_MODEL_GOVERNANCE.md` §2.
 
 ### Phase 9.2 — Anomaly Detection Engine
-Kafka consumer loop monitoring `market.ohlc.10m` for ≥2% absolute price swings. On anomaly detection, invokes DeepSeek v4 Pro for AI-generated headline, analysis_text, and sentiment_score. Publishes `MarketInsight` protobuf to `signals.insights` and broadcasts JSON via WebSocket port 8083.
+Kafka consumer loop monitoring `market.ohlc.10m` for ≥2% absolute price swings. On anomaly detection, invokes the configured LLM for an AI-generated headline, analysis_text, and sentiment_score. Publishes `MarketInsight` protobuf to `signals.insights` and broadcasts JSON via WebSocket port 8083.
 
 ### Phase 9.3 — End-to-End Stress Test (The Crucible)
 The `/tools/load_tester` Chaos Engine validates all pipelines under extreme institutional load.
@@ -146,9 +146,9 @@ The `/tools/load_tester` Chaos Engine validates all pipelines under extreme inst
 
 ## Perfection Phase 1: Error Visibility
 
-**Error Visibility:** LLM API failures are caught and broadcast to the frontend as system-level anomalies to prevent silent UI failures. When the DeepSeek v4 Pro API returns an error (network timeout, invalid API key, rate limit, malformed response), the engine constructs a fallback `MarketInsight` with:
+**Error Visibility:** LLM API failures are caught and broadcast to the frontend as system-level anomalies to prevent silent UI failures. When the LLM API returns an error (network timeout, invalid API key, rate limit, malformed response), the engine constructs a fallback `MarketInsight` with:
 - `headline`: `"LLM API Failure"`
-- `analysis_text`: `"DeepSeek Error: <detailed error message>"`
+- `analysis_text`: `"LLM Error: <detailed error message>"`
 - `sentiment_score`: `50` (neutral)
 
 ## Perfection Phase 2: Live Data Hardening

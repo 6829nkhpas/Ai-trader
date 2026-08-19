@@ -5,6 +5,8 @@
 
 import { create } from 'zustand';
 import { useAuthStore } from './useAuthStore';
+import { canRunAgentMode } from './useFeatureStore';
+import { RESEARCH_LOCKED_MESSAGE } from '../lib/sku';
 
 // ── TypeScript interfaces matching Rust backend structs ─────────────────
 
@@ -1181,6 +1183,32 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     const runKey = _sessionKey(symbol, activeProfile);
     console.log(`[QuantStore] ▶ Deep analysis START key=${runKey} mode=${activeMode} tf=${activeTimeframe} ts=${new Date().toISOString()}`);
 
+    // ── RESEARCH SKU gate (compliance blocker P1) ─────────────────────────────
+    // FIND produces a directional recommendation, which is regulated research;
+    // VERIFY only validates numbers the user supplied, so it stays on TERMINAL.
+    // Short-circuit BEFORE the IPC invoke so an unentitled user triggers no
+    // analysis. This is defence in depth and a UX affordance — the gate that
+    // actually holds is server-side in the agent's `entitlements.py`.
+    if (!canRunAgentMode(activeMode)) {
+      console.warn(`[QuantStore] ⛔ ${activeMode} blocked: RESEARCH SKU required`);
+      set((s) => {
+        const sess = s.sessionsByKey[runKey] ?? blankSession();
+        const locked: QuantSession = {
+          ...sess,
+          isAnalyzing: false,
+          sessionStatus: 'error',
+          analysisError: RESEARCH_LOCKED_MESSAGE,
+          updatedAt: Date.now(),
+        };
+        return {
+          activeViewKey: runKey,
+          sessionsByKey: { ...s.sessionsByKey, [runKey]: locked },
+          ...projectSession(locked),
+        };
+      });
+      return;
+    }
+
     // Initialize a FRESH running session under this (symbol, profile) key. It
     // becomes both the streaming target (so its events route here) and the
     // active view. Every other session — other symbols AND other profiles of
@@ -1431,6 +1459,27 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       // one currently on screen.
       ...(runKey === state.activeViewKey ? projectSession(nextSession) : {}),
     }));
+
+    // ── Discipline counters (compliance blocker P6) ─────────────────────────
+    // Count this run against the discipline statistics that replaced the removed
+    // performance metrics. Fires on the null→non-null `finalTrade` transition,
+    // which the DECISION reducer makes exactly once per session
+    // (`finalTrade: session.finalTrade ?? decisionPlan`), so a duplicate or
+    // replayed DECISION frame cannot double-count. Best-effort: a failure here
+    // must never break a live run.
+    if (current.finalTrade == null && nextSession.finalTrade != null) {
+      void (async () => {
+        try {
+          const { useTradeStore } = await import('./useTradeStore');
+          useTradeStore.getState().recordSetupAudit({
+            mode: nextSession.mode,
+            actionable: isActionableTrade(nextSession.finalTrade),
+          });
+        } catch (err) {
+          console.warn('[QuantStore] discipline stat not recorded:', err);
+        }
+      })();
+    }
     return;
 
   },
@@ -1507,6 +1556,29 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     }
     if (get().qaStatus === 'streaming') {
       console.warn('[QuantStore] askQuestion ignored — a Q&A turn is already streaming.');
+      return;
+    }
+
+    // ── RESEARCH SKU gate (compliance blocker P1) ─────────────────────────────
+    // Q&A elaborates a committed recommendation, so it is a RESEARCH surface.
+    // Refuse before the IPC invoke; render the refusal as an ordinary assistant
+    // turn so the transcript stays coherent. Server-side `entitlements.py` is
+    // the authoritative check.
+    if (!canRunAgentMode('QA')) {
+      console.warn('[QuantStore] ⛔ Q&A blocked: RESEARCH SKU required');
+      const lockStamp = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      set((state) => ({
+        qaMessages: [
+          ...state.qaMessages,
+          { id: `qa-user-${lockStamp}`, role: 'user', content: trimmed },
+          {
+            id: `qa-asst-${lockStamp}`,
+            role: 'assistant',
+            content: RESEARCH_LOCKED_MESSAGE,
+            error: true,
+          },
+        ],
+      }));
       return;
     }
 

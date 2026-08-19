@@ -13,16 +13,20 @@
 //       reasoning_snippet} contract (Kafka publisher, older callers) keeps
 //       working. Implemented as a thin wrapper over the strategic engine.
 //
-// Both submit to an OpenAI-compatible chat completions endpoint (HuggingFace
-// router by default), at temperature 0 for deterministic, backtest-reproducible
-// output, and parse strict raw JSON (code fences stripped defensively).
+// Both submit to an OpenAI-compatible chat completions endpoint, at temperature
+// 0 for deterministic, backtest-reproducible output, and parse strict raw JSON
+// (code fences stripped defensively).
 //
 // Required env vars:
 //   LLM_API_KEY  — your LLM provider API token.
 //
 // Optional env vars:
 //   LLM_MODEL    — model ID (default: deepseek-ai/DeepSeek-V3-0324).
-//   LLM_API_URL  — endpoint URL (default: https://router.huggingface.co/v1/chat/completions).
+//   LLM_API_URL  — endpoint URL (default: https://api.freemodel.dev/v1/chat/completions).
+//
+// Defaults above are the DEFAULT_MODEL / DEFAULT_URL constants below; keep them
+// in step. This header previously named a HuggingFace router that the code has
+// never pointed at — see docs/compliance/BRAND_GUIDELINES.md §4.0.
 
 import { metrics } from './metrics.js';
 

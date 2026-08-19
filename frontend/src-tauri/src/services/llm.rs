@@ -1,11 +1,27 @@
-// services/llm.rs — Unified LLM Client (Provider-Agnostic)
+// services/llm.rs — LLM Client for the Tauri backend (Provider-Agnostic)
 //
-// All AI inference in the system routes through this module. The provider
-// is configured entirely via three environment variables:
+// ⚠️ This is NOT the only LLM client in the system. It is the Tauri-side one.
+// The others, each with its own endpoint resolution, are:
+//   • agents/deep-quant-loop/graph.py       — the recommendation loop (OpenRouter)
+//   • agents/quant-rag/src/llm.rs           — market-anomaly insights
+//   • agents/sentiment/src/{analyzer,claude}.js — news sentiment scoring
+//   • frontend/src-tauri/src/commands/sentiment.rs — its own inline call
+// The complete inventory is docs/compliance/AI_MODEL_GOVERNANCE.md §2, which is
+// the only place a model or provider name may be sourced from. This header said
+// "All AI inference in the system routes through this module" and that has not
+// been true for some time — a reviewer building the disclosure from it would have
+// missed four call sites. See BRAND_GUIDELINES.md §4.0.
+//
+// The provider is configured entirely via three environment variables:
 //
 //   LLM_API_URL   — OpenAI-compatible chat/completions endpoint
 //   LLM_API_KEY   — Bearer token for the provider
 //   LLM_MODEL     — Model identifier (provider-specific)
+//
+// Each resolves runtime env → compile-time `option_env!` → hardcoded default
+// (via `crate::server::resolve_env`; see `resolve_endpoint` / `resolve_model`
+// below), so a released binary can carry values baked at build time. The
+// built-in defaults are `api.freemodel.dev` with `deepseek-ai/DeepSeek-V3-0324`.
 //
 // To switch providers, just change these three values in .env:
 //

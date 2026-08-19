@@ -11,8 +11,11 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "AI Trader - Trade Terminal",
-  description: "Institutional-grade AI-powered trading.",
+  // Compliance: user-facing copy. "AI Trader" / "AI-powered trading" claimed the
+  // product trades — it has no order path at all (providers::BrokerProvider has no
+  // order method). See docs/compliance/BRAND_GUIDELINES.md §1.1 rule 11.
+  title: "Strat Ai — Market Analysis Terminal",
+  description: "Market analysis and charting terminal for NSE and NFO.",
 };
 
 export default function RootLayout({

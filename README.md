@@ -371,7 +371,7 @@ RUN_STARTED → [REASONING | TOOL_CALL_START | TOOL_CALL_RESULT | TOOL_CALL_END]
 ### Trade Exits & Simulator (`trade_manager.py` & `journal.py`)
 
 - **Managed Exit Simulation**: Models multi-leg target execution, stop-loss triggers, breakeven thresholds, and trailing stop offsets over historical candle arrays.
-- **Trade Expectancy Audit**: SQLite-backed journal tracking win rate and expectancy (measured in $R$) overall and per setup type.
+- **Trade Expectancy Audit**: SQLite-backed journal tracking win rate and expectancy (measured in $R$) overall and per setup type. *Internal model calibration — never a user-facing or marketing figure. See `docs/compliance/BRAND_GUIDELINES.md` §1 rule 2 and `docs/compliance/AI_MODEL_GOVERNANCE.md` §6.*
 - **Calibrated Confidence**: Conviction is adjusted downward when the journal reports historically negative expectancy for comparable setups.
 
 ### Timezone-Aware Session Engine (`session.py`)
@@ -565,7 +565,7 @@ Ai-trader/
 │   │   └── tests/                # 278 property-based test files (Hypothesis)
 │   ├── technical/                # Rust technical indicator agent (RSI, BB, MACD, EMA)
 │   ├── predictive/               # Rust OLS & linear regression projection engine
-│   ├── quant-rag/                # DeepSeek anomaly analysis (NVIDIA NIM)
+│   ├── quant-rag/                # LLM anomaly analysis (WS 8083)
 │   └── sentiment/                # Node.js news sentiment pipeline
 │       ├── src/
 │       │   ├── index.js          # Main entry point & orchestration

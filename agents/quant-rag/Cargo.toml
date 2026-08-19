@@ -2,7 +2,7 @@
 name = "quant-rag"
 version = "0.1.0"
 edition = "2021"
-description = "Serverless AI insights agent: consumes market anomalies via Kafka, generates LLM-powered analysis using DeepSeek v4 Pro, and broadcasts insights to the Edge Terminal."
+description = "Serverless AI insights agent: consumes market anomalies via Kafka, generates LLM-powered analysis, and broadcasts insights to the Edge Terminal."
 
 # ===========================================================================
 # Runtime Dependencies

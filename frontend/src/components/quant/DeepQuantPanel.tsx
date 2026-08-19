@@ -313,8 +313,14 @@ export default function DeepQuantPanel() {
               >
                 <Zap size={13} className="text-text-secondary" />
                 <div className="flex flex-col">
-                  <span>Find High-Probability Trade</span>
-                  <span className="text-[8px] font-normal text-text-muted">Autonomous breakouts & quant scanning</span>
+                  {/* Compliance: was "Find High-Probability Trade" / "Autonomous
+                      breakouts & quant scanning". "High-Probability" states a
+                      probability about the outcome, which is the reading
+                      docs/compliance/BRAND_GUIDELINES.md §1.2 exists to prevent, and
+                      "Autonomous" reads as acting without the user (§1.1 rule 11).
+                      The mode scans and proposes; it never acts. */}
+                  <span>Find a Trade Setup</span>
+                  <span className="text-[8px] font-normal text-text-muted">Scans breakouts & quant signals</span>
                 </div>
               </button>
 

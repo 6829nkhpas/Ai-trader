@@ -55,6 +55,16 @@ telemetry.db
 *.sqlite
 *.sqlite3
 
+# ----- Compliance record (P2 recommendation record + P5 interaction log) -----
+# NEVER commit this. It is the append-only regulatory record: it holds user ids
+# and published recommendations, it is subject to a 5-year SEBI retention floor,
+# and a copy in git history could not be corrected or erased. It belongs in the
+# off-machine backup the rotation runbook describes, not in the repository.
+# The -wal / -shm sidecars exist because hashchain.py opens the store in WAL mode.
+compliance.db
+compliance.db-wal
+compliance.db-shm
+
 # ----- Environment & Secrets -----
 .env
 .env.local

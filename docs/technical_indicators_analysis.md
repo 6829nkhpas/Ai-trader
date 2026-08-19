@@ -276,7 +276,12 @@ Reliance Industries reports Q4 earnings beat...
 }
 ```
 
-**LLM Provider:** Configurable via 3 env vars — supports HuggingFace, OpenAI, Groq, local Ollama.
+**LLM Provider:** Configurable via 3 env vars (`LLM_API_URL`, `LLM_API_KEY`, `LLM_MODEL`), so any
+OpenAI-compatible endpoint works — OpenAI, Groq, a local Ollama, or a router. Each resolves runtime env →
+compile-time `option_env!` → hardcoded default, so a released binary can carry values baked in at build
+time. **The list above is what is supported, not what is deployed** — for the actual default and the
+per-service inventory, see `docs/compliance/AI_MODEL_GOVERNANCE.md` §2, which is the only source of truth
+for a model or provider name. Do not restate one from this file.
 
 ---
 

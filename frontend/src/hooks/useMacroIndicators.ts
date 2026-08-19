@@ -8,7 +8,7 @@
 // No new backend endpoints needed — reuses the existing Kite REST proxy on :8084.
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useTradeStore } from '../store/useTradeStore';
+import { useTradeStore, type DisciplineStats } from '../store/useTradeStore';
 import { kiteFetch } from '../lib/tauriFetch';
 
 // ── Index Definitions ────────────────────────────────────────────────────────
@@ -99,9 +99,10 @@ export function useMacroIndicators(): UseMacroIndicatorsReturn {
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Read trade data from Zustand store for portfolio metrics
-  const executedTrades = useTradeStore((s) => s.executedTrades);
-  const portfolioBalance = useTradeStore((s) => s.portfolioBalance);
+  // Discipline statistics for the sidebar summary (compliance blocker P6).
+  // `executedTrades` / `portfolioBalance` are deliberately NOT read here any
+  // more: they fed the removed performance metrics.
+  const disciplineStats = useTradeStore((s) => s.disciplineStats);
 
   // ── Fetch macro quotes ─────────────────────────────────────────────────
   const fetchMacroQuotes = useCallback(async () => {
@@ -174,78 +175,78 @@ export function useMacroIndicators(): UseMacroIndicatorsReturn {
     };
   });
 
-  // ── Compute Portfolio Risk Metrics from live store data ────────────────
-  const portfolioMetrics: PortfolioMetric[] = computePortfolioMetrics(
-    executedTrades,
-    portfolioBalance,
-  );
+  // ── Compute discipline metrics from live store data ────────────────────
+  const portfolioMetrics: PortfolioMetric[] = computeDisciplineMetrics(disciplineStats);
 
   return { indicators, portfolioMetrics, loading, error, lastUpdated };
 }
 
-// ── Portfolio metrics computation ────────────────────────────────────────────
+// ── Discipline metrics computation ───────────────────────────────────────────
+//
+// Compliance blocker P6 — external performance surfaces removed.
+//
+// This function previously reported Total Return, Win Rate, Max Drawdown and
+// Avg Conviction. All four are gone:
+//
+//   - Total Return / Win Rate / Max Drawdown are performance representations.
+//     SEBI's advertisement code bars publishing them without a specific set of
+//     disclosures, and the versions computed here could not have carried them:
+//     they were derived from PAPER trades against a hardcoded ₹1,00,000 opening
+//     balance, so they described a simulation, not any user's actual result.
+//     (The old win-rate branch also counted any trade with a positive price as a
+//     win, which was not a win rate at all.)
+//   - Avg Conviction invited reading the model's confidence as an expected
+//     return, which is the specific misreading the AI-disclosure requirement
+//     exists to prevent.
+//
+// They are replaced by the process statistics `docs/business/GO_TO_MARKET.md` §4
+// specifies: what the terminal talked the user OUT of. Every value renders "—"
+// until a real event has been counted; nothing is inferred and no zero is
+// presented as a measurement.
+//
+// Win rate and expectancy are NOT removed from the product — they remain in
+// `agents/deep-quant-loop/journal.py` as internal per-setup calibration, which
+// is model monitoring the AI framework actively wants.
+//
+// [COUNSEL] GO_TO_MARKET §4 and PLAN_OF_ACTION §11 both require sign-off on the
+// exact wording of any user-facing discipline summary before it ships. The labels
+// below are deliberately factual counts with no comparative or outcome claim.
 
-function computePortfolioMetrics(
-  trades: ReturnType<typeof useTradeStore.getState>['executedTrades'],
-  currentBalance: number,
-): PortfolioMetric[] {
-  const initialBalance = 100_000; // Matches useTradeStore default
+// Exported for the compliance test suite: P6 requires proof that no performance
+// figure is emitted and that an unmeasured metric renders "—" rather than 0.
+export function computeDisciplineMetrics(stats: DisciplineStats): PortfolioMetric[] {
+  const { setupsAudited, setupsRejected, forcedHolds, plansFollowed, plansDeviated } =
+    stats;
 
-  // Total P&L
-  const totalPnL = currentBalance - initialBalance;
-  const totalReturn = initialBalance > 0 ? (totalPnL / initialBalance) * 100 : 0;
-
-  // Win rate
-  const completedTrades = trades.filter((t) => t.decision.price != null);
-  const winningTrades = completedTrades.filter((t) => {
-    if (t.decision.action_type === 'BUY') return (t.decision.price ?? 0) > 0;
-    if (t.decision.action_type === 'SELL') return (t.decision.price ?? 0) > 0;
-    return false;
-  });
-  const winRate = completedTrades.length > 0
-    ? (winningTrades.length / completedTrades.length) * 100
-    : 0;
-
-  // Max drawdown from balance trajectory
-  let peak = initialBalance;
-  let maxDrawdown = 0;
-  let runningBalance = initialBalance;
-  for (const trade of trades) {
-    const price = trade.decision.price ?? 0;
-    if (trade.decision.action_type === 'BUY') {
-      runningBalance -= price * trade.quantity;
-    } else if (trade.decision.action_type === 'SELL') {
-      runningBalance += price * trade.quantity;
-    }
-    if (runningBalance > peak) peak = runningBalance;
-    const dd = peak > 0 ? ((peak - runningBalance) / peak) * 100 : 0;
-    if (dd > maxDrawdown) maxDrawdown = dd;
-  }
-
-  // Avg conviction from decisions
-  const avgConviction = completedTrades.length > 0
-    ? completedTrades.reduce((sum, t) => sum + t.decision.final_conviction_score, 0) / completedTrades.length
-    : 0;
+  const plansResolved = plansFollowed + plansDeviated;
+  const adherence =
+    plansResolved > 0 ? Math.round((plansFollowed / plansResolved) * 100) : null;
 
   return [
     {
-      label: 'Total Return',
-      value: `${totalReturn >= 0 ? '+' : ''}${totalReturn.toFixed(1)}%`,
-      tooltip: `₹${totalPnL.toLocaleString('en-IN', { maximumFractionDigits: 0 })} P&L`,
+      label: 'Setups Audited',
+      value: setupsAudited > 0 ? `${setupsAudited}` : '—',
+      tooltip: 'Trade setups this terminal has analysed in this session',
     },
     {
-      label: 'Win Rate',
-      value: completedTrades.length > 0 ? `${winRate.toFixed(0)}%` : '—',
-      tooltip: `${winningTrades.length}/${completedTrades.length} trades`,
+      label: 'Setups Rejected',
+      value: setupsRejected > 0 ? `${setupsRejected}` : '—',
+      tooltip: 'Your proposed trades that failed the risk validator',
     },
     {
-      label: 'Max Drawdown',
-      value: maxDrawdown > 0 ? `-${maxDrawdown.toFixed(1)}%` : '0.0%',
+      label: 'Forced HOLDs',
+      value: forcedHolds > 0 ? `${forcedHolds}` : '—',
+      tooltip: 'Analyses that concluded no trade was worth taking',
     },
     {
-      label: 'Avg Conviction',
-      value: avgConviction > 0 ? `${avgConviction.toFixed(0)}/100` : '—',
-      tooltip: 'Average AI conviction score across executed trades',
+      label: 'Plan Adherence',
+      // Null until a deployed plan has actually resolved at its committed stop
+      // or target. An unmeasured metric shows "—", never 0%.
+      value: adherence !== null ? `${adherence}%` : '—',
+      tooltip:
+        plansResolved > 0
+          ? `${plansFollowed}/${plansResolved} plans exited at their committed levels`
+          : 'No deployed plan has resolved yet',
     },
   ];
 }

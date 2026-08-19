@@ -146,7 +146,16 @@ def _run_finalize(state, decision):
 
 
 # ── Property 14 ───────────────────────────────────────────────────────────────
-@settings(max_examples=100)
+# ``deadline=None`` because ``_finalize_decision`` now appends to the append-only
+# compliance record (blocker P2) as well as journaling, and this test drives it 200
+# times (two finalizes per example). That append is a durable SQLite commit —
+# measured at ~16ms per call, dominated by the fsync that ``synchronous=FULL``
+# requires and that a tamper-evident record should keep. Per-example wall time is
+# therefore no longer a meaningful invariant here: the property being asserted is
+# parity of CONTENT between the two modes, not latency. Left at the default, the
+# first (cold) example intermittently exceeded the 200ms deadline and Hypothesis
+# itself reported the timings as unreliable.
+@settings(max_examples=100, deadline=None)
 @given(
     debate_decision=_decision("DEBATE"),
     debate_state=_state("DEBATE"),

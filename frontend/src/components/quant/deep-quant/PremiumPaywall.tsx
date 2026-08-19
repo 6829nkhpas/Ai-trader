@@ -51,11 +51,20 @@ export default function PremiumPaywall({ onUpgradeClick }: PremiumPaywallProps) 
       </motion.div>
 
       {/* Feature list */}
+      {/* Compliance: this is PROMOTIONAL copy for a paid plan, so every label must be
+          literally true of the shipped build — docs/compliance/BRAND_GUIDELINES.md §3.
+          Previously: "DeepSeek v4 Autonomous ReAct Agent Loop" (a model that does not
+          run this loop — the default is openai/gpt-4o, and the model is configurable,
+          so naming one here is wrong in every deployment) and "Virtual Execution &
+          Paper Broker Sync" ("Broker Sync" implies orders reach a broker; paper
+          trading is entirely local). "Autonomous" is the single worst word to sell a
+          product on when its compliance position is that it cannot act — see §1.1
+          rule 11. */}
       <motion.div variants={fadeInUp} className="w-full max-w-sm space-y-2 text-left">
         {[
-          { icon: Cpu, label: 'DeepSeek v4 Autonomous ReAct Agent Loop' },
+          { icon: Cpu, label: 'Multi-Step AI Research Loop with Live Tool Calls' },
           { icon: ShieldCheck, label: 'Mathematical Risk Manager & Trade Evaluator' },
-          { icon: Activity, label: 'Virtual Execution & Paper Broker Sync' },
+          { icon: Activity, label: 'Local Paper-Trade Simulator — No Broker Orders' },
         ].map(({ icon: Icon, label }) => (
           <div
             key={label}

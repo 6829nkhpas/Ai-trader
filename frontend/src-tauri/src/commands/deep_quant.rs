@@ -25,42 +25,13 @@ use tokio::task::AbortHandle;
 static AGENT_TASKS: Lazy<StdMutex<HashMap<String, AbortHandle>>> =
     Lazy::new(|| StdMutex::new(HashMap::new()));
 
-pub fn get_kite_credentials() -> (String, String) {
-    let mut api_key = std::env::var("KITE_API_KEY").unwrap_or_default();
-    let mut access_token = std::env::var("KITE_ACCESS_TOKEN").unwrap_or_default();
-
-    if let Ok(mut current_dir) = std::env::current_dir() {
-        loop {
-            let env_path = current_dir.join(".env");
-            if env_path.is_file() {
-                if let Ok(content) = std::fs::read_to_string(env_path) {
-                    for line in content.lines() {
-                        let line = line.trim();
-                        if line.starts_with('#') || !line.contains('=') {
-                            continue;
-                        }
-                        let parts: Vec<&str> = line.splitn(2, '=').collect();
-                        if parts.len() == 2 {
-                            let key = parts[0].trim();
-                            let val = parts[1].trim().trim_matches('"').trim_matches('\'');
-                            if key == "KITE_API_KEY" && !val.is_empty() {
-                                api_key = val.to_string();
-                            } else if key == "KITE_ACCESS_TOKEN" && !val.is_empty() {
-                                access_token = val.to_string();
-                            }
-                        }
-                    }
-                }
-                break;
-            }
-            if !current_dir.pop() {
-                break;
-            }
-        }
-    }
-
-    (api_key, access_token)
-}
+// NOTE (P14): this module used to carry its own `get_kite_credentials()` — a
+// second, uncached copy of the resolver in `commands::charts`. Both loader call
+// sites below now go through `providers::registry::market_data()`, which resolves
+// credentials itself, so nothing called it. Deleted rather than left `pub`:
+// two functions that read the same secret from the same two places, one cached and
+// one not, is exactly the ambiguity P7 is trying to remove. The canonical resolver
+// is `commands::charts::get_kite_credentials`.
 
 // ── News Fetcher (with Google News RSS fallback) ────────────────────────────
 
@@ -542,11 +513,6 @@ pub(crate) async fn load_candles_with_ts(
 
     // ── Proactive Zerodha Kite loading if AppHandle is provided ──────────────────
     if let Some(app) = app {
-        // Empty credentials are expected in a shipped thin client; the loader
-        // falls back to the server-side Kite proxy, so they no longer gate the
-        // backfill. Passed through as-is to keep the direct path in local dev.
-        let (api_key, access_token) = get_kite_credentials();
-
         {
             let local_token: Option<u32> = {
                 app.try_state::<crate::db::DbState>()
@@ -653,8 +619,6 @@ pub(crate) async fn load_candles_with_ts(
                                 pool,
                                 token,
                                 symbol,
-                                &api_key,
-                                &access_token,
                             ).await {
                                 warn!(
                                     "[deep_quant] Proactive daily backfill FAILED for {} (token {}): {}",
@@ -679,8 +643,6 @@ pub(crate) async fn load_candles_with_ts(
                                 token,
                                 symbol,
                                 base_tf,
-                                &api_key,
-                                &access_token,
                             ).await {
                                 warn!(
                                     "[deep_quant] Proactive intraday backfill FAILED for {} (token {}) [base_tf={}]: {}",
@@ -1431,10 +1393,6 @@ async fn run_glass_box_loop(
 
     // Low data / proactive Kite fetch logic (same as original, but inside loop)
     if candles.len() < 50 {
-        // Empty credentials no longer gate the backfill — the loader falls back
-        // to the server-side Kite proxy in a shipped thin client.
-        let (api_key, access_token) = get_kite_credentials();
-
         {
             let local_token: Option<u32> = {
                 app.try_state::<crate::db::DbState>()
@@ -1454,8 +1412,6 @@ async fn run_glass_box_loop(
                     pool.inner(),
                     token,
                     &symbol,
-                    &api_key,
-                    &access_token,
                 ).await {
                     Ok(count) => {
                         let _ = app.emit("agent_message", llm::AgentMessagePayload {

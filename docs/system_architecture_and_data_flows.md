@@ -192,7 +192,7 @@ sequenceDiagram
   * [/frontend/src-tauri/src/quant/mod.rs](file:///d:/projects/Ai-trader/frontend/src-tauri/src/quant/mod.rs): The **ConsensusEngine** which reads 200 candles from QuestDB and extracts the mathematical consensus report (Trend, Momentum, Volatility, Volume Flow).
   * [/frontend/src-tauri/src/quant/patterns.rs](file:///d:/projects/Ai-trader/frontend/src-tauri/src/quant/patterns.rs): Detects Doji, Hammer, Shooting Star, Bullish Engulfing, and Bearish Engulfing.
   * [/frontend/src-tauri/src/quant/strategies.rs](file:///d:/projects/Ai-trader/frontend/src-tauri/src/quant/strategies.rs): Evaluates Golden/Death Cross, VWAP Bounce, and Opening Range Breakouts.
-  * `/frontend/src-tauri/src/services/llm.rs`: DeepSeek v4 Pro REST client communicating via NVIDIA NIM's OpenAI-compatible interface (`https://integrate.api.nvidia.com/v1/chat/completions`).
+  * `/frontend/src-tauri/src/services/llm.rs`: Provider-agnostic REST client over an OpenAI-compatible `chat/completions` endpoint, set by `LLM_API_URL` / `LLM_MODEL` / `LLM_API_KEY`. Not the only LLM client in the system — the full inventory is `docs/compliance/AI_MODEL_GOVERNANCE.md` §2, which is the only place a model or provider name may be sourced from.
 
 ```mermaid
 sequenceDiagram
@@ -202,7 +202,7 @@ sequenceDiagram
     participant QDB as QuestDB Pool (Port 8812)
     participant CE as Consensus Engine (quant/mod.rs)
     participant RSS as RSS Fetcher (Google News)
-    participant LLM as NVIDIA NIM (DeepSeek v4 Pro)
+    participant LLM as LLM (LLM_API_URL)
 
     UI->>Tauri: invoke("run_deep_quant_analysis", { symbol: "RELIANCE" })
     Tauri->>QDB: Query 200 daily candles for RELIANCE
@@ -217,7 +217,7 @@ sequenceDiagram
     
     Note over Tauri: Construct Elite Portfolio Manager Master Prompt<br/>Embed ConsensusReport + News Headlines
     
-    Tauri->>LLM: POST chat/completions (Bearer NVIDIA_API_KEY)
+    Tauri->>LLM: POST chat/completions (Bearer LLM_API_KEY)
     Note over LLM: Evaluates strategy validity<br/>Assesses traps vs indicators
     LLM-->>Tauri: Returns JSON: { conviction_score, setup_validation, execution_plan }
     
@@ -265,15 +265,15 @@ graph TD
 * **Purpose**: Continuously monitor the real-time aggregated OHLC stream for major price shocks (swings $\ge 2\%$) and automatically request DeepSeek AI commentary on what triggered the volatility.
 * **Core Components**:
   * `/agents/quant-rag/src/engine.rs`: Connects to Kafka topic `market.ohlc.10m`.
-  * `/agents/quant-rag/src/llm.rs`: Communicates with NVIDIA NIM DeepSeek v4 Pro.
-  * **Error Hardening**: If the DeepSeek service returns an API error or timeout, the engine generates and broadcasts a fallback `MarketInsight` featuring `headline: "LLM API Failure"` and the exact technical error details inside `analysis_text` to prevent silent UI failures.
+  * `/agents/quant-rag/src/llm.rs`: Provider-agnostic OpenAI-compatible client; endpoint and model from `LLM_API_URL` / `LLM_MODEL`, logged as resolved at startup.
+  * **Error Hardening**: If the LLM service returns an API error or timeout, the engine generates and broadcasts a fallback `MarketInsight` featuring `headline: "LLM API Failure"` and the exact technical error details inside `analysis_text` to prevent silent UI failures.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant Kafka as Kafka (market.ohlc.10m)
     participant RAG as Quant-RAG Agent (/agents/quant-rag)
-    participant DeepSeek as DeepSeek v4 Pro (NVIDIA NIM)
+    participant LLM as LLM (LLM_API_URL / LLM_MODEL)
     participant WS as WebSocket Server (Port 8083)
     participant UI as React Swing/Investor Panels
 
@@ -282,12 +282,12 @@ sequenceDiagram
     
     alt swing >= 2.0% (Volatility Anomaly Triggered)
         Note over RAG: construct quick news query & master prompt
-        RAG->>DeepSeek: POST chat/completions
+        RAG->>LLM: POST chat/completions
         
-        alt DeepSeek Response Success
-            DeepSeek-->>RAG: Returns JSON { headline, analysis_text, sentiment_score }
+        alt LLM Response Success
+            LLM-->>RAG: Returns JSON { headline, analysis_text, sentiment_score }
             RAG->>WS: Broadcast MarketInsight JSON
-        else DeepSeek API Fails (Timeout / Rate Limit)
+        else LLM API Fails (Timeout / Rate Limit)
             Note over RAG: llm.rs: Catch exception & create fallback insight
             RAG->>WS: Broadcast { headline: "LLM API Failure", analysis_text: error.message, sentiment: 50 }
         end

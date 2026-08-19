@@ -13,7 +13,6 @@ use sqlx::PgPool;
 use log::{info, warn, error};
 
 use crate::db::DbState;
-use crate::commands::charts::get_kite_credentials;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FnoChainRow {
@@ -95,31 +94,12 @@ pub struct DbSnapshotRow {
 }
 
 // ── Kite API Response Types ──
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct KiteQuoteResponse {
-    status: String,
-    data: HashMap<String, KiteQuoteData>,
-}
-
-#[derive(Debug, Deserialize)]
-struct KiteQuoteData {
-    last_price: f64,
-    oi: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ServerProxyQuote {
-    symbol: String,
-    last_price: f64,
-    oi: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ServerQuoteProxyResponse {
-    quotes: Vec<ServerProxyQuote>,
-}
+//
+// NOTE (P14): the four wire types that used to live here (`KiteQuoteResponse`,
+// `KiteQuoteData`, `ServerProxyQuote`, `ServerQuoteProxyResponse`) moved into
+// `providers::kite`, together with the direct-vs-proxy quote fetch they decoded.
+// This module now takes `providers::Quote` from the trait, so the F&O chain no
+// longer carries a private copy of one broker's JSON shape.
 
 // ── Service Helpers ──
 
@@ -336,9 +316,10 @@ pub async fn build_fno_snapshot(
         expiry_opt.trim().to_string()
     };
 
-    // MOCK_BROKER is for profile/auth only — always call Kite API for F&O data
-    let (api_key, access_token) = get_kite_credentials();
-    
+    // MOCK_BROKER is for profile/auth only — always call the live market-data
+    // provider for F&O data. Credentials are resolved inside the provider (P14),
+    // which also decides direct-vs-proxy; this module does not see them.
+
     let mut quote_success = false;
     let mut chain = Vec::new();
     let mut spot = None;
@@ -358,9 +339,12 @@ pub async fn build_fno_snapshot(
         let spot_symbol = map_spot_quote_symbol(underlying);
         symbols_to_query.push(spot_symbol.clone());
 
-        info!("[fno_service] Querying Kite Quote API for F&O chain ({} symbols)", symbols_to_query.len());
+        info!("[fno_service] Querying market-data provider for F&O chain ({} symbols)", symbols_to_query.len());
 
-        match fetch_kite_quotes_api(&api_key, &access_token, &symbols_to_query).await {
+        match crate::providers::registry::market_data()
+            .quotes(&symbols_to_query)
+            .await
+        {
             Ok(quotes) => {
                 let mut strike_rows: HashMap<String, FnoChainRow> = HashMap::new();
                 
@@ -536,107 +520,11 @@ pub async fn build_fno_snapshot(
     Ok(serde_json::to_value(payload).unwrap())
 }
 
-async fn fetch_kite_quotes_api(
-    api_key: &str,
-    access_token: &str,
-    symbols: &[String],
-) -> Result<HashMap<String, KiteQuoteData>, String> {
-    let client = reqwest::Client::new();
-    let mut all_quotes = HashMap::new();
-
-    if !api_key.is_empty() && !access_token.is_empty() {
-        // Direct local Kite API call (local dev)
-        let url = "https://api.kite.trade/quote";
-        for chunk in symbols.chunks(500) {
-            let mut query = Vec::new();
-            for sym in chunk {
-                query.push(("i", sym.clone()));
-            }
-
-            let resp = client
-                .get(url)
-                .query(&query)
-                .header("Authorization", format!("token {}:{}", api_key, access_token))
-                .header("X-Kite-Version", "3")
-                .send()
-                .await
-                .map_err(|e| format!("HTTP request failed: {}", e))?;
-
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                return Err(format!("Kite API returned status {}: {}", status, text));
-            }
-
-            let body: KiteQuoteResponse = resp
-                .json()
-                .await
-                .map_err(|e| format!("JSON parse failed: {}", e))?;
-
-            for (k, v) in body.data {
-                all_quotes.insert(k, v);
-            }
-        }
-    } else {
-        // Thin-client production mode: query server Kite REST proxy
-        let kite_base = crate::server::kite_url();
-        let url = format!("{}/quote", kite_base.trim_end_matches('/'));
-
-        for chunk in symbols.chunks(500) {
-            let mut query = Vec::new();
-            for sym in chunk {
-                query.push(("i", sym.clone()));
-            }
-
-            let mut req = client.get(&url).query(&query);
-
-            let user = crate::server::questdb_user();
-            let pass = crate::server::questdb_password();
-            if !user.is_empty() {
-                req = req.basic_auth(&user, Some(&pass));
-            }
-
-            let resp = req
-                .send()
-                .await
-                .map_err(|e| format!("Server Kite proxy request failed: {}", e))?;
-
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                return Err(format!("Server Kite proxy returned status {}: {}", status, text));
-            }
-
-            let body: ServerQuoteProxyResponse = resp
-                .json()
-                .await
-                .map_err(|e| format!("JSON parse failed from server proxy: {}", e))?;
-
-            for q in body.quotes {
-                // Server proxy returns symbol e.g. "NIFTY26JUL24000CE" or full key
-                let key = if symbols.iter().any(|s| s == &q.symbol) {
-                    q.symbol.clone()
-                } else {
-                    symbols
-                        .iter()
-                        .find(|s| s.ends_with(&q.symbol) || s == &&q.symbol)
-                        .cloned()
-                        .unwrap_or_else(|| q.symbol.clone())
-                };
-
-                all_quotes.insert(
-                    key,
-                    KiteQuoteData {
-                        last_price: q.last_price,
-                        oi: q.oi,
-                    },
-                );
-            }
-        }
-    }
-
-    Ok(all_quotes)
-}
+// NOTE (P14): `fetch_kite_quotes_api` lived here — a fourth copy of the
+// direct-Kite-vs-server-proxy branch, with its own 500-symbol chunking and its
+// own proxy-symbol reconciliation. Both now live in `providers::kite`, where the
+// reconciliation is a pure, unit-tested `resolve_proxy_quote_key`. The chunking
+// moved with it, so callers here pass the whole symbol list as before.
 
 pub async fn fetch_snapshots_from_questdb(
     pool: &PgPool,

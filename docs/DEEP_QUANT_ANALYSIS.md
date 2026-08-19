@@ -1,6 +1,6 @@
 # Deep Quant — End-to-End Architecture Analysis
 
-> How the Ai-trader platform finds "deep profitable trades": the full path from a user click in the
+> How the Ai-trader platform finds high-conviction setups: the full path from a user click in the
 > frontend, through the LangGraph agent and the Rust tool server / LLM, to the streamed chat output
 > served back in the terminal's AI Quant session.
 >
@@ -94,9 +94,12 @@ user ask follow-up questions grounded in the persisted session context, streamed
 | Node Sentiment Service (`agents/sentiment`) | Node | `:8090` (default `SENTIMENT_SERVICE_URL`) | News classification for `get_news_context` |
 | LLM provider | — | `LLM_API_URL` (default `https://api.freemodel.dev/v1/chat/completions`) | OpenAI-compatible `chat/completions`; default model `LLM_MODEL` (`gpt-5.5` in the live `.env`, `deepseek-ai/DeepSeek-V3-0324` in code default) |
 
-> Note: ARCHITECTURE.md still references DeepSeek-v4/NVIDIA-NIM for the older `quant-rag` agent. The
-> **Deep Quant** path itself has no Bedrock or NVIDIA-NIM code; `services/llm.rs` and `graph.py` both
-> use a single OpenAI-compatible endpoint driven by `LLM_API_URL` / `LLM_API_KEY` / `LLM_MODEL`.
+> Note: this discrepancy is now closed. `ARCHITECTURE.md` used to reference DeepSeek-v4 / NVIDIA-NIM for
+> the older `quant-rag` agent; **both were wrong for every service, not just Deep Quant** — no code path
+> has ever called NVIDIA. The flag sat here unactioned long enough for the false name to reach shipped
+> installer metadata and a paid-plan paywall. Corrected across the tree; see
+> `docs/compliance/BRAND_GUIDELINES.md` §4.0 and §4.2. The single source of truth for any model or
+> provider name is now `docs/compliance/AI_MODEL_GOVERNANCE.md` §2 — cite it, do not restate it.
 
 ---
 
@@ -939,7 +942,7 @@ pick. Verified against the code unless noted.
 3. **Risk is enforced, not advised.** A trade is committed (`final_analysis_ready` +
    `agent-declared-trade`) **only** if it passes the hard validator (stop ≥1.5×ATR, R:R ≥1:2,
    direction-consistent ordering). The agent cannot route around a rejection — it must revise.
-4. **Bounded hunt.** The "deep" in deep profitable trades comes from structural patience: a Watch_Cap
+4. **Bounded hunt.** The "deep" in deep quant comes from structural patience: a Watch_Cap
    and Session_Budget bound the hunt; `watch_price_condition` suspends the run and the Rust server
    auto-resumes on a live trigger; an unchanged-thesis re-arm after an invalidation is forbidden;
    exhaustion commits a terminal `stand_aside` with a Best_Current_Read rather than a forced trade.
@@ -995,4 +998,5 @@ pick. Verified against the code unless noted.
 - `docker-compose.yml`: redpanda `:19092`, questdb `:9000/:8812/:9009`, redis `:6379`, ingestion,
   alpha-terminal `:8081`, aggregator `:8080`, predictive `:8082`, quant-rag `:8083`.
 - `frontend/src-tauri/tauri.conf.json` — "Strat Ai" v2.0.0, `strat://` deep-link, CSP allowing
-  `ws://127.0.0.1:*`, `http://127.0.0.1:*`, NVIDIA + Kite endpoints.
+  `ws://127.0.0.1:*`, `http://127.0.0.1:*`, `*.stratai.live` + Kite endpoints. The `integrate.api.nvidia.com`
+  entry was removed: nothing contacted it, and LLM calls are made from Rust, which CSP does not govern.

@@ -115,12 +115,67 @@ export interface OrderFlowTick {
   delta: number;
 }
 
+/**
+ * Discipline statistics — the retention surface that replaced the performance
+ * metrics (compliance blocker P6).
+ *
+ * WHY THIS EXISTS AS A DEDICATED SLICE
+ * ------------------------------------
+ * `docs/business/GO_TO_MARKET.md` §4 requires the user-facing summary to report
+ * *process* rather than *returns*: setups rejected, forced HOLDs, and how often
+ * the user stuck to a plan. None of that is derivable from existing state:
+ *
+ *   - `executedTrades` holds only trades that WERE executed, so a rejected setup
+ *     or a forced HOLD never appears in it at all.
+ *   - `liveDecisions` is an aggregator WebSocket feed capped at 100 entries. It
+ *     accumulates on its own while the user does nothing and silently discards
+ *     the oldest entries, so any count taken from it would be both inflated and
+ *     lossy — a fabricated statistic, which is precisely what this blocker
+ *     exists to remove.
+ *
+ * So these are explicit counters, incremented once per committed decision at the
+ * point the event actually occurs, and reported as `—` until they hold real data.
+ * Every field counts events the user caused; none is inferred.
+ */
+export interface DisciplineStats {
+  /** Committed decisions the agent produced, across FIND and VERIFY. */
+  setupsAudited: number;
+  /** VERIFY runs where the user's own proposed trade failed validation. */
+  setupsRejected: number;
+  /** FIND runs that concluded no trade (HOLD / stand_aside). */
+  forcedHolds: number;
+  /** Deployed plans whose exit matched the committed stop or target. */
+  plansFollowed: number;
+  /** Deployed plans closed away from the committed levels. */
+  plansDeviated: number;
+}
+
+export function blankDisciplineStats(): DisciplineStats {
+  return {
+    setupsAudited: 0,
+    setupsRejected: 0,
+    forcedHolds: 0,
+    plansFollowed: 0,
+    plansDeviated: 0,
+  };
+}
+
+/** The classification of a single committed decision, as recorded by the caller. */
+export interface AuditOutcome {
+  /** The mode the run was launched in. */
+  mode: 'FIND' | 'VERIFY';
+  /** Whether the committed decision was a validated directional trade. */
+  actionable: boolean;
+}
+
 interface TradeStore {
   liveDecisions: AggregatedDecision[];
   activeDecision: AggregatedDecision | null;
   portfolioBalance: number;
   positions: Record<string, number>;
   executedTrades: ExecutedTrade[];
+  /** See {@link DisciplineStats}. Replaces the removed performance metrics. */
+  disciplineStats: DisciplineStats;
   latencyMs: number;
   ohlcCandles: OhlcCandle[];
   predictiveSignals: PredictiveSignal[];
@@ -202,6 +257,17 @@ interface TradeStore {
   destroyWebSockets: () => void;
 
   resetSession: () => void;
+  /**
+   * Record one committed decision against the discipline counters (P6).
+   *
+   * Idempotency is the CALLER's responsibility: this increments unconditionally,
+   * because the store cannot tell a genuine second decision from a replayed
+   * event. `useQuantStore.handleStreamEvent` calls it only on the null→non-null
+   * `finalTrade` transition, which happens exactly once per session.
+   */
+  recordSetupAudit: (outcome: AuditOutcome) => void;
+  /** Record whether a deployed plan's exit honoured its committed levels (P6). */
+  recordPlanOutcome: (followed: boolean) => void;
   paperPortfolio: VirtualPortfolio | null;
   fetchPaperPortfolio: () => Promise<void>;
   agentChatLog: Array<{ role: string; content: string }>;
@@ -374,6 +440,7 @@ export const useTradeStore = create<TradeStore>((set) => {
     portfolioBalance: 100000,
     positions: {},
     executedTrades: [],
+    disciplineStats: blankDisciplineStats(),
     latencyMs: 0,
     ohlcCandles: [],
     predictiveSignals: [],
@@ -802,6 +869,48 @@ export const useTradeStore = create<TradeStore>((set) => {
         executedTrades: [],
         liveDecisions: [],
         activeDecision: null,
+        disciplineStats: blankDisciplineStats(),
+      });
+    },
+
+    // ── Discipline counters (compliance blocker P6) ───────────────────────
+    // Increment-only, one call per real event. See {@link DisciplineStats} for
+    // why these cannot be derived from `executedTrades` or `liveDecisions`.
+
+    recordSetupAudit: (outcome) => {
+      const mode = outcome?.mode;
+      if (mode !== 'FIND' && mode !== 'VERIFY') return; // ignore malformed input
+      const actionable = outcome.actionable === true;
+
+      set((state) => {
+        const s = state.disciplineStats;
+        return {
+          disciplineStats: {
+            ...s,
+            setupsAudited: s.setupsAudited + 1,
+            // Disjoint by mode, matching GO_TO_MARKET §4's two distinct metrics:
+            // VERIFY rejects the user's OWN proposed trade; a forced HOLD is the
+            // agent declining to originate one. A decision is counted in at most
+            // one of these, so the two never double-count the same event.
+            setupsRejected:
+              mode === 'VERIFY' && !actionable ? s.setupsRejected + 1 : s.setupsRejected,
+            forcedHolds:
+              mode === 'FIND' && !actionable ? s.forcedHolds + 1 : s.forcedHolds,
+          },
+        };
+      });
+    },
+
+    recordPlanOutcome: (followed) => {
+      set((state) => {
+        const s = state.disciplineStats;
+        return {
+          disciplineStats: {
+            ...s,
+            plansFollowed: followed ? s.plansFollowed + 1 : s.plansFollowed,
+            plansDeviated: followed ? s.plansDeviated : s.plansDeviated + 1,
+          },
+        };
       });
     },
 

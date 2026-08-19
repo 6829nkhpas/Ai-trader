@@ -36,9 +36,19 @@ KITE_API_SECRET=your_kite_api_secret
 KITE_ACCESS_TOKEN=your_daily_access_token
 KITE_INSTRUMENT_TOKENS=256265:RELIANCE,340481:HDFCBANK,408065:INFY
 
-# ── NVIDIA NIM (DeepSeek v4 Pro) ────────────────────────────────────────
-# Required for AI-powered market insights and anomaly detection.
-NVIDIA_API_KEY=nvapi-your_nvidia_api_key_here
+# ── LLM provider ────────────────────────────────────────────────────────
+# Required for AI market insights, anomaly detection and news sentiment.
+# One OpenAI-compatible endpoint, set with three variables. Defaults are
+# https://api.freemodel.dev/v1/chat/completions and
+# deepseek-ai/DeepSeek-V3-0324; see docs/compliance/AI_MODEL_GOVERNANCE.md §2
+# for every service that reads them.
+LLM_API_KEY=your_llm_provider_token
+LLM_API_URL=https://api.freemodel.dev/v1/chat/completions
+LLM_MODEL=deepseek-ai/DeepSeek-V3-0324
+
+# The Deep Quant recommendation service takes its gateway separately, because it
+# binds a PER-USER key at request time rather than a shared one:
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 
 # ── Kafka Configuration ─────────────────────────────────────────────────
 # When running via Docker Compose, use the internal broker address.
@@ -171,11 +181,11 @@ ERROR: Kite WS auth failed — 403 Forbidden
 ```
 **Fix:** Regenerate the access token via the Kite Connect login flow and update `.env`.
 
-### DeepSeek API Timeout
+### LLM API Timeout
 ```
-ERROR: DeepSeek API failure: NVIDIA NIM request timeout
+ERROR: LLM call failed for symbol=RELIANCE: request timeout
 ```
-**Fix:** Check your `NVIDIA_API_KEY` is valid. Verify network connectivity to `https://integrate.api.nvidia.com`.
+**Fix:** Check `LLM_API_KEY` is valid and that the host in `LLM_API_URL` is reachable. The quant-rag agent logs the model and endpoint it resolved at startup (`LlmClient initialized — model=… endpoint=…`) — check that line first; the resolved values are what matters, not what `.env` appears to say, because a Tauri build can also carry values baked in at compile time.
 
 ### CMake Not Found (Local Dev Only)
 ```
