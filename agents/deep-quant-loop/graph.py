@@ -142,6 +142,31 @@ from tools import (
 # decision and scores it later, so the agent can audit its realized edge.
 import journal
 
+# Personalisation refusal guardrail (compliance blocker P8a). A SEBI Research
+# Analyst may publish impersonal research; tailoring output to an individual's
+# capital, income, holdings or goals is investment advice and needs a different
+# registration. The same boundary decides whether the US publisher's exclusion
+# (Lowe v. SEC) applies at all. The detector is pure and runs BEFORE the model, so
+# the refusal is a control rather than a request — see personalisation.py.
+import personalisation
+
+# Immutable recommendation record (compliance blocker P2) and the prompt/model
+# fingerprints that make a published recommendation replayable. `journal.py` also
+# records every committed decision, but its rows are updated when a trade is
+# scored and it has a `purge()` — correct for measurement, disqualifying for a
+# regulatory record. `reco_store` is the append-only, hash-chained second copy;
+# `prompt_version` names the analyst that produced it (model id + prompt digest).
+# None of the three import `graph`, so there is no cycle: `prompt_version` reads
+# the prompt constants back out of `sys.modules` at call time for that reason.
+import hashchain
+import prompt_version
+import reco_store
+
+# The per-run authenticated user id (a ContextVar set once per request by
+# main.py). Read at finalize so a recommendation record can answer "to whom was
+# this published?" without threading the id through AgentState.
+import run_context
+
 # Adaptive Opportunity Engine — the pure, deterministic loop-control core
 # (adaptive-opportunity-engine). The graph consults it for the tiered opportunity
 # ladder, the bounded-hunt Watch_Cap / Session_Budget termination predicates, the
@@ -3832,6 +3857,116 @@ def _thread_id_from_config(config) -> Optional[str]:
     return None
 
 
+def _system_prompt_text(messages, state: AgentState) -> Optional[str]:
+    """The system prompt the model actually saw this run, for the P2 prompt hash.
+
+    Reads the FIRST SystemMessage in the history rather than re-composing, because
+    that is the text the recommendation was produced under — a later edit to
+    ``format_system_prompt`` must not silently rewrite what an old record claims
+    the analyst was. ``call_model`` prepends that message when none is present, so
+    on any run that reached the model this is the real prompt.
+
+    ``format_system_prompt(state)`` is the fallback for the finalize paths that
+    commit without a model call at all (the data-gating HOLD). It is what WOULD
+    have been used, which is the honest answer for those rows. Returns None when
+    even that fails, and ``prompt_version.prompt_hash`` turns None into an explicit
+    ``<unavailable>`` rather than the hash of an empty prompt.
+    """
+    try:
+        for m in messages or ():
+            is_system = isinstance(m, SystemMessage) or getattr(m, "role", None) == "system"
+            if is_system:
+                content = getattr(m, "content", None)
+                if isinstance(content, str) and content.strip():
+                    return content
+                # A multimodal/blocks content list: serialise deterministically so
+                # the hash is stable rather than skipping the prompt entirely.
+                if isinstance(content, list):
+                    return hashchain.canonical_json(content)
+    except Exception as e:  # noqa: BLE001 - a hash input must not break a commit
+        print(f"[Deep Quant] WARN: system prompt capture failed: {e}")
+    try:
+        return format_system_prompt(state)
+    except Exception as e:  # noqa: BLE001
+        print(f"[Deep Quant] WARN: system prompt recomposition failed: {e}")
+        return None
+
+
+def _declared_horizon(record) -> Optional[str]:
+    """The holding horizon the agent actually stated, or None.
+
+    The only real source is the ``holding_horizon`` the agent passed to
+    ``get_event_risk``, mirrored verbatim into the defensibility record's event
+    entry. The run ``profile`` implies a horizon (INTRADAY vs INVESTOR) but is not
+    a stated one, so it is NOT substituted here: a recommendation record must say
+    what was recommended, not what was probable.
+    """
+    try:
+        event = (record or {}).get("event")
+        horizon = event.get("holding_horizon") if isinstance(event, dict) else None
+        return horizon.strip() if isinstance(horizon, str) and horizon.strip() else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _record_recommendation(state: AgentState, decision: dict, thread_id: Optional[str]) -> None:
+    """Append the committed decision to the immutable recommendation record (P2).
+
+    Called from the single finalize chokepoint, immediately after the journal
+    write, and wrapped exactly as the journal call is: a compliance store that
+    could abort a run would be a reliability regression dressed as a control, and
+    the store's own contract is to raise so this caller can decide. The WARN line
+    is the operator's signal — a run that logs it produced a recommendation with
+    no regulatory record, which is a defect to fix, not to ignore.
+
+    ``reco_store.record`` is idempotent per ``thread_id``, so the Bug-5 re-entry
+    path above (which returns before reaching here) and this write are belt and
+    braces: even a replay that bypassed the in-process guard appends nothing.
+    """
+    record = decision.get("defensibility")
+    record = record if isinstance(record, dict) else {}
+    levels = record.get("levels") if isinstance(record.get("levels"), dict) else {}
+    messages = state.get("messages")
+    reco_store.record(
+        action=decision.get("action") or "HOLD",
+        thread_id=thread_id,
+        user_id=run_context.get_run_user_id(),
+        symbol=state.get("symbol"),
+        timeframe=state.get("timeframe"),
+        mode=state.get("mode"),
+        profile=state.get("profile"),
+        # Prefer the structured declare_trade args; fall back to the levels the
+        # defensibility record resolved, which is where a level parsed out of the
+        # plan prose ends up. Same precedence journal.record_decision uses, so the
+        # two stores cannot disagree about what was recommended.
+        entry=decision.get("entry") if _is_finite_num(decision.get("entry")) else levels.get("entry"),
+        stop_loss=(
+            decision.get("stop_loss")
+            if _is_finite_num(decision.get("stop_loss"))
+            else levels.get("stop_loss")
+        ),
+        take_profit=(
+            decision.get("take_profit")
+            if _is_finite_num(decision.get("take_profit"))
+            else levels.get("take_profit")
+        ),
+        horizon=_declared_horizon(record),
+        conviction=decision.get("conviction_score"),
+        risk_reward=record.get("risk_reward"),
+        # The full defensibility record: volatility basis, R:R derivation,
+        # multi-timeframe bias, named patterns and the mandated risk factors. It is
+        # already assembled from real tool results and fabricates nothing, so P2
+        # persists it rather than rebuilding a second version of the rationale.
+        rationale=record,
+        # The raw tool results the reasoning was drawn from, so the evidence can be
+        # re-read years later without the message history.
+        tool_inputs=_latest_tool_results(messages) if messages else None,
+        model_id=prompt_version.model_id(state.get("model")),
+        prompt_hash=prompt_version.prompt_hash(_system_prompt_text(messages, state)),
+        prompt_set_hash=prompt_version.prompt_set_hash(),
+    )
+
+
 def _finalize_decision(state: AgentState, decision: dict, thread_id: Optional[str] = None) -> dict:
     """Attach the defensibility record AND persist the decision to the journal.
 
@@ -3910,6 +4045,16 @@ def _finalize_decision(state: AgentState, decision: dict, thread_id: Optional[st
         )
     except Exception as e:
         print(f"[Deep Quant] WARN: journal.record_decision failed: {e}")
+    # Immutable recommendation record (compliance blocker P2). Deliberately a
+    # SECOND write rather than a change to the journal: the journal's rows are
+    # updated when a trade is later scored and it has a purge(), both of which
+    # disqualify it as the regulatory record. Same best-effort posture as the
+    # journal call above so a compliance store can never abort a run — the WARN
+    # line is the signal that a recommendation went out unrecorded.
+    try:
+        _record_recommendation(state, decision, thread_id)
+    except Exception as e:  # noqa: BLE001 - never raise into a run
+        print(f"[Deep Quant] WARN: reco_store.record failed: {e}")
     # Bug 5 Layer 1: record this thread's first commit so any re-entry short-
     # circuits above. Best-effort — a guard failure never breaks the finalize.
     if thread_id is not None:
@@ -4872,6 +5017,10 @@ def build_qa_system_prompt(context: dict) -> str:
     context and say so (R18.3); when data is missing, call the relevant read-only
     tool or state it is unavailable — never fabricate (R18.4); and never alter
     the committed trade (R18.6).
+
+    Rule 6 restates the personalisation prohibition (compliance blocker P8a) as
+    defence in depth. The enforced control is the deterministic check in
+    ``qa_node``, which refuses before this prompt is ever built.
     """
     try:
         context_json = json.dumps(context, indent=2, default=str)
@@ -4933,8 +5082,23 @@ def build_qa_system_prompt(context: dict) -> str:
         "5. Be concise and specific. Quote the recorded numbers when relevant. "
         "Answer the SPECIFIC question the user asked — do NOT open the reply with the "
         "trade/decision status (e.g. 'no trade has been declared / HOLD') unless the "
-        "question is actually about the trade or the decision."
+        "question is actually about the trade or the decision.\n"
+        f"6. {personalisation.QA_PROMPT_RULE}"
     )
+
+
+def _latest_user_question(messages) -> str:
+    """The text of the most recent user turn in ``messages`` (``""`` if none).
+
+    ``/qa`` appends the question to the checkpointed thread, so the last
+    HumanMessage is this turn's question. Scanning from the end (rather than
+    taking ``messages[-1]``) keeps this correct if a tool/AI message is ever
+    appended between the user turn and the node. Total: never raises.
+    """
+    for message in reversed(list(messages or [])):
+        if _is_human_message(message):
+            return personalisation.question_text(getattr(message, "content", ""))
+    return ""
 
 
 def qa_node(state: AgentState):
@@ -4946,6 +5110,12 @@ def qa_node(state: AgentState):
     ``watch_price_condition`` are reclassified as forbidden and answered with a
     synthetic refusal so they are NEVER executed (R18.6).
 
+    Before any of that, the personalisation guardrail (compliance blocker P8a)
+    inspects the question deterministically and short-circuits with a fixed
+    refusal if it asks for advice tailored to the user's own finances. That check
+    runs BEFORE the LLM call — not as a prompt rule — so no model, temperature or
+    prompt-injection can talk past it, and it costs no tokens.
+
     Crucially, this node returns ONLY a ``messages`` update (plus the bounded
     ``qa_turns`` counter); it never returns a ``decision`` update, so the
     committed Declared_Trade in state is left untouched (R18.5, R18.6).
@@ -4953,6 +5123,25 @@ def qa_node(state: AgentState):
     messages = state.get("messages") or []
     symbol = state.get("symbol", "N/A")
     print(f"\n[Deep Quant Q&A] === Trade Q&A Turn (Symbol: {symbol}) ===")
+
+    # ── Personalisation guardrail (P8a) — enforced before the model ────────
+    # A hit returns the fixed refusal as this turn's answer. `qa_should_continue`
+    # sees an AIMessage with no tool calls and routes straight to "end", so the
+    # turn terminates with a real answer and the committed trade is untouched.
+    # The category is stamped on the message so the interaction log (P5) can
+    # record WHY the turn was refused without re-running the detector.
+    hit = personalisation.detect_personalisation(_latest_user_question(messages))
+    if hit is not None:
+        print(
+            f"[Deep Quant Q&A] Personalisation guardrail REFUSED this turn "
+            f"(category={hit.category}, matched={hit.matched!r}). No LLM call made."
+        )
+        refusal = AIMessage(content=personalisation.build_refusal(hit))
+        refusal.additional_kwargs["_personalisation_refusal"] = hit.category
+        return {
+            "messages": [refusal],
+            "qa_turns": (state.get("qa_turns") or 0) + 1,
+        }
 
     context = build_qa_context(state)
     system_prompt = build_qa_system_prompt(context)

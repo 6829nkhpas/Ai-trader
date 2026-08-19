@@ -22,6 +22,14 @@ test module — and an autouse fixture resets those two leak-prone globals aroun
 every test. Tests remain free to set them inside their own body; the fixture
 only guarantees each test starts and ends from the pristine value, so no
 module's mutation can leak into another.
+
+A second autouse fixture redirects the compliance store (``COMPLIANCE_DB_PATH``,
+read per call by ``hashchain.db_path``) into a per-test temporary directory. That
+one is not about leakage between tests — it is about the suite never appending to
+the real, append-only recommendation record. ``_finalize_decision`` writes there
+now (compliance blocker P2), and several existing property tests drive it with
+hundreds of synthetic decisions; those rows must not end up in an artefact whose
+whole purpose is that rows cannot be removed from it.
 """
 
 import os
@@ -54,3 +62,20 @@ def _isolate_journal_globals():
     finally:
         journal.score_open_trades = _PRISTINE_SCORE_OPEN_TRADES
         journal.LOW_SAMPLE_THRESHOLD = _PRISTINE_LOW_SAMPLE_THRESHOLD
+
+
+@pytest.fixture(autouse=True)
+def _isolate_compliance_store(tmp_path_factory, monkeypatch):
+    """Point the P2/P5 compliance store at a throwaway file for every test.
+
+    Set via the environment rather than by patching a module global because
+    ``hashchain.db_path()`` deliberately reads ``COMPLIANCE_DB_PATH`` on every
+    call — so this holds for any module that reaches the store, including code
+    imported before this fixture runs.
+
+    A test that wants its own path simply sets the variable again; last writer
+    wins and ``monkeypatch`` restores the original afterwards.
+    """
+    store = tmp_path_factory.mktemp("compliance") / "compliance.db"
+    monkeypatch.setenv("COMPLIANCE_DB_PATH", str(store))
+    yield
