@@ -24,6 +24,19 @@ const nextConfig: NextConfig = {
   // Pin the Turbopack workspace root to the frontend folder so Next.js does
   // not guess between the two lockfiles in the monorepo (root + frontend/).
   // Silences the "inferred workspace root" warning during dev/build.
+  //
+  // `build:desktop` also passes `--turbopack`, and that is load-bearing rather
+  // than a speed preference: on Node 24 the default webpack production build
+  // dies partway through compilation with
+  //
+  //   FATAL ERROR: Committing semi space failed. Allocation failed -
+  //   JavaScript heap out of memory
+  //
+  // crashing in ArrayBuffer/Buffer allocation with the JS heap flat at ~167 MB.
+  // Because the exhaustion is in EXTERNAL memory, not the JS heap, raising
+  // --max-old-space-size (tried at 8 GB) does not help. Turbopack compiles the
+  // same cold tree to a complete ../out without the spike. If you ever drop the
+  // flag, verify a COLD build (delete .next first) — a warm cache can mask this.
   turbopack: {
     root: path.resolve(__dirname),
   },

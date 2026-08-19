@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "build:desktop": "cross-env NEXT_OUTPUT_EXPORT=1 next build",
+    "build:desktop": "node scripts/clean-build-dirs.mjs --pre && cross-env NEXT_OUTPUT_EXPORT=1 next build --turbopack && node scripts/clean-build-dirs.mjs --post",
+    "clean": "node scripts/clean-build-dirs.mjs",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
