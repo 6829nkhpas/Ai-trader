@@ -184,6 +184,16 @@ basis.
 We keep these records because we are required to, and because it means the question "why did it say
 that, on that date, on that data?" has an answer we can produce rather than reconstruct.
 
+> **Internal note — not published copy.** Every claim in this section became true of the build on
+> 19 August 2026 (`bf0c885`, blockers P2 and P5). Specifically: the append-only property is enforced
+> by SQLite triggers that make `UPDATE` and `DELETE` raise, not by convention; `row_hash =
+> sha256(prev_hash ‖ canonical_json(payload))` is what makes alteration detectable; `verify_chain()`
+> is the audit entry point; and `interaction_log.py` has **no** `purge()`, with a test asserting it
+> never grows one. Two limits to keep in mind before anyone strengthens this wording: the chain has
+> **no external witness**, so it is tamper-*evident* and not tamper-*proof* — never upgrade the word —
+> and `analyst_of_record` is currently null pending blocker P8b, which is why this section claims a
+> model identifier and a prompt hash but says nothing about a named analyst.
+
 **Retention:** [RETENTION PERIOD — 5 years from the relevant date under SEBI record-keeping rules;
 confirm the exact computation]. Note that this retention obligation can override a request to delete
 your data. **[COUNSEL — the DPDP Act carve-out wording must be settled before publication.]**
@@ -198,7 +208,12 @@ your data. **[COUNSEL — the DPDP Act carve-out wording must be settled before 
 | 2 | The standard SEBI disclaimer and MITC link | [COUNSEL] |
 | 3 | Retention wording in §7 | [COUNSEL] — DPDP vs SEBI retention |
 | 4 | Whether any accuracy figure is disclosed at all | [COUNSEL] — the draft AI framework asks for accuracy disclosure; the advertisement code restricts performance claims. Unresolved, tracked as open item 5 in `AI_MODEL_GOVERNANCE.md` §10 |
-| 5 | Confirmation that §2's structural claims survive the final build | Re-verify against `providers::BrokerProvider` and `personalisation.py` at release |
+| 5 | Confirmation that §2's structural claims survive the final build | ✅ **Re-verified 19 August 2026** against `frontend/src-tauri/src/providers/mod.rs` and `agents/deep-quant-loop/personalisation.py`. All three hold. `BrokerProvider` exposes `id`, `positions` and `margins` and **no order method**, so "it cannot place, modify or cancel an order" is a property of the type, not a promise. `detect_personalisation()` is deterministic and runs before the model call. The stop and R:R floors are applied by the validator regardless of model confidence. **Re-run this check at every release** — it is a claim about a build, so it expires with the build |
+
+**Item 5 is the only one of the five that engineering can close, and it is closed.** The remaining four
+are all outside this repo: item 1 needs the registration, items 2–4 need counsel. Two further stops sit
+outside this table — the gateway-naming block in §4, and the fact that publishing at all requires an
+approver who is not the writer (`BRAND_GUIDELINES.md` §5.1, lesson 3).
 
 **Until item 4 is resolved this page states limitations without an accuracy figure.** That is a
 deliberate choice, not an omission: publishing a hit rate is precisely the headline-performance claim

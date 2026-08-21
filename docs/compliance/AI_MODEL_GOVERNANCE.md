@@ -226,6 +226,30 @@ Three of these are worth naming individually as **model-risk** controls rather t
   Detecting that requires an external witness (a retained row count or tip hash). **[Open — the
   witness is not yet implemented. It must be before an external audit relies on the store.]**
 
+### 4.1 Harness conditions — so a passing gate means the same thing everywhere
+
+A gate that only passes on one laptop is not a gate. Three harness properties were fixed deliberately,
+and changing any of them silently weakens this section:
+
+- **The suite collects without an LLM credential** (`71534be`). `graph.py` builds its client at module
+  scope, so on a machine with no key every test module that imports it used to fail at *collection*
+  with `Missing credentials` — clean CI, or any new contributor. `tests/conftest.py` exports a
+  deliberately invalid `LLM_API_KEY` at module scope, which also pins the credential **mode** to
+  shared-key so CI exercises the same branch a developer with a `.env` does. If a test ever does reach
+  the network it 401s loudly and names itself, rather than quietly spending someone's quota.
+- **The compliance store is redirected per test.** An autouse fixture points `COMPLIANCE_DB_PATH` at a
+  throwaway file. This is not tidiness: the property tests drive `_finalize_decision` with hundreds of
+  synthetic decisions, and those rows must never land in an append-only artefact whose entire purpose
+  is that rows cannot be removed from it.
+- **One property test runs without a Hypothesis deadline** (`5333934`) — the finalize/journal parity
+  test does real SQLite work per example, so a per-example time limit made it fail on timing rather
+  than on behaviour.
+
+**Verified 19 August 2026:** the five compliance suites report **329 passed**. There is a separate,
+pre-existing family of failures elsewhere in this service's test tree (Hypothesis feeding NUL bytes
+into unrelated `st.text()` strategies); it does not touch these five suites, and it must not be allowed
+to become the reason someone stops running them.
+
 ---
 
 ## 5. How existing architecture maps to the draft principles
@@ -365,3 +389,5 @@ Tracked here rather than omitted, so the gaps are on the record.
 | 6 | **AI/ML system filing** under the 2019 circulars not made | Confirm applicability pre-registration [COUNSEL] |
 | 7 | **§2 cannot be verified from source alone.** Deployment `.env`, gateway selection and compile-time `option_env!` baking all override the code defaults (§2.1) — the live `.env` already runs a model no row names. The §8 quarterly review must be signed against the **deployed** environment | An accurate answer to "which model is in production" |
 | 8 | **Releases do not record what was baked into them.** Two installers of the same version can carry different models and endpoints (§2.1). Until a release records its resolved values, "which model produced this output" is unanswerable for a given build | Per-build auditability; §3 replayability for desktop-side outputs |
+| 9 | **The public disclosure page names a provider the desktop build does not use.** `NEXT_PUBLIC_LLM_GATEWAY` defaults to an internal proxy, so for some builds the party receiving the request is not the one §4 of `AI_DISCLOSURE.md` names. Either the default changes or the wording does — it cannot be left to whichever is noticed first | Publishing `AI_DISCLOSURE.md` §4; also `BRAND_GUIDELINES.md` §4.5 item 20 |
+| 10 | **Website copy is drafted but unapproved.** `docs/compliance/WEBSITE_COPY.md` carries per-claim substantiation, but under `BRAND_GUIDELINES.md` §5.1 lesson 3 the writer cannot be the approver, and no approver is appointed (the Compliance Officer role is itself unfilled) | Publishing the landing page; the P10 advertisement register has nothing to record an approval into |

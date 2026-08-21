@@ -57,6 +57,13 @@ application and your marketing are read by the same institution.
 | **Supporting** | "Sub-second ticks parsed in Rust. Five years of history. Native desktop, not a browser tab." | Pure engineering claim, zero regulatory surface |
 | **Supporting** | "When data is missing, it says so. It never fills the gap with a guess." | The honest-failure principle. Rare and credible |
 
+**This table is the copy spine, and it has been drawn down into shippable text.** See
+`docs/compliance/WEBSITE_COPY.md` — every landing-page string, each one traced to the code or commit
+that substantiates it, screened against `docs/compliance/BRAND_GUIDELINES.md` §1–§3, and constrained
+to pre-licence **TERMINAL-only** positioning. Write website copy from that file, not from this table:
+a claim that is safe *as a message* can still be false *of the build*, and only the copy file checks
+the second thing.
+
 ### The banned list — put this in the brand guidelines and enforce it in review
 
 Never publish: assured/guaranteed/consistent returns · win rate or accuracy as a headline · P&L
@@ -155,6 +162,21 @@ never as marketing copy):
 - Count of forced HOLDs during conflicted technical/sentiment conditions
 - Discipline score: how often the user followed their own stated plan
 
+**Shipped, three of four** (`51c457a`, blocker P6). The in-product surface is now headed **"Discipline
+Metrics"** and shows Setups Audited, Setups Rejected, Forced HOLDs and Plan Adherence. The four
+performance figures that were there before — Total Return, Win Rate, Max Drawdown and Avg Conviction —
+are gone, and the bull/bear colouring that made the panel read like a P&L went with them. Win rate and
+expectancy survive **inside** `journal.py` as calibration input, which is where the draft AI framework
+wants them.
+
+Two things to know before this becomes copy:
+
+- **Plan Adherence renders `—`, not a number.** Its counter has no data yet. That em-dash is the
+  deliberate honest-empty pattern, not a bug — a fabricated zero on a discipline metric would be the
+  same class of defect as a fabricated return.
+- **The quarterly-summary sentence below is still unapproved.** It is the one piece of §4 that is
+  outward-facing.
+
 A quarterly in-product summary — "your plan was audited 46 times; 14 setups failed the volatility or
 R:R floor" — is a factual statement about product usage. It contains no performance claim, and it is
 the most powerful retention artefact available to us. **[COUNSEL — review the exact wording of any
@@ -175,6 +197,17 @@ around the scalper means growing into a shrinking pool.
 | RESEARCH | ₹4,999/mo · ₹49,999/yr | RA required | FIND, DEBATE, conviction score, journal, QA mode |
 | PLATFORM | ₹25L–₹1.5cr/yr + rev-share | None (licensee's obligation) | White-label |
 
+**The SKU names are now code, not just a price sheet.** `TERMINAL` and `RESEARCH` are the two values of
+`Sku` in `frontend/src/lib/sku.ts`, and the mapping this table implies is enforced there and in
+`agents/deep-quant-loop/entitlements.py`: FIND, DEBATE and QA are RESEARCH; **VERIFY is TERMINAL**,
+because it checks arithmetic the user supplied rather than producing a view. Both gates fail closed —
+a null, absent or malformed entitlement resolves to TERMINAL.
+
+**Pre-licence, only the first two rows are sellable.** RESEARCH must not be advertised, priced on a
+public page, or offered as a waitlist that implies advice is coming on a date. The entitlement source
+it depends on does not exist yet either (`PLAN_OF_ACTION.md` §4.2, P1), so today `SKU_ENFORCE=1` denies
+all RESEARCH traffic — which is the correct posture, not a bug to work around.
+
 Annual prepay is permitted: since April 2025 SEBI allows RAs to collect advance fees covering up to
 one year. At ₹49,999/year the RESEARCH tier sits at roughly **one third of the ₹1,51,000 per-family
 annual fee ceiling**, leaving real headroom — but note the cap is **per family across all research
@@ -187,10 +220,19 @@ services**, so a household with two subscriptions must be tracked against one ce
 **Month 0–1** · Freeze and audit every existing marketing asset against §1. Publish brand guidelines
 with the banned list. Ship the TERMINAL/RESEARCH SKU split so the free and paid tiers carry no
 recommendations. Screen and, where needed, terminate every affiliate and influencer relationship.
+→ **Three of four done** (`876bbf0`, `51c457a`, `bf0c885`). Brand guidelines published at
+`docs/compliance/BRAND_GUIDELINES.md`; in-product copy audited and scrubbed; SKU split shipped and
+test-verified on both sides of the API. **Outstanding: the live website itself** — the audit covered
+the repo, and the website is not in the repo. `docs/compliance/WEBSITE_COPY.md` is the replacement
+copy, and affiliate/influencer screening has not started.
 
 **Month 1–3** · Begin the engineering-credibility content engine — two deep pieces a month. Launch the
 moderated no-calls community. Publish the AI model disclosure page. Open broker conversations led by
 compliance, not features.
+→ **The disclosure page is drafted but cannot be published in this window.** `docs/compliance/AI_DISCLOSURE.md`
+§8 lists five blockers, of which the entity name, registration number and Compliance Officer contact
+all depend on the INH. Do not slip this item quietly — publishing it with placeholders visible is
+itself a disclosure defect. Reschedule to Month 6–9, alongside the INH wiring.
 
 **Month 3–6** · TERMINAL Pro paid launch. Open-source one peripheral component. First broker pilot
 signed. Stand up the advertisement register ahead of needing it.
