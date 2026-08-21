@@ -295,7 +295,28 @@ jobs:
             exit 1
           fi
 
-          VERSION="${RELEASE_TAG#v}"
+          # The manifest version MUST be the version baked into the bundle, not the
+          # git tag. The updater compares `latest.json.version` against the running
+          # app's own version — which comes from tauri.conf.json — so a manifest
+          # that disagrees with its own artifact is silently inert: the failed
+          # v1.0.0 run published `"version": "1.0.0"` pointing at
+          # `Strat Ai_2.0.0_x64-setup.exe`, and every installed 2.0.0 client would
+          # have compared 1.0.0 against 2.0.0 and correctly decided there was
+          # nothing to do. No error anywhere; the feed just never updates anyone.
+          #
+          # `node -p` rather than jq: Setup Node ran above, so Node is guaranteed on
+          # both runners, and it parses the JSON properly instead of grepping it.
+          VERSION="$(node -p "require('./frontend/src-tauri/tauri.conf.json').version")"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "undefined" ]; then
+            echo "::error::Could not read version from frontend/src-tauri/tauri.conf.json."
+            exit 1
+          fi
+          # A tag that disagrees with the bundle is a release-hygiene problem, not a
+          # feed problem, so warn rather than fail: the artifacts are good and the
+          # manifest is now correct regardless of what the tag says.
+          if [ "$VERSION" != "${RELEASE_TAG#v}" ]; then
+            echo "::warning::Tag $RELEASE_TAG does not match the bundle version $VERSION (frontend/src-tauri/tauri.conf.json). Publishing the feed as v$VERSION, which is what installed clients compare against. Tag v$VERSION next time so the GitHub Release and the update feed agree."
+          fi
           BASENAME="$(basename "$ARTIFACT")"
           SIGNATURE="$(cat "$SIG_FILE")"
 
@@ -329,11 +350,26 @@ jobs:
 
             echo "Publishing $BASENAME (v$VERSION) -> $PLATFORM_DIR"
             ssh $SSH_OPTS "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$TARGET'"
-            scp $SSH_OPTS "$ARTIFACT" "$DEPLOY_USER@$DEPLOY_HOST:'$TARGET/'"
+            # NOTE — do NOT shell-quote the remote path (`…:'$TARGET/'`).
+            #
+            # `ssh` above passes its argument to a remote SHELL, which strips the
+            # single quotes. `scp` does not: since OpenSSH 9.0 it speaks the SFTP
+            # protocol by default, so the remote path is sent to an SFTP server
+            # verbatim with no shell in the loop. Quotes therefore become literal
+            # characters in the filename, and the upload fails with
+            #   scp: dest open "'/srv/updates/darwin-aarch64/'": No such file or directory
+            # against a directory `mkdir -p` had just created successfully — the
+            # confusing part, because the error names a path that plainly exists.
+            #
+            # These paths are literals built from $PLATFORM_DIR (`windows-x86_64`,
+            # `darwin-aarch64`, `darwin-x86_64`), so there is nothing to quote for:
+            # no spaces, no globs. The local side still needs its double quotes —
+            # $ARTIFACT does contain a space ("Strat Ai.app.tar.gz").
+            scp $SSH_OPTS "$ARTIFACT" "$DEPLOY_USER@$DEPLOY_HOST:$TARGET/"
             # Manifest LAST: until it names the new file, clients keep resolving
             # the previous version, so there is never a window in which the feed
             # advertises a build whose upload has not finished.
-            scp $SSH_OPTS latest.json "$DEPLOY_USER@$DEPLOY_HOST:'$TARGET/latest.json'"
+            scp $SSH_OPTS latest.json "$DEPLOY_USER@$DEPLOY_HOST:$TARGET/latest.json"
             echo "  -> https://app-api.stratai.live/updates/$PLATFORM_DIR/latest.json"
           done
 
