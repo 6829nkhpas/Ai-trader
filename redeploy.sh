@@ -111,9 +111,11 @@ git log --oneline -1
 #
 # The fix keeps a copy at /srv/vendor/charting_library, OUTSIDE the repo, so
 # `git reset --hard` cannot touch it and no GitHub credential is needed. Seed it
-# once per droplet (from a machine that has the submodule checked out):
+# once per droplet (from a machine that has the submodule checked out) — note the
+# `--exclude`, without which tar packs the submodule's `.git` gitlink and breaks the
+# NEXT deploy (see strip_gitlink below):
 #
-#   cd frontend/public/static && tar czf /tmp/cl.tgz charting_library
+#   cd frontend/public/static && tar --exclude=.git -czf /tmp/cl.tgz charting_library
 #   scp /tmp/cl.tgz root@<droplet>:/root/
 #   ssh root@<droplet> 'mkdir -p /srv/vendor && tar xzf /root/cl.tgz -C /srv/vendor'
 #
@@ -126,12 +128,29 @@ git log --oneline -1
 VENDOR_CHARTING="/srv/vendor/charting_library"
 CHARTING_DEST="frontend/public/static/charting_library"
 
+# The submodule's own `.git` gitlink must NEVER survive into the seeded copy. It is
+# a file reading `gitdir: ../../../../.git/modules/...`, which does not exist on a
+# droplet that never cloned the submodule — and its presence makes git treat the
+# path as a live submodule, so the `git reset --hard` above dies with
+#
+#   fatal: not a git repository: .../charting_library/../../../../.git/modules/...
+#
+# and the whole deploy fails at step 1. A `tar czf` of a working checkout picks that
+# file up silently, which is exactly how it happened. Stripped from both the vendor
+# copy and the destination, every run, so a stale seed self-heals.
+strip_gitlink() {
+  rm -f "$1/.git" 2>/dev/null || true
+}
+
 if [ -f "$CHARTING_DEST/charting_library/charting_library.standalone.js" ]; then
+  strip_gitlink "$CHARTING_DEST"
   log "Charting library already present in the checkout"
 elif [ -d "$VENDOR_CHARTING" ]; then
+  strip_gitlink "$VENDOR_CHARTING"
   log "Seeding charting library from $VENDOR_CHARTING"
   mkdir -p "$CHARTING_DEST"
   cp -a "$VENDOR_CHARTING/." "$CHARTING_DEST/"
+  strip_gitlink "$CHARTING_DEST"
   log "Seeded $(find "$CHARTING_DEST" -type f | wc -l) files"
 else
   log "ERROR: the TradingView charting library is missing."
