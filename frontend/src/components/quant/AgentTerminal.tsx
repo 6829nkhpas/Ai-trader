@@ -11,6 +11,7 @@ import ReasoningStepRenderer from './deep-quant/ReasoningStepRenderer';
 import ToolExecutionStep from './deep-quant/ToolExecutionStep';
 import ActionableTradePlan from './deep-quant/ActionableTradePlan';
 import ThinkingGroupRenderer from './deep-quant/ThinkingGroupRenderer';
+import { classifyAgentError } from './deep-quant/agentErrorClassifier';
 import { highlightNumbers } from './deep-quant/textHighlighter';
 
 export default function AgentTerminal() {
@@ -179,23 +180,52 @@ export default function AgentTerminal() {
           </div>
         )}
 
-        {/* Error message display */}
-        {sessionStatus === 'error' && (
-          <div className="flex items-start gap-3 p-3.5 bg-rose-500/5 border border-rose-500/20 rounded mt-2 select-text font-sans shadow-lg shadow-rose-955/20">
-            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm bg-rose-500/20 text-rose-500 dark:text-rose-400 text-[10px] font-bold select-none mt-0.5">
-              ⚠
+        {/* Error message display.
+            The explanation is DERIVED from the error, not hardcoded — see
+            `agentErrorClassifier`. This box used to assert "your LLM API key is
+            expired, rate-limited, or out of quota" for every failure, including a
+            plan restriction that never issued a request, which sent people to
+            audit a healthy key. */}
+        {sessionStatus === 'error' && (() => {
+          const err = classifyAgentError(analysisError);
+          // A plan restriction or a deployment switch is not a fault; render it in
+          // a neutral tone so it does not read as something broken.
+          const isFault = err.kind !== 'research-locked' && err.kind !== 'feature-disabled';
+          const tone = isFault
+            ? {
+                wrap: 'bg-rose-500/5 border-rose-500/20 shadow-rose-955/20',
+                badge: 'bg-rose-500/20 text-rose-500 dark:text-rose-400',
+                title: 'text-rose-500 dark:text-rose-400',
+                body: 'text-rose-600 dark:text-rose-300/80',
+                detail: 'text-rose-500 dark:text-rose-400 bg-rose-500/5 border-rose-500/15',
+                glyph: '⚠',
+              }
+            : {
+                wrap: 'bg-amber-500/5 border-amber-500/20 shadow-amber-955/20',
+                badge: 'bg-amber-500/20 text-amber-600 dark:text-amber-400',
+                title: 'text-amber-600 dark:text-amber-400',
+                body: 'text-amber-700 dark:text-amber-300/80',
+                detail: 'text-amber-600 dark:text-amber-400 bg-amber-500/5 border-amber-500/15',
+                glyph: '🔒',
+              };
+
+          return (
+            <div className={`flex items-start gap-3 p-3.5 border rounded mt-2 select-text font-sans shadow-lg ${tone.wrap}`}>
+              <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-[10px] font-bold select-none mt-0.5 ${tone.badge}`}>
+                {tone.glyph}
+              </div>
+              <div className="flex flex-col">
+                <span className={`text-[11px] font-bold ${tone.title}`}>{err.title}</span>
+                <span className={`text-[10px] mt-1 leading-relaxed ${tone.body}`}>
+                  {err.explanation}
+                </span>
+                <span className={`text-[9px] font-mono rounded-sm border px-2 py-1 mt-2 leading-normal ${tone.detail}`}>
+                  {err.detail}
+                </span>
+              </div>
             </div>
-            <div className="flex flex-col">
-              <span className="text-[11px] font-bold text-rose-500 dark:text-rose-400">Deep Quant Analysis Error</span>
-              <span className="text-[10px] text-rose-600 dark:text-rose-300/80 mt-1 leading-relaxed">
-                The LangGraph agent loop returned a pipeline error. This usually occurs if your LLM API key (e.g. Google Gemini or OpenAI) is expired, rate-limited, or out of quota.
-              </span>
-              <span className="text-[9px] font-mono text-rose-500 dark:text-rose-400 bg-rose-500/5 rounded-sm border border-rose-500/15 px-2 py-1 mt-2 leading-normal">
-                {analysisError || "Connection refused: Python service port :8086 unreachable."}
-              </span>
-            </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Stand-Aside decision rendered INLINE in the terminal log */}
         {sessionStatus === 'complete' && finalTrade && !isActionableTrade(finalTrade) && (
