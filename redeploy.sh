@@ -90,6 +90,58 @@ fi
 git reset --hard "origin/$DEPLOY_BRANCH"
 git log --oneline -1
 
+# ── 1b. Seed the TradingView Advanced Charts library ──────────────────────────
+#
+# `frontend/public/static/charting_library` is a git SUBMODULE pointing at
+# https://github.com/tradingview/charting_library.git — a PRIVATE repo that
+# requires access granted by TradingView. The droplet cannot clone it: its
+# credential is a deploy token scoped to this repository only, so
+# `git submodule update --init` fails with
+#
+#   fatal: could not read Username for 'https://github.com'
+#
+# and `git reset --hard` above leaves the submodule path as an empty directory.
+# The library is therefore absent at Docker build time, `public/` ships without
+# it, and the app loads but every chart dies with
+#
+#   ⚠ Chart failed to load — Failed to load charting library script.
+#
+# with a 404 on /static/charting_library/charting_library/charting_library.standalone.js.
+# That is exactly what happened on the first app.stratai.live deploy.
+#
+# The fix keeps a copy at /srv/vendor/charting_library, OUTSIDE the repo, so
+# `git reset --hard` cannot touch it and no GitHub credential is needed. Seed it
+# once per droplet (from a machine that has the submodule checked out):
+#
+#   cd frontend/public/static && tar czf /tmp/cl.tgz charting_library
+#   scp /tmp/cl.tgz root@<droplet>:/root/
+#   ssh root@<droplet> 'mkdir -p /srv/vendor && tar xzf /root/cl.tgz -C /srv/vendor'
+#
+# Update it the same way when TradingView ships a new version.
+#
+# Deliberately a hard failure rather than a warning: a frontend built without the
+# library looks healthy to every check — the container starts, /api/features
+# answers 200, the healthcheck passes — and only the charts are dead. Failing here
+# is far better than shipping that silently.
+VENDOR_CHARTING="/srv/vendor/charting_library"
+CHARTING_DEST="frontend/public/static/charting_library"
+
+if [ -f "$CHARTING_DEST/charting_library/charting_library.standalone.js" ]; then
+  log "Charting library already present in the checkout"
+elif [ -d "$VENDOR_CHARTING" ]; then
+  log "Seeding charting library from $VENDOR_CHARTING"
+  mkdir -p "$CHARTING_DEST"
+  cp -a "$VENDOR_CHARTING/." "$CHARTING_DEST/"
+  log "Seeded $(find "$CHARTING_DEST" -type f | wc -l) files"
+else
+  log "ERROR: the TradingView charting library is missing."
+  log "       Not at $VENDOR_CHARTING, and the submodule cannot be cloned here"
+  log "       (private TradingView repo; this droplet has no access)."
+  log "       Every chart would 404. Seed it with the tar/scp recipe in this"
+  log "       script's comments, then re-run."
+  exit 1
+fi
+
 # ── 2. Build every service (sequential — keeps concurrent Rust compiles from
 #       exhausting memory on a small box; cached layers make unchanged services
 #       fast, so the serial cost is low even on a 16 GB host) ─────────────────
