@@ -17,7 +17,6 @@ import RightSidebar from '../components/panels/RightSidebar';
 import ToastContainer from '../components/common/ToastContainer';
 import AuthOverlay from '../components/auth/AuthOverlay';
 import ConnectionLost from '../components/common/ConnectionLost';
-import UpdateNotifier from '../components/common/UpdateNotifier';
 
 import { useTradeStore, hydratePaperPortfolio } from '../store/useTradeStore';
 import { useQuantStore } from '../store/useQuantStore';
@@ -25,11 +24,11 @@ import { useChartUIStore } from '../store/useChartUIStore';
 import { useFeatureStore } from '../store/useFeatureStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { useCredit } from '../hooks/useApi';
-import { useTauriLiveData } from '../hooks/useTauriLiveData';
 import { useConnectionMonitor } from '../hooks/useConnectionMonitor';
 import { useSymbolQuote } from '../hooks/useSymbolQuote';
 import { useSidebarDrag } from '../hooks/useSidebarDrag';
 import { useToast } from '../hooks/useToast';
+import { bridgeListen } from '../lib/bridge';
 import type { ConsensusReport } from '../store/useQuantStore';
 
 export default function Home() {
@@ -37,11 +36,12 @@ export default function Home() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const fetchProfile = useAuthStore((s) => s.fetchProfile);
   const setFeatureAccessFlags = useFeatureStore((s) => s.setAccessFlags);
+  const hydrateFeatureConfig = useFeatureStore((s) => s.hydrateConfig);
   const resetFeatureAccess = useFeatureStore((s) => s.reset);
   const { data: creditData } = useCredit();
 
   // ── Store selectors ───────────────────────────────────────────────
-  const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, selectedSymbol, paperPortfolio } = useTradeStore();
+  const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, connectOrderFlowWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, selectedSymbol, paperPortfolio } = useTradeStore();
   const isFullscreen = useChartUIStore((s) => s.isFullscreen);
   const setIsFullscreen = useChartUIStore((s) => s.setIsFullscreen);
   const splitView = useChartUIStore((s) => s.splitView);
@@ -68,6 +68,14 @@ export default function Home() {
   useSymbolQuote(symbol);
 
   // ── Feature-access hydration ──────────────────────────────────────
+  // Two independent inputs, ANDed in `computeFeatureAccess`:
+  //   • the DEPLOYMENT kill switches — asked of the backend once on mount, so
+  //     they are not a constant in this bundle (see lib/featureFlags.ts).
+  //   • the USER's plan flags — from the /credit API, refreshed with the session.
+  useEffect(() => {
+    void hydrateFeatureConfig();
+  }, [hydrateFeatureConfig]);
+
   useEffect(() => {
     setFeatureAccessFlags(creditData?.accessFlags ?? null);
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -85,15 +93,22 @@ export default function Home() {
     fetchProfile();
   }, [connectWebSocket, fetchProfile]);
 
-  const isTauriEnv = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-  useTauriLiveData(symbol);
-
+  // ── Live feed bootstrap ───────────────────────────────────────────
+  // `/ws/*` is the one gateway prefix with no basic auth
+  // (`infra/caddy/Caddyfile`), so these sockets are opened straight from the
+  // browser. They must be `wss://` in production — an https:// page cannot open a
+  // ws:// socket (see `wsUrlIsUsable` in useTradeStore).
   useEffect(() => {
-    if (isTauriEnv) return;
     connectAlphaWebSocket(process.env.NEXT_PUBLIC_ALPHA_WS_URL || 'ws://127.0.0.1:8081');
     connectPredictiveWebSocket(process.env.NEXT_PUBLIC_PREDICTIVE_WS_URL || 'ws://127.0.0.1:8082');
     connectInsightWebSocket(process.env.NEXT_PUBLIC_INSIGHT_WS_URL || 'ws://127.0.0.1:8083');
-  }, [isTauriEnv, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket]);
+    connectOrderFlowWebSocket(process.env.NEXT_PUBLIC_ORDER_FLOW_WS_URL || 'ws://127.0.0.1:8089');
+  }, [
+    connectAlphaWebSocket,
+    connectPredictiveWebSocket,
+    connectInsightWebSocket,
+    connectOrderFlowWebSocket,
+  ]);
 
   // ── Quant consensus listener ──────────────────────────────────────
   useEffect(() => {
@@ -106,13 +121,13 @@ export default function Home() {
     let unlisten: (() => void) | undefined;
     (async () => {
       try {
-        const { listen } = await import('@tauri-apps/api/event');
-        if (cancelled) return;
-        const u = await listen<ConsensusReport>('quant-consensus', (event) => {
+        // Tauri IPC on desktop; in a browser the bridge bus, fed by the agent's
+        // `get_consensus_report` tool result as it streams.
+        const u = await bridgeListen<ConsensusReport>('quant-consensus', (event) => {
           if (!cancelled) setConsensusData(event.payload);
         });
         if (cancelled) { u(); } else { unlisten = u; }
-      } catch { /* Not in Tauri context */ }
+      } catch (err) { console.warn('[page] consensus listener unavailable:', err); }
     })();
     return () => { cancelled = true; unlisten?.(); };
   }, [setConsensusData]);
@@ -200,7 +215,6 @@ export default function Home() {
       </div>
 
       <ToastContainer toasts={toasts} />
-      <UpdateNotifier />
       {isResizingSidebar && <div className="fixed inset-0 z-9999 cursor-col-resize select-none pointer-events-auto bg-white/0" />}
       {isDraggingRight && <div className="fixed inset-0 z-9999 cursor-row-resize select-none pointer-events-auto bg-white/0" />}
     </div>

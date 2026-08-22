@@ -407,6 +407,108 @@ services:
     mem_limit: 512m
     restart: unless-stopped
 
+  # ── Web frontend (Next.js standalone, :3000) ─────────────────────────────────
+  # The same codebase as the desktop shell, served as a website at
+  # app.stratai.live. Reached through the Caddy gateway vhost — port 3000 is NOT
+  # published to the host.
+  #
+  # Why this service holds NO gateway credential
+  # --------------------------------------------
+  # The `/api/*` route handlers exist because a browser cannot call the gateway
+  # directly: infra/caddy/Caddyfile emits no CORS headers on /questdb, /deepquant
+  # or /kite, and they sit behind basic auth. But those handlers only need that
+  # credential when they go OUT through the public gateway. On this network they
+  # talk to the services by hostname, and internal HTTP is unauthenticated by
+  # design — QuestDB's auth is PG-wire only (QDB_PG_USER/QDB_PG_PASSWORD; :9000 is
+  # not published and not protected), which is why deep-quant already reaches it
+  # as plain `http://questdb:9000`.
+  #
+  # So the per-service overrides below are set INSTEAD OF STRATAI_HTTP_BASE_URL,
+  # and QUESTDB_PASSWORD is deliberately absent. A compromised web container
+  # therefore leaks no shared secret — it only has what it can already reach.
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Inlined into the JS bundle at build time (Next.js substitutes
+        # NEXT_PUBLIC_* textually), so these CANNOT be moved to `environment:`.
+        # Changing one requires a rebuild, not a restart.
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://api-web.stratai.live}
+        NEXT_PUBLIC_DASHBOARD_URL: ${NEXT_PUBLIC_DASHBOARD_URL:-https://dashboard.stratai.live}
+        NEXT_PUBLIC_AUTH_SERVICE_URL: ${NEXT_PUBLIC_AUTH_SERVICE_URL:-https://api-web.stratai.live}
+        # wss://, not ws:// — an https:// page cannot open an insecure socket.
+        NEXT_PUBLIC_AGGREGATOR_WS_URL: ${NEXT_PUBLIC_AGGREGATOR_WS_URL:-wss://app-api.stratai.live/ws/aggregator}
+        NEXT_PUBLIC_ALPHA_WS_URL: ${NEXT_PUBLIC_ALPHA_WS_URL:-wss://app-api.stratai.live/ws/alpha}
+        NEXT_PUBLIC_PREDICTIVE_WS_URL: ${NEXT_PUBLIC_PREDICTIVE_WS_URL:-wss://app-api.stratai.live/ws/predictive}
+        NEXT_PUBLIC_INSIGHT_WS_URL: ${NEXT_PUBLIC_INSIGHT_WS_URL:-wss://app-api.stratai.live/ws/insight}
+        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-wss://app-api.stratai.live/ws/aggregator}
+        NEXT_PUBLIC_PROD: ${NEXT_PUBLIC_PROD:-true}
+        NEXT_PUBLIC_LLM_GATEWAY: ${NEXT_PUBLIC_LLM_GATEWAY:-omniroute}
+    container_name: stratai-frontend
+    environment:
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+      # ── Upstreams, by service name on this network ──────────────────────────
+      # `app/api/_gateway.ts` prefers these explicit overrides over
+      # STRATAI_HTTP_BASE_URL, so no request leaves the network and no basic-auth
+      # credential is needed. Deliberately no QUESTDB_PASSWORD here.
+      KITE_API_URL: "http://aggregator:8087/api/kite"
+      QUESTDB_HTTP_URL: "http://questdb:9000"
+      DEEP_QUANT_URL: "http://deep-quant:8086"
+      QUANT_TOOL_SERVER_URL: "http://tool-server:8084"
+      SENTIMENT_HTTP_URL: "http://sentiment:8090"
+      # ── Feature kill switches, resolved per request ─────────────────────────
+      # Unprefixed on purpose: Next only inlines NEXT_PUBLIC_* into the bundle, so
+      # these stay server-side and a change here takes effect on restart with no
+      # rebuild. See frontend/src/app/api/_featureSwitches.ts.
+      #
+      # FEATURE_ENFORCEMENT defaults to TRUE here, unlike everywhere else. Absent
+      # or false means "this is local development", and `computeFeatureAccess`
+      # then returns true for every feature regardless of plan — which on a public
+      # site hands every premium capability to anyone who signs up. The default has
+      # to be the safe one in the file that describes production, because the
+      # failure mode of forgetting it is silent revenue loss, not an error.
+      #
+      # Two distinct things switch on together:
+      #   * the UI begins honouring each user's `accessFlags` from /credit, so a
+      #     free plan sees the locked placeholder + Upgrade CTA;
+      #   * the server-side kill switches below become load-bearing —
+      #     `assertFeatureEnabled` consults them in the request path.
+      #
+      # SCOPE, so this is not mistaken for full entitlement enforcement: the proxy
+      # routes do not resolve the caller's identity (the JWT is minted by the
+      # separate api-web deployment and `/api/v1/internal/entitlement/{user_id}`
+      # does not exist yet), so the SERVER enforces the deployment-wide switch
+      # only. A subscriber-level bypass of the per-user gate remains possible on
+      # the web path; the UI gate is an affordance there, not a boundary. The one
+      # authoritative per-user gate today is agents/deep-quant-loop/entitlements.py.
+      FEATURE_ENFORCEMENT: ${FEATURE_ENFORCEMENT:-true}
+      # Each of these is the deployment-wide kill switch for one capability, ANDed
+      # with the user's plan flag. `true` means "this deployment offers it at all",
+      # NOT "everyone gets it" — flip one to false to disable a feature fleet-wide
+      # (e.g. an LLM provider outage) with a container restart and no rebuild.
+      ENABLE_DEEPSEEK_GLM: ${ENABLE_DEEPSEEK_GLM:-true}
+      ENABLE_MULTI_MODEL: ${ENABLE_MULTI_MODEL:-true}
+      ENABLE_GHOSTLINE: ${ENABLE_GHOSTLINE:-true}
+      ENABLE_FOOTPRINT: ${ENABLE_FOOTPRINT:-true}
+      ENABLE_TOPUP: ${ENABLE_TOPUP:-true}
+      ENABLE_INSTANT_NEWS: ${ENABLE_INSTANT_NEWS:-true}
+      ENABLE_ADVANCE_CHART: ${ENABLE_ADVANCE_CHART:-true}
+    networks: [stratai]
+    # Started, not healthy: the site must still load and show honest degraded
+    # panels when a data service is down. Gating startup on them would turn a
+    # single wedged upstream into a total outage of the app shell.
+    depends_on:
+      aggregator:
+        condition: service_started
+      deep-quant:
+        condition: service_started
+      tool-server:
+        condition: service_started
+    mem_limit: 512m
+    restart: unless-stopped
+
   # ══════════════════════════════════════════════════════════════════════════════
   # Monitoring stack
   # ══════════════════════════════════════════════════════════════════════════════

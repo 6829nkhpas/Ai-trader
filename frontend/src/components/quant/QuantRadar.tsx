@@ -21,6 +21,7 @@ import {
   type LocatedPattern,
   type LocatedStrategy,
 } from '../../utils/radarData';
+import { bridgeListen } from '../../lib/bridge';
 import {
   Radar,
   X,
@@ -37,7 +38,6 @@ import {
   ChevronDown,
 } from 'lucide-react';
 
-const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
 // ── Live alert payload (mirrors the enriched Rust RadarAlert) ─────────────
 interface RadarAlert {
@@ -112,21 +112,19 @@ export default function QuantRadar() {
 
   // ── Live radar-alert subscription (background worker) ────────────
   useEffect(() => {
-    if (!isTauri()) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     (async () => {
       try {
-        const { listen } = await import('@tauri-apps/api/event');
         if (cancelled) return;
-        const u = await listen<RadarAlert>('radar-alert', (event) => {
+        const u = await bridgeListen<RadarAlert>('radar-alert', (event) => {
           if (cancelled) return;
           setLiveAlerts((prev) => [event.payload, ...prev].slice(0, 30));
         });
         if (cancelled) u();
         else unlisten = u;
-      } catch {
-        /* not in Tauri */
+      } catch (err) {
+        console.warn('[Radar] alert listener unavailable:', err);
       }
     })();
     return () => {
@@ -366,7 +364,10 @@ export default function QuantRadar() {
           <div className="flex items-center justify-between px-3 py-1.5 border-t border-border-default bg-surface/60 text-[9px] text-text-muted rounded-b-xl">
             <span className="flex items-center gap-1">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              {isTauri() ? 'Native scan engine' : 'Open in desktop app'}
+              {/* The scan runs in quant-core via tool-server, so this is always
+                  the real engine — it used to read "Open in desktop app" off
+                  isTauri(), which is no longer a distinction that exists. */}
+              Scan engine live
             </span>
             <span className="tabular-nums">{timeframe} timeframe</span>
           </div>

@@ -4,20 +4,20 @@
 // per-symbol scan results (located patterns + strategies), the radar
 // timeframe, and the current on-chart visualization target.
 //
-// Persistence: the symbol list + timeframe are saved to the local SQLite
-// workspace DB (key "__QUANT_RADAR__") and pushed to the Rust background
-// worker's registry so live alerts follow the same symbols.
+// Persistence: the symbol list + timeframe are saved through the bridge — the
+// local SQLite workspace DB (key "__QUANT_RADAR__") on desktop, `localStorage`
+// in a browser — and pushed to the radar registry so live alerts follow the
+// same symbols.
 
 import { create } from 'zustand';
 import type { Timeframe } from '../utils/chartTypes';
+import { bridgeInvoke } from '../lib/bridge';
 import {
   scanRadarSymbol,
   type RadarScan,
   type LocatedPattern,
   type LocatedStrategy,
 } from '../utils/radarData';
-
-const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
 const RADAR_PERSIST_KEY = '__QUANT_RADAR__';
 
@@ -77,13 +77,12 @@ interface RadarStore {
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
 async function persist(symbols: string[], timeframe: Timeframe) {
-  // Debounced SQLite save (mirrors watchlist persistence pattern).
+  // Debounced save (mirrors watchlist persistence pattern): SQLite under Tauri,
+  // localStorage in a browser — both behind `save_workspace`.
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(async () => {
-    if (!isTauri()) return;
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('save_workspace', {
+      await bridgeInvoke('save_workspace', {
         symbol: RADAR_PERSIST_KEY,
         stateJson: JSON.stringify({ symbols, timeframe }),
       });
@@ -93,12 +92,10 @@ async function persist(symbols: string[], timeframe: Timeframe) {
   }, 400);
 }
 
-/** Push the symbol set to the Rust background worker registry. */
+/** Push the symbol set to the radar registry that drives live alerts. */
 async function syncRegistry(symbols: string[]) {
-  if (!isTauri()) return;
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('set_radar_symbols', { symbols });
+    await bridgeInvoke('set_radar_symbols', { symbols });
   } catch (e) {
     console.warn('[Radar] registry sync failed:', e);
   }
@@ -207,18 +204,20 @@ export const useRadarStore = create<RadarStore>((set, get) => ({
     }));
 
     try {
-      // Single native call: fetch candles from QuestDB + locate detections,
-      // all in Rust. No browser fetch.
+      // Single call: fetch candles + locate detections. In-process Rust on
+      // desktop; the equivalent `tool-server` route (same `quant-core` crate)
+      // in a browser.
       const scan = await scanRadarSymbol(sym, tf);
 
       if (scan === null) {
-        // Only happens outside the Tauri desktop app.
+        // Defensive: the scan helper resolves to a report or throws. A null here
+        // means a transport returned no body at all.
         set((state) => ({
           scans: {
             ...state.scans,
             [sym]: {
               symbol: sym, scan: null, loading: false,
-              error: 'Open the desktop app to scan', lastScanned: Date.now(),
+              error: 'Scanner returned no result', lastScanned: Date.now(),
             },
           },
         }));
@@ -295,10 +294,8 @@ export const useRadarStore = create<RadarStore>((set, get) => ({
   toggleViz: () => set((s) => ({ vizEnabled: !s.vizEnabled })),
 
   hydrate: async () => {
-    if (!isTauri()) return;
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const json = await invoke<string>('load_workspace', { symbol: RADAR_PERSIST_KEY });
+      const json = await bridgeInvoke<string>('load_workspace', { symbol: RADAR_PERSIST_KEY });
       if (json && json !== '{}') {
         const parsed = JSON.parse(json) as { symbols?: string[]; timeframe?: Timeframe };
         const symbols = Array.isArray(parsed.symbols) ? parsed.symbols.map(clean) : [];

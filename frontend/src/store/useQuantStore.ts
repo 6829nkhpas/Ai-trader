@@ -7,6 +7,7 @@ import { create } from 'zustand';
 import { useAuthStore } from './useAuthStore';
 import { canRunAgentMode } from './useFeatureStore';
 import { RESEARCH_LOCKED_MESSAGE } from '../lib/sku';
+import { bridgeInvoke, bridgeListen } from '../lib/bridge';
 
 // ── TypeScript interfaces matching Rust backend structs ─────────────────
 
@@ -450,14 +451,6 @@ const clearStreamWatchdog = (runKey: string) => {
 // Thread IDs that have been cancelled. handleStreamEvent ignores events for
 // these threads; the id is dropped on RUN_FINISHED/ERROR so the set stays small.
 const cancelledThreads = new Set<string>();
-
-// ── Tauri invoke helper ─────────────────────────────────────────────────
-
-async function tauriInvoke<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
-  // Dynamic import to avoid SSR issues with Tauri APIs
-  const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<T>(cmd, args);
-}
 
 // ── Execution Plan Parser ───────────────────────────────────────────────
 
@@ -1071,7 +1064,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     set({ isFetchingSentiment: true, sentimentError: null });
 
     try {
-      const payload = await tauriInvoke<SentimentPayload>('fetch_symbol_sentiment', { symbol });
+      const payload = await bridgeInvoke<SentimentPayload>('fetch_symbol_sentiment', { symbol });
       console.log(`[QuantStore] ✔ Sentiment OK symbol=${symbol} score=${payload.score} label=${payload.label}`);
       set((state) => ({
         activeSentiment: payload,
@@ -1126,7 +1119,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     set({ isFetchingSentiment: true, sentimentError: null });
 
     try {
-      const payload = await tauriInvoke<SentimentPayload>('fetch_symbol_sentiment', { symbol });
+      const payload = await bridgeInvoke<SentimentPayload>('fetch_symbol_sentiment', { symbol });
       console.log(`[QuantStore] ✔ Sentiment REFRESHED symbol=${symbol} score=${payload.score}`);
       set((state) => ({
         activeSentiment: payload,
@@ -1248,10 +1241,10 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     console.log(`[QuantStore] → AI context: timeframe=${activeTimeframe} profile=${activeProfile} fnoExpiry=${fnoExpiry || '(nearest)'}`);
 
     try {
-      console.log(`[QuantStore] → invoking 'run_deep_quant_agent' (Tauri IPC)…`);
+      console.log(`[QuantStore] → invoking 'run_deep_quant_agent'…`);
       const tInvoke = (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
-      const threadId = await tauriInvoke<string>(
+      const threadId = await bridgeInvoke<string>(
         'run_deep_quant_agent',
         {
           symbol,
@@ -1509,7 +1502,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     if (threadId) {
       cancelledThreads.add(threadId);
       try {
-        await tauriInvoke('cancel_deep_quant_agent', { threadId });
+        await bridgeInvoke('cancel_deep_quant_agent', { threadId });
       } catch {
         // best-effort
       }
@@ -1620,11 +1613,10 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     };
 
     try {
-      // Mirror the deep-quant-stream listener registration (dynamic import of
-      // the same `@tauri-apps/api/event` `listen`), but on the dedicated
-      // `deep-quant-qa-stream` channel emitted by `ask_trade_question`.
-      const { listen } = await import('@tauri-apps/api/event');
-      unlisten = await listen<StreamEventPayload>('deep-quant-qa-stream', (event) => {
+      // Mirror the deep-quant-stream listener registration, but on the dedicated
+      // `deep-quant-qa-stream` channel emitted by `ask_trade_question` (Tauri IPC
+      // on desktop, the bridge's SSE relay in a browser).
+      unlisten = await bridgeListen<StreamEventPayload>('deep-quant-qa-stream', (event) => {
         const payload = event.payload;
         if (!payload || !payload.event) return;
 
@@ -1697,7 +1689,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       });
 
       // Invoke the proxy command (camelCase args → snake_case Rust params).
-      await tauriInvoke<void>('ask_trade_question', { threadId, question: trimmed, model: MODEL_SELECTION_LOCKED ? null : (get().selectedModel || null), userId: useAuthStore.getState().user?.id ?? null });
+      await bridgeInvoke<void>('ask_trade_question', { threadId, question: trimmed, model: MODEL_SELECTION_LOCKED ? null : (get().selectedModel || null), userId: useAuthStore.getState().user?.id ?? null });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[QuantStore] ✘ askQuestion FAIL: ${message}`);
@@ -1749,7 +1741,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       set((state) => ({ isFetchingPatterns: true, multiTfPatterns: cached?.data ?? state.multiTfPatterns ?? null }));
     }
     try {
-      const data = await tauriInvoke<MultiTfChartPatterns[]>('get_multi_timeframe_chart_patterns', { symbol });
+      const data = await bridgeInvoke<MultiTfChartPatterns[]>('get_multi_timeframe_chart_patterns', { symbol });
       multiTfCache.set(sym, { data, fetchedAt: Date.now() });
       console.log(`[QuantStore] ✔ fetchMultiTfPatterns completed symbol=${sym} (${data.length} timeframes)`);
       if (isActiveSymbol()) set({ multiTfPatterns: data, isFetchingPatterns: false });
@@ -1829,7 +1821,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     }));
 
     // Persist to SQLite asynchronously
-    tauriInvoke('log_completed_trade', {
+    bridgeInvoke('log_completed_trade', {
       id: trade.id,
       symbol: trade.symbol,
       entryPrice: trade.entry_price,

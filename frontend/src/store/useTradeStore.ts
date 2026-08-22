@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { DataRange } from '../utils/chartTypes';
 import { isFnoSymbol } from '../charting/symbolUtils';
+import { bridgeInvoke, bridgeListen } from '../lib/bridge';
 
 export type TradeProfile = 'INTRADAY' | 'SWING' | 'INVESTOR' | 'FNO';
 
@@ -280,8 +281,38 @@ interface TradeStore {
 // which could never be set to true and caused infinite reconnect loops on unmount.
 const wsFlags = { alpha: false, predictive: false, insight: false, orderFlow: false };
 
+/**
+ * Whether `url` can actually be opened from the current page, logging once if not.
+ *
+ * Every `connect*WebSocket` call site falls back to a `ws://127.0.0.1:<port>`
+ * default when its `NEXT_PUBLIC_*_WS_URL` is unset — correct for `next dev` on
+ * localhost, but mixed content on the hosted website. A browser blocks an
+ * insecure socket from an HTTPS page with a `SecurityError`, and because each of
+ * these sockets reconnects on close, the failure repeats forever in the console.
+ *
+ * Refusing to start the loop reports the misconfiguration once and leaves the
+ * dependent panel honestly empty, which is the same outcome the user sees either
+ * way — minus the error spam. Plain-HTTP pages (dev) are unaffected: there, a
+ * `ws://` URL is a legitimate same-origin-class connection.
+ */
+function wsUrlIsUsable(url: string, label: string): boolean {
+  if (typeof window === 'undefined') return false;
+  if (!url) {
+    console.warn(`[useTradeStore] ${label} WS not connected: no URL configured.`);
+    return false;
+  }
+  if (window.location.protocol !== 'https:' || url.startsWith('wss://')) return true;
+  console.warn(
+    `[useTradeStore] ${label} WS not connected: ${url} is insecure (ws://) but this ` +
+      `page is HTTPS, so the browser would block it. Point the matching ` +
+      `NEXT_PUBLIC_*_WS_URL at a wss:// gateway route.`,
+  );
+  return false;
+}
+
 // ── Watchlist Persistence ─────────────────────────────────────────────────
-// Saves the user's watchlist to the local SQLite workspace DB via Tauri IPC.
+// Saves the user's watchlist to the local SQLite workspace DB on desktop, and to
+// `localStorage` in a browser (see `lib/bridge/webAdapters.ts`).
 // Debounced to avoid spamming the DB on rapid reorder operations.
 let persistTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -289,12 +320,11 @@ function persistWatchlist(items: WatchlistItem[]) {
   if (persistTimeout) clearTimeout(persistTimeout);
   persistTimeout = setTimeout(async () => {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       // Strip volatile price data before persisting — only save structure
       const toSave = items.map(({ symbol, token, name, sector }) => ({
         symbol, token, name, sector,
       }));
-      await invoke('save_workspace', {
+      await bridgeInvoke('save_workspace', {
         symbol: '__WATCHLIST__',
         stateJson: JSON.stringify(toSave),
       });
@@ -322,8 +352,7 @@ const DEFAULT_WATCHLIST: WatchlistItem[] = [
  *  If no persisted data exists, seeds with the default NIFTY 50 blue chips. */
 export async function hydrateWatchlist() {
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    const json = await invoke<string>('load_workspace', { symbol: '__WATCHLIST__' });
+    const json = await bridgeInvoke<string>('load_workspace', { symbol: '__WATCHLIST__' });
     if (json && json !== '{}') {
       const items: Array<{ symbol: string; token: number; name: string; sector: string }> = JSON.parse(json);
       if (Array.isArray(items) && items.length > 0) {
@@ -349,22 +378,23 @@ export async function hydrateWatchlist() {
   }
 }
 
-const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-
-/** Hydrate and subscribe to paper trading virtual portfolio state. */
+/** Hydrate and subscribe to paper trading virtual portfolio state.
+ *
+ *  The portfolio is stored per-device in `localStorage` (see the paper-trading
+ *  adapters in `lib/bridge/webAdapters.ts`). That is the same scope the desktop
+ *  shell had — its portfolio lived in Tauri managed state — except it now also
+ *  survives a reload. */
 export async function hydratePaperPortfolio() {
-  if (!isTauri()) return;
   try {
     const store = useTradeStore.getState();
     await store.fetchPaperPortfolio();
 
-    const { listen } = await import('@tauri-apps/api/event');
-    await listen<VirtualPortfolio>('paper_portfolio_update', (event) => {
+    await bridgeListen<VirtualPortfolio>('paper_portfolio_update', (event) => {
       console.log('[TradeStore] Paper portfolio update event received:', event.payload);
       useTradeStore.setState({ paperPortfolio: event.payload });
     });
 
-    await listen<{ role: string; content: string }>('agent_message', (event) => {
+    await bridgeListen<{ role: string; content: string }>('agent_message', (event) => {
       console.log('[TradeStore] agent_message event received:', event.payload);
       const currentLog = useTradeStore.getState().agentChatLog;
       useTradeStore.setState({
@@ -372,7 +402,7 @@ export async function hydratePaperPortfolio() {
       });
     });
 
-    await listen<any>('final_analysis_ready', async (event) => {
+    await bridgeListen<any>('final_analysis_ready', async (event) => {
       console.log('[TradeStore] final_analysis_ready event received:', event.payload);
       useTradeStore.setState({ finalTradePlan: event.payload });
       // Bug 7 fix: Removed premature `isAnalyzing: false` reset here.
@@ -465,10 +495,8 @@ export const useTradeStore = create<TradeStore>((set) => {
     clearAgentChatLog: () => set({ agentChatLog: [], finalTradePlan: null }),
 
     fetchPaperPortfolio: async () => {
-      if (!isTauri()) return;
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        const portfolio = await invoke<VirtualPortfolio>('get_paper_portfolio');
+        const portfolio = await bridgeInvoke<VirtualPortfolio>('get_paper_portfolio');
         set({ paperPortfolio: portfolio });
       } catch (e) {
         console.warn('[TradeStore] Failed to fetch paper portfolio:', e);
@@ -637,6 +665,7 @@ export const useTradeStore = create<TradeStore>((set) => {
     },
 
     connectAlphaWebSocket: (url: string) => {
+      if (!wsUrlIsUsable(url, 'Alpha OHLC')) return;
       // BUG-5: wsFlags.alpha replaces `const destroyed = false` which could
       // never be set to true — causing infinite reconnect loops on app unmount.
       wsFlags.alpha = false;
@@ -703,6 +732,7 @@ export const useTradeStore = create<TradeStore>((set) => {
     },
 
     connectPredictiveWebSocket: (url: string) => {
+      if (!wsUrlIsUsable(url, 'Predictive')) return;
       wsFlags.predictive = false; // BUG-5: mutable flag
 
       const connect = () => {
@@ -739,6 +769,7 @@ export const useTradeStore = create<TradeStore>((set) => {
     },
 
     connectInsightWebSocket: (url: string) => {
+      if (!wsUrlIsUsable(url, 'Insight')) return;
       wsFlags.insight = false; // BUG-5: mutable flag
 
       const connect = () => {
@@ -806,6 +837,7 @@ export const useTradeStore = create<TradeStore>((set) => {
     },
 
     connectOrderFlowWebSocket: (url: string) => {
+      if (!wsUrlIsUsable(url, 'Order Flow')) return;
       wsFlags.orderFlow = false;
 
       const connect = () => {
@@ -924,6 +956,11 @@ export const useTradeStore = create<TradeStore>((set) => {
         process.env.NEXT_PUBLIC_AGGREGATOR_WS_URL ||
         process.env.NEXT_PUBLIC_WS_URL ||
         'ws://127.0.0.1:8080';
+
+      if (!wsUrlIsUsable(wsUrl, 'Decision')) {
+        set({ wsStatus: 'disconnected', connectionStatus: 'DISCONNECTED' });
+        return;
+      }
 
       const connect = () => {
         set({ wsStatus: 'connecting', connectionStatus: 'CONNECTING' });

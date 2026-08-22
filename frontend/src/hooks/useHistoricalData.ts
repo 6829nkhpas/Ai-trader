@@ -15,7 +15,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useTradeStore, type OhlcCandle } from '../store/useTradeStore';
-import { kiteFetch } from '../lib/tauriFetch';
+import { kiteFetch } from '../lib/kiteFetch';
 
 export interface HistoricalCandle {
   /** Seconds since Unix epoch (lightweight-charts format) */
@@ -42,51 +42,9 @@ interface UseHistoricalDataReturn {
   refetch: () => void;
 }
 
-// Check if running in Tauri environment
-const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
 // URL for QuestDB REST API (browser-only path via Next.js proxy).
 const QUESTDB_BROWSER_URL = '/questdb/exec';
-
-/**
- * Parses a bincode-serialized byte array of `BinaryCandle` structs into an array of `HistoricalCandle`.
- * Each `BinaryCandle` in Rust is: ts (i64), open (f64), high (f64), low (f64), close (f64), volume (i64) = 48 bytes.
- * Note: bincode serialization of a Vec<T> includes an 8-byte length prefix (u64).
- */
-function parseBincodeCandles(buffer: Uint8Array): HistoricalCandle[] {
-  const candles: HistoricalCandle[] = [];
-  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-
-  // Read the 8-byte length prefix (number of items)
-  const length = Number(view.getBigUint64(0, true));
-
-  let offset = 8;
-  for (let i = 0; i < length; i++) {
-    // bincode serializes in little-endian by default
-    const tsMicro = Number(view.getBigInt64(offset, true));
-    const open = view.getFloat64(offset + 8, true);
-    const high = view.getFloat64(offset + 16, true);
-    const low = view.getFloat64(offset + 24, true);
-    const close = view.getFloat64(offset + 32, true);
-    const volume = Number(view.getBigInt64(offset + 40, true));
-
-    // Convert microseconds to seconds for lightweight-charts
-    const timeSec = Math.floor(tsMicro / 1000000);
-
-    candles.push({
-      time: timeSec,
-      open,
-      high,
-      low,
-      close,
-      volume,
-    });
-
-    offset += 48; // Advance by the size of one BinaryCandle struct
-  }
-
-  return candles;
-}
 
 /**
  * Parse QuestDB JSON response rows into HistoricalCandle[].
@@ -117,59 +75,8 @@ function getQueries(symbol: string): string[] {
 }
 
 /**
- * Wait for QuestDB PgPool to be registered as Tauri managed state.
- * Polls `get_pool_status` every 500ms for up to `maxWaitMs`.
- */
-async function waitForPool(tauri: any, maxWaitMs = 8000): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < maxWaitMs) {
-    try {
-      const ready: boolean = await tauri.invoke('get_pool_status');
-      if (ready) return true;
-    } catch {
-      // Command itself might fail if Tauri is still initializing
-    }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  return false;
-}
-
-/**
- * Fetch historical data from QuestDB via the `fetch_questdb` IPC command.
- * This proxies the HTTP request through Rust, completely bypassing CORS.
- * Used as the Tauri fallback when the primary bincode IPC path fails.
- */
-async function fetchViaIpcProxy(
-  tauri: any,
-  symbol: string
-): Promise<HistoricalCandle[]> {
-  const queries = getQueries(symbol);
-
-  for (const query of queries) {
-    try {
-      const rawJson: string = await tauri.invoke('fetch_questdb', { query });
-      const data: QuestDBResponse = JSON.parse(rawJson);
-      if (data.error || !data.dataset || data.dataset.length === 0) continue;
-
-      const parsed = parseQuestDBRows(data.dataset);
-      console.log(
-        `[Historical] ${symbol}: ${parsed.length} candles loaded via Tauri IPC proxy (fetch_questdb)`
-      );
-      return parsed;
-    } catch (err) {
-      console.warn('[Historical] IPC proxy query attempt failed:', err);
-    }
-  }
-
-  console.warn(
-    `[Historical] All IPC proxy queries failed for ${symbol} — no historical data available.`
-  );
-  return [];
-}
-
-/**
- * Fetch historical data from QuestDB via browser fetch() + Next.js proxy.
- * Only used in non-Tauri (browser) mode where /questdb/* proxy is available.
+ * Fetch historical data from QuestDB through the same-origin `/questdb/*` route
+ * handler, which holds the gateway credential server-side.
  */
 async function fetchFromQuestDB(symbol: string): Promise<HistoricalCandle[]> {
   const queries = getQueries(symbol);
@@ -417,116 +324,9 @@ export function useHistoricalData(
     setCandles([]);
 
     try {
-      if (isTauri()) {
-        // ── TAURI PATH ──────────────────────────────────────────────────
-        // Dynamic import prevents breaking web-only builds where
-        // @tauri-apps/api/core may not be installed.
-        const tauri = await import('@tauri-apps/api/core');
-
-        // Step 1: Wait for the QuestDB PgPool to be registered as managed
-        // state. The pool is initialized asynchronously in lib.rs — calling
-        // get_historical_view before it's ready causes "state not managed".
-        const poolReady = await waitForPool(tauri);
-
-        if (poolReady) {
-          // Step 2a: Try the primary bincode IPC path (zero-latency).
-          // Pass the active UI timeframe so the Rust side picks the right
-          // SAMPLE BY interval (1m / 5m / 15m / 1h / 1d / 7d).
-          try {
-            const response = await tauri.invoke<number[] | Uint8Array>(
-              'get_historical_view',
-              { symbol, timeframe: effectiveTimeframe }
-            );
-            const binaryBuffer =
-              response instanceof Uint8Array ? response : new Uint8Array(response);
-
-            // ── DIAGNOSTIC TRACER — IPC ingestion (Rust → React) ──
-            // Verifies the raw payload landed intact across the Tauri bridge.
-            // Compare this byte count against `🛑 [RUST EXIT] Bincode payload
-            // size:` in the Rust console — they MUST match.
-            console.log(
-              `🔥 [REACT INGEST] Received Payload Size: ${binaryBuffer?.length ?? 0} bytes ` +
-              `(symbol=${symbol}, tf=${effectiveTimeframe})`
-            );
-
-            const parsed = parseBincodeCandles(binaryBuffer);
-
-            // ── DIAGNOSTIC TRACER — Bincode → JS object boundary ──
-            // Verifies parseBincodeCandles produced a non-empty, well-formed
-            // array. If this prints `Parsed 0 candles` while the byte count
-            // above is non-zero, the parser's offset arithmetic is wrong.
-            console.log(`🔥 [REACT PARSE] Parsed ${parsed.length} candles.`);
-            if (parsed.length > 0) {
-              console.log("🔥 [REACT PARSE] Sample First Candle:", JSON.stringify(parsed[0]));
-              console.log(
-                "🔥 [REACT PARSE] Sample Last  Candle:",
-                JSON.stringify(parsed[parsed.length - 1])
-              );
-            }
-
-            console.log(
-              `[Historical Tauri IPC] ${symbol} (tf=${effectiveTimeframe}): ${parsed.length} candles loaded via zero-latency buffer`
-            );
-            if (parsed.length > 0) {
-              setCandles(parsed);
-              // Populate cache for instant re-visits.
-              // bincode timestamps are in microseconds → convert to milliseconds.
-              const asOhlc: OhlcCandle[] = parsed.map((c) => ({
-                symbol: symbol.toUpperCase(),
-                start_timestamp_ms: c.time * 1000, // seconds → milliseconds
-                open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
-              }));
-              useTradeStore.getState().setHistoricalCache(cacheKey, asOhlc);
-              return; // Success — done
-            }
-            // IPC returned 0 candles — fall through to HTTP proxy
-          } catch (ipcErr) {
-            console.warn(
-              `[Historical] Tauri IPC 'get_historical_view' failed for ${symbol} (tf=${effectiveTimeframe}):`,
-              ipcErr,
-              '→ falling back to IPC proxy'
-            );
-          }
-        } else {
-          console.warn(
-            `[Historical] QuestDB pool not ready after timeout — skipping bincode path for ${symbol}`
-          );
-        }
-
-        // Step 2b: Fallback — use fetch_questdb IPC command which proxies
-        // the HTTP request through Rust, bypassing CORS entirely.
-        // This works even when the PgPool isn't ready (uses HTTP, not PG).
-        const parsed = await fetchViaIpcProxy(tauri, symbol);
-        if (parsed.length > 0) {
-          setCandles(parsed);
-          // Populate cache
-          const asOhlc: OhlcCandle[] = parsed.map((c) => ({
-            symbol: symbol.toUpperCase(),
-            start_timestamp_ms: c.time * 1000, // seconds → ms
-            open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
-          }));
-          useTradeStore.getState().setHistoricalCache(cacheKey, asOhlc);
-          return;
-        }
-
-        // Step 2c: Final fallback — fetch from Kite Historical API directly.
-        // This handles symbols that were never ingested into QuestDB.
-        const kiteCandles = await fetchFromKiteHistorical(symbol, rangeDays, kiteInterval);
-        if (kiteCandles.length > 0) {
-          // Populate cache
-          const asOhlc: OhlcCandle[] = kiteCandles.map((c) => ({
-            symbol: symbol.toUpperCase(),
-            start_timestamp_ms: c.time * 1000, // seconds → ms
-            open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
-          }));
-          useTradeStore.getState().setHistoricalCache(cacheKey, asOhlc);
-        }
-        setCandles(kiteCandles);
-        return;
-      }
-
-      // ── BROWSER PATH ────────────────────────────────────────────────
-      // Uses the Next.js proxy rewrite: /questdb/* → localhost:9000
+      // QuestDB first (the ingested cache), then Kite for anything that was
+      // never ingested. `/questdb/*` is rewritten to the same-origin route
+      // handler, which is what keeps the gateway credential server-side.
       let parsed = await fetchFromQuestDB(symbol);
 
       // If QuestDB has no data for this symbol, fall back to the Kite

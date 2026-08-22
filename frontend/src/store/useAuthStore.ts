@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import { API_BASE_URL, API_V1_PREFIX } from '../lib/env';
-import { tauriFetch } from '../lib/tauriFetch';
 import { usersApi } from '../lib/api/endpoints';
 import { REFRESH_TOKEN_KEY } from '../lib/api/client';
+import { bridgeInvoke, bridgeListen } from '../lib/bridge';
 import { useFeatureStore } from './useFeatureStore';
 
 export interface AuthUser {
@@ -68,7 +68,7 @@ export const useAuthStore = create<AuthState>((set, get) => {
     isBrokerConnected: true,
 
     login: async () => {
-      const response = await tauriFetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/desktop/session`, {
+      const response = await fetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/desktop/session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -81,8 +81,7 @@ export const useAuthStore = create<AuthState>((set, get) => {
 
       let browserOpened = false;
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        await invoke('open_browser', { url: loginUrl });
+        await bridgeInvoke('open_browser', { url: loginUrl });
         browserOpened = true;
       } catch (err) {
         console.error('[Auth Store] open_browser invoke failed:', err);
@@ -96,7 +95,7 @@ export const useAuthStore = create<AuthState>((set, get) => {
       }
 
       const exchangeToken = async (loginToken: string) => {
-        const exchangeRes = await tauriFetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/desktop/exchange`, {
+        const exchangeRes = await fetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/desktop/exchange`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ token: loginToken }),
@@ -123,16 +122,18 @@ export const useAuthStore = create<AuthState>((set, get) => {
 
       let unlistenSuccess: (() => void) | undefined;
       const tauriPromise = new Promise<string>((resolve) => {
-        import('@tauri-apps/api/event').then(async ({ listen }) => {
-          try {
-            const unlisten = await listen<{ token: string }>('desktop-login-success', (event) => {
-              resolve(event.payload.token);
-            });
+        // Desktop wins the race via the `strat://` deep-link IPC event; in a
+        // browser this listener simply never fires and the poll below completes
+        // the login. Both paths resolve the same `Promise.race`.
+        bridgeListen<{ token: string }>('desktop-login-success', (event) => {
+          resolve(event.payload.token);
+        })
+          .then((unlisten) => {
             unlistenSuccess = unlisten;
-          } catch {
-            // Not in Tauri environment or listener failed — polling will handle it.
-          }
-        });
+          })
+          .catch(() => {
+            // Not in Tauri, or the listener failed — polling will handle it.
+          });
       });
 
       let isCompleted = false;
@@ -143,7 +144,7 @@ export const useAuthStore = create<AuthState>((set, get) => {
             return;
           }
           try {
-            const statusRes = await tauriFetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/desktop/session/${sessionId}`);
+            const statusRes = await fetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/desktop/session/${sessionId}`);
             if (!statusRes.ok) return;
             const statusData = await statusRes.json();
             const { status, token } = statusData.data;

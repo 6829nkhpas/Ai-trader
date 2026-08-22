@@ -12,9 +12,9 @@
  */
 
 import { useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { useTradeStore } from '../../store/useTradeStore';
 import { getStrikeFromSymbol, getOptionTypeFromSymbol } from './symbolParser';
+import { bridgeInvoke } from '../../lib/bridge';
 
 interface ResolvedContract {
   tradingsymbol: string;
@@ -41,13 +41,13 @@ export function useFnoExpiryChange(): (expiry: string) => void {
 
       const resolve =
         strike != null && side
-          ? invoke<ResolvedContract | null>('fno_resolve_option_contract', {
+          ? bridgeInvoke<ResolvedContract | null>('fno_resolve_option_contract', {
               underlying: fnoUnderlying,
               strike,
               optionType: side,
               expiry: expiry || null,
             })
-          : invoke<ResolvedContract | null>('fno_resolve_nearest_contract', {
+          : bridgeInvoke<ResolvedContract | null>('fno_resolve_nearest_contract', {
               underlying: fnoUnderlying,
               expiry: expiry || null,
             });

@@ -26,11 +26,12 @@ use axum::{
     routing::post,
     Json, Router,
 };
-use log::{error, info};
+use log::{error, info, warn};
 use quant_core::{
     chart_patterns::{ChartPattern, ChartPatternEngine},
     patterns::Candle,
     predictive::calculate_dual_projection,
+    scanner::{self, RadarScan, TimedCandle},
     vwepr::OhlcCandle,
     Action, AiExecutionPlan, ConsensusEngine, ExecutionLevels, IndicatorState, ValidatorOutcome,
 };
@@ -285,6 +286,12 @@ fn build_router(state: ServerState) -> Router {
         .route("/tools/get_multi_tf_trend", post(get_multi_tf_trend_handler))
         .route("/tools/declare_trade", post(declare_trade))
         .route("/tools/get_chart_patterns", post(get_chart_patterns_handler))
+        .route(
+            "/tools/get_multi_tf_chart_patterns",
+            post(get_multi_tf_chart_patterns_handler),
+        )
+        .route("/tools/scan_radar", post(scan_radar_handler))
+        .route("/tools/scan_in_memory", post(scan_in_memory_handler))
         .route("/tools/get_support_resistance", post(get_support_resistance))
         .route("/tools/get_prediction", post(get_prediction))
         .route("/tools/get_news_context", post(get_news_context))
@@ -406,6 +413,253 @@ async fn get_chart_patterns_handler(
         }),
     )
         .into_response()
+}
+
+// ── get_multi_tf_chart_patterns ───────────────────────────────────────────────
+//
+// The web counterpart of the desktop `get_multi_timeframe_chart_patterns` command
+// (`frontend/src-tauri/src/commands/deep_quant.rs`). Fanning the existing
+// `/tools/get_chart_patterns` route over the timeframe set from the browser would
+// NOT be equivalent: that route calls `ChartPatternEngine::analyze` (completed
+// patterns) while this panel wants `analyze_forming` (patterns still building,
+// carrying `is_forming` / `formation_progress`). Those are different detectors, so
+// the fan-out would have quietly answered a different question.
+//
+// A failed timeframe yields an empty pattern list for that timeframe rather than
+// failing the request, matching the desktop command: the panel compares
+// timeframes, and one unavailable series should not blank the other six.
+
+/// The timeframes the multi-timeframe panel renders, in display order. Kept
+/// identical to the desktop command's list.
+const MULTI_TF_PATTERN_TIMEFRAMES: [&str; 7] = ["1m", "5m", "10m", "15m", "1h", "4h", "1d"];
+
+#[derive(serde::Deserialize)]
+struct GetMultiTfChartPatternsRequest {
+    symbol: String,
+    limit: Option<i64>,
+}
+
+#[derive(serde::Serialize)]
+struct MultiTfChartPatterns {
+    timeframe: String,
+    patterns: Vec<EnrichedChartPattern>,
+}
+
+/// A `ChartPattern` plus the chart coordinates the overlay needs.
+///
+/// `ChartPattern` locates itself by candle *index*, which is meaningless to a
+/// caller holding its own bars. These are the same four fields the desktop command
+/// derives from the timestamped candles: the pattern's start/end times in SECONDS
+/// (TradingView's unit) and the high/low envelope over its span.
+#[derive(serde::Serialize)]
+struct EnrichedChartPattern {
+    #[serde(flatten)]
+    pattern: ChartPattern,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    time: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start_time: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    high: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    low: Option<f64>,
+}
+
+/// Attach chart coordinates to one pattern, given the bars it was detected over.
+///
+/// Returns the pattern with all four fields `None` when either index is out of
+/// range — an honest "cannot place this on a chart" rather than a fabricated
+/// coordinate. Pure, so the index arithmetic is testable without a database.
+fn enrich_pattern(
+    pattern: ChartPattern,
+    timed: &[(i64, quant_core::patterns::Candle)],
+) -> EnrichedChartPattern {
+    let (start_idx, end_idx) = (pattern.start_idx, pattern.end_idx);
+    if start_idx >= timed.len() || end_idx >= timed.len() || start_idx > end_idx {
+        return EnrichedChartPattern {
+            pattern,
+            time: None,
+            start_time: None,
+            high: None,
+            low: None,
+        };
+    }
+
+    let mut high = f64::MIN;
+    let mut low = f64::MAX;
+    for (_, candle) in &timed[start_idx..=end_idx] {
+        if candle.high > high {
+            high = candle.high;
+        }
+        if candle.low < low {
+            low = candle.low;
+        }
+    }
+
+    EnrichedChartPattern {
+        // ms → s: the frontend feeds these straight to TradingView, which takes
+        // seconds. The desktop command divides here for the same reason.
+        start_time: Some(timed[start_idx].0 / 1000),
+        time: Some(timed[end_idx].0 / 1000),
+        high: Some(high),
+        low: Some(low),
+        pattern,
+    }
+}
+
+async fn get_multi_tf_chart_patterns_handler(
+    State(state): State<ServerState>,
+    Json(payload): Json<GetMultiTfChartPatternsRequest>,
+) -> Response {
+    let limit = payload.limit.unwrap_or(200);
+
+    let mut out: Vec<MultiTfChartPatterns> = Vec::with_capacity(MULTI_TF_PATTERN_TIMEFRAMES.len());
+    for tf in MULTI_TF_PATTERN_TIMEFRAMES {
+        let patterns = match load_candles_with_ts(&state.pool, &payload.symbol, tf, limit, 30).await
+        {
+            Ok(timed) => {
+                let candles: Vec<quant_core::patterns::Candle> =
+                    timed.iter().map(|(_, c)| c.clone()).collect();
+                ChartPatternEngine::analyze_forming(&candles, 30)
+                    .into_iter()
+                    .map(|p| enrich_pattern(p, &timed))
+                    .collect()
+            }
+            Err(e) => {
+                warn!(
+                    "[tool-server] get_multi_tf_chart_patterns: {} / {} unavailable: {}",
+                    payload.symbol, tf, e
+                );
+                Vec::new()
+            }
+        };
+        out.push(MultiTfChartPatterns {
+            timeframe: tf.to_string(),
+            patterns,
+        });
+    }
+
+    (StatusCode::OK, Json(out)).into_response()
+}
+
+// ── scan_radar / scan_in_memory ───────────────────────────────────────────────
+//
+// The web counterparts of the desktop `scan_radar_symbol` / `scan_quant_radar`
+// commands (`frontend/src-tauri/src/commands/radar.rs`). Both are thin wrappers
+// over `quant_core::scanner::scan`, which is the shared crate both binaries
+// already depend on — so the located pattern/strategy math is called here, never
+// reimplemented. A TS port would have forked property-tested detection logic and
+// let the two surfaces disagree about what the same chart shows.
+
+/// Candles pulled per scan, and the floor below which a scan is not attempted.
+/// Both mirror `commands/radar.rs`.
+const SCAN_CANDLE_LIMIT: i64 = 300;
+const MIN_SCAN_CANDLES: usize = 5;
+
+#[derive(serde::Deserialize)]
+struct ScanRadarRequest {
+    symbol: String,
+    timeframe: String,
+    lookback: Option<usize>,
+}
+
+#[derive(serde::Deserialize)]
+struct ScanInMemoryRequest {
+    symbol: String,
+    timeframe: String,
+    candles: Vec<TimedCandle>,
+    lookback: Option<usize>,
+}
+
+/// A scan with every reading at its neutral value.
+///
+/// Returned when there are too few candles to measure anything. The alternative —
+/// running the scanner on 3 bars — would emit a trend score and momentum state
+/// derived from noise, which reads to the user as a real signal. Mirrors
+/// `commands/radar.rs::empty_scan`.
+fn empty_scan(
+    symbol: String,
+    timeframe: String,
+    candle_count: usize,
+    last_close: f64,
+    last_time: i64,
+) -> RadarScan {
+    RadarScan {
+        symbol,
+        timeframe,
+        candle_count,
+        last_close,
+        last_time,
+        trend_score: 0,
+        momentum_state: "NEUTRAL".into(),
+        volatility_state: "NORMAL".into(),
+        volume_flow_state: "NEUTRAL".into(),
+        patterns: vec![],
+        strategies: vec![],
+    }
+}
+
+async fn scan_radar_handler(
+    State(state): State<ServerState>,
+    Json(payload): Json<ScanRadarRequest>,
+) -> Response {
+    // Floor of 0, as on desktop: return whatever candles exist. The loader still
+    // errors when every source is empty, and the scanner degrades its consensus
+    // summary gracefully — so patterns still surface on a freshly-cached timeframe.
+    let timed = match load_candles_with_ts(
+        &state.pool,
+        &payload.symbol,
+        &payload.timeframe,
+        SCAN_CANDLE_LIMIT,
+        0,
+    )
+    .await
+    {
+        Ok(t) => t,
+        Err(e) => return candle_load_error_response(e, "scan_radar", &state.metrics),
+    };
+
+    let candles: Vec<TimedCandle> = timed
+        .into_iter()
+        .map(|(ts_millis, c)| TimedCandle {
+            // ms → s (lightweight-charts convention), as in commands/radar.rs.
+            time: ts_millis / 1000,
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+            volume: c.volume,
+        })
+        .collect();
+
+    let lookback = payload.lookback.unwrap_or(scanner::DEFAULT_LOOKBACK);
+    let scan = scanner::scan(&payload.symbol, &candles, &payload.timeframe, lookback);
+    (StatusCode::OK, Json(scan)).into_response()
+}
+
+async fn scan_in_memory_handler(Json(payload): Json<ScanInMemoryRequest>) -> Response {
+    // Pure CPU over caller-supplied candles — no database touch, so no pool and no
+    // load-error path. Used for a zero-latency rescan of the bars already charted.
+    if payload.candles.len() < MIN_SCAN_CANDLES {
+        let last = payload.candles.last();
+        let scan = empty_scan(
+            payload.symbol,
+            payload.timeframe,
+            payload.candles.len(),
+            last.map(|c| c.close).unwrap_or(0.0),
+            last.map(|c| c.time).unwrap_or(0),
+        );
+        return (StatusCode::OK, Json(scan)).into_response();
+    }
+
+    let lookback = payload.lookback.unwrap_or(scanner::DEFAULT_LOOKBACK);
+    let scan = scanner::scan(
+        &payload.symbol,
+        &payload.candles,
+        &payload.timeframe,
+        lookback,
+    );
+    (StatusCode::OK, Json(scan)).into_response()
 }
 
 // ── get_multi_tf_trend ────────────────────────────────────────────────────────

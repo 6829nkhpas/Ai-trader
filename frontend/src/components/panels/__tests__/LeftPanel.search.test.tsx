@@ -29,17 +29,20 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 
-// ── Controllable Tauri `invoke` boundary ─────────────────────────────────────
+// ── Controllable `bridgeInvoke` boundary ─────────────────────────────────────
 // `search_instruments` returns whatever the current test installs (or rejects);
 // `load_workspace` (used by hydrateWatchlist) returns an empty workspace so no
 // default symbols are seeded; everything else resolves to undefined.
+//
+// Mocked at `lib/bridge` — the transport chokepoint the panel actually calls —
+// so the assertions hold for both the desktop IPC and the website HTTP path.
 const ipc = vi.hoisted(() => ({
   search: async (_query: string): Promise<unknown[]> => [],
 }));
 
-vi.mock('@tauri-apps/api/core', () => ({
-  __esModule: true,
-  invoke: vi.fn(async (cmd: string, args?: { query?: string }) => {
+vi.mock('../../../lib/bridge', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../lib/bridge')>()),
+  bridgeInvoke: vi.fn(async (cmd: string, args?: { query?: string }) => {
     if (cmd === 'search_instruments') return ipc.search(args?.query ?? '');
     // Return a controlled, non-colliding persisted watchlist so hydrateWatchlist
     // does NOT seed the default NIFTY-50 blue chips (which include RELIANCE and

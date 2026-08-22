@@ -44,7 +44,7 @@ const counts = vi.hoisted(() => ({
   },
 }));
 
-// Tauri IPC seams. The factories delegate to the current mock fns, which are
+// Transport seams. The factories delegate to the current mock fns, which are
 // (re)assigned per test in `beforeEach`, so behaviour is configurable while the
 // module mock binding stays stable.
 const tauri = vi.hoisted(() => ({
@@ -54,13 +54,16 @@ const tauri = vi.hoisted(() => ({
   snapshotHandler: { current: null as null | ((e: { payload: unknown }) => void) },
 }));
 
-// ── Mock the Tauri IPC modules ───────────────────────────────────────────────
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...args: any[]) => tauri.invokeMock(...args),
-}));
-
-vi.mock('@tauri-apps/api/event', () => ({
-  listen: (...args: any[]) => tauri.listenMock(...args),
+// ── Mock the transport bridge ────────────────────────────────────────────────
+// `FnoSection` calls `bridgeInvoke` / `bridgeListen`, which resolve to Tauri IPC
+// on desktop and HTTP + the local event bus in a browser. Mocking the bridge
+// (not `@tauri-apps/api/core`) asserts the commands the component issues,
+// independent of which transport carries them. `importOriginal` preserves the
+// real `UnlistenFn` type module and `isTauri`.
+vi.mock('../../../lib/bridge', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../lib/bridge')>()),
+  bridgeInvoke: (...args: any[]) => tauri.invokeMock(...args),
+  bridgeListen: (...args: any[]) => tauri.listenMock(...args),
 }));
 
 // ── Mock FnoChartPanel + the unavailable panel ───────────────────────────

@@ -7,12 +7,14 @@
 // indicators, the drawings (including locked ones), and the oscillator pane
 // layout. Serialization is a pair of PURE functions so they can be round-trip
 // property-tested (Property 33) and default-tested (Property 34) without any
-// I/O. The persistence side (debounced save / restore with a Tauri IPC bridge
-// and an in-memory fallback outside Tauri) is layered on top of those pure
+// I/O. The persistence side (debounced save / restore through the transport
+// bridge — SQLite on desktop, `localStorage` on the web — with an in-memory
+// fallback when the backend rejects a write) is layered on top of those pure
 // functions (Requirements 11.1, 11.2, 11.3, 11.6).
 
 import { CHART_TYPES, type ChartType, type ChartTypeParams } from './engines';
 import type { PaneLayout } from './paneManager';
+import { bridgeInvoke } from '../lib/bridge';
 // Type-only imports keep this module free of a runtime cycle with the store
 // (the store imports the runtime persistence helpers from here).
 import type { ActiveIndicator, Drawing } from '../store/useChartUIStore';
@@ -129,30 +131,26 @@ export function deserializeWorkspace(raw: unknown): WorkspaceState {
   };
 }
 
-// ── Tauri IPC bridge ──────────────────────────────────────────────────
-// Lazy-imported so the module never crashes in browser-only (non-Tauri) dev
-// mode, where `@tauri-apps/api/core` is unavailable. When the bridge is null we
-// fall back to an in-memory session store (Requirement 11.6).
+// ── Persistence backend ───────────────────────────────────────────────
+// Routed through `lib/bridge`, which resolves to the Tauri `save_workspace` /
+// `load_workspace` commands (SQLite) on desktop and to `localStorage` in a
+// browser. A browser therefore now KEEPS its workspace across reloads; the
+// in-memory store below remains the fallback for when the backend rejects a
+// write — quota exceeded, private mode, storage disabled (Requirement 11.6).
 
-type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
-
-let cachedInvoke: Invoke | null = null;
-let invokeResolved = false;
-
-async function getInvoke(): Promise<Invoke | null> {
-  if (invokeResolved) return cachedInvoke;
-  try {
-    const mod = await import('@tauri-apps/api/core');
-    cachedInvoke = mod.invoke as Invoke;
-  } catch {
-    cachedInvoke = null;
-  }
-  invokeResolved = true;
-  return cachedInvoke;
-}
-
-/** In-memory, per-symbol fallback used when no Tauri backend is present. */
+/** In-memory, per-symbol fallback used when the persistence backend fails. */
 const memoryStore = new Map<string, WorkspaceState>();
+
+/**
+ * True when a loaded blob carries no stored workspace.
+ *
+ * `db::load_workspace` maps `QueryReturnedNoRows` to `Ok("{}")` and the browser
+ * adapter mirrors that, so `"{}"` is a MISS, not a stored empty workspace. It
+ * must not clobber state this session already holds in memory.
+ */
+function isEmptyBlob(raw: unknown): boolean {
+  return typeof raw !== 'string' || raw.trim().length === 0 || raw.trim() === '{}';
+}
 
 /** Default debounce window for persistence writes (Requirement 11.6). */
 export const SAVE_DEBOUNCE_MS = 500;
@@ -162,23 +160,21 @@ const pendingTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingState = new Map<string, WorkspaceState>();
 
 /**
- * Persist a workspace immediately (no debounce). Writes through the Tauri IPC
- * when available, otherwise records it in the in-memory session store. The
- * in-memory copy is always updated first so a failed/absent backend still
- * retains the latest state for the session (Requirements 11.4, 11.6).
+ * Persist a workspace immediately (no debounce). Writes through the persistence
+ * backend (SQLite on desktop, `localStorage` on the web); the in-memory copy is
+ * always updated first so a failed backend still retains the latest state for
+ * the session (Requirements 11.4, 11.6).
  *
- * @returns `true` when the persistent backend accepted the write, `false` when
- *          it fell back to memory or the write failed (caller may retry).
+ * @returns `true` when the backend accepted the write, `false` when the write
+ *          failed and only the in-memory copy holds it (caller may retry).
  */
 export async function flushWorkspace(
   symbol: string,
   state: WorkspaceState,
 ): Promise<boolean> {
   memoryStore.set(symbol, state);
-  const invoke = await getInvoke();
-  if (!invoke) return false; // Not in Tauri — in-memory only.
   try {
-    await invoke('save_workspace', { symbol, stateJson: serializeWorkspace(state) });
+    await bridgeInvoke('save_workspace', { symbol, stateJson: serializeWorkspace(state) });
     return true;
   } catch {
     // Persist failure: in-memory state is retained; caller retries next change.
@@ -210,24 +206,25 @@ export function saveWorkspace(symbol: string, state: WorkspaceState): void {
 }
 
 /**
- * Restore a symbol's workspace. Reads from the Tauri IPC when available and
- * deserializes the blob; outside Tauri it returns the in-memory session copy.
- * Any malformed blob or load failure resolves to {@link DEFAULT_WORKSPACE}
+ * Restore a symbol's workspace from the persistence backend, falling back to
+ * the in-memory session copy when the backend has no row for this symbol or the
+ * read fails. Any malformed blob resolves to {@link DEFAULT_WORKSPACE}
  * (Requirements 1.4, 11.3, 11.4).
  */
 export async function loadWorkspace(symbol: string): Promise<WorkspaceState> {
-  const invoke = await getInvoke();
-  if (!invoke) {
-    return memoryStore.get(symbol) ?? freshDefault();
-  }
   try {
-    const raw = await invoke('load_workspace', { symbol });
+    const raw = await bridgeInvoke('load_workspace', { symbol });
+    if (isEmptyBlob(raw)) {
+      // Backend miss — prefer state this session already holds over defaults,
+      // so drawings whose save failed are not silently discarded on reload.
+      return memoryStore.get(symbol) ?? freshDefault();
+    }
     const state = deserializeWorkspace(raw);
     memoryStore.set(symbol, state);
     return state;
   } catch {
-    // Restore failure: apply defaults (Requirement 11.4).
-    return freshDefault();
+    // Restore failure: retained session state, else defaults (Requirement 11.4).
+    return memoryStore.get(symbol) ?? freshDefault();
   }
 }
 

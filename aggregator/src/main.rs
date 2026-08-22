@@ -22,6 +22,8 @@ mod kafka_producer;
 mod kite_api;
 mod metrics;
 mod ohlc_server;
+mod option_chain;
+mod option_chain_selector;
 mod proto;
 mod quant;
 mod state;

@@ -93,7 +93,22 @@ git log --oneline -1
 # ── 2. Build every service (sequential — keeps concurrent Rust compiles from
 #       exhausting memory on a small box; cached layers make unchanged services
 #       fast, so the serial cost is low even on a 16 GB host) ─────────────────
-for svc in ingestion alpha-terminal technical aggregator predictive quant-rag sentiment tool-server deep-quant; do
+#
+# `frontend` is built LAST and deliberately so. It is the heaviest build in the
+# stack by a wide margin: `next build --turbopack` over this tree needs
+# significantly more memory than any Rust service, and on the 8 GB droplet the
+# running stack already commits ~6.8 GB (see docker-compose.8gb.yml). Building it
+# while everything else is up is the most likely thing here to OOM — and the
+# process the kernel picks is not necessarily this one, so a frontend build can
+# take QuestDB down with it.
+#
+# If that happens, the options in order of preference are:
+#   1. Build the image in CI and pull it here (removes the droplet build entirely);
+#   2. `docker compose stop deep-quant quant-rag` for the duration of the build;
+#   3. add swap;
+#   4. move to a 16 GB instance.
+# Do NOT "fix" it by parallelising this loop.
+for svc in ingestion alpha-terminal technical aggregator predictive quant-rag sentiment tool-server deep-quant frontend; do
   log "Building $svc"
   $COMPOSE build "$svc"
 done
@@ -105,6 +120,36 @@ if [ "$FORCE_RECREATE" = "1" ]; then
 else
   log "Starting stack (recreate changed)"
   $COMPOSE up -d
+fi
+
+# ── 4. Pick up gateway config changes ─────────────────────────────────────────
+#
+# `up -d` recreates a container only when its SERVICE DEFINITION changed. The
+# Caddyfile is a read-only bind mount, so editing it changes no compose field and
+# the gateway keeps serving its previously-loaded config indefinitely — a routing
+# change (e.g. adding the app.stratai.live vhost) would appear to deploy
+# successfully and simply not take effect.
+#
+# `caddy reload` is NOT usable here: it drives the admin API, and the Caddyfile
+# sets `admin off`, so it would fail on every run. A restart is the remaining
+# option — but a restart on a MALFORMED config leaves nothing listening on 443,
+# which takes down the WSS feeds and the app together. So validate first and only
+# restart when the config actually parses. `caddy validate` is offline (no admin
+# API) and runs inside the container so it sees the real QUESTDB_* values.
+#
+# Non-fatal by design: a gateway problem must not fail a deploy whose service
+# builds all succeeded, but it is logged loudly because routing is then stale.
+if $COMPOSE ps --status running --services 2>/dev/null | grep -qx questdb-gateway; then
+  log "Validating Caddy config"
+  if $COMPOSE exec -T questdb-gateway \
+       caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
+    log "Caddy config valid — restarting gateway to apply it"
+    $COMPOSE restart questdb-gateway
+  else
+    log "WARNING: Caddyfile is INVALID — gateway NOT restarted, so it keeps serving"
+    log "         its previous config. Routing changes are NOT live. Diagnose with:"
+    log "         $COMPOSE exec questdb-gateway caddy validate --config /etc/caddy/Caddyfile"
+  fi
 fi
 
 log "DEPLOY DONE"

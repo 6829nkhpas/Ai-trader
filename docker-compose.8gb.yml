@@ -28,8 +28,17 @@
 # this lands, the documented fix remains moving to a 16 GB instance rather than
 # squeezing either side further.
 #
-# Running total: ~6.83 GB committed of 8 GB (6.56 existing + 0.53 new − 0.25
-# reclaimed), leaving ~1.3 GB for the OS + Docker daemon.
+# Running total: ~7.02 GB committed of 8 GB (6.56 existing + 0.53 monitoring
+# + 0.19 frontend − 0.25 reclaimed), leaving ~1 GB for the OS + Docker daemon.
+#
+# ── The build, not the runtime, is what is actually tight ────────────────────
+# Every mem_limit here caps a RUNNING container. `redeploy.sh` builds on this same
+# box, and `next build --turbopack` needs far more memory than the 192 MB the
+# frontend then runs in — it is the heaviest build in the stack. With ~1 GB free
+# and no swap configured, that build is the most likely thing to OOM, and the
+# kernel may well pick QuestDB rather than the build to kill. See the note above
+# the build loop in redeploy.sh for the options; building the image in CI and
+# pulling it here is the one that removes the problem rather than deferring it.
 # ──────────────────────────────────────────────────────────────────────────────
 
 services:
@@ -75,6 +84,21 @@ services:
 
   deep-quant:
     mem_limit: 512m
+
+  # The Next.js web app (app.stratai.live).
+  #
+  # 192m, down from 512m in the base file, and that is measured rather than
+  # guessed: the built image idles at 38 MiB and peaked at 41 MiB under 60
+  # concurrent full page loads. Next's standalone server holds almost nothing —
+  # the bundle and the ~31 MB TradingView library are static files streamed off
+  # disk, and every data call is a pass-through proxy that never buffers a
+  # response (see app/api/_proxy.ts, which hands upstream.body straight back).
+  #
+  # 192m leaves roughly 4.5x the observed peak for the Node heap to grow into
+  # under sustained traffic. If it ever OOMs, that is a real signal worth reading
+  # as a leak rather than a limit to raise.
+  frontend:
+    mem_limit: 192m
 
   # ── Monitoring stack ────────────────────────────────────────────────────────
   # 736m in the base file → 528m here. Every one of these is trimmed rather than

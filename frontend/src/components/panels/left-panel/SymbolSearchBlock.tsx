@@ -2,10 +2,10 @@
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Search, Loader2, X, Plus } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
 import { useTradeStore } from '../../../store/useTradeStore';
 import { useChartUIStore } from '../../../store/useChartUIStore';
 import { isFnoSymbol } from '../../../charting/symbolUtils';
+import { bridgeInvoke } from '../../../lib/bridge';
 
 interface ResolvedContract {
   tradingsymbol: string;
@@ -98,7 +98,7 @@ export default function SymbolSearchBlock() {
     let cancelled = false;
     (async () => {
       try {
-        const chains = await invoke<{ underlyings?: string[] }>('fno_list_chains');
+        const chains = await bridgeInvoke<{ underlyings?: string[] }>('fno_list_chains');
         if (!cancelled && Array.isArray(chains?.underlyings) && chains.underlyings.length > 0) {
           setConfiguredUnderlyings(chains.underlyings);
         }
@@ -119,7 +119,7 @@ export default function SymbolSearchBlock() {
     }
     setIsSearching(true); setShowDropdown(true); setSearchError(null);
     try {
-      const results = await invoke<SearchResult[]>('search_instruments', { query: normalized });
+      const results = await bridgeInvoke<SearchResult[]>('search_instruments', { query: normalized });
       setSearchResults(results || []);
     } catch (err) {
       console.error('[SymbolSearchBlock] search_instruments failed:', err);
@@ -159,7 +159,7 @@ export default function SymbolSearchBlock() {
       const profile = useTradeStore.getState().activeProfile;
       if (profile === 'FNO' && !isFnoSymbol(symbol)) {
         try {
-          const resolved = await invoke<ResolvedContract | null>(
+          const resolved = await bridgeInvoke<ResolvedContract | null>(
             'fno_resolve_nearest_contract',
             { underlying: symbol },
           );
@@ -252,7 +252,7 @@ export default function SymbolSearchBlock() {
       // symbol exactly like an equity selection — do NOT activate F&O.
       closeDropdown();
       try {
-        const accepted = await invoke<boolean>('fno_request_underlying', { underlying });
+        const accepted = await bridgeInvoke<boolean>('fno_request_underlying', { underlying });
         if (accepted) {
           setActiveProfile('FNO');
           setFnoUnderlying(underlying);

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { SymbolQuote } from '../types/home';
-import { kiteFetch } from '../lib/tauriFetch';
+import { kiteFetch } from '../lib/kiteFetch';
 
 /**
  * Polls the Kite quote endpoint for the active symbol every 30 s.

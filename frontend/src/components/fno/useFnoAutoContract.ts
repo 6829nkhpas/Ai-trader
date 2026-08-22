@@ -12,9 +12,9 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { useTradeStore } from '../../store/useTradeStore';
 import { isFnoSymbol } from '../../charting/symbolUtils';
+import { bridgeInvoke } from '../../lib/bridge';
 
 interface ResolvedContract {
   tradingsymbol: string;
@@ -47,7 +47,7 @@ export function useFnoAutoContract(): void {
     let cancelled = false;
     (async () => {
       try {
-        const resolved = await invoke<ResolvedContract | null>(
+        const resolved = await bridgeInvoke<ResolvedContract | null>(
           'fno_resolve_nearest_contract',
           { underlying: selectedSymbol },
         );
