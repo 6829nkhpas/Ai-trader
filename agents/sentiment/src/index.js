@@ -9,7 +9,7 @@
 //     ↓
 //   getProfileContext(symbol, seed)         → Finnhub profile+financials (Redis 24h cache)
 //     ↓
-//   fetchStrategicNews(symbol, seed)        → materiality-bucketed, deduped NewsData.io
+//   fetchStrategicNews(symbol, seed)        → materiality-bucketed, deduped Google News RSS
 //     ↓  category-tagged article array
 //   analyzeStrategicSentiment(symbol, ctx)  → rich verdict (score, label, thesis, drivers…)
 //     ↓
@@ -33,7 +33,7 @@ import './loadEnv.js';  // MUST be first: loads the repo-root .env (LLM_*, NEWSD
 import { loadNewsSentimentType }                   from './protoLoader.js';
 import { resolveProfileSeed }                      from './companyProfiles.js';
 import { fetchCompanyProfile, fetchBasicFinancials } from './profile.js';
-import { fetchStrategicNews }                      from './strategicFetcher.js';
+import { fetchStrategicNews }                      from './googleNewsFetcher.js';
 import { analyzeStrategicSentiment }               from './analyzer.js';
 import { connectProducer, publishSentiment, disconnectProducer } from './kafkaProducer.js';
 import { createClient }                            from 'redis';
@@ -162,7 +162,7 @@ async function getProfileContext(symbol, seed) {
  * Runs a single strategic poll cycle for one ticker symbol:
  *   1. Resolve the company profile seed (companyProfiles).
  *   2. Fetch + cache Finnhub profile/financials context (Redis, 24 h TTL).
- *   3. Fetch materiality-bucketed, deduplicated news (strategicFetcher).
+ *   3. Fetch materiality-bucketed, deduplicated news (googleNewsFetcher).
  *   4. Synthesize a rich strategic verdict (analyzeStrategicSentiment).
  *   5. Store the rich verdict in the in-memory cache for the HTTP API.
  *   6. Publish a backward-compatible projection to Kafka (proto schema unchanged).
