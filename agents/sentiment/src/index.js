@@ -221,7 +221,14 @@ async function processTicker(symbol, NewsSentiment) {
   metrics.verdictProduced(verdict.label);
 
   // ── Step 5: Cache the RICH verdict for the HTTP API ────────────────────────
-  const headlines = categorizedNews.map((a) => a.title).filter(Boolean).slice(0, 5);
+  // Headline count is capped so the panel has a bounded list, not because more
+  // are unavailable — the fetcher gathers up to SENTIMENT_PER_BUCKET per bucket
+  // across every bucket. Raised from a hardcoded 5 to 10.
+  const maxHeadlines = (() => {
+    const n = parseInt(process.env.SENTIMENT_MAX_HEADLINES ?? '10', 10);
+    return Number.isFinite(n) && n > 0 ? n : 10;
+  })();
+  const headlines = categorizedNews.map((a) => a.title).filter(Boolean).slice(0, maxHeadlines);
   const reasoningSnippet = String(verdict.thesis ?? '').slice(0, 150);
 
   latestSentiment.set(symbol.toUpperCase(), {

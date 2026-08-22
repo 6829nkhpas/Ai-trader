@@ -46,8 +46,16 @@ import { metrics } from './metrics.js';
 
 const GOOGLE_NEWS_BASE_URL = 'https://news.google.com/rss/search';
 
-/** Articles kept per bucket. The feed returns ~100; we only need the freshest. */
-const PER_BUCKET_SIZE = 3;
+/**
+ * Articles kept per bucket. The feed returns ~100 per query; only the freshest
+ * are taken.
+ *
+ * 4, not 3. The HTTP API surfaces up to `SENTIMENT_MAX_HEADLINES` (default 10) and
+ * cross-cycle Redis dedup removes anything already scored, so the ceiling has to
+ * exceed the target with room to spare: 4 buckets x 4 = 16 candidates for 10 slots.
+ * At 3 the ceiling was 12 and a couple of repeats left the panel short.
+ */
+const PER_BUCKET_SIZE = parseInt(process.env.SENTIMENT_PER_BUCKET ?? '4', 10);
 
 /** Default number of materiality buckets (targeted queries) per symbol. */
 const DEFAULT_BUCKETS = parseInt(process.env.SENTIMENT_NEWS_BUCKETS ?? '4', 10);
