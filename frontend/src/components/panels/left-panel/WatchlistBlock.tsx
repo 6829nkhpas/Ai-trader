@@ -2,12 +2,12 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { ChevronUp, ChevronDown, GripVertical, Trash2, ArrowUpRight, ArrowDownRight, Loader2 } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
 import { useTradeStore, hydrateWatchlist } from '../../../store/useTradeStore';
 import { useChartUIStore } from '../../../store/useChartUIStore';
 import { isFnoSymbol } from '../../../charting/symbolUtils';
 import WatchlistSkeleton from './WatchlistSkeleton';
-import { kiteFetch } from '../../../lib/tauriFetch';
+import { kiteFetch } from '../../../lib/kiteFetch';
+import { bridgeInvoke } from '../../../lib/bridge';
 
 interface ResolvedContract {
   tradingsymbol: string;
@@ -79,7 +79,7 @@ export default function WatchlistBlock() {
       // an empty placeholder.
       if (activeProfile === 'FNO' && !isFnoSymbol(symbol)) {
         try {
-          const resolved = await invoke<ResolvedContract | null>(
+          const resolved = await bridgeInvoke<ResolvedContract | null>(
             'fno_resolve_nearest_contract',
             { underlying: symbol },
           );

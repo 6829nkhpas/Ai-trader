@@ -3,6 +3,7 @@ import { Shield, Rocket, CheckCircle2, Loader2 } from 'lucide-react';
 import { AiExecutionPlan, ExecutionLevels } from '../../../store/useQuantStore';
 import { useTradeStore } from '../../../store/useTradeStore';
 import { highlightNumbers } from './textHighlighter';
+import { bridgeInvoke } from '../../../lib/bridge';
 
 interface ActionableTradePlanProps {
   finalTrade: AiExecutionPlan & { execution_levels: ExecutionLevels };
@@ -31,8 +32,7 @@ export default function ActionableTradePlan({
     setIsExecuting(true);
 
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const resMsg = await invoke<string>('execute_paper_trade', {
+      const resMsg = await bridgeInvoke<string>('execute_paper_trade', {
         symbol: selectedSymbol,
         side,
         entryPrice,

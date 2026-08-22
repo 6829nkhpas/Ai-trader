@@ -6,7 +6,7 @@ import type { OhlcCandle } from '../../store/useTradeStore';
 import { ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import ReasoningBlock from './order-execution/ReasoningBlock';
 import MetricsHUD from './order-execution/MetricsHUD';
-import { kiteFetch } from '../../lib/tauriFetch';
+import { kiteFetch } from '../../lib/kiteFetch';
 
 // ── ATR Calculation (Average True Range — 14 period) ─────────────────────────
 // Used to compute dynamic Target and Stop levels based on recent volatility.

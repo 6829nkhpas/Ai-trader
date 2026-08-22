@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuthStore } from '../../store/useAuthStore';
 import { Landmark, ArrowRight, Loader2, Info, ArrowLeft } from 'lucide-react';
+import { bridgeInvoke } from '../../lib/bridge';
 
 export default function BrokerConnectCard() {
   const user = useAuthStore((s) => s.user);
@@ -25,10 +26,11 @@ export default function BrokerConnectCard() {
     console.log(`[BrokerConnect] Redirecting to: ${connectUrl}`);
 
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('open_browser', { url: connectUrl });
+      // Rust `open_browser` on desktop, `window.open` via the bridge adapter in
+      // a browser. The fallback below covers a popup blocker rejecting either.
+      await bridgeInvoke('open_browser', { url: connectUrl });
     } catch (err) {
-      console.warn('[BrokerConnect] Failed to use Tauri open_browser command, falling back to window.open:', err);
+      console.warn('[BrokerConnect] open_browser failed, falling back to window.open:', err);
       if (typeof window !== 'undefined') {
         window.open(connectUrl, '_blank');
       }

@@ -44,18 +44,19 @@ import fc from 'fast-check';
 
 import type { FnoUnavailableMarker } from '../viewModel';
 
-// ── Configurable Tauri IPC seams (hoisted so mock factories can bind them) ────
+// ── Configurable transport seams (hoisted so mock factories can bind them) ────
+// `FnoSection` talks to the backend through `lib/bridge`; a rejected
+// `bridgeInvoke` is the transport-Err case this property is about, whichever
+// transport produced it.
 const tauri = vi.hoisted(() => ({
   invokeMock: null as any,
   listenMock: null as any,
 }));
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...args: any[]) => tauri.invokeMock(...args),
-}));
-
-vi.mock('@tauri-apps/api/event', () => ({
-  listen: (...args: any[]) => tauri.listenMock(...args),
+vi.mock('../../../lib/bridge', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../lib/bridge')>()),
+  bridgeInvoke: (...args: any[]) => tauri.invokeMock(...args),
+  bridgeListen: (...args: any[]) => tauri.listenMock(...args),
 }));
 
 // Stub the heavy chart children (canvas/recharts); keep FnoUnavailableState REAL.

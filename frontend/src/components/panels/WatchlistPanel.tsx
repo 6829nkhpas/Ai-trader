@@ -3,11 +3,11 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Search, Loader2, X, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { invoke } from '@tauri-apps/api/core';
 import { useTradeStore } from '../../store/useTradeStore';
 import { staggerContainer, fadeInUp, crossfade } from '../../lib/motionVariants';
 import WatchlistSkeleton from './left-panel/WatchlistSkeleton';
-import { kiteFetch } from '../../lib/tauriFetch';
+import { kiteFetch } from '../../lib/kiteFetch';
+import { bridgeInvoke } from '../../lib/bridge';
 
 // ── Static Top-10 Watchlist Symbols (NIFTY 50 Blue Chips) ──────────────
 const TOP_WATCHLIST = [
@@ -155,7 +155,7 @@ export default function WatchlistPanel() {
     setShowDropdown(true);
 
     try {
-      const results = await invoke<TauriSearchResult[]>('search_instruments', { query: normalized });
+      const results = await bridgeInvoke<TauriSearchResult[]>('search_instruments', { query: normalized });
       // The command returns EQ + Index + FNO rows in a single flat list — one
       // global search across NSE / BSE / NFO. Map each row to the flat
       // `SearchInstrument` shape this panel already renders.

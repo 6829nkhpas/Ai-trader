@@ -23,10 +23,15 @@ import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/re
 import '@testing-library/jest-dom/vitest';
 import fc from 'fast-check';
 
+// ── Configurable transport seam ───────────────────────────────────────────────
+// The panel reaches the backend through `lib/bridge`, so the mock goes there
+// rather than at `@tauri-apps/api/core`: the routing under test is the same on
+// desktop IPC and on the website's HTTP path.
 const tauri = vi.hoisted(() => ({ invokeMock: null as any }));
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...args: any[]) => tauri.invokeMock(...args),
+vi.mock('../../../lib/bridge', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../lib/bridge')>()),
+  bridgeInvoke: (...args: any[]) => tauri.invokeMock(...args),
 }));
 
 vi.mock('../left-panel/LiveAssetHUD', () => ({

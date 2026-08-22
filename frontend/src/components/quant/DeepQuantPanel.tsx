@@ -6,12 +6,10 @@ import { useQuantStore, isActionableTrade } from '../../store/useQuantStore';
 import type { StreamEventPayload } from '../../store/useQuantStore';
 import { useTradeStore } from '../../store/useTradeStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
-import { listen } from '@tauri-apps/api/event';
 import AgentTerminal from './AgentTerminal';
 import TradeQaPanel from './TradeQaPanel';
 import ModelSelector from './deep-quant/ModelSelector';
 import { useAuthStore } from '../../store/useAuthStore';
-import { invoke } from '@tauri-apps/api/core';
 
 // ── Subcomponents ──────────────────────────────────────────────────────
 import LoadingState from './deep-quant/LoadingState';
@@ -24,6 +22,7 @@ import { useVerificationForm } from './deep-quant/useVerificationForm';
 import { useFeature } from '../../store/useFeatureStore';
 import { dashboardUrl, openExternalUrl } from '../../lib/redirect';
 import { useCredit } from '../../hooks/useApi';
+import { bridgeInvoke, bridgeListen } from '../../lib/bridge';
 
 export default function DeepQuantPanel() {
   const user = useAuthStore((s) => s.user);
@@ -60,7 +59,7 @@ export default function DeepQuantPanel() {
     let unlistenFn: (() => void) | undefined;
     (async () => {
       try {
-        const dispose = await listen<StreamEventPayload>('deep-quant-stream', (event) => {
+        const dispose = await bridgeListen<StreamEventPayload>('deep-quant-stream', (event) => {
           if (!cancelled) {
             useQuantStore.getState().handleStreamEvent(event.payload);
           }
@@ -141,7 +140,7 @@ export default function DeepQuantPanel() {
   React.useEffect(() => {
     let unlisten: (() => void) | undefined;
     const setupListener = async () => {
-      unlisten = await listen<string>('agent_status', (event) => {
+      unlisten = await bridgeListen<string>('agent_status', (event) => {
         console.log(`🧠 [AGENT STATE UPDATE]: ${event.payload}`);
         setAgentStatus(event.payload);
       });
@@ -209,8 +208,7 @@ export default function DeepQuantPanel() {
     const tradeSide = aiPlan.action === 'SELL' ? 'SELL' : 'BUY';
 
     try {
-      const { invoke: tauriInvoke } = await import('@tauri-apps/api/core');
-      const resMsg = await tauriInvoke<string>('execute_paper_trade', {
+      const resMsg = await bridgeInvoke<string>('execute_paper_trade', {
         symbol,
         side: tradeSide,
         entryPrice: entry,

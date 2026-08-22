@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTradeStore } from '../store/useTradeStore';
 import { crossfade } from '../lib/motionVariants';
+import { bridgeListen } from '../lib/bridge';
 
 import {
   type OrderBookLevel,
@@ -48,9 +49,10 @@ export default function OrderBook() {
 
     async function setupListener() {
       try {
-        // Tauri IPC path — native desktop mode
-        const { listen } = await import('@tauri-apps/api/event');
-        const unlisten = await listen<{
+        // Tauri IPC on desktop; the bridge event bus in a browser. There is no
+        // browser producer for `orderbook-update` yet, so the book stays in cold
+        // standby there — the same visible state as before this was bridged.
+        const unlisten = await bridgeListen<{
           bid_prices: number[];
           bid_sizes: number[];
           ask_prices: number[];

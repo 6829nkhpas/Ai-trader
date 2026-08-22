@@ -9,7 +9,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTradeStore, type DisciplineStats } from '../store/useTradeStore';
-import { kiteFetch } from '../lib/tauriFetch';
+import { kiteFetch } from '../lib/kiteFetch';
 
 // ── Index Definitions ────────────────────────────────────────────────────────
 // These are NSE indices available via Kite Connect's quote API.

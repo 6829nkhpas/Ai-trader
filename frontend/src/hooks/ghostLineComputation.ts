@@ -18,9 +18,7 @@
 import { useChartUIStore } from '../store/useChartUIStore';
 import { useTradeStore } from '../store/useTradeStore';
 import { TIMEFRAME_MS, KITE_INTERVAL_MAP, type Timeframe } from '../utils/chartTypes';
-import { kiteFetch } from '../lib/tauriFetch';
-
-const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+import { kiteFetch } from '../lib/kiteFetch';
 
 /** Fallback projection length (bars) when the visible range is unknown. */
 const PROJECTION_BARS = 6;
@@ -227,42 +225,9 @@ async function fetchLookbackCandles(symbol: string, timeframe: string): Promise<
     return storeBars;
   }
 
-  // Path A: Tauri IPC — cached bars from QuestDB (bincode).
-  if (isTauri()) {
-    try {
-      const tauri = await import('@tauri-apps/api/core');
-      const response = await tauri.invoke<number[] | Uint8Array>('get_historical_view', { symbol, timeframe });
-      const buffer = response instanceof Uint8Array ? response : new Uint8Array(response);
-      if (buffer.length > 8) {
-        const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-        const length = Number(view.getBigUint64(0, true));
-        let offset = 8;
-        const bars: LookbackCandle[] = [];
-        for (let i = 0; i < length; i++) {
-          const tsMicro = Number(view.getBigInt64(offset, true));
-          // BinaryCandle layout: ts@0, open@8, high@16, low@24, close@32, vol@40.
-          const high   = view.getFloat64(offset + 16, true);
-          const low    = view.getFloat64(offset + 24, true);
-          const close  = view.getFloat64(offset + 32, true);
-          const volume = Number(view.getBigInt64(offset + 40, true));
-          bars.push({ time: Math.floor(tsMicro / 1_000_000), close, volume, high, low });
-          offset += 48;
-        }
-        if (bars.length >= 20) {
-          console.log(`[GhostLine] Tauri historical: ${bars.length} bars for ${symbol}`);
-          return bars;
-        }
-      }
-    } catch (err) {
-      console.warn('[GhostLine] Tauri get_historical_view failed, falling back to API:', err);
-    }
-  }
-
-  // Path B: Kite REST via the gateway. Uses `kiteFetch` (Rust `kite_fetch`
-  // command under Tauri) rather than a bare fetch on `/kite/...`: the relative
-  // path only works under `npm run dev`, where the Next.js rewrite proxies it.
-  // The packaged app is a static export with no rewrites, so a bare fetch would
-  // hit `tauri.localhost` and 404. Path is the part AFTER `/kite`.
+  // Kite REST via the gateway, through `kiteFetch` so the `/kite` prefix (and the
+  // same-origin route handler that holds the gateway credential) is applied in one
+  // place. Path is the part AFTER `/kite`.
   try {
     const to   = new Date();
     const days = timeframe.endsWith('D') || timeframe.endsWith('W') || timeframe.endsWith('M') ? 365 : 10;
@@ -609,37 +574,13 @@ export async function computeGhostPoints(
     }
   }
 
-  // ── Path 2: Tauri Rust engine ───────────────────────────────────────
-  if (points.length === 0 && isTauri()) {
-    try {
-      const tauri = await import('@tauri-apps/api/core');
-      const candles = window.map(c => ({ time: c.time, close: c.close, volume: c.volume || 1.0 }));
-      const payload = await tauri.invoke<any>('compute_ghost_curve', {
-        candles, intervalSec, projectionLength: projBars,
-      });
-      useChartUIStore.getState().setAccelerationCoefficient(payload.acceleration_coefficient);
-      // OLS, VWLR and VWEPR all come from the single Rust engine so there is
-      // exactly ONE implementation of each. Only 'forecast' (which Rust has no
-      // equivalent for) falls through to the JS Path 3.
-      const raw =
-        ghostLineMode === 'linear' ? payload.linear_points :
-        ghostLineMode === 'volume' ? payload.volume_points :
-        ghostLineMode === 'curved' ? payload.curved_points :
-        undefined; // 'forecast' → JS Path 3.
-      if (raw?.length > 0) {
-        points = raw.map((p: any) => ({ time: p.time, price: +p.value.toFixed(2) }));
-        console.log('[GhostLine] Path2 Tauri:', points.length, 'points');
-      }
-    } catch (err) {
-      console.error('[GhostLine] Path2 failed:', err);
-    }
-  }
-
-  // ── Path 3: pure-JS engines ─────────────────────────────────────────
+  // ── Projection engines ──────────────────────────────────────────────
   if (points.length === 0) {
-    console.log('[GhostLine] Path3: pure-JS engine, mode=', ghostLineMode);
-    // Fallback (browser preview / Rust unavailable). Every engine fits the
-    // same 50-bar `window` as the Rust path so the two agree bar-for-bar.
+    console.log('[GhostLine] engine mode=', ghostLineMode);
+    // Window sizes stay pinned to the retired Rust engines' constants
+    // (predictive::OLS_MAX_WINDOW / vwepr::MAX_WINDOW) because `quant-core` still
+    // fits over the same bars server-side — the agent's read of a projection and
+    // the user's must not disagree.
     const closes = window.map(c => c.close);
     points =
       ghostLineMode === 'linear'   ? olsProjection(closes, last.time, intervalSec, projBars) :

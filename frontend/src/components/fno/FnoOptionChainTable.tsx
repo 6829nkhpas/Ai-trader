@@ -1,9 +1,9 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { type FnoViewState } from './viewModel';
 import { useTradeStore } from '../../store/useTradeStore';
+import { bridgeInvoke } from '../../lib/bridge';
 
 interface FnoOptionChainTableProps {
   viewState: FnoViewState & { kind: 'ready' | 'partial' };
@@ -51,7 +51,7 @@ export default function FnoOptionChainTable({
   const openContractChart = (strike: number, type: 'CE' | 'PE') => {
     const shortSymbol = `${underlying}${strike}${type}`;
     if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
-      invoke<{ tradingsymbol?: string } | null>('fno_resolve_option_contract', {
+      bridgeInvoke<{ tradingsymbol?: string } | null>('fno_resolve_option_contract', {
         underlying,
         strike,
         optionType: type,

@@ -41,11 +41,16 @@ import {
 import type { ChartCandle } from '@/charting/types';
 import type { OhlcCandle } from '@/store/useTradeStore';
 
-// Simulate running OUTSIDE the Tauri runtime so the persistence layer exercises
-// its documented in-memory session fallback (Requirement 11.6) — this is the
-// closest feasible proxy for the SQLite IPC round-trip, which serializes the
-// exact same blob via `save_workspace` / `load_workspace`.
-vi.mock('@tauri-apps/api/core', () => ({ invoke: undefined }));
+// Force the persistence backend to reject so this suite exercises the documented
+// in-memory session fallback (Requirement 11.6) — the closest feasible proxy for
+// the SQLite / `localStorage` round-trip, which serializes the exact same blob
+// via `save_workspace` / `load_workspace`.
+vi.mock('@/lib/bridge', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/bridge')>()),
+  bridgeInvoke: vi.fn(async (cmd: string) => {
+    throw new Error(`persistence backend unavailable (${cmd})`);
+  }),
+}));
 
 import {
   serializeWorkspace,
