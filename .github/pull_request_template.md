@@ -1,8 +1,7 @@
-<!-- Target the right base branch:
-       feature/fix/chore  ->  develop
-       develop            ->  staging
-       staging            ->  main      (production — needs an approving review)
-     See CONTRIBUTING.md. -->
+<!-- `main` is the only long-lived branch, so PRs target it.
+     PRs are OPTIONAL now — pushing straight to main is the normal path. Open one
+     when a change is large, risky, or touches money / auth / compliance code.
+     NOTE: merging this deploys to production. See CONTRIBUTING.md. -->
 
 ## What
 
@@ -39,7 +38,7 @@
 
 ## Checklist
 
-- [ ] Branched off `develop` (or `main` for a `hotfix/*`)
+- [ ] Verified locally before merge — merging deploys to production
 - [ ] Scoped to one concern
 - [ ] No secrets, tokens, or `.env` values in the diff
 - [ ] No debug logging or commented-out code left behind

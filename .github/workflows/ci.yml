@@ -1,20 +1,28 @@
 name: ci
 
-# Verification for the develop -> staging -> main ladder.
+# Verification for every push to main, and for every PR into it.
 #
-# Runs on PRs into any long-lived branch and on pushes to develop/staging, so a
-# regression is caught before it reaches production. main is deliberately NOT a
-# push trigger here — by the time code lands there it has already passed this
-# workflow on the staging PR, and deploy-server.yml owns that event.
+# `main` is the only long-lived branch: develop and staging were deleted and work
+# is pushed to main directly. So main IS a push trigger, which it was not under the
+# old develop -> staging -> main ladder (back then, code reaching main had already
+# passed this workflow on the staging PR). Without it, a push would deploy to
+# production with no typecheck, no tests and no cargo build, because
+# deploy-server.yml fires on the same event and does not wait for anything.
 #
-# Jobs are path-filtered: a docs-only PR should not spend 20 minutes building
+# CI and deploy therefore run CONCURRENTLY on a push to main, not in sequence. That
+# is a deliberate trade: the deploy is not blocked on a slow Rust build, but a red
+# CI means production already has the bad commit and you are reading a post-mortem,
+# not a gate. If that becomes the wrong trade, add `workflow_run` gating to
+# deploy-server.yml rather than removing this trigger.
+#
+# Jobs are path-filtered: a docs-only push should not spend 20 minutes building
 # Rust. Each job self-skips when its paths are untouched.
 
 on:
   pull_request:
-    branches: [main, staging, develop]
+    branches: [main]
   push:
-    branches: [develop, staging]
+    branches: [main]
   workflow_dispatch: {}
 
 concurrency:

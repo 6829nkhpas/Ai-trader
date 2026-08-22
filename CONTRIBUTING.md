@@ -2,132 +2,118 @@
 
 ## Branching model
 
-Three long-lived branches. Work flows in one direction only:
+**One branch: `main`.** Work is committed and pushed to it directly.
 
 ```
-feature/*  fix/*  chore/*
-    │
-    │  PR + review
-    ▼
-develop ──────────► staging ──────────► main
-          PR                  PR          │
-     (integration)      (pre-prod)        └─► production
+main ──► push ──► CI + production deploy (concurrently)
 ```
 
-| Branch | Purpose | Who writes to it | Deploys to |
-|---|---|---|---|
-| **`main`** | **Production.** Always releasable. | **Nobody directly** — approved PRs from `staging` only | Droplet backend on push; desktop app on `v*` tag |
-| **`staging`** | Pre-production verification against real infra | Approved PRs from `develop` | Staging environment (when configured) |
-| **`develop`** | Day-to-day integration of feature work | Approved PRs from `feature/*` etc. | Nothing automatic |
+`develop` and `staging` were removed, along with `branch-guard.yml` and the
+`.githooks/pre-push` hook that enforced the old three-rung ladder. If you go
+looking for them in the history: they were deleted deliberately, not lost.
 
-### Rules
+| Branch | Purpose | Deploys to |
+|---|---|---|
+| **`main`** | The only long-lived branch. Everything lands here. | Droplet backend + the web app on every push that touches server or `frontend/` code |
 
-1. **Never push directly to `main`.** It accepts approved pull requests from
-   `staging` only. A CI guard flags direct pushes — see
-   [Enforcement](#enforcement) below.
-2. **Never push directly to `staging`.** It accepts PRs from `develop`.
-3. **Branch off `develop`**, not `main`, for all new work.
-4. **Don't skip a rung.** A `feature/*` branch does not go straight to `staging`
-   or `main`. The one exception is a hotfix — see below.
-5. **Keep history linear where you can.** Rebase your feature branch on
-   `develop` before opening the PR rather than merging `develop` into it
-   repeatedly.
+Short-lived branches are still fine for work in progress — nothing stops you
+opening a PR into `main` if a change deserves review. There is simply no longer a
+promotion path you are required to walk.
 
-### Branch naming
+### What this trades away
 
-| Prefix | For |
-|---|---|
-| `feature/` | new functionality — `feature/options-greeks-panel` |
-| `fix/` | bug fixes — `fix/ghost-line-double-buffer` |
-| `chore/` | deps, tooling, config, cleanup |
-| `refactor/` | behaviour-preserving restructuring |
-| `docs/` | documentation only |
-| `hotfix/` | urgent production fix — see below |
+Worth being explicit, because it is a real cost and not a formality:
+
+* **Every push to `main` is a production deploy.** There is no pre-production rung
+  to catch a bad change first.
+* **CI does not gate the deploy.** `ci.yml` and `deploy-server.yml` both fire on
+  the same push event and run *concurrently*. A red CI tells you a broken commit
+  is already live; it does not prevent it. Wiring a `workflow_run` dependency into
+  `deploy-server.yml` would turn it into a real gate, at the cost of waiting for
+  the Rust build on every deploy.
+* **Nothing enforces review.** See [Enforcement](#enforcement).
+
+So the checks below are the safety net. Run them *before* you push, because after
+you push the site has already changed.
 
 ## Everyday workflow
 
 ```bash
-# 1. Start from an up-to-date develop
-git checkout develop
 git pull
-
-# 2. Branch
-git checkout -b feature/my-thing
-
-# 3. Work, committing as you go. Then verify (see below), push, open a PR.
-git push -u origin feature/my-thing
-gh pr create --base develop
+# work, committing as you go
+# verify (see below) — BEFORE pushing, since the push deploys
+git push origin main
 ```
 
-### Promoting develop → staging
+Watch the deploy:
 
 ```bash
-gh pr create --base staging --head develop \
-  --title "release: promote develop to staging"
+gh run watch "$(gh run list --workflow=deploy-server --limit 1 --json databaseId -q '.[0].databaseId')"
 ```
 
-### Promoting staging → main (production)
+Then confirm the site actually came back:
 
 ```bash
-gh pr create --base main --head staging \
-  --title "release: promote staging to production"
+curl -sI https://app.stratai.live/ | head -1        # 200
+curl -s  https://app.stratai.live/api/features      # {"enforced":true,…}
 ```
 
-Merging to `main` triggers [`deploy-server.yml`](.github/workflows/deploy-server.yml),
-which SSHes into the droplet and runs `redeploy.sh`. Treat every merge to `main`
-as a production deploy.
-
-## Hotfixes
-
-For a production incident that cannot wait for the full ladder:
+If a push broke production, the fastest honest fix is forward:
 
 ```bash
-git checkout -b hotfix/describe-it main
-# fix, verify
-gh pr create --base main --head hotfix/describe-it
+git revert <sha> && git push origin main
 ```
 
-After it merges to `main`, **back-merge immediately** so the fix isn't lost:
-
-```bash
-git checkout staging && git merge main && git push
-git checkout develop && git merge staging && git push
-```
-
-A hotfix that skips the back-merge will be silently reverted by the next
-ordinary `staging → main` promotion.
-
-## Before you open a PR
+## Before you push
 
 Run the checks that cover what you touched. From the repo root:
 
 | Changed | Command |
 |---|---|
-| Rust (Tauri backend) | `cd frontend/src-tauri && cargo build --lib && cargo test --lib` |
 | Rust (a service crate) | `cd <crate> && cargo check && cargo test` |
+| Aggregator (option-chain math) | `cd aggregator && cargo test --bin aggregator` |
+| Tool server | `cd tool-server && cargo build --release` |
 | Frontend types | `cd frontend && npx tsc --noEmit` |
 | Frontend tests | `cd frontend && npx vitest run` |
 | Charting (largest suite) | `cd frontend && npx vitest run src/charting` |
+| The web build itself | `cd frontend && npm run build:web` |
 | Python agent | `cd agents/deep-quant-loop && python -m pytest` |
 
+`npm run build:web` is worth running for anything that touches routing, config or
+`app/api/`: a route can typecheck and test green and still fail to register in the
+production build. That exact failure mode has bitten twice — once as a
+`PageNotFoundError: /_document` that only appeared in the production build, and
+once as an `/api/tools/*` 404 caused by a missing upstream path prefix.
+
 Known pre-existing failures that are **not** your fault — they fail on a clean
-tree too: `frontend/src/components/fno/__tests__/selectors.bounding.property.test.ts`,
-`scopeBoundary.test.ts`, and `tsc` errors in `WatchlistPanel.tsx` plus the
-TradingView codegen assets. `tools/load_tester` also does not currently compile.
+tree too (9 tests across 4 files):
+`frontend/src/components/fno/__tests__/selectors.bounding.property.test.ts`,
+`frontend/src/components/chart/__tests__/SplitChartContainer.test.tsx`,
+`frontend/src/components/layout/__tests__/TerminalLayout.modeSelector.test.tsx`,
+`frontend/src/components/panels/__tests__/LeftPanel.search.test.tsx`.
+`tools/load_tester` also does not currently compile. `tsc --noEmit` is clean.
+
+## Commits
+
+- Explain **why**, not just what. The diff already says what changed.
+- Note anything you measured rather than assumed — a comment recording "404
+  without the prefix, 405 with it" saves the next person the experiment.
+- Call out deliberate trade-offs and known ceilings so they are not mistaken for
+  oversights later.
 
 ## Pull requests
 
+Optional now, but still the right call for a change that is large, risky, or
+touches money / auth / compliance paths. If you open one:
+
 - Fill in the template — what changed, why, how you verified it.
-- Keep PRs scoped. A 40-file PR that does three unrelated things is three PRs.
-- Link the issue or tracker row if there is one (`docs/tasks/*.csv`).
-- **At least one approving review** before merge. This is the gate that matters
-  most, since GitHub cannot currently enforce it for us.
-- CI must be green.
+- Keep it scoped. A 40-file PR doing three unrelated things is three PRs.
+- CI runs on PRs into `main` as well as on pushes to it.
 
 ## Enforcement
 
-Server-side enforcement is **not available on this repository.** It is private
-under a Free organization, and *both* mechanisms are gated behind a paid plan:
+There is **none** server-side, and it is not currently purchasable on this plan.
+The repo is private under a Free organization and *both* mechanisms are gated:
 
 | Attempted | Result |
 |-----------|--------|
@@ -137,152 +123,48 @@ under a Free organization, and *both* mechanisms are gated behind a paid plan:
 
 Per GitHub's docs, rulesets and protected branches cover private repos only on
 **Pro / Team / Enterprise**; org-wide rulesets need **Team**. `thestratai` is on
-`free`. So the rules above are **policy, not physics.** Three things compensate:
+`free`. So there was never a server-side rule to switch off — the previous model
+was policy, enforced by a CI reporter and a local hook, both now removed.
 
-1. **[`.githooks/pre-push`](.githooks/pre-push) — the only real prevention.**
-   Refuses to push (or delete) `main` and `staging` from your machine, before
-   anything reaches GitHub. Install it once per clone:
+What remains is discipline: run the checks before you push, and read the deploy.
+
+### If you later want a gate back
+
+Two independent levers, in increasing strictness:
+
+1. **Make CI block the deploy.** Add a `workflow_run` trigger to
+   `deploy-server.yml` so it only runs after `ci` concludes successfully on the
+   same SHA. Needs no paid plan, and is the highest-value change if a bad deploy
+   ever bites.
+
+2. **Require green CI on `main` at the git level.** Needs **Team** (or a public
+   repo), then:
 
    ```bash
-   git config core.hooksPath .githooks
+   gh api -X POST repos/thestratai/Ai-trader/rulesets --input - <<'JSON'
+   {
+     "name": "protect-main",
+     "target": "branch",
+     "enforcement": "active",
+     "conditions": { "ref_name": { "include": ["refs/heads/main"], "exclude": [] } },
+     "rules": [
+       { "type": "deletion" },
+       { "type": "non_fast_forward" },
+       {
+         "type": "required_status_checks",
+         "parameters": {
+           "strict_required_status_checks_policy": true,
+           "required_status_checks": [{ "context": "CI" }]
+         }
+       }
+     ],
+     "bypass_actors": []
+   }
+   JSON
    ```
 
-   It is per-clone and bypassable (`--no-verify`, or the explicit
-   `ALLOW_PROTECTED_PUSH=1`). It is a seatbelt against the accidental push on
-   the wrong branch, not a security control — someone who wants to push to
-   `main` still can.
-
-2. **[`branch-guard.yml`](.github/workflows/branch-guard.yml)** — reports a
-   direct push to `main`/`staging`, and fails any PR into `main` not from
-   `staging` or `hotfix/*`. It runs *after* the push lands, so it documents a
-   violation rather than stopping it.
-
-3. **Review discipline.** Until the plan allows protection, this is the real
-   gate. Nothing above can stop a determined `git push`.
-
-### Turning on real protection
-
-Once the org is on **Team** (or the repo is made public), enforce the model for
-real. A **ruleset** is the current mechanism and is preferred over classic
-branch protection — it is evaluated as a unit, can target several branches at
-once, and reports which rule rejected a push.
-
-```bash
-REPO=thestratai/Ai-trader
-
-# One ruleset covering both protected branches: PR-only, no force-push,
-# no deletion, and CI must be green. The status context is "CI" — the
-# `name:` of the ci-ok job, which aggregates every other CI job. Point at
-# that one rather than each job, so path-filtered skips don't wedge a merge.
-gh api -X POST "repos/$REPO/rulesets" --input - <<'JSON'
-{
-  "name": "protected-branches",
-  "target": "branch",
-  "enforcement": "active",
-  "conditions": {
-    "ref_name": { "include": ["refs/heads/main", "refs/heads/staging"], "exclude": [] }
-  },
-  "rules": [
-    { "type": "deletion" },
-    { "type": "non_fast_forward" },
-    {
-      "type": "pull_request",
-      "parameters": {
-        "required_approving_review_count": 1,
-        "dismiss_stale_reviews_on_push": true,
-        "require_last_push_approval": true,
-        "require_code_owner_review": false,
-        "required_review_thread_resolution": false,
-        "allowed_merge_methods": ["merge", "squash", "rebase"]
-      }
-    },
-    {
-      "type": "required_status_checks",
-      "parameters": {
-        "strict_required_status_checks_policy": true,
-        "required_status_checks": [{ "context": "CI" }]
-      }
-    }
-  ],
-  "bypass_actors": []
-}
-JSON
-
-# Verify it took effect, then confirm a direct push is actually refused:
-gh api "repos/$REPO/rulesets" --jq '.[] | "\(.id) \(.name) \(.enforcement)"'
-gh api "repos/$REPO/rules/branches/main" --jq '.[].type'
-```
-
-`bypass_actors: []` means the rules apply to admins too. To let repo admins
-bypass in a genuine emergency, add
-`{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}`.
-
-<details>
-<summary>Classic branch protection (alternative, if you prefer it)</summary>
-
-```bash
-REPO=thestratai/Ai-trader
-
-# main — production: PR-only, 1 approval, no force-push, no deletion
-gh api -X PUT "repos/$REPO/branches/main/protection" \
-  --input - <<'JSON'
-{
-  "required_status_checks": { "strict": true, "contexts": ["CI"] },
-  "enforce_admins": true,
-  "required_pull_request_reviews": {
-    "required_approving_review_count": 1,
-    "dismiss_stale_reviews": true,
-    "require_last_push_approval": true
-  },
-  "restrictions": null,
-  "allow_force_pushes": false,
-  "allow_deletions": false,
-  "required_linear_history": true
-}
-JSON
-
-# staging — same, but approvals optional
-gh api -X PUT "repos/$REPO/branches/staging/protection" \
-  --input - <<'JSON'
-{
-  "required_status_checks": { "strict": true, "contexts": ["CI"] },
-  "enforce_admins": false,
-  "required_pull_request_reviews": {
-    "required_approving_review_count": 0,
-    "dismiss_stale_reviews": true
-  },
-  "restrictions": null,
-  "allow_force_pushes": false,
-  "allow_deletions": false
-}
-JSON
-```
-
-</details>
-
-⚠️ Do **not** enable *Automatically delete head branches* on this repo. In this
-model the head of a promotion PR is `develop` or `staging` — long-lived branches
-that must survive the merge. It is currently off; leave it off.
-
-After enabling either mechanism, `branch-guard.yml` becomes a redundant second
-layer — harmless to keep as defence in depth.
-
-## Commit messages
-
-Conventional Commits, matching existing history:
-
-```
-feat(fno): add options greeks panel
-fix(charting): stop scroll-back cache from dropping merged bars
-chore(deps): drop unused three.js
-refactor(quant): extract consensus engine into quant-core
-docs(readme): document the branch model
-```
-
-## A note on the external auth API
-
-Authentication, broker credentials, credit, and payments are **not in this
-repository** — they are a separate deployment behind
-`NEXT_PUBLIC_API_BASE_URL` (production: `https://api-web.stratai.live`). Changes
-to login or payment behaviour usually belong in that repository, not this one.
-See [`frontend/src/store/useAuthStore.ts`](frontend/src/store/useAuthStore.ts).
+   The status context is `CI` — the `name:` of the `ci-ok` job, which aggregates
+   every other CI job. Point at that one rather than at each job individually, so
+   a path-filtered skip cannot wedge a merge. This deliberately omits the
+   `pull_request` rule: adding it would re-impose PR-only on `main`, which is the
+   thing being removed here.

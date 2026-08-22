@@ -720,39 +720,33 @@ Three long-lived branches. Work flows in one direction only — see
 [CONTRIBUTING.md](CONTRIBUTING.md) for the full rules.
 
 ```
-feature/*  fix/*  chore/*
-    │
-    │  PR + review
-    ▼
-develop ──────────► staging ──────────► main
-          PR                  PR          │
-     (integration)      (pre-prod)        └─► production deploy
+main ──► push ──► CI + production deploy (concurrently)
 ```
 
-| Branch | Purpose | Accepts | Triggers |
-|---|---|---|---|
-| **`main`** | **Production.** Always releasable. | Approved PRs from `staging` (or `hotfix/*`) — **never a direct push** | `deploy-server.yml` → droplet redeploy; `v*` tag → desktop release |
-| **`staging`** | Pre-production verification | PRs from `develop` | `ci.yml` |
-| **`develop`** | Day-to-day integration | PRs from `feature/*`, `fix/*`, `chore/*` | `ci.yml` |
+| Branch | Purpose | Triggers |
+|---|---|---|
+| **`main`** | The only long-lived branch. Everything is pushed here directly. | `deploy-server.yml` → droplet + web redeploy; `ci.yml` |
 
-**Every merge into `main` is a production deploy.** Branch off `develop` for new
-work, and promote up the ladder rather than skipping a rung.
+`develop` and `staging` were removed, along with `branch-guard.yml` and the
+`.githooks/pre-push` hook that enforced the old three-rung ladder.
+
+**Every push to `main` is a production deploy**, so run the checks BEFORE pushing —
+afterwards the live site has already changed.
 
 ```bash
-git checkout develop && git pull
-git checkout -b feature/my-thing
-# ... work, verify ...
-git push -u origin feature/my-thing
-gh pr create --base develop
+git pull
+# ... work ...
+cd frontend && npx tsc --noEmit && npx vitest run && npm run build:web
+git push origin main
 ```
 
-> **Enforcement caveat.** GitHub branch protection is not currently active — the
-> repo is private on a free plan, and the protection API returns
-> `403 Upgrade to GitHub Pro`. [`branch-guard.yml`](.github/workflows/branch-guard.yml)
-> reports direct pushes to `main`/`staging` and wrongly-targeted PRs, but it runs
-> *after* the fact and cannot block them. Until the plan allows real protection,
-> review discipline is the actual gate. The `gh api` commands to enable
-> protection are in [CONTRIBUTING.md](CONTRIBUTING.md#turning-on-real-protection).
+> **No enforcement.** GitHub branch protection and rulesets are both unavailable —
+> the repo is private on a free plan and both APIs return
+> `403 Upgrade to GitHub Pro`. `ci.yml` runs on every push to `main`, but
+> *concurrently* with the deploy rather than before it, so a red CI tells you a bad
+> commit is already live instead of preventing it. Making CI a real gate needs a
+> `workflow_run` dependency in `deploy-server.yml` — see
+> [CONTRIBUTING.md](CONTRIBUTING.md#if-you-later-want-a-gate-back).
 
 ---
 

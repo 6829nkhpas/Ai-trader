@@ -2,9 +2,14 @@ name: deploy-server
 
 # Continuous deployment for the DROPLET backend stack.
 #
-# main is the PRODUCTION branch and the ONLY branch that deploys. Code reaches
-# it through an approved PR (see CONTRIBUTING.md), so every run of this workflow
-# is a production deploy of already-reviewed, already-CI-verified code.
+# main is the PRODUCTION branch and the ONLY branch. Work is pushed to it
+# directly, so every push here is a production deploy — there is no review gate
+# ahead of it and no promotion ladder behind it.
+#
+# ci.yml runs on the SAME event, concurrently rather than before. A red CI does
+# not stop this workflow, so it tells you a bad commit is already live rather
+# than preventing it. If you want a real gate, add a `workflow_run` dependency on
+# ci.yml here.
 #
 # On every push to main that touches server code (or manually), SSH into the
 # droplet and run redeploy.sh, which syncs the repo to the branch that triggered
