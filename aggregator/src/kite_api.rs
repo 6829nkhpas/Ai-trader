@@ -32,6 +32,14 @@ pub struct Instrument {
     pub tradingsymbol: String,
     pub name: String,
     pub last_price: f64,
+    /// Expiry as the CSV carries it (`YYYY-MM-DD`), empty for cash instruments.
+    /// Needed by the web instrument search, which renders the expiry on F&O rows
+    /// (`lib/bridge/webAdapters.ts::rowsToSearchResults`).
+    #[serde(default)]
+    pub expiry: String,
+    /// Strike price; `0.0` for futures and cash instruments.
+    #[serde(default)]
+    pub strike: f64,
     pub tick_size: f64,
     pub lot_size: u32,
     pub instrument_type: String,
@@ -88,6 +96,13 @@ pub struct HistoricalParams {
 
 // ── Shared State ─────────────────────────────────────────────────────────────
 
+/// Cached instrument list for ONE exchange.
+///
+/// Previously this was a single shared slot with an `exchange: String` tag, so a
+/// lookup for the other exchange invalidated it. Since `resolve_token` picks NSE
+/// or NFO per symbol, alternating an equity and an option chart evicted the cache
+/// on every request and refetched the ~100k-row NFO CSV each time. Keyed per
+/// exchange, both lists stay warm.
 struct InstrumentCache {
     instruments: Vec<Instrument>,
     fetched_at: Option<Instant>,
@@ -95,14 +110,14 @@ struct InstrumentCache {
     /// Used to enforce a 60-second cooldown so a bad token doesn't cause
     /// per-request hammering of the Kite instruments endpoint.
     last_failed_at: Option<Instant>,
-    exchange: String,
 }
 
 pub struct KiteApiState {
     api_key: String,
     access_token: String,
     http_client: reqwest::Client,
-    cache: RwLock<InstrumentCache>,
+    /// Per-exchange instrument caches, keyed by the upper-case exchange code.
+    cache: RwLock<HashMap<String, InstrumentCache>>,
     /// Prevents thundering herd: only one task can fetch instruments at a time.
     /// Others wait for the first to finish and then read from cache.
     fetch_lock: tokio::sync::Mutex<()>,
@@ -111,8 +126,13 @@ pub struct KiteApiState {
 }
 
 const CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60); // 24 hours
-/// Disk path for persisted instrument cache — survives aggregator restarts.
-const DISK_CACHE_PATH: &str = "instruments_cache.json";
+
+/// Disk path for a persisted instrument cache — survives aggregator restarts.
+/// Keyed by exchange for the same reason the memory cache is: one un-keyed file
+/// meant NSE and NFO overwrote each other's snapshot on every refresh.
+fn disk_cache_path(exchange: &str) -> String {
+    format!("instruments_cache_{}.json", exchange.to_lowercase())
+}
 
 // Per-symbol token cache: symbol → instrument_token.
 // Avoids re-scanning the full instrument CSV on every historical request.
@@ -169,7 +189,24 @@ impl KiteApiState {
         }
 
         // Pre-load from disk cache on startup so the first request is instant.
-        let disk_instruments = Self::load_disk_cache();
+        // Both exchanges are loaded: an F&O chart must not have to wait on a cold
+        // 100k-row NFO fetch just because the last process only warmed NSE.
+        let mut cache: HashMap<String, InstrumentCache> = HashMap::new();
+        for exchange in ["NSE", "NFO"] {
+            let instruments = Self::load_disk_cache(exchange);
+            if !instruments.is_empty() {
+                cache.insert(
+                    exchange.to_string(),
+                    InstrumentCache {
+                        instruments,
+                        // `None` marks it as servable-but-stale: `get_instruments`
+                        // returns it immediately and still refreshes.
+                        fetched_at: None,
+                        last_failed_at: None,
+                    },
+                );
+            }
+        }
 
         Self {
             api_key,
@@ -178,15 +215,63 @@ impl KiteApiState {
                 .timeout(Duration::from_secs(30))
                 .build()
                 .expect("Failed to create HTTP client"),
-            cache: RwLock::new(InstrumentCache {
-                instruments: disk_instruments,
-                fetched_at: None,
-                last_failed_at: None,
-                exchange: "NSE".to_string(),
-            }),
+            cache: RwLock::new(cache),
             fetch_lock: tokio::sync::Mutex::new(()),
             metrics,
         }
+    }
+
+    /// Instruments for one exchange, using the same memory → disk → Kite path the
+    /// HTTP handlers use.
+    ///
+    /// Exposed for `option_chain_selector`, which needs the NFO ladder. It reads
+    /// through the same cache deliberately: a second fetch path would double the
+    /// daily instrument download and could disagree with what the search endpoint
+    /// serves.
+    pub(crate) async fn instruments_for(&self, exchange: &str) -> Result<Vec<Instrument>, String> {
+        self.get_instruments(exchange).await
+    }
+
+    /// Latest traded price for one Kite instrument key (e.g. `NSE:NIFTY 50`).
+    ///
+    /// `Ok(None)` means Kite answered but had no price for the key — a data
+    /// outcome, not a fault — so the caller can skip that underlying this cycle
+    /// instead of treating it as an outage.
+    pub(crate) async fn last_price_for(&self, instrument: &str) -> Result<Option<f64>, String> {
+        let url = format!(
+            "https://api.kite.trade/quote?i={}",
+            urlencoding::encode(instrument)
+        );
+        let response = self
+            .http_client
+            .get(&url)
+            .header("X-Kite-Version", "3")
+            .header("Authorization", self.auth_header())
+            .send()
+            .await
+            .map_err(|e| {
+                self.metrics.kite_api_failed("quote");
+                format!("quote transport error: {e}")
+            })?;
+
+        if !response.status().is_success() {
+            self.metrics.kite_api_failed("quote");
+            return Err(format!("quote returned HTTP {}", response.status().as_u16()));
+        }
+
+        let body: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("quote decode error: {e}"))?;
+
+        let price = body
+            .get("data")
+            .and_then(|d| d.get(instrument))
+            .and_then(|q| q.get("last_price"))
+            .and_then(|p| p.as_f64())
+            .filter(|p| p.is_finite() && *p > 0.0);
+
+        Ok(price)
     }
 
     fn auth_header(&self) -> String {
@@ -196,13 +281,17 @@ impl KiteApiState {
         format!("token {}:{}", final_key, final_token)
     }
 
-    /// Load instrument cache from disk. Returns empty vec on any error.
-    fn load_disk_cache() -> Vec<Instrument> {
-        match std::fs::read_to_string(DISK_CACHE_PATH) {
+    /// Load one exchange's instrument cache from disk. Empty vec on any error.
+    fn load_disk_cache(exchange: &str) -> Vec<Instrument> {
+        match std::fs::read_to_string(disk_cache_path(exchange)) {
             Ok(json) => {
                 match serde_json::from_str::<Vec<Instrument>>(&json) {
                     Ok(instruments) if !instruments.is_empty() => {
-                        log::info!("[Kite API] Loaded {} instruments from disk cache", instruments.len());
+                        log::info!(
+                            "[Kite API] Loaded {} {} instruments from disk cache",
+                            instruments.len(),
+                            exchange
+                        );
                         instruments
                     }
                     _ => Vec::new(),
@@ -212,13 +301,17 @@ impl KiteApiState {
         }
     }
 
-    /// Save instrument list to disk as JSON for persistence across restarts.
-    fn save_disk_cache(instruments: &[Instrument]) {
+    /// Save one exchange's instrument list to disk for persistence across restarts.
+    fn save_disk_cache(exchange: &str, instruments: &[Instrument]) {
         if let Ok(json) = serde_json::to_string(instruments) {
-            if let Err(e) = std::fs::write(DISK_CACHE_PATH, &json) {
-                log::warn!("[Kite API] Failed to write disk cache: {}", e);
+            if let Err(e) = std::fs::write(disk_cache_path(exchange), &json) {
+                log::warn!("[Kite API] Failed to write {} disk cache: {}", exchange, e);
             } else {
-                log::info!("[Kite API] Persisted {} instruments to disk cache", instruments.len());
+                log::info!(
+                    "[Kite API] Persisted {} {} instruments to disk cache",
+                    instruments.len(),
+                    exchange
+                );
             }
         }
     }
@@ -256,17 +349,21 @@ impl KiteApiState {
         // ── Level 1: Memory cache (fast path) ────────────────────────────
         {
             let cache = self.cache.read().await;
-            if cache.exchange == exchange {
-                if let Some(fetched_at) = cache.fetched_at {
-                    if fetched_at.elapsed() < CACHE_TTL && !cache.instruments.is_empty() {
-                        return Ok(cache.instruments.clone());
+            if let Some(entry) = cache.get(exchange) {
+                if let Some(fetched_at) = entry.fetched_at {
+                    if fetched_at.elapsed() < CACHE_TTL && !entry.instruments.is_empty() {
+                        return Ok(entry.instruments.clone());
                     }
                 }
                 // Disk cache loaded on startup has fetched_at=None.
                 // Serve it immediately but allow a background refresh.
-                if cache.fetched_at.is_none() && !cache.instruments.is_empty() {
-                    log::info!("[Kite API] Serving {} instruments from disk cache (will refresh)", cache.instruments.len());
-                    return Ok(cache.instruments.clone());
+                if entry.fetched_at.is_none() && !entry.instruments.is_empty() {
+                    log::info!(
+                        "[Kite API] Serving {} {} instruments from disk cache (will refresh)",
+                        entry.instruments.len(),
+                        exchange
+                    );
+                    return Ok(entry.instruments.clone());
                 }
             }
         }
@@ -274,19 +371,23 @@ impl KiteApiState {
         // If the last API attempt failed (0 instruments / HTTP error) less than
         // 60 seconds ago, return immediately with whatever cache we have.
         // This prevents per-second hammering when the Kite token is invalid.
+        // Per exchange: an NFO failure must not put NSE into cooldown.
         {
             let cache = self.cache.read().await;
-            if let Some(failed_at) = cache.last_failed_at {
-                const COOLDOWN: Duration = Duration::from_secs(60);
-                if failed_at.elapsed() < COOLDOWN {
-                    if !cache.instruments.is_empty() {
-                        log::debug!("[Kite API] Cooldown active — serving stale cache");
-                        return Ok(cache.instruments.clone());
-                    } else {
-                        return Err(format!(
-                            "Kite instruments unavailable (cooldown {}s remaining)",
-                            COOLDOWN.saturating_sub(failed_at.elapsed()).as_secs()
-                        ));
+            if let Some(entry) = cache.get(exchange) {
+                if let Some(failed_at) = entry.last_failed_at {
+                    const COOLDOWN: Duration = Duration::from_secs(60);
+                    if failed_at.elapsed() < COOLDOWN {
+                        if !entry.instruments.is_empty() {
+                            log::debug!("[Kite API] Cooldown active — serving stale {} cache", exchange);
+                            return Ok(entry.instruments.clone());
+                        } else {
+                            return Err(format!(
+                                "Kite {} instruments unavailable (cooldown {}s remaining)",
+                                exchange,
+                                COOLDOWN.saturating_sub(failed_at.elapsed()).as_secs()
+                            ));
+                        }
                     }
                 }
             }
@@ -297,10 +398,10 @@ impl KiteApiState {
         // Double-check after acquiring lock
         {
             let cache = self.cache.read().await;
-            if cache.exchange == exchange {
-                if let Some(fetched_at) = cache.fetched_at {
-                    if fetched_at.elapsed() < CACHE_TTL && !cache.instruments.is_empty() {
-                        return Ok(cache.instruments.clone());
+            if let Some(entry) = cache.get(exchange) {
+                if let Some(fetched_at) = entry.fetched_at {
+                    if fetched_at.elapsed() < CACHE_TTL && !entry.instruments.is_empty() {
+                        return Ok(entry.instruments.clone());
                     }
                 }
             }
@@ -374,34 +475,45 @@ impl KiteApiState {
             log::info!("[Kite API] Fetched {} instruments for {}", instruments.len(), exchange);
 
             // Persist to disk so next restart is instant
-            Self::save_disk_cache(&instruments);
+            Self::save_disk_cache(exchange, &instruments);
 
             // Update memory cache — clear any previous failure mark
             {
                 let mut cache = self.cache.write().await;
-                cache.instruments = instruments.clone();
-                cache.fetched_at = Some(Instant::now());
-                cache.last_failed_at = None; // clear cooldown on success
-                cache.exchange = exchange.to_string();
+                cache.insert(
+                    exchange.to_string(),
+                    InstrumentCache {
+                        instruments: instruments.clone(),
+                        fetched_at: Some(Instant::now()),
+                        last_failed_at: None, // clear cooldown on success
+                    },
+                );
             }
 
             return Ok(instruments);
         }
 
-        // All attempts failed — set cooldown so we don't hammer Kite.
+        // All attempts failed — set the cooldown for THIS exchange so we don't
+        // hammer Kite, without taking the other exchange down with it.
+        log::warn!(
+            "[Kite API] {} instruments fetch failed after 3 attempts: {}",
+            exchange, last_err
+        );
         {
             let mut cache = self.cache.write().await;
-            cache.last_failed_at = Some(Instant::now());
-        }
-        log::warn!("[Kite API] Instruments fetch failed after 3 attempts: {}", last_err);
-        {
-            let cache = self.cache.read().await;
-            if !cache.instruments.is_empty() && cache.exchange == exchange {
+            let entry = cache.entry(exchange.to_string()).or_insert_with(|| InstrumentCache {
+                instruments: Vec::new(),
+                fetched_at: None,
+                last_failed_at: None,
+            });
+            entry.last_failed_at = Some(Instant::now());
+
+            if !entry.instruments.is_empty() {
                 log::warn!(
-                    "[Kite API] All retries failed — serving stale cache ({} instruments). Error: {}",
-                    cache.instruments.len(), last_err
+                    "[Kite API] All retries failed — serving stale {} cache ({} instruments). Error: {}",
+                    exchange, entry.instruments.len(), last_err
                 );
-                return Ok(cache.instruments.clone());
+                return Ok(entry.instruments.clone());
             }
         }
 
@@ -441,7 +553,16 @@ fn parse_csv_line(line: &str) -> Vec<String> {
 }
 
 /// Parse the Kite instruments CSV into a Vec<Instrument>.
-/// Only includes EQ (equity) and INDEX types for cleaner search results.
+///
+/// Keeps the tradeable instrument types and drops the rest, so search results
+/// stay clean without the parser needing to know which exchange it is reading:
+/// the NSE CSV only contains `EQ`/`INDEX` rows and the NFO CSV only `CE`/`PE`/`FUT`.
+///
+/// The derivative types used to be dropped here unconditionally, which made the
+/// NFO parse yield ~0 rows. That tripped the `instruments.len() < 100` sanity
+/// guard in `get_instruments`, so `resolve_token` could never resolve an F&O
+/// tradingsymbol over HTTP — every option/future chart on the browser path failed,
+/// and the 60-second failure cooldown then suppressed retries.
 ///
 /// Kite CSV columns (0-indexed):
 ///   0  instrument_token
@@ -457,6 +578,10 @@ fn parse_csv_line(line: &str) -> Vec<String> {
 ///   10 segment
 ///   11 exchange
 fn parse_instruments_csv(csv: &str) -> Vec<Instrument> {
+    /// Instrument types worth serving. Anything else (bonds, ETF variants Kite
+    /// tags separately, exercise rows) is noise in a symbol search.
+    const KEEP_TYPES: [&str; 5] = ["EQ", "INDEX", "CE", "PE", "FUT"];
+
     let mut instruments = Vec::new();
     let mut lines = csv.lines();
 
@@ -477,7 +602,7 @@ fn parse_instruments_csv(csv: &str) -> Vec<Instrument> {
 
         // col 9 = instrument_type
         let instrument_type = cols[9].as_str();
-        if instrument_type != "EQ" && instrument_type != "INDEX" {
+        if !KEEP_TYPES.contains(&instrument_type) {
             continue;
         }
 
@@ -487,6 +612,8 @@ fn parse_instruments_csv(csv: &str) -> Vec<Instrument> {
             tradingsymbol:    cols[2].clone(),
             name:             cols[3].clone(),
             last_price:       cols[4].parse().unwrap_or(0.0),
+            expiry:           cols[5].clone(),                // empty for cash
+            strike:           cols[6].parse().unwrap_or(0.0), // 0 for FUT / cash
             tick_size:        cols[7].parse().unwrap_or(0.0), // col 7, NOT 5
             lot_size:         cols[8].parse().unwrap_or(0),   // col 8, NOT 6
             instrument_type:  instrument_type.to_string(),
@@ -506,9 +633,143 @@ fn parse_instruments_csv(csv: &str) -> Vec<Instrument> {
 }
 
 
+// ── Instrument search (pure) ─────────────────────────────────────────────────
+//
+// Kept as free functions over a slice so they are unit-testable without an axum
+// state or a live Kite fetch. They deliberately mirror
+// `frontend/src-tauri/src/commands/instruments.rs` — the desktop path searches
+// the local SQLite masters (`search_in_db` + `search_nfo_tokenized`) while the
+// browser path comes through here, and the two must agree or the same keystroke
+// yields different results on desktop and on the website.
+
+/// Cash-side result cap — matches the desktop equity query's `LIMIT 10`.
+const EQ_SEARCH_LIMIT: usize = 10;
+/// Derivative-side result cap — matches the desktop NFO query's `LIMIT 25`.
+const FNO_SEARCH_LIMIT: usize = 25;
+
+/// Normalize an option-type alias to its canonical form.
+///
+/// Same table as `commands/instruments.rs::normalize_option_type`, so "NIFTY
+/// 24000 PUT" and "NIFTY 24000 PE" behave identically on both transports.
+fn normalize_option_type(token: &str) -> Option<&'static str> {
+    match token {
+        "CE" | "CALL" => Some("CE"),
+        "PE" | "PUT" => Some("PE"),
+        "FUT" | "FUTURE" | "FUTURES" => Some("FUT"),
+        _ => None,
+    }
+}
+
+/// Search cash instruments (`EQ` / `INDEX`).
+///
+/// Ordering mirrors the desktop SQL: prefix matches on tradingsymbol first, then
+/// shorter tradingsymbols, so "REL" surfaces `RELIANCE` above `RELINFRA`. A
+/// `name` match (e.g. "Reliance Industries") is admitted but ranks after the
+/// symbol prefixes, exactly as `CASE WHEN tradingsymbol LIKE ?1 THEN 0 ELSE 1`
+/// does.
+fn search_cash(instruments: &[Instrument], query: &str) -> Vec<Instrument> {
+    let mut scored: Vec<(u8, usize, &Instrument)> = Vec::new();
+
+    for inst in instruments {
+        let sym = inst.tradingsymbol.to_uppercase();
+        let rank = if sym.starts_with(query) {
+            0
+        } else if sym.contains(query) || inst.name.to_uppercase().contains(query) {
+            1
+        } else {
+            continue;
+        };
+        scored.push((rank, sym.len(), inst));
+    }
+
+    scored.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.tradingsymbol.cmp(&b.2.tradingsymbol)));
+    scored.truncate(EQ_SEARCH_LIMIT);
+    scored.into_iter().map(|(_, _, i)| i.clone()).collect()
+}
+
+/// Token-aware derivative search (`CE` / `PE` / `FUT`).
+///
+/// Splits the query on whitespace and classifies every token as an option type,
+/// a numeric strike, or free text — the port of `search_nfo_tokenized`. All
+/// tokens must match (AND), so "NIFTY 24000 CE" narrows instead of widening.
+///
+/// Results are sorted by (expiry, strike) and only THEN truncated. The previous
+/// implementation broke out of the scan at 30 candidates and truncated to 15,
+/// which on the ~100k-row NFO list returned whichever strikes happened to appear
+/// first in the CSV — so a search for `NIFTY` never showed a near-month contract.
+fn search_derivatives(instruments: &[Instrument], query: &str) -> Vec<Instrument> {
+    let mut text_tokens: Vec<&str> = Vec::new();
+    let mut option_type_filter: Option<&str> = None;
+    let mut strike_prefix: Option<String> = None;
+
+    for token in query.split_whitespace() {
+        if let Some(ot) = normalize_option_type(token) {
+            option_type_filter = Some(ot);
+        } else if let Ok(num) = token.parse::<f64>() {
+            // Prefix match on the integer strike, so "2400" finds 24000 / 24050
+            // — the desktop `CAST(strike AS INTEGER) AS TEXT LIKE '2400%'`.
+            strike_prefix = Some(format!("{}", num as i64));
+        } else {
+            text_tokens.push(token);
+        }
+    }
+
+    let mut matches: Vec<&Instrument> = Vec::new();
+
+    for inst in instruments {
+        let sym = inst.tradingsymbol.to_uppercase();
+        let name = inst.name.to_uppercase();
+
+        // Every text token must appear in the tradingsymbol or the underlying
+        // name (`name` is what `derive_underlying` keys `nfo_instruments` on).
+        if !text_tokens.iter().all(|t| sym.contains(t) || name.contains(t)) {
+            continue;
+        }
+        if let Some(ot) = option_type_filter {
+            if inst.instrument_type != ot {
+                continue;
+            }
+        }
+        if let Some(prefix) = &strike_prefix {
+            if !format!("{}", inst.strike as i64).starts_with(prefix.as_str()) {
+                continue;
+            }
+        }
+        matches.push(inst);
+    }
+
+    // Sort the FULL candidate set before capping: nearest expiry first, then
+    // ascending strike, then tradingsymbol so the order is total (two contracts
+    // can share expiry+strike across CE/PE).
+    matches.sort_by(|a, b| {
+        a.expiry
+            .cmp(&b.expiry)
+            .then(a.strike.partial_cmp(&b.strike).unwrap_or(std::cmp::Ordering::Equal))
+            .then(a.tradingsymbol.cmp(&b.tradingsymbol))
+    });
+    matches.truncate(FNO_SEARCH_LIMIT);
+    matches.into_iter().cloned().collect()
+}
+
+/// Dispatch to the cash or derivative search based on what the exchange holds.
+///
+/// The caller asks per exchange (`webAdapters.ts::search_instruments` fires NSE
+/// and NFO in parallel and concatenates), so the split is by exchange rather
+/// than by inspecting each row.
+fn search_instrument_list(instruments: &[Instrument], query: &str, exchange: &str) -> Vec<Instrument> {
+    if exchange == "NFO" || exchange == "BFO" {
+        search_derivatives(instruments, query)
+    } else {
+        search_cash(instruments, query)
+    }
+}
+
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 /// GET /api/kite/instruments?q=RELI&exchange=NSE
+///
+/// `q` accepts multi-token derivative queries ("NIFTY 24000 CE"); see
+/// `search_derivatives`.
 async fn instruments_search(
     Query(params): Query<InstrumentSearchParams>,
     state: axum::extract::State<Arc<KiteApiState>>,
@@ -529,28 +790,7 @@ async fn instruments_search(
         )
     })?;
 
-    // Filter: prefix matches first, then contains matches
-    let mut prefix_matches = Vec::new();
-    let mut contains_matches = Vec::new();
-
-    for inst in &instruments {
-        let sym = inst.tradingsymbol.to_uppercase();
-        let name = inst.name.to_uppercase();
-
-        if sym.starts_with(&query) {
-            prefix_matches.push(inst.clone());
-        } else if sym.contains(&query) || name.contains(&query) {
-            contains_matches.push(inst.clone());
-        }
-
-        if prefix_matches.len() + contains_matches.len() >= 30 {
-            break;
-        }
-    }
-
-    let mut results: Vec<Instrument> = prefix_matches;
-    results.extend(contains_matches);
-    results.truncate(15);
+    let results = search_instrument_list(&instruments, &query, &exchange);
 
     Ok(Json(serde_json::json!({ "results": results })))
 }
@@ -813,6 +1053,14 @@ async fn historical_handler(
 pub async fn run_kite_api_server(port: &str, metrics: crate::metrics::AggregatorMetrics) {
     let state = Arc::new(KiteApiState::new(metrics));
 
+    // Option-chain selection, moved off the retired desktop shell. The selector
+    // needs exactly two things this state already owns — the NFO instrument cache
+    // and an authenticated Kite quote path — so it runs here rather than as a
+    // separate service. Without it, nothing tells the ingestion service which
+    // strikes to track and `option_chain_snapshots` stops filling, which is what
+    // the website's entire F&O workspace reads.
+    tokio::spawn(crate::option_chain_selector::run(state.clone()));
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -835,4 +1083,302 @@ pub async fn run_kite_api_server(port: &str, metrics: crate::metrics::Aggregator
     axum::serve(listener, app)
         .await
         .expect("Kite API server crashed");
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A minimal Kite instruments CSV header, in the real column order.
+    const HEADER: &str = "instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,strike,tick_size,lot_size,instrument_type,segment,exchange";
+
+    fn csv(rows: &[&str]) -> String {
+        let mut out = String::from(HEADER);
+        for r in rows {
+            out.push('\n');
+            out.push_str(r);
+        }
+        out
+    }
+
+    // ── parse_instruments_csv ────────────────────────────────────────────────
+
+    #[test]
+    fn parses_an_equity_row_from_the_correct_columns() {
+        let out = parse_instruments_csv(&csv(&[
+            "738561,2885,RELIANCE,\"RELIANCE INDUSTRIES\",2450.5,,0,0.05,1,EQ,NSE,NSE",
+        ]));
+
+        assert_eq!(out.len(), 1);
+        let i = &out[0];
+        assert_eq!(i.instrument_token, 738561);
+        assert_eq!(i.exchange_token, 2885);
+        assert_eq!(i.tradingsymbol, "RELIANCE");
+        // The quoted name is unwrapped, not split on its inner comma-free spaces.
+        assert_eq!(i.name, "RELIANCE INDUSTRIES");
+        assert_eq!(i.last_price, 2450.5);
+        assert_eq!(i.expiry, "");
+        assert_eq!(i.strike, 0.0);
+        // tick_size/lot_size come from cols 7/8 — a past bug read 5/6 (expiry,
+        // strike), so every instrument reported tick_size 0 and lot_size 0.
+        assert_eq!(i.tick_size, 0.05);
+        assert_eq!(i.lot_size, 1);
+        assert_eq!(i.instrument_type, "EQ");
+        assert_eq!(i.exchange, "NSE");
+    }
+
+    #[test]
+    fn parses_a_quoted_name_containing_a_comma_without_shifting_columns() {
+        let out = parse_instruments_csv(&csv(&[
+            "111,222,ABC,\"Alpha, Beta & Co\",10.5,,0,0.05,7,EQ,NSE,NSE",
+        ]));
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].name, "Alpha, Beta & Co");
+        // The inner comma did not shift tick_size/lot_size/type one place left.
+        assert_eq!(out[0].tick_size, 0.05);
+        assert_eq!(out[0].lot_size, 7);
+        assert_eq!(out[0].instrument_type, "EQ");
+    }
+
+    #[test]
+    fn keeps_derivative_rows_with_expiry_and_strike() {
+        // Regression: these three types were dropped unconditionally, so the NFO
+        // parse yielded 0 rows, tripped the `len() < 100` guard in
+        // `get_instruments`, and `resolve_token` could never resolve an F&O
+        // tradingsymbol over HTTP — every option/future chart failed in a browser.
+        let out = parse_instruments_csv(&csv(&[
+            "12345678,48225,NIFTY26AUG24000CE,NIFTY,120.25,2026-08-25,24000,0.05,75,CE,NFO-OPT,NFO",
+            "12345679,48226,NIFTY26AUG24000PE,NIFTY,98.4,2026-08-25,24000,0.05,75,PE,NFO-OPT,NFO",
+            "12345680,48227,NIFTY26AUGFUT,NIFTY,24110,2026-08-27,0,0.05,75,FUT,NFO-FUT,NFO",
+        ]));
+
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0].instrument_type, "CE");
+        assert_eq!(out[0].expiry, "2026-08-25");
+        assert_eq!(out[0].strike, 24000.0);
+        assert_eq!(out[0].lot_size, 75);
+        assert_eq!(out[2].instrument_type, "FUT");
+        // Futures carry no strike; 0.0 is what `rowsToSearchResults` maps to null.
+        assert_eq!(out[2].strike, 0.0);
+    }
+
+    #[test]
+    fn keeps_index_rows_and_drops_unknown_types() {
+        let out = parse_instruments_csv(&csv(&[
+            "256265,0,NIFTY 50,NIFTY 50,0,,0,0,0,INDEX,INDICES,NSE",
+            "999001,0,SOMEBOND,Some Bond,0,,0,0,0,BOND,NSE,NSE",
+        ]));
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].tradingsymbol, "NIFTY 50");
+        assert_eq!(out[0].instrument_type, "INDEX");
+    }
+
+    #[test]
+    fn skips_malformed_short_and_empty_rows() {
+        let out = parse_instruments_csv(&csv(&[
+            "",
+            "738561,2885,RELIANCE",                              // too few columns
+            "0,2885,ZEROTOKEN,Zero,0,,0,0,1,EQ,NSE,NSE",         // token 0
+            ",2885,,Blank,0,,0,0,1,EQ,NSE,NSE",                  // empty symbol
+            "738562,2886,TCS,TCS LTD,3900,,0,0.05,1,EQ,NSE,NSE", // the only good row
+        ]));
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].tradingsymbol, "TCS");
+    }
+
+    // ── Fixtures ────────────────────────────────────────────────────────────
+
+    fn eq(symbol: &str, name: &str) -> Instrument {
+        Instrument {
+            instrument_token: 1,
+            exchange_token: 1,
+            tradingsymbol: symbol.to_string(),
+            name: name.to_string(),
+            last_price: 0.0,
+            expiry: String::new(),
+            strike: 0.0,
+            tick_size: 0.05,
+            lot_size: 1,
+            instrument_type: "EQ".to_string(),
+            segment: "NSE".to_string(),
+            exchange: "NSE".to_string(),
+        }
+    }
+
+    fn opt(symbol: &str, underlying: &str, expiry: &str, strike: f64, itype: &str) -> Instrument {
+        Instrument {
+            instrument_token: 2,
+            exchange_token: 2,
+            tradingsymbol: symbol.to_string(),
+            name: underlying.to_string(),
+            last_price: 0.0,
+            expiry: expiry.to_string(),
+            strike,
+            tick_size: 0.05,
+            lot_size: 75,
+            instrument_type: itype.to_string(),
+            segment: "NFO-OPT".to_string(),
+            exchange: "NFO".to_string(),
+        }
+    }
+
+    // ── search_cash ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn cash_search_ranks_symbol_prefix_above_name_match_then_shortest_first() {
+        let list = vec![
+            eq("RELINFRA", "Reliance Infrastructure"),
+            eq("RELIANCE", "Reliance Industries"),
+            eq("IRFC", "Indian Railway Finance"),
+            eq("TCS", "Tata Consultancy"),
+        ];
+
+        let hits = search_cash(&list, "RELI");
+        let syms: Vec<&str> = hits.iter().map(|i| i.tradingsymbol.as_str()).collect();
+        // Both are prefix matches; the shorter symbol wins the tie.
+        assert_eq!(syms, vec!["RELIANCE", "RELINFRA"]);
+    }
+
+    #[test]
+    fn cash_search_matches_on_company_name() {
+        let list = vec![eq("BAJFINANCE", "Bajaj Finance"), eq("TCS", "Tata Consultancy")];
+        let hits = search_cash(&list, "BAJAJ");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].tradingsymbol, "BAJFINANCE");
+    }
+
+    #[test]
+    fn cash_search_caps_at_the_desktop_limit() {
+        let list: Vec<Instrument> =
+            (0..40).map(|n| eq(&format!("SYM{:03}", n), "Something")).collect();
+        assert_eq!(search_cash(&list, "SYM").len(), EQ_SEARCH_LIMIT);
+    }
+
+    // ── search_derivatives ──────────────────────────────────────────────────
+
+    #[test]
+    fn derivative_search_orders_by_expiry_then_strike_before_truncating() {
+        let mut list = vec![
+            opt("NIFTY26SEP24500CE", "NIFTY", "2026-09-29", 24500.0, "CE"),
+            opt("NIFTY26AUG25000CE", "NIFTY", "2026-08-25", 25000.0, "CE"),
+            opt("NIFTY26AUG24000CE", "NIFTY", "2026-08-25", 24000.0, "CE"),
+        ];
+        // Pad the FRONT with far-dated strikes: the old implementation broke out
+        // of the scan at 30 candidates and truncated to 15, so it returned these
+        // and never saw the near-month contracts a trader actually wants.
+        for n in 0..40 {
+            let strike = 30000 + n * 50;
+            list.insert(
+                0,
+                opt(&format!("NIFTY27JAN{}CE", strike), "NIFTY", "2027-01-28", strike as f64, "CE"),
+            );
+        }
+
+        let hits = search_derivatives(&list, "NIFTY");
+        assert_eq!(hits.len(), FNO_SEARCH_LIMIT);
+        let head: Vec<&str> = hits.iter().take(3).map(|i| i.tradingsymbol.as_str()).collect();
+        assert_eq!(
+            head,
+            vec!["NIFTY26AUG24000CE", "NIFTY26AUG25000CE", "NIFTY26SEP24500CE"]
+        );
+    }
+
+    #[test]
+    fn derivative_search_ands_the_tokens() {
+        let list = vec![
+            opt("NIFTY26AUG24000CE", "NIFTY", "2026-08-25", 24000.0, "CE"),
+            opt("NIFTY26AUG24000PE", "NIFTY", "2026-08-25", 24000.0, "PE"),
+            opt("NIFTY26AUG25000CE", "NIFTY", "2026-08-25", 25000.0, "CE"),
+            opt("BANKNIFTY26AUG24000CE", "BANKNIFTY", "2026-08-25", 24000.0, "CE"),
+        ];
+
+        let hits = search_derivatives(&list, "NIFTY 24000 CE");
+        let syms: Vec<&str> = hits.iter().map(|i| i.tradingsymbol.as_str()).collect();
+        // BANKNIFTY matches too — its tradingsymbol contains "NIFTY", exactly as
+        // the desktop `LIKE '%NIFTY%'` does. The 25000 strike and the PE do not.
+        assert_eq!(syms, vec!["BANKNIFTY26AUG24000CE", "NIFTY26AUG24000CE"]);
+    }
+
+    #[test]
+    fn derivative_search_accepts_option_type_aliases() {
+        let list = vec![
+            opt("NIFTY26AUG24000CE", "NIFTY", "2026-08-25", 24000.0, "CE"),
+            opt("NIFTY26AUG24000PE", "NIFTY", "2026-08-25", 24000.0, "PE"),
+        ];
+
+        assert_eq!(search_derivatives(&list, "NIFTY PUT")[0].instrument_type, "PE");
+        assert_eq!(search_derivatives(&list, "NIFTY CALL")[0].instrument_type, "CE");
+    }
+
+    #[test]
+    fn derivative_search_treats_a_numeric_token_as_a_strike_prefix() {
+        let list = vec![
+            opt("NIFTY26AUG24000CE", "NIFTY", "2026-08-25", 24000.0, "CE"),
+            opt("NIFTY26AUG24005CE", "NIFTY", "2026-08-25", 24005.0, "CE"),
+            opt("NIFTY26AUG24050CE", "NIFTY", "2026-08-25", 24050.0, "CE"),
+            opt("NIFTY26AUG25000CE", "NIFTY", "2026-08-25", 25000.0, "CE"),
+        ];
+
+        // A genuine PREFIX match, matching the desktop's
+        // `CAST(strike AS INTEGER) AS TEXT LIKE '2400%'`: 24000 and 24005 share
+        // the prefix, 24050 and 25000 do not. (The desktop comment at
+        // `commands/instruments.rs` claims 24050 matches; it does not.)
+        let hits = search_derivatives(&list, "NIFTY 2400");
+        let syms: Vec<&str> = hits.iter().map(|i| i.tradingsymbol.as_str()).collect();
+        assert_eq!(syms, vec!["NIFTY26AUG24000CE", "NIFTY26AUG24005CE"]);
+
+        // The full strike still resolves to the single exact contract.
+        let exact = search_derivatives(&list, "NIFTY 24050");
+        assert_eq!(exact.len(), 1);
+        assert_eq!(exact[0].tradingsymbol, "NIFTY26AUG24050CE");
+    }
+
+    #[test]
+    fn derivative_search_finds_futures_by_alias() {
+        let list = vec![
+            opt("NIFTY26AUGFUT", "NIFTY", "2026-08-27", 0.0, "FUT"),
+            opt("NIFTY26AUG24000CE", "NIFTY", "2026-08-25", 24000.0, "CE"),
+        ];
+
+        let hits = search_derivatives(&list, "NIFTY FUTURES");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].tradingsymbol, "NIFTY26AUGFUT");
+    }
+
+    // ── Dispatch ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn dispatch_routes_nfo_to_the_token_search_and_nse_to_the_cash_search() {
+        let cash = vec![eq("RELIANCE", "Reliance Industries")];
+        let derivs = vec![
+            opt("NIFTY26AUG24000CE", "NIFTY", "2026-08-25", 24000.0, "CE"),
+            opt("NIFTY26AUG24000PE", "NIFTY", "2026-08-25", 24000.0, "PE"),
+        ];
+
+        assert_eq!(search_instrument_list(&cash, "RELI", "NSE").len(), 1);
+        // A multi-token query only narrows on the derivative path.
+        assert_eq!(search_instrument_list(&derivs, "NIFTY 24000 CE", "NFO").len(), 1);
+    }
+
+    // ── Serialization contract with the web adapter ──────────────────────────
+
+    #[test]
+    fn instrument_json_carries_the_fields_the_web_adapter_reads() {
+        // `lib/bridge/webAdapters.ts::rowsToSearchResults` reads exactly these
+        // keys off each row; `expiry` and `strike` were missing before, so every
+        // F&O search result rendered with a blank expiry and a null strike.
+        let json = serde_json::to_value(opt("NIFTY26AUG24000CE", "NIFTY", "2026-08-25", 24000.0, "CE")).unwrap();
+
+        assert_eq!(json["tradingsymbol"], "NIFTY26AUG24000CE");
+        assert_eq!(json["name"], "NIFTY");
+        assert_eq!(json["expiry"], "2026-08-25");
+        assert_eq!(json["strike"], 24000.0);
+        assert_eq!(json["instrument_type"], "CE");
+        assert_eq!(json["exchange"], "NFO");
+    }
 }

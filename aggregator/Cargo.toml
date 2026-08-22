@@ -76,6 +76,18 @@ prost-build = "0.12"
 protoc-bin-vendored = "3"
 
 # ===========================================================================
+# Dev Dependencies (tests only)
+# ===========================================================================
+[dev-dependencies]
+
+# Property-based testing. Required by the seven property-test modules inside
+# `src/option_chain.rs`, which moved here with that file when the desktop shell
+# was retired. They are the guarantee that ATM selection, the strike band, and
+# expiry resolution stay correct, so the dependency comes along rather than the
+# tests being dropped.
+proptest = "1"
+
+# ===========================================================================
 # Feature Flags
 # ===========================================================================
 [features]
