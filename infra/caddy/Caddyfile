@@ -1,5 +1,11 @@
-# Caddy gateway for the Strat Ai data plane — one TLS domain fronts every
-# desktop-facing endpoint (live WS feeds, QuestDB HTTP, deep-quant AI).
+# Caddy gateway for Strat Ai. Two TLS domains, served by this one container:
+#
+#   app-api.stratai.live — the data plane (live WS feeds, QuestDB HTTP,
+#                          deep-quant AI). Basic-auth on everything that reads
+#                          data; a shared credential, also compiled into desktop
+#                          installers.
+#   app.stratai.live     — the public web app (Next.js). NO basic-auth; the JWT
+#                          is the auth boundary. See the vhost at the bottom.
 #
 # Credentials for the basic-auth-protected routes are injected from the
 # environment (see the questdb-gateway service in docker-compose.prod.yml):
@@ -8,9 +14,8 @@
 #                           (generate: `docker run --rm caddy:2-alpine \
 #                            caddy hash-password --plaintext '<password>'`)
 #
-# TLS certificates are provisioned automatically by Let's Encrypt for
-# app-api.stratai.live and persisted in the caddy_data volume across restarts.
-
+# TLS certificates are provisioned automatically by Let's Encrypt for both
+# domains and persisted in the caddy_data volume across restarts.
 {
 	admin off
 	# `disable_redirects` keeps automatic HTTPS (so app-api.stratai.live gets a real
@@ -143,25 +148,31 @@ app-api.stratai.live {
 	}
 
 	# ── Desktop auto-update feed (/updates/* -> static files) ─────────────────
-	# Serves the signed installers and their per-platform `latest.json` manifests
-	# that the Tauri updater polls. Layout, written by the desktop-release
-	# workflow over SSH:
+	#
+	# ⚠ VESTIGIAL. The desktop shell was retired (frontend/src-tauri and
+	# .github/workflows/desktop-release.yml are both deleted), so nothing writes
+	# /srv/updates any more and no new client polls it. It is kept ONLY because
+	# already-installed builds in the wild still check this feed on launch: with the
+	# route removed they would get a 404 from the app.stratai.live vhost's catch-all
+	# instead of a clean "no update", and there is no upside to that. Delete the
+	# route, the /srv/updates bind mount in docker-compose.prod.yml, and the
+	# directory once you are satisfied no installed copies remain.
+	#
+	# Layout it serves (was written by the release workflow over SSH):
 	#
 	#   /srv/updates/windows-x86_64/latest.json
 	#   /srv/updates/windows-x86_64/Strat Ai_<ver>_x64-setup.exe
 	#   /srv/updates/darwin-universal/latest.json
 	#   /srv/updates/darwin-universal/Strat Ai_<ver>_universal.app.tar.gz
 	#
-	# basic_auth is NOT optional here. The installers have credentials compiled
-	# into them (QuestDB password, LLM key — see server.rs / services/llm.rs), so
-	# an open feed would hand those to anyone who fetched a build. The desktop
-	# sends this header from its already-baked credential
-	# (commands/updater.rs::authenticated_updater), so no new secret exists.
+	# basic_auth is NOT optional while it exists. The installers have credentials
+	# compiled into them, so an open feed would hand those to anyone who fetched a
+	# build. The desktop sends this header from its already-baked credential, so no
+	# new secret exists.
 	#
 	# Auth only proves the feed is ours; payload authenticity is enforced
-	# independently by the updater's minisign check against the pubkey in
-	# tauri.conf.json, so a valid-looking response still cannot ship code we did
-	# not sign.
+	# independently by the updater's minisign check against the baked pubkey, so a
+	# valid-looking response still cannot ship code we did not sign.
 	handle_path /updates/* {
 		basic_auth {
 			{$QUESTDB_USER} {$QUESTDB_PASSWORD_HASH}
@@ -172,4 +183,56 @@ app-api.stratai.live {
 
 	# Friendly root / health probe (returns 200 for a plain GET).
 	respond / "Strat Ai gateway" 200
+}
+
+# ── The web app (app.stratai.live) ────────────────────────────────────────────
+# Serves the Next.js terminal to end users. Deliberately NOT behind basic_auth:
+# this is the public product and the JWT (issued by the separate
+# api-web.stratai.live deployment) is the auth boundary. Adding a shared
+# gateway password here would mean every prospective user needed a secret that is
+# also compiled into desktop installers.
+#
+# The container holds NO gateway credential. `frontend`'s compose environment
+# points each upstream at its internal service name (KITE_API_URL,
+# QUESTDB_HTTP_URL, DEEP_QUANT_URL, QUANT_TOOL_SERVER_URL, SENTIMENT_HTTP_URL),
+# so its same-origin /api/* route handlers reach aggregator/QuestDB/deep-quant/
+# tool-server/sentiment directly over the stratai network and never traverse this
+# gateway. That is why no /tools or /sentiment route was added above.
+#
+# Requires: a DNS A record for app.stratai.live -> this droplet, and
+# https://app.stratai.live added to the CORS allowlist on the api-web deployment
+# (out of this repo) or login fails preflight.
+app.stratai.live {
+	# Compression is not cosmetic here: the app ships a 526 kB first-load JS bundle
+	# plus the TradingView Advanced Charts library (~31 MB of static assets under
+	# /static/charting_library/). Next's standalone server does not compress on its
+	# own behalf, so without this every cold visit transfers all of it raw.
+	encode zstd gzip
+
+	# Baseline hardening for a public financial app. `frame-ancestors 'none'`
+	# (superseding X-Frame-Options) is the load-bearing one: a trading terminal
+	# framed by a third party is a clickjacking target where the clicks place
+	# orders. The rest are cheap and uncontroversial.
+	header {
+		Content-Security-Policy "frame-ancestors 'none'"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Caddy advertises itself by default; nothing gains from telling the world.
+		-Server
+	}
+
+	reverse_proxy frontend:3000
+}
+
+# HTTP -> HTTPS for the app, explicitly.
+#
+# The global `auto_https disable_redirects` above suppresses Caddy's automatic
+# redirect, which is correct for the API gateway (its clients always dial https
+# and the flag keeps port 80 free for the ACME challenge). But a HUMAN types
+# `app.stratai.live` with no scheme, and without this block that request would be
+# served over plaintext — putting the JWT and the whole session on an
+# unencrypted page, and breaking the wss:// feeds as mixed content. So the
+# redirect is restored for this one site only.
+http://app.stratai.live {
+	redir https://{host}{uri} permanent
 }
