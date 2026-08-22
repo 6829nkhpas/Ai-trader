@@ -40,6 +40,18 @@ export function httpBase(): string {
   return resolveEnv(process.env.STRATAI_HTTP_BASE_URL, '').replace(/\/+$/, '');
 }
 
+/**
+ * `base` with `suffix` appended exactly once, trailing slashes normalized.
+ *
+ * Idempotent so an operator who configures `http://tool-server:8084/tools` and one
+ * who configures `http://tool-server:8084` both end up at the same upstream —
+ * doubling the segment would 404 just as surely as omitting it.
+ */
+function withSuffix(base: string, suffix: string): string {
+  const trimmed = base.replace(/\/+$/, '');
+  return trimmed.endsWith(suffix) ? trimmed : `${trimmed}${suffix}`;
+}
+
 /** Shared gateway basic-auth username. Mirrors `server.rs::questdb_user`. */
 export function gatewayUser(): string {
   return resolveEnv(process.env.QUESTDB_USER, 'admin');
@@ -99,10 +111,22 @@ export function upstreamBase(target: Upstream): string {
       return `http://${host()}:8086`;
     }
     case 'tools': {
+      // tool-server mounts every route under `/tools` (see tool-server/src/main.rs
+      // `build_router`), and the `[...path]` segment arrives with that prefix
+      // already stripped — so it has to be restored here. Appending it to the
+      // OVERRIDE too is the whole point: without that, a deployment setting
+      // QUANT_TOOL_SERVER_URL=http://tool-server:8084 forwarded
+      // `/api/tools/get_candles` to `http://tool-server:8084/get_candles` and got
+      // a 404 from the upstream, which the proxy passed through verbatim — a
+      // route that looked missing while both sides were healthy. Measured on the
+      // droplet: without the prefix 404, with it 405 (route present).
+      //
+      // A trailing `/tools` supplied by the operator is tolerated rather than
+      // doubled, since documenting the base either way is a coin flip.
       const override = resolveEnv(process.env.QUANT_TOOL_SERVER_URL, '');
-      if (override) return override.replace(/\/+$/, '');
+      if (override) return withSuffix(override, '/tools');
       if (base) return `${base}/tools`;
-      return `http://${host()}:8084`;
+      return `http://${host()}:8084/tools`;
     }
     case 'sentiment': {
       const override = resolveEnv(process.env.SENTIMENT_HTTP_URL, '');
