@@ -65,6 +65,14 @@ compliance.db
 compliance.db-wal
 compliance.db-shm
 
+# ----- Runtime caches written by services -----
+# The aggregator persists its Kite instrument dump next to the binary so the
+# cache survives a restart (kite_api.rs::disk_cache_path). It is ~12 MB of
+# regenerable exchange data, refetched automatically once the 24h TTL lapses,
+# so committing it would add bulk to every clone to no purpose — and would go
+# stale immediately, since contract listings change daily.
+aggregator/instruments_cache_*.json
+
 # ----- Environment & Secrets -----
 .env
 .env.local

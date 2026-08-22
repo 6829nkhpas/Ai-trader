@@ -1,9 +1,12 @@
 import { DASHBOARD_URL } from './env';
+import { bridgeInvoke } from './bridge';
 
 export async function openExternalUrl(url: string): Promise<void> {
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('open_browser', { url });
+    // Under Tauri this is the Rust `open_browser` command; in a browser the
+    // bridge adapter is `window.open`. The catch below stays as a last resort
+    // for a popup blocker rejecting the adapter's own call.
+    await bridgeInvoke('open_browser', { url });
     return;
   } catch {
     if (typeof window !== 'undefined') {

@@ -8,6 +8,11 @@
 > change and must be confirmed against the primary source at the time of filing. Read with
 > `SEBI_COMPLIANCE_BLUEPRINT.md`, `INVESTOR_BRIEF.md` and `GO_TO_MARKET.md`.
 > *Content from external sources was rephrased for compliance with licensing restrictions.*
+>
+> **Status · 19 August 2026.** The seven Phase-0 engineering blockers have shipped on `develop`.
+> **§4.2 is the canonical status table** — it carries the commit for each blocker and, more
+> importantly, the gap each one still has. Nothing in Part 4 should be read as complete without
+> checking it there. Gate 0→1 currently stands at one criterion of five.
 
 ---
 
@@ -143,17 +148,29 @@ Nothing here needs a regulator's permission. All of it is blocking.
 
 ### 4.2 Engineering — the seven blockers (Day 0–45) · Owner: CTO
 
-Full detail in `SEBI_COMPLIANCE_BLUEPRINT.md` §5.1. Summary:
+Full detail in `SEBI_COMPLIANCE_BLUEPRINT.md` §5.1. Summary and current state:
 
-| # | Task | Why blocking |
-| --- | --- | --- |
-| **P7** | **Secret hygiene first.** Purge `.env`, `keys/`, `bedrock-api-key.txt` from the repo and full git history. Rotate every credential. Move to a managed secret store | A leaked broker credential inside a regulated entity is a reportable cyber incident. Do this before anything else |
-| **P1** | **SKU split in code.** `TERMINAL` (analytics, Ghost Lines, footprint, volume profile, indicators, regime, VWEPR, S/R, patterns, VERIFY maths) vs `RESEARCH` (FIND, DEBATE, conviction, journal). Entitlement-gated at the API layer, not the UI | Lets you sell legally on Day 45 while the licence is pending. UI-only gating is not a control |
-| **P2** | **Immutable recommendation record store.** Per output: timestamp, symbol, direction, entry, SL, TP, horizon, rationale, every tool input value, model + prompt version hash, analyst of record | One table serves the research-report record rule, the audit trail, AI accountability and any future black-box research report |
-| **P5** | **Interaction log.** Every QA turn, notification and support message, tamper-evident, 5+ year retention | Record-keeping covers *all* client interactions |
-| **P6** | **Strip external performance surfaces.** Journal win rate and expectancy become internal-only. Ship the discipline-statistics surface instead | Fastest route to enforcement if left exposed |
-| **P8a** | **Personalisation refusal guardrail in QA mode** | Prevents drift from RA (research) into IA (advice) territory |
-| **P14** | **Broker + market-data adapter abstraction** | Removes the single-point-of-failure on one broker. Investors will ask |
+> **All seven mechanisms shipped on `develop` on 19 August 2026.** The Status column below is the
+> canonical record of what is closed and what is not; every other document in `docs/` cites this
+> table rather than restating it. **Shipped ≠ closed.** Four of the seven carry a residual gap that
+> is a Gate 0→1 item in its own right, and they are named here rather than in a footnote, because a
+> table that reads all-green is how a control gets treated as done when it is not.
+
+| # | Task | Why blocking | Status |
+| --- | --- | --- | --- |
+| **P7** | **Secret hygiene first.** Purge `.env`, `keys/`, `bedrock-api-key.txt` from the repo and full git history. Rotate every credential. Move to a managed secret store | A leaked broker credential inside a regulated entity is a reportable cyber incident. Do this before anything else | ⚠️ **Partial** (`8293dda`). `.env` and `keys/` were **never tracked** — the original claim was wrong. `bedrock-api-key.txt` and `scripts/powershell/auth/keys/*.pem` **were** tracked and are now untracked, with `.gitignore` widened. Runbook at `docs/compliance/SECRET_ROTATION_RUNBOOK.md`. **Three things remain: git history deliberately not rewritten (§4 of the runbook records why), two credentials still owed rotation, and no managed secret store exists** |
+| **P1** | **SKU split in code.** `TERMINAL` (analytics, Ghost Lines, footprint, volume profile, indicators, regime, VWEPR, S/R, patterns, VERIFY maths) vs `RESEARCH` (FIND, DEBATE, conviction, journal). Entitlement-gated at the API layer, not the UI | Lets you sell legally on Day 45 while the licence is pending. UI-only gating is not a control | ⚠️ **Shipped, not yet operable** (`bf0c885` server, `51c457a` client). Authoritative gate is `agents/deep-quant-loop/entitlements.py`; `frontend/src/lib/sku.ts` is explicitly defence-in-depth and a UX affordance only. Both fail closed. **Blocked on the remote auth deployment: `GET /api/v1/internal/entitlement/{user_id}` does not exist, so `SKU_ENFORCE=1` currently denies *all* RESEARCH traffic.** Correct posture for Phase 0 — TERMINAL-only is what is being sold — but it must be built before RESEARCH can be sold to a real user |
+| **P2** | **Immutable recommendation record store.** Per output: timestamp, symbol, direction, entry, SL, TP, horizon, rationale, every tool input value, model + prompt version hash, analyst of record | One table serves the research-report record rule, the audit trail, AI accountability and any future black-box research report | ⚠️ **Shipped, one field null** (`bf0c885`). `hashchain.py` + `reco_store.py`, append-only SQLite with `row_hash = sha256(prev_hash ‖ canonical_json(payload))`, `verify_chain()`, UPDATE/DELETE refused by database trigger. Hooked at the single `_finalize_decision` chokepoint. Model id and `prompt_hash` recorded per row via `prompt_version.py`. **`analyst_of_record` is null until P8b** (recorded honestly, not faked), and **the chain has no external witness** — a holder of the file could rebuild it end to end |
+| **P5** | **Interaction log.** Every QA turn, notification and support message, tamper-evident, 5+ year retention | Record-keeping covers *all* client interactions | ✅ **Shipped** (`bf0c885`). `interaction_log.py` on the same hash-chain primitive. Logged at `/run`, `/qa`, `/resume`, `/cancel`, **before** the work, so refused requests are on the record too. Content stored verbatim; oversize content truncated visibly. **No `purge()` exists** and a test asserts it never will — the 5-year floor is enforced by the absence of an API. Notifications and support messages are not yet in scope: the log covers product interactions only |
+| **P6** | **Strip external performance surfaces.** Journal win rate and expectancy become internal-only. Ship the discipline-statistics surface instead | Fastest route to enforcement if left exposed | ✅ **Shipped** (`51c457a`). `computePortfolioMetrics` no longer computes Total Return, Win Rate, Max Drawdown or Avg Conviction; the surface is now Setups Audited / Rejected / Forced HOLDs / Plan Adherence, headed "Discipline Metrics", with the P&L colouring removed. `journal.py` keeps win rate and expectancy as **internal** calibration. Plan Adherence renders `—` until its counter has data — honest empty, never a fabricated zero. User-facing wording still **[COUNSEL]** |
+| **P8a** | **Personalisation refusal guardrail in QA mode** | Prevents drift from RA (research) into IA (advice) territory | ✅ **Shipped** (`bf0c885`). `personalisation.py` `detect_personalisation()` is deterministic and runs **before** the model is called, so the refusal costs no tokens and does not depend on the model choosing to comply. Covers capital, income, net worth, goals, holdings, position sizing and suitability. The matched category is stamped on the refusal and carried into the P5 log as evidence. Prompt rule 6 added as defence in depth |
+| **P14** | **Broker + market-data adapter abstraction** | Removes the single-point-of-failure on one broker. Investors will ask | ⚠️ **Seam shipped, still one feed** (`e1caf32`). `providers::MarketDataProvider` and `providers::BrokerProvider`, selected by `MARKET_DATA_PROVIDER` (default `kite`). `BrokerProvider` exposes only `positions` and `margins` — **it has no order method**, which is what makes the "cannot place an order" claim in `docs/compliance/AI_DISCLOSURE.md` §2 structural rather than a policy. **Kite is the only implementation**, so the single point of failure is reduced to weeks of work, not removed |
+
+**What the seven do not cover.** P3, P4, P8b, P9, P10 and P13 remain open and are Phase-1 items
+(Part 14). P11 and P12 have shipped as *documents* — `docs/compliance/AI_DISCLOSURE.md` and
+`docs/compliance/AI_MODEL_GOVERNANCE.md` (`876bbf0`) — but the disclosure page is **not publishable**:
+§8 of it lists five blockers, and §4 carries a hard stop because the desktop build's default LLM
+gateway is an internal proxy rather than the router the page names.
 
 ### 4.3 Compliance groundwork (Day 15–45) · Owner: Founder + Counsel
 
@@ -164,9 +181,9 @@ Full detail in `SEBI_COMPLIANCE_BLUEPRINT.md` §5.1. Summary:
 | 0.11 | **Register for NISM Series XV (Research Analyst)** for the principal officer and every person who will touch research output |
 | 0.12 | **Appoint a Compliance Officer** — mandatory for a non-individual RA |
 | 0.13 | **Open the lien-marked deposit.** ₹1 lakh at the ≤150-client tier. Hold it in a **liquid or overnight mutual fund** — SEBI permitted this from August 2025, so it need not be dead capital |
-| 0.14 | **Draft the policy set:** compliance manual, code of conduct, personal-trading and blackout policy, conflict-of-interest policy, advertisement policy, grievance policy, record-retention policy, **AI model governance policy** |
+| 0.14 | **Draft the policy set:** compliance manual, code of conduct, personal-trading and blackout policy, conflict-of-interest policy, advertisement policy, grievance policy, record-retention policy, **AI model governance policy** — ✅ the AI model governance policy is drafted at `docs/compliance/AI_MODEL_GOVERNANCE.md` (`876bbf0`), with eight open items listed in its §10. The other eight policies are not started |
 | 0.15 | **Commission the CSCRF gap assessment.** Confirm your applicability category first — thresholds are size-based and a small RA sits in a lighter tier **[VERIFY]** |
-| 0.16 | **Freeze and audit all existing marketing.** Remove every return claim, performance figure, "SEBI" reference and P&L screenshot. Publish internal brand guidelines with the banned list from `GO_TO_MARKET.md` §2 |
+| 0.16 | **Freeze and audit all existing marketing.** Remove every return claim, performance figure, "SEBI" reference and P&L screenshot. Publish internal brand guidelines with the banned list from `GO_TO_MARKET.md` §2 — ✅ guidelines published at `docs/compliance/BRAND_GUIDELINES.md` and the in-product copy audited and scrubbed (`876bbf0`). **The audit covered the repo, not the live website** — that is the next pass, and `docs/compliance/WEBSITE_COPY.md` is the artefact it produces |
 | 0.17 | **Screen every affiliate, influencer and referral partner** against Regulation 16A. Terminate anyone giving stock calls or making return claims |
 
 ### 4.4 Revenue (Day 30–45) · Owner: Founder + Growth
@@ -182,6 +199,16 @@ Full detail in `SEBI_COMPLIANCE_BLUEPRINT.md` §5.1. Summary:
 **Gate 0 → 1:** TERMINAL live and taking payment · no recommendation surface reachable by an
 unlicensed user (verified by a written test, not an eyeball) · all secrets rotated · counsel engaged ·
 NISM booked.
+
+**Gate status as of 19 August 2026 — one of five criteria met.**
+
+| Criterion | State |
+| --- | --- |
+| TERMINAL live and taking payment | ⬜ Not met. The SKU split exists in code; the website still has to sell it. `docs/compliance/WEBSITE_COPY.md` is the copy source, `GO_TO_MARKET.md` §5 the price |
+| No recommendation surface reachable by an unlicensed user, **verified by a written test** | ✅ Met as a mechanism. The tests exist and are the evidence this criterion asked for: `frontend/src/lib/__tests__/sku*` (client), `agents/deep-quant-loop/tests/test_entitlements*.py` (server), and `test_interaction_log.py::test_a_refused_request_is_logged_with_both_rows` — which proves the refusal is *written down*, so "no unentitled user asked" can be distinguished from "we never recorded it". Both gates fail closed on a null, malformed or absent flag |
+| All secrets rotated | ⬜ **Not met.** Two credentials are still owed rotation and the rotation log in `SECRET_ROTATION_RUNBOOK.md` §6 has empty cells. This is the criterion most likely to be mistaken for done because P7 "shipped" |
+| Counsel engaged | ⬜ Not met. Every **[COUNSEL]** marker in `docs/` is downstream of this one |
+| NISM booked | ⬜ Not met |
 
 ---
 
@@ -451,7 +478,7 @@ sentence true and defensible.
 | India tightens crypto regulation | Discussion paper published, or international reporting-framework alignment announced | Quarterly monitoring brief already assigns an owner. Crypto is an accelerant, never the foundation — the equity licence carries the company |
 | SEBI AI/ML guidelines land stricter than the draft (e.g. mandatory reproducibility for client-facing models) | Final circular issued | LLM already out of the order path. Model and prompt hashes on every record make outputs replayable. Governance policy already written |
 | US or UK exclusion opinion unavailable | Counsel declines to opine favourably | Do not launch. Redirect to UAE, or serve those markets only through a locally licensed partner |
-| Single-broker dependency fails | Any Kite outage exceeding one trading session | Adapter abstraction (P14) shipped in Phase 0 specifically so a second feed can be added in weeks |
+| Single-broker dependency fails | Any Kite outage exceeding one trading session | Adapter abstraction (P14) shipped in Phase 0 (`e1caf32`) specifically so a second feed can be added in weeks. **The mitigation is not yet in place** — the seam exists, but Kite remains the only implementation, so today an outage is still an outage |
 | Regulation 16A breach via a marketing partner | Any partner names a stock or claims a return | Immediate termination clause in every partner contract. Weekly screening already in the cadence |
 | CSCRF audit failure or data breach | Audit finding, or any incident | Gap assessment in Phase 0. 72-hour DPDP breach-notification runbook written before it is needed |
 | Fee-cap breach at the family level | Any household approaching ₹1,51,000 across subscriptions | P4 hard-blocks the sale. Monthly reconciliation catches drift |
@@ -461,14 +488,18 @@ sentence true and defensible.
 
 ## Part 14 — Master checklist
 
-**Phase 0 · Day 0–45**
+**Phase 0 · Day 0–45** — ☑ done · ◐ shipped with a named gap (see §4.2) · ☐ not started
 ☐ TechCo incorporated ☐ ResearchCo incorporated ☐ IP assigned to TechCo ☐ IP licence executed
 ☐ Shared-services agreement ☐ ESOP pool ☐ GST, DPIIT, bank accounts ☐ Trademark filed (IN)
-☐ **P7 secrets purged and rotated** ☐ **P1 SKU split** ☐ **P2 recommendation store**
-☐ **P5 interaction log** ☐ **P6 performance surfaces stripped** ☐ **P8a personalisation guardrail**
-☐ **P14 broker/data adapters** ☐ Counsel engaged ☐ Principal officer identified ☐ NISM booked
-☐ Compliance Officer appointed ☐ Deposit opened in liquid fund ☐ Policy set drafted
-☐ AI governance policy drafted ☐ CSCRF gap assessment commissioned ☐ Marketing frozen and audited
+◐ **P7 secrets purged and rotated** — untracked, not rotated; no managed store
+◐ **P1 SKU split** — both gates ship and fail closed; remote entitlement endpoint absent
+◐ **P2 recommendation store** — chained and append-only; no external witness, analyst null
+☑ **P5 interaction log** ☑ **P6 performance surfaces stripped** ☑ **P8a personalisation guardrail**
+◐ **P14 broker/data adapters** — seam shipped, Kite still the only implementation
+☐ Counsel engaged ☐ Principal officer identified ☐ NISM booked
+☐ Compliance Officer appointed ☐ Deposit opened in liquid fund ☐ Policy set drafted (1 of 9)
+☑ AI governance policy drafted ☐ CSCRF gap assessment commissioned
+◐ Marketing frozen and audited — product copy scrubbed; website copy drafted, not yet published
 ☐ Partners screened for Reg 16A ☐ **TERMINAL Pro live and selling** ☐ Content engine running
 ☐ Community live with no-calls rule ☐ Broker conversations opened
 
@@ -476,7 +507,10 @@ sentence true and defensible.
 ☐ Application pack assembled ☐ Schedule III fee paid ☐ Filed on SEBI Intermediary Portal
 ☐ RAASB (BSE) enlistment ☐ **P3 report renderer** ☐ **P4 KYC + family fee-cap gating**
 ☐ **P8b analyst-of-record workflow** ☐ **P9 personal-trading surveillance**
-☐ **P10 advertisement register** ☐ **P11 AI disclosure page** ☐ **P12 model register**
+☐ **P10 advertisement register** ◐ **P11 AI disclosure page** — drafted at
+`docs/compliance/AI_DISCLOSURE.md`, **not publishable** (its §8 lists five blockers, §4 a hard stop)
+◐ **P12 model register** — `prompt_version.py` records model id + prompt hash per output;
+inventory and version register at `docs/compliance/AI_MODEL_GOVERNANCE.md` §2–§3
 ☐ **P13 grievance module** ☐ INH number wired into product ☐ RESEARCH SKU live
 ☐ Google financial services verification ☐ SEBI SI Portal advertiser verification
 ☐ Paid search live on approved terms

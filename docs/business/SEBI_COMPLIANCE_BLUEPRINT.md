@@ -219,11 +219,29 @@ Applicability is **threshold-based** by entity size, so a small RA sits in a lig
   cyber-resilience/recovery plan.
 - Cloud services adopted under SEBI's **Framework for Adoption of Cloud Services by REs**.
 
-**Immediate engineering consequence:** your repo currently has `.env`, `keys/` and
-`bedrock-api-key.txt` at the workspace root. Before ResearchCo holds a single client record, move all
-secrets to a managed secret store, rotate everything that has ever been committed, and confirm
-`.gitignore` coverage. A leaked broker credential inside a SEBI-regulated entity is a reportable
-cyber incident, not just a bad day.
+**Immediate engineering consequence — partly discharged, and the original claim was wrong.** This
+paragraph previously said the repo had `.env`, `keys/` and `bedrock-api-key.txt` at the workspace root.
+Verified against `git ls-files` on 17 August 2026:
+
+- `.env` and `keys/` were **never tracked**. The claim was inherited from an architecture note, not
+  measured. Both hold live material — the deploy key and the Tauri updater private key — so the risk
+  was real, but it was never a *git* exposure.
+- `bedrock-api-key.txt` **was** tracked (in history from `4aeceb2`), and so was
+  `scripts/powershell/auth/keys/{private,public}.pem` — **which this paragraph missed entirely**.
+  Neither is referenced by any code. Both are now untracked and `.gitignore` widened (`8293dda`).
+
+What remains, and why it is not closed:
+
+1. **Git history was deliberately not rewritten.** Every existing clone already holds the old values,
+   so **rotation, not rewriting, is what closes the exposure**. The purge command is recorded in
+   `docs/compliance/SECRET_ROTATION_RUNBOOK.md` §4 for when re-clones can be coordinated.
+2. **Two credentials are still owed rotation** — see the runbook's §6 log, which is the artefact an
+   auditor asks for and currently has empty cells.
+3. **No managed secret store is in use** (runbook §3.3, §8 item 1). Stronghold covers user-supplied
+   keys in the desktop app only, not service credentials.
+
+A leaked broker credential inside a SEBI-regulated entity is a reportable cyber incident, not just a
+bad day — and the reporting trigger itself is still **[COUNSEL]** (runbook §5).
 
 ### 4.2 AI/ML governance — one binding rule, one draft
 
@@ -252,11 +270,26 @@ tracking realised expectancy per setup is *model monitoring*. Do three things no
 1. **Write the AI Model Governance Policy before you are asked for it** — model inventory, owner per
    model, version register, pre-deployment test suite, drift monitoring, human-override log, incident
    procedure, and a documented fallback when an LLM returns garbage.
+   ✅ **Done** — `docs/compliance/AI_MODEL_GOVERNANCE.md` (`876bbf0`). Eight items in its §10 remain
+   open; the two that bite are that **no human-override log exists** (there is nothing to override
+   today, but that stops being true the moment P8b lands) and that **§2's inventory cannot be
+   fully verified from source** because model names are baked at compile time via `option_env!`.
 2. **Version and hash every model + prompt that produced a published recommendation**, and store the
    hash on the recommendation record. When SEBI asks "why did you recommend this," you replay it.
+   ✅ **Done** — `prompt_version.py` emits `model_id`, `prompt_hash` and `prompt_set_hash`; P2's
+   `reco_store` writes them onto every row at the `_finalize_decision` chokepoint.
 3. **Publish a plain-language AI disclosure page** stating what the model does, its inputs, its known
    limitations, that its output is probabilistic, and its measured accuracy. Do this voluntarily. When
    the guidelines land, you are already compliant and every competitor is scrambling.
+   ◐ **Drafted, not published, and one clause of this instruction is now deliberately not followed.**
+   `docs/compliance/AI_DISCLOSURE.md` covers what the model does, its inputs, its limitations and that
+   the output is probabilistic. It does **not** state a measured accuracy figure. That is a resolved
+   choice, not an omission: publishing a hit rate is exactly the headline-performance claim the
+   advertisement code restricts and `docs/compliance/BRAND_GUIDELINES.md` prohibits, so the two
+   requirements pull against each other and the safer error is to under-claim. **[COUNSEL]** must
+   settle it — tracked as `AI_MODEL_GOVERNANCE.md` §10 item 5 and `AI_DISCLOSURE.md` §8 item 4.
+   Publication is separately blocked: the desktop build's default LLM gateway is an internal proxy,
+   not the router the page names, so §4 of the page carries a hard stop.
 
 ### 4.3 DPDP Act 2023 + DPDP Rules 2025
 
@@ -280,26 +313,30 @@ This is the engineering backlog. Ordered by blocking severity.
 
 ### 5.1 Blocking — cannot launch paid without these
 
-| # | Change | Why |
-| --- | --- | --- |
-| P1 | **Split the product into two SKUs in code**: `TERMINAL` (analytics only — Ghost Lines, footprint, volume profile, indicators, regime, VWEPR, S/R, patterns) and `RESEARCH` (FIND, DEBATE, conviction score, journal). Gate `RESEARCH` behind a verified RA-client entitlement | Lets TechCo sell `TERMINAL` legally from day one while the INH is pending |
-| P2 | **Recommendation record store**: every FIND/DEBATE output persisted immutably with timestamp, symbol, direction, entry, SL, TP, horizon, rationale, every tool input value, model + prompt version hash, and the analyst of record | Research-report retention, audit trail, AI accountability, and the black-box research report all draw on this one table |
-| P3 | **Research report renderer**: turn each FIND output into a compliant report containing date/time, price at publication, target, holding period, rationale, **risk factors**, RA name + INH number, Compliance Officer contact, conflict disclosures and the standard SEBI disclaimer | A recommendation delivered without these is a defective research report |
-| P4 | **KYC-gated onboarding**: PAN, KRA check, client agreement e-sign, MITC acknowledgement, family-level fee-cap tracking that hard-blocks a sale that would breach ₹1,51,000 p.a. per family | The fee cap is per *family*, not per login — you must model family linkage or you will breach it |
-| P5 | **Interaction logging**: every chat turn in QA mode, every notification, every support conversation retained 5+ years in a legally verifiable, tamper-evident form | Record-keeping rule covers *all* client interactions, and QA mode is a client interaction about a recommendation |
-| P6 | **Strip or gate all performance surfaces**: the journal's win rate and expectancy cannot be shown as marketing. Internally it is a calibration input; externally it is a performance claim governed by the advertisement code | Fastest way to draw an enforcement action |
-| P7 | **Secrets hygiene**: purge `.env`, `keys/`, `bedrock-api-key.txt` from the repo and history; move to a managed secret store; rotate all credentials | CSCRF, and basic hygiene before you hold client data |
+> **Status column is a pointer, not the record.** `docs/business/PLAN_OF_ACTION.md` §4.2 is canonical
+> and carries the commit and the residual gap for each item. Duplicating detail here is how the two
+> drift apart.
+
+| # | Change | Why | Status |
+| --- | --- | --- | --- |
+| P1 | **Split the product into two SKUs in code**: `TERMINAL` (analytics only — Ghost Lines, footprint, volume profile, indicators, regime, VWEPR, S/R, patterns) and `RESEARCH` (FIND, DEBATE, conviction score, journal). Gate `RESEARCH` behind a verified RA-client entitlement | Lets TechCo sell `TERMINAL` legally from day one while the INH is pending | ◐ Both gates ship and fail closed. The **entitlement source does not exist yet** in the remote auth deployment, so RESEARCH is currently deniable-only |
+| P2 | **Recommendation record store**: every FIND/DEBATE output persisted immutably with timestamp, symbol, direction, entry, SL, TP, horizon, rationale, every tool input value, model + prompt version hash, and the analyst of record | Research-report retention, audit trail, AI accountability, and the black-box research report all draw on this one table | ◐ Shipped, hash-chained, DB-enforced append-only. **Analyst of record is null until P8b**; no external witness |
+| P3 | **Research report renderer**: turn each FIND output into a compliant report containing date/time, price at publication, target, holding period, rationale, **risk factors**, RA name + INH number, Compliance Officer contact, conflict disclosures and the standard SEBI disclaimer | A recommendation delivered without these is a defective research report | ☐ Not started — Phase 1. Blocked on the INH number regardless |
+| P4 | **KYC-gated onboarding**: PAN, KRA check, client agreement e-sign, MITC acknowledgement, family-level fee-cap tracking that hard-blocks a sale that would breach ₹1,51,000 p.a. per family | The fee cap is per *family*, not per login — you must model family linkage or you will breach it | ☐ Not started — Phase 1 |
+| P5 | **Interaction logging**: every chat turn in QA mode, every notification, every support conversation retained 5+ years in a legally verifiable, tamper-evident form | Record-keeping rule covers *all* client interactions, and QA mode is a client interaction about a recommendation | ✅ Shipped for product interactions (`/run`, `/qa`, `/resume`, `/cancel`), logged before the work so refusals are recorded. **Notifications and support conversations are not yet covered** |
+| P6 | **Strip or gate all performance surfaces**: the journal's win rate and expectancy cannot be shown as marketing. Internally it is a calibration input; externally it is a performance claim governed by the advertisement code | Fastest way to draw an enforcement action | ✅ Shipped. Discipline metrics replaced the four performance figures; `journal.py` keeps them internal. Labels still **[COUNSEL]** |
+| P7 | **Secrets hygiene**: untrack every credential file, move to a managed secret store, rotate all credentials, and decide history-rewrite separately | CSCRF, and basic hygiene before you hold client data | ◐ Untracking done. **Rotation incomplete, no managed store, history deliberately intact** — see §4.1 above |
 
 ### 5.2 High priority — needed within one quarter of launch
 
-| # | Change |
-| --- | --- |
-| P8 | **Analyst-of-record workflow.** A NISM-certified human must be accountable for published research. Design this as a *supervisory* layer — the analyst reviews and signs off on the AI's output, with the review logged — not as a bottleneck on every call **[COUNSEL on the acceptable degree of automation]** |
-| P9 | **Personal-trading surveillance**: block or flag trades by employees and the entity that run contrary to a live published recommendation or fall inside a blackout window |
-| P10 | **Advertisement register**: every ad, landing page, social post and creative stored with approval trail. SEBI has been running AI-based surveillance of financial social media and has flagged roughly 20,000 fraudulent posts since November 2025 — assume your marketing is being read by a machine |
-| P11 | **Public AI disclosure page** (§4.2) |
-| P12 | **Model governance policy + model register** (§4.2) |
-| P13 | **Grievance module**: in-app complaint intake with SLA timers, wired to SCORES and ODR escalation |
+| # | Change | Status |
+| --- | --- | --- |
+| P8 | **Analyst-of-record workflow.** A NISM-certified human must be accountable for published research. Design this as a *supervisory* layer — the analyst reviews and signs off on the AI's output, with the review logged — not as a bottleneck on every call **[COUNSEL on the acceptable degree of automation]** | ☐ Not started. P8a (the personalisation guardrail) shipped and is a different control; **P8b is what fills P2's null `analyst_of_record` column** |
+| P9 | **Personal-trading surveillance**: block or flag trades by employees and the entity that run contrary to a live published recommendation or fall inside a blackout window | ☐ Not started |
+| P10 | **Advertisement register**: every ad, landing page, social post and creative stored with approval trail. SEBI has been running AI-based surveillance of financial social media and has flagged roughly 20,000 fraudulent posts since November 2025 — assume your marketing is being read by a machine | ☐ Not started. **`docs/compliance/WEBSITE_COPY.md` is the first entry it will need to hold** — every landing-page string with its substantiation and approver |
+| P11 | **Public AI disclosure page** (§4.2) | ◐ Drafted at `docs/compliance/AI_DISCLOSURE.md`; **not publishable** — five blockers in its §8, plus the gateway-naming stop in its §4 |
+| P12 | **Model governance policy + model register** (§4.2) | ✅ Policy and inventory at `docs/compliance/AI_MODEL_GOVERNANCE.md`; per-output model id and prompt hash recorded by `prompt_version.py` |
+| P13 | **Grievance module**: in-app complaint intake with SLA timers, wired to SCORES and ODR escalation | ☐ Not started |
 
 ### 5.3 Design choices that reduce regulatory load
 
@@ -307,6 +344,16 @@ This is the engineering backlog. Ordered by blocking severity.
   reproducible and explainable. It already displays its own confidence and hides itself outside the
   10-minute timeframe it was calibrated on. Document it as a deterministic indicator; it never needs
   to enter the black-box lane.
+  - ⚠️ **Verified 19 August 2026, and there are two implementations — do not describe them as one.**
+    The `agents/predictive` service is exactly as described above: a rolling **14**-candle OLS on
+    **10-minute** candles, `r_squared` converted to the displayed confidence, `MODEL_VERSION =
+    "alpha-linreg-v1"`. The Tauri desktop path (`compute_ghost_curve` → `calculate_dual_projection`)
+    is a **different model** — a dual-engine OLS + VWEPR projection with a 20-candle minimum and **no
+    R²**. So "published R²" is true of the service and **not** of the desktop build. Any public
+    sentence about Ghost Lines must either name the one the reader is looking at or describe only
+    what both share (deterministic, reproducible, shows its own confidence, no forecast claim). This
+    is the §5.1-lesson-2 failure mode in `docs/compliance/BRAND_GUIDELINES.md`: a wrong statement
+    about how the model works is a compliance defect, not a wording nit.
 - **Make the conflict-forced HOLD a named, documented control.** "When technical and sentiment
   signals conflict, the system outputs HOLD" is a *risk control*, and a regulator reads a documented,
   testable, always-on risk control very differently from a marketing claim. Give it a name, a test,
@@ -380,11 +427,20 @@ compliance line in an investor model, and note that it is a one-time-heavy, recu
 
 ## 9. 90-day execution sequence
 
+> **Engineering ran ahead of the sequence.** The Days 1–60 *code* — P7, P1, P2, P5, plus P6, P8a and
+> P14 that this section did not schedule — landed on `develop` on 19 August 2026. The Days 1–60
+> **non-engineering** items are all still open, and they are now the critical path: no amount of
+> shipped mechanism substitutes for incorporation, counsel, NISM or a rotation log with entries in it.
+> Status per blocker: `docs/business/PLAN_OF_ACTION.md` §4.2.
+
 **Days 1–30**
 Incorporate both entities. Appoint the principal officer and Compliance Officer; register them for
 NISM Series XV. Engage securities counsel. Purge and rotate all secrets (P7). Ship P1 — the SKU split
 — and start selling the TERMINAL SaaS. Freeze all marketing copy containing performance, return or
 "SEBI" claims until reviewed.
+→ P1 shipped. P7 **half done** — files untracked, credentials not rotated. Marketing frozen and the
+in-product copy scrubbed; the **website** is the outstanding surface, and
+`docs/compliance/WEBSITE_COPY.md` is the reviewed copy to replace it with. Nothing else here started.
 
 **Days 31–60**
 Build P2 (recommendation record store) and P5 (interaction logging) — both are pure engineering and
@@ -393,11 +449,17 @@ Draft the compliance manual, code of conduct, personal-trading policy, advertise
 model governance policy. Commission the CSCRF gap assessment. Begin B2B2C conversations with brokers
 — lead with Reg 16A and your glass-box audit trail, which is what their compliance team actually
 cares about.
+→ P2 and P5 shipped. Of the five policies, **only the AI model governance policy is drafted**. Deposit,
+CSCRF assessment and broker conversations not started.
 
 **Days 61–90**
 File the SEBI RA application and the RAASB enlistment. Build P3 (report renderer) and P4 (KYC +
 family fee-cap gating). Publish the AI disclosure page. Stand up the advertisement register. Get the
 first B2B2C pilot signed.
+→ Unchanged, with one correction: **the AI disclosure page cannot be published on this schedule as
+drafted.** Two of its blockers are outside engineering's control — the INH number (item 1) and three
+**[COUNSEL]** questions — and one is inside it: the default LLM gateway must match the provider the
+page names. Treat "publish the disclosure page" as gated on the INH, not on the calendar.
 
 ---
 

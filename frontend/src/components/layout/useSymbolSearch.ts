@@ -7,10 +7,10 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { useTradeStore } from '../../store/useTradeStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
 import { SearchResult, resultSymbol } from '../../types/searchResult';
+import { bridgeInvoke } from '../../lib/bridge';
 
 const DEFAULT_FNO_UNDERLYINGS = ['NIFTY 50', 'BANKNIFTY'];
 
@@ -73,7 +73,7 @@ export function useSymbolSearch({ onClose }: UseSymbolSearchOptions) {
     setIsSearching(true);
     setSearchError(null);
     try {
-      const results = await invoke<SearchResult[]>('search_instruments', { query: normalized });
+      const results = await bridgeInvoke<SearchResult[]>('search_instruments', { query: normalized });
       setSearchResults(results || []);
       setSelectedIndex(results && results.length > 0 ? 0 : -1);
     } catch (err) {
@@ -164,7 +164,7 @@ export function useSymbolSearch({ onClose }: UseSymbolSearchOptions) {
 
       // Register the underlying with the option-chain subscriber (best-effort).
       if (!matchedConfig) {
-        invoke<boolean>('fno_request_underlying', { underlying: r.underlying }).catch(
+        bridgeInvoke<boolean>('fno_request_underlying', { underlying: r.underlying }).catch(
           (err) => console.warn('[SymbolSearch] fno_request_underlying failed:', err),
         );
       }

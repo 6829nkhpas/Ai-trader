@@ -5,13 +5,14 @@
 //
 // `lib/__tests__/sku.property.test.ts` proves the SKU *model* refuses. This file
 // proves the *call sites* honour it: that an unentitled (TERMINAL) user driving
-// the real `useQuantStore` actions issues NO Tauri IPC at all.
+// the real `useQuantStore` actions issues NO backend call at all, on either
+// transport (Tauri IPC on desktop, HTTP on the website).
 //
-// "No IPC" is the property that matters and the reason this is a separate test.
+// "No call" is the property that matters and the reason this is a separate test.
 // A gate that renders a locked placeholder while still firing
 // `run_deep_quant_agent` has not withheld the regulated output — it has merely
 // hidden it, and the recommendation was still generated, billed and logged. So
-// the assertion here is on the mocked `invoke` spy, not on the store's error text.
+// the assertion here is on the mocked transport spy, not the store's error text.
 //
 // This layer is defence in depth. The authoritative gate is server-side in
 // `agents/deep-quant-loop/entitlements.py`, which the user cannot patch out.
@@ -34,15 +35,30 @@ vi.hoisted(() => {
   process.env.NEXT_PUBLIC_DASHBOARD_URL ||= 'http://127.0.0.1:0/dashboard';
 });
 
-// ── Tauri mocks, installed before the store module is imported ────────────
-// `useQuantStore` reaches Tauri through `await import('@tauri-apps/api/core')`
-// inside `tauriInvoke`, so the mock must be registered at module scope.
+// ── Transport mocks, installed before the store module is imported ────────
+// `useQuantStore` reaches the backend through `lib/bridge`, which is the single
+// transport chokepoint: `invoke()` under Tauri, HTTP in a browser. Mocking THERE
+// rather than at `@tauri-apps/api/core` makes this property transport-agnostic —
+// the gate must withhold the regulated output on the website too, not only on
+// desktop. `importOriginal` keeps the real `isTauri` / `BridgeUnsupportedError`
+// so nothing else in the module graph loses its behaviour.
+//
+// The spies live in `vi.hoisted` because `lib/bridge` is imported *eagerly* here
+// (`lib/tauriFetch.ts` pulls it in), so the factory runs during import evaluation
+// — before a plain `const` at module scope would be initialized. The old
+// `@tauri-apps/api/core` mock got away with a plain `const` only because that
+// module was reached through a lazy `await import`.
 
-const invokeSpy = vi.fn(async () => ({}));
-const listenSpy = vi.fn(async () => () => {});
+const { invokeSpy, listenSpy } = vi.hoisted(() => ({
+  invokeSpy: vi.fn(async () => ({})),
+  listenSpy: vi.fn(async () => () => {}),
+}));
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeSpy }));
-vi.mock('@tauri-apps/api/event', () => ({ listen: listenSpy }));
+vi.mock('@/lib/bridge', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/bridge')>()),
+  bridgeInvoke: invokeSpy,
+  bridgeListen: listenSpy,
+}));
 
 import { useQuantStore } from '@/store/useQuantStore';
 import { useFeatureStore } from '@/store/useFeatureStore';

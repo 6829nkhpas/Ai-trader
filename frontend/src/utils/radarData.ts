@@ -1,14 +1,17 @@
-// utils/radarData.ts — Native scan helpers for the Quant Radar (FEAT-037).
+// utils/radarData.ts — Scan helpers for the Quant Radar (FEAT-037).
 //
-// Desktop-first by design: all candle fetching and pattern/strategy detection
-// happen in the Rust backend for near-native speed. The frontend just invokes
-// `scan_radar_symbol` (fetch + locate in one native call) and renders the
-// located detections. There is NO browser fetch path — the app runs as a
-// Tauri desktop application only.
+// All candle fetching and pattern/strategy detection happen in Rust for
+// near-native speed: `scan_radar_symbol` (fetch + locate in one call) and
+// `scan_quant_radar` (CPU-only, over caller-supplied candles). The frontend
+// just invokes and renders the located detections — the detection math is never
+// reimplemented in TS.
+//
+// On desktop those run in-process. In a browser they route through the bridge
+// to the equivalent `tool-server` routes, which reuse the same `quant-core`
+// crate, so both paths run identical logic.
 
 import type { Timeframe } from './chartTypes';
-
-const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+import { bridgeInvoke } from '../lib/bridge';
 
 // ── Located detection contracts (mirror the Rust scanner structs) ─────────
 
@@ -66,17 +69,16 @@ export interface TimedCandle {
  * round-trips from the frontend.
  *
  * Throws on backend failure so callers can surface the real reason (e.g.
- * "pool not ready", "no data") instead of a generic message. Returns `null`
- * only when not running inside the Tauri desktop app.
+ * "pool not ready", "no data") instead of a generic message. In a browser,
+ * until the `tool-server` route lands, that failure is a
+ * `BridgeUnsupportedError` naming the missing surface.
  */
 export async function scanRadarSymbol(
   symbol: string,
   timeframe: Timeframe,
   lookback = 60,
 ): Promise<RadarScan | null> {
-  if (!isTauri()) return null;
-  const { invoke } = await import('@tauri-apps/api/core');
-  return await invoke<RadarScan>('scan_radar_symbol', {
+  return await bridgeInvoke<RadarScan>('scan_radar_symbol', {
     symbol: symbol.toUpperCase(),
     timeframe,
     lookback,
@@ -94,11 +96,9 @@ export async function scanInMemory(
   candles: TimedCandle[],
   lookback = 60,
 ): Promise<RadarScan | null> {
-  if (!isTauri()) return null;
   if (candles.length === 0) return null;
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    return await invoke<RadarScan>('scan_quant_radar', {
+    return await bridgeInvoke<RadarScan>('scan_quant_radar', {
       symbol: symbol.toUpperCase(),
       timeframe,
       candles,

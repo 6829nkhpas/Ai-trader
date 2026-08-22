@@ -2,9 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Loader2, Activity, RefreshCw, ChevronDown } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
 import FnoSkeleton from './FnoSkeleton';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useTradeStore } from '../../store/useTradeStore';
 import {
   toFnoViewState,
@@ -22,6 +20,7 @@ import {
 } from './symbolParser';
 import FnoOptionChainTable from './FnoOptionChainTable';
 import { useFnoExpiryChange } from './useFnoExpiryChange';
+import { bridgeInvoke, bridgeListen, type UnlistenFn } from '../../lib/bridge';
 
 type FnoSnapshot = FnoPayload | FnoUnavailableMarker;
 
@@ -58,7 +57,7 @@ export default function FnoSidebarPanel() {
       return;
     }
     let cancelled = false;
-    invoke<string[]>('fno_list_expiries', { underlying: fnoUnderlying })
+    bridgeInvoke<string[]>('fno_list_expiries', { underlying: fnoUnderlying })
       .then((e) => { if (!cancelled) setExpiries(Array.isArray(e) ? e : []); })
       .catch(() => { if (!cancelled) setExpiries([]); });
     return () => { cancelled = true; };
@@ -85,7 +84,7 @@ export default function FnoSidebarPanel() {
 
   // Initial fetch of available chains
   useEffect(() => {
-    invoke<FnoChains>('fno_list_chains')
+    bridgeInvoke<FnoChains>('fno_list_chains')
       .then((c) => setChains(c))
       .catch(() => setChains(null));
   }, []);
@@ -97,7 +96,7 @@ export default function FnoSidebarPanel() {
 
     (async () => {
       try {
-        unlisten = await listen<FnoSnapshot>('fno-snapshot', (event) => {
+        unlisten = await bridgeListen<FnoSnapshot>('fno-snapshot', (event) => {
           if (!cancelled && event.payload) {
             setViewState(toFnoViewState(event.payload));
           }
@@ -106,7 +105,7 @@ export default function FnoSidebarPanel() {
 
       setLoading(true);
       try {
-        const payload = await invoke<FnoSnapshot>('get_fno_analytics', {
+        const payload = await bridgeInvoke<FnoSnapshot>('get_fno_analytics', {
           underlying: fnoUnderlying,
           expiry: fnoExpiry,
         });
@@ -122,14 +121,14 @@ export default function FnoSidebarPanel() {
         if (!cancelled) setLoading(false);
       }
       try {
-        await invoke('fno_subscribe', { underlying: fnoUnderlying, expiry: fnoExpiry });
+        await bridgeInvoke('fno_subscribe', { underlying: fnoUnderlying, expiry: fnoExpiry });
       } catch { /* not in Tauri */ }
     })();
 
     return () => {
       cancelled = true;
       unlisten?.();
-      invoke('fno_unsubscribe').catch(() => {});
+      bridgeInvoke('fno_unsubscribe').catch(() => {});
     };
   }, [fnoUnderlying, fnoExpiry]);
 
@@ -287,7 +286,7 @@ export default function FnoSidebarPanel() {
             onClick={() => {
               setLoading(true);
               setViewState(null);
-              invoke<FnoSnapshot>('get_fno_analytics', { underlying: fnoUnderlying, expiry: fnoExpiry })
+              bridgeInvoke<FnoSnapshot>('get_fno_analytics', { underlying: fnoUnderlying, expiry: fnoExpiry })
                 .then(p => setViewState(toFnoViewState(p)))
                 .catch(() => setViewState({ kind: 'service-error', detail: 'Retry failed' }))
                 .finally(() => setLoading(false));

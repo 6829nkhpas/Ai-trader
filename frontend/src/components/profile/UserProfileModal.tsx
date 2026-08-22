@@ -31,15 +31,11 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
   const { data: creditData, loading: creditLoading, error: creditError, refetch: refetchCredit } = useCredit();
   const { data: billingData, loading: billingLoading, error: billingError, refetch: refetchBilling } = useBillingHistory();
 
-  const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-
   useEffect(() => {
     if (!isOpen) return;
     fetchProfile();
-    if (isTauri) {
-      fetchPaperPortfolio();
-    }
-  }, [isOpen, fetchProfile, fetchPaperPortfolio, isTauri]);
+    fetchPaperPortfolio();
+  }, [isOpen, fetchProfile, fetchPaperPortfolio]);
 
   if (!isOpen) return null;
 

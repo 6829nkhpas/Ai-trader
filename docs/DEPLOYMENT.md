@@ -123,6 +123,54 @@ docker exec stratai-redpanda rpk topic list --brokers redpanda:29092
 Point a desktop client's server config at `ws://<server-ip>:8080` / `:8081` / `:8082` / `:8083`
 and control port `<server-ip>:8085`.
 
+## 6.5 The web app — app.stratai.live
+
+The Next.js terminal runs as the `frontend` service and is fronted by the same
+Caddy container as the data plane (`infra/caddy/Caddyfile`, second vhost). It holds
+**no gateway credential**: its `environment:` block points each upstream at an
+internal service name, so its same-origin `/api/*` route handlers reach
+aggregator / QuestDB / deep-quant / tool-server / sentiment over the `stratai`
+network and never traverse the public gateway.
+
+**Prerequisites, both outside this repo and both able to break the launch:**
+
+1. **DNS** — an A record for `app.stratai.live` → the droplet. Caddy provisions the
+   TLS certificate on first request; until the record resolves, ACME cannot
+   validate and the site will not serve HTTPS.
+2. **CORS on the auth deployment** — `api-web.stratai.live` must add
+   `https://app.stratai.live` to its allowlist. Every login call is a cross-origin
+   `fetch` from the browser, so without this the preflight fails and **nobody can
+   log in**, while the rest of the app looks fine. This is the single most likely
+   launch blocker and it cannot be fixed from this tree.
+
+```bash
+# Build + start just the web tier (the Caddy container needs no rebuild — it
+# re-reads the Caddyfile bind mount on restart):
+docker compose -f docker-compose.prod.yml -f docker-compose.8gb.yml build frontend
+docker compose -f docker-compose.prod.yml -f docker-compose.8gb.yml up -d frontend
+docker compose -f docker-compose.prod.yml -f docker-compose.8gb.yml restart questdb-gateway
+```
+
+Verify — the last check is the important one:
+
+```bash
+curl -sI https://app.stratai.live/ | head -1                    # 200
+curl -s  https://app.stratai.live/api/features                  # {"enforced":…}
+curl -s 'https://app.stratai.live/api/kite/quote?i=NSE:TCS'     # real quote, same-origin
+
+# The credential MUST still be required when the gateway is hit directly. If this
+# returns data without -u, the web tier is leaking the shared password.
+curl -sI https://app-api.stratai.live/kite/quote?i=NSE:TCS | head -1   # expect 401
+```
+
+> **Memory.** The container is capped at 192m in `docker-compose.8gb.yml` — measured,
+> not guessed (idles at 38 MiB; 41 MiB under 60 concurrent page loads). The tight
+> resource is the **build**, not the runtime: `redeploy.sh` builds on the droplet and
+> `next build --turbopack` needs far more than 192 MB. With ~1 GB free and no swap,
+> that build is the likeliest OOM in the stack, and the kernel may kill QuestDB
+> instead of the build. Building the image in CI and pulling it here removes the
+> problem; see the note above the build loop in `redeploy.sh`.
+
 ## 7. Operations
 
 - Logs: `docker compose -f docker-compose.prod.yml logs -f <service>`

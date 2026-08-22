@@ -6,6 +6,13 @@
 > assumptions. Read alongside `SEBI_COMPLIANCE_BLUEPRINT.md` — the regulatory structure is a material
 > part of this investment case, not an appendix to it.
 > *Content from external sources was rephrased for compliance with licensing restrictions.*
+>
+> **Engineering status · 19 August 2026.** Six of the seven Phase-0 compliance blockers have shipped
+> and the seventh is half done, all pre-seed. That changes several rows in §5 and §7 from *intent* to
+> *evidence*, and the diligence-relevant residual gaps are named in place rather than smoothed over.
+> `PLAN_OF_ACTION.md` §4.2 is the canonical status table; this brief cites it and does not restate it.
+> Registration, counsel and certification — the non-code half of Phase 0 — are all still open, and
+> they are the critical path.
 
 ---
 
@@ -123,6 +130,16 @@ profile that comes with them — are permitted.
 | **B · PLATFORM (B2B2E)** | White-labelled terminal + research engine licensed to brokers and existing SEBI-registered RAs. The licensee carries the client-facing obligation | ₹25L–₹1.5cr/yr + rev-share | **None for us** | ~90% | Fastest scale, lowest compliance load, best logos. Reg 16A is the sales pitch |
 | **C · RESEARCH** | FIND, DEBATE, conviction score, journal — delivered as compliant research reports | ₹3,999–₹7,999/mo | **RA (INH)** | ~75% | Highest ARPU, highest defensibility, gated on licence |
 
+> **The prices above are modelling ranges, not the price sheet.** `GO_TO_MARKET.md` §5 carries the
+> operative numbers — TERMINAL Pro ₹1,499/mo · ₹14,999/yr, RESEARCH ₹4,999/mo · ₹49,999/yr — and it
+> governs anything customer-facing. Do not take a figure from this table onto a pricing page.
+>
+> **Tracks A and C are now real code, not a plan.** `TERMINAL` and `RESEARCH` are enforced values in
+> `frontend/src/lib/sku.ts` and `agents/deep-quant-loop/entitlements.py`, both failing closed
+> (`PLAN_OF_ACTION.md` §4.2, P1). That is what makes the sequencing argument below verifiable rather
+> than asserted — but note the remote entitlement endpoint the server gate calls **does not exist
+> yet**, so Track C cannot be sold to a real user until the auth deployment provides it.
+
 **Why the sequencing matters to an investor:** the SEBI application takes 3–6 months and is not fully
 in our control. Tracks A and B generate revenue during that window, so the licence timeline sits off
 the revenue critical path. This is the first question a sophisticated fintech investor will ask, and
@@ -155,9 +172,23 @@ Ranked by durability, not by how impressive it sounds.
    expectancy. Every month of operation makes the next month's output better. No competitor holds a
    labelled dataset of AI-generated Indian-market recommendations tagged by setup with realised
    outcomes, and none can buy one. This is the asset that gets more valuable while we sleep.
+   - **Blocker P6 removed the *display* of win rate and expectancy, not the computation.** They stayed
+     inside `journal.py` as calibration input, which is where the draft AI framework wants them as
+     model monitoring; only the user-facing panel changed. The moat is intact and is now also *defensible*
+     — a performance figure on a dashboard is an advertisement, a performance figure feeding a
+     confidence adjustment is a control.
+   - **Since 19 August 2026 the dataset has a second, stronger layer.** Every committed decision is
+     also written to an append-only, hash-chained store with the model id, the prompt hash and the
+     full tool-input snapshot that produced it (`PLAN_OF_ACTION.md` §4.2, P2). That makes each row
+     *replayable*, not merely labelled — which is what turns the dataset from a training asset into an
+     evidentiary one. Caveat worth stating to a diligence team before they find it: the chain has no
+     external witness yet, so it proves internal consistency rather than third-party attestation.
 2. **Regulatory position.** An INH registration, CSCRF compliance, an AI model governance policy and a
    documented audit trail. Post-April 2026 this is a barrier, not a cost. It also unlocks broker
-   distribution that Reg 16A closes to everyone else.
+   distribution that Reg 16A closes to everyone else. **Of the four, two now exist**: the policy
+   (`docs/compliance/AI_MODEL_GOVERNANCE.md`) and the audit trail (P2 + P5 hash-chained stores). The
+   INH is filed-for-later and CSCRF has not been assessed, so this moat is roughly half-built — the
+   half that is engineering is done, the half that is registration is not.
 3. **Latency infrastructure.** A Rust binary tick parser reading the exchange WebSocket directly, with
    a dual sink to Kafka/Redpanda for live agents and QuestDB for five years of history, and a native
    Tauri desktop shell streaming to the UI over IPC rather than through a browser. Competitors
@@ -202,13 +233,13 @@ An investor will find these anyway. Naming them first is worth more than hiding 
 | --- | --- | --- |
 | **The regulator is deliberately shrinking our core TAM.** SEBI's curbs cut unique EDS traders from 98.1 lakh to 78.6 lakh in one year, and that is the stated intent, not a side effect | **High** | Do not build a company whose only customer is an F&O scalper. Weight product and GTM toward the **Swing and Investor profiles** — multi-day and allocation horizons that SEBI is not trying to suppress — and toward **B2B2E**, where our revenue tracks broker platform spend rather than retail speculation volume |
 | **Regulatory rejection or delay of the RA application** | High | Tracks A and B are revenue-generating without registration. Engage securities counsel pre-filing. Do not put a licence date on the critical path |
-| **AI/ML guidelines land stricter than the draft** — e.g. mandatory reproducibility for client-facing models | Medium-High | Keep the LLM out of the order path (see blueprint §1.3). Maintain versioned model + prompt hashes on every recommendation so any output is replayable. Ship a plain-language AI disclosure page voluntarily |
-| **Single-broker dependency (Zerodha Kite) for ticks and execution** | Medium-High | Abstract the market-data and broker interfaces behind adapters; add a second feed and a second broker before Series A. Currently a genuine single point of failure |
-| **Model risk — a visibly wrong call at scale** | Medium-High | The risk architecture *is* the mitigation, and it must be enforced, tested and never bypassable. Publish accuracy honestly. Never advertise performance |
-| **Structural churn: most retail traders lose money and quit** | Medium-High | Retention has to come from *capital preservation*, not from wins. "We stopped you taking 14 bad trades this quarter" is the retention metric to instrument and surface |
+| **AI/ML guidelines land stricter than the draft** — e.g. mandatory reproducibility for client-facing models | Medium-High | **Mitigation shipped 19 Aug 2026.** The LLM stays out of the order path — structurally, not by policy: the internal `BrokerProvider` trait has no order method (blueprint §1.3, P14). Every committed output carries a versioned model id and prompt hash in an append-only store, so any output is replayable (P2). The AI disclosure page is drafted but **not yet published** — its blockers are the INH number and three counsel questions, not engineering |
+| **Single-broker dependency (Zerodha Kite) for ticks and execution** | Medium-High | Adapter seam shipped (`e1caf32`): `MarketDataProvider` / `BrokerProvider` traits selected by env, so a second feed is a new file rather than a refactor. **Still a genuine single point of failure today** — Kite remains the only implementation. Adding a second feed and a second broker before Series A is now weeks of work, which is the actual change in this row |
+| **Model risk — a visibly wrong call at scale** | Medium-High | The risk architecture *is* the mitigation, and it must be enforced, tested and never bypassable — it is: the ≥1.5× ATR stop floor and the per-profile R:R floor are applied by a deterministic validator that the model cannot outvote. Never advertise performance. **Correction to this row's earlier wording:** "publish accuracy honestly" is now an open **[COUNSEL]** question rather than a commitment — the draft AI framework asks for accuracy disclosure while the advertisement code restricts performance claims, and the two pull against each other. Pending resolution we disclose limitations and withhold the figure (blueprint §4.2 item 3) |
+| **Structural churn: most retail traders lose money and quit** | Medium-High | Retention has to come from *capital preservation*, not from wins. "We stopped you taking 14 bad trades this quarter" is the retention metric to instrument and surface — **shipped** as the Discipline Metrics panel (`GO_TO_MARKET.md` §4, blocker P6), though the wording of any such summary is still **[COUNSEL]** |
 | **LLM inference cost per user** | Medium | Cache aggressively; run cheap deterministic tools first and reserve LLM calls for synthesis; monitor cost per FIND run as a first-class product metric |
-| **Reg 16A liability via marketing partners** | Medium | Screen and contractually bind every affiliate and influencer. One unregistered partner making a return claim is an enforcement vector into a licensed entity |
-| **CSCRF audit failure / data breach** | Medium | Gap assessment before launch. Immediate secret hygiene remediation (blueprint §5.1 P7) |
+| **Reg 16A liability via marketing partners** | Medium | Screen and contractually bind every affiliate and influencer. One unregistered partner making a return claim is an enforcement vector into a licensed entity. **Not started** — and it is the cheapest unaddressed risk on this list |
+| **CSCRF audit failure / data breach** | Medium | Gap assessment before launch — not yet commissioned. Secret-hygiene remediation (blueprint §5.1 P7) is **half done**: credential files untracked and a rotation runbook published, but two credentials are still unrotated, git history was deliberately left intact, and no managed secret store is in use. An auditor will ask for the rotation log in `SECRET_ROTATION_RUNBOOK.md` §6, which currently has empty cells |
 
 ---
 
@@ -218,7 +249,7 @@ An investor will find these anyway. Naming them first is worth more than hiding 
 
 | Use | Share | Detail |
 | --- | --- | --- |
-| Engineering | 40% | Compliance-blocking backlog (P1–P7), execution hardening, second data feed, mobile |
+| Engineering | 40% | Remaining compliance backlog — **P3** report renderer, **P4** KYC + family fee-cap gating, **P8b** analyst-of-record workflow, **P9** personal-trading surveillance, **P10** advertisement register, **P13** grievance module — plus execution hardening, a second data feed, and mobile. P1, P2, P5, P6, P8a and P14 shipped pre-seed (`PLAN_OF_ACTION.md` §4.2) |
 | Regulatory & compliance | 12% | Counsel, RA registration, CSCRF, DPDP, Compliance Officer, first audits |
 | Go-to-market | 25% | Content, community, broker BD for the B2B2E track |
 | Infrastructure & LLM inference | 13% | QuestDB, Kafka, model inference, monitoring |

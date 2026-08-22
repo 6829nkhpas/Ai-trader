@@ -3,9 +3,9 @@
 // Unit tests for workspace persist/restore failure handling
 // (Validates Requirements 5.12, 11.4, 11.5).
 //
-// These tests exercise the in-memory fallback path that runs outside the Tauri
-// runtime (the lazy `@tauri-apps/api/core` bridge is absent in the node test
-// environment, so `getInvoke()` resolves to null). In that mode:
+// These tests exercise the in-memory fallback that runs when the persistence
+// backend REJECTS — SQLite erroring under Tauri, or `localStorage` unavailable in
+// a browser (private mode, storage disabled, quota exhausted). In that mode:
 //
 //  - loadWorkspace(symbol) for an unsaved symbol resolves to DEFAULT_WORKSPACE
 //    — a restore "miss"/failure applies the defaults (Requirement 11.4).
@@ -20,12 +20,17 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-// Simulate running OUTSIDE the Tauri runtime: the lazy `@tauri-apps/api/core`
-// bridge is unavailable, so `getInvoke()` resolves to a falsy value and the
-// persistence layer uses its in-memory session fallback (Requirement 11.6).
-// This mocks only the IPC boundary — the persistence logic under test (memory
-// retention, flush-failure reporting, retry-on-next-change) is the real code.
-vi.mock('@tauri-apps/api/core', () => ({ invoke: undefined }));
+// Make the persistence backend fail EXPLICITLY rather than relying on the node
+// test environment happening to lack both a Tauri runtime and `localStorage`.
+// `save_workspace` / `load_workspace` rejecting is the documented degraded case
+// (Requirement 11.6); the persistence logic under test — memory retention,
+// flush-failure reporting, retry-on-next-change — is the real code.
+vi.mock('@/lib/bridge', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/bridge')>()),
+  bridgeInvoke: vi.fn(async (cmd: string) => {
+    throw new Error(`persistence backend unavailable (${cmd})`);
+  }),
+}));
 
 import {
   DEFAULT_WORKSPACE,
@@ -76,10 +81,10 @@ describe('workspace restore-failure handling (Requirement 11.4)', () => {
 });
 
 describe('workspace persist-failure handling (Requirements 11.5, 5.12)', () => {
-  it('flushWorkspace reports failure outside Tauri but retains in-memory state', async () => {
+  it('flushWorkspace reports failure when the backend rejects but retains in-memory state', async () => {
     const state = makeState({ chartType: 'area' });
 
-    // No persistent backend present -> reports false (caller may retry).
+    // Backend rejected the write -> reports false (caller may retry).
     const persisted = await flushWorkspace('MSFT', state);
     expect(persisted).toBe(false);
 

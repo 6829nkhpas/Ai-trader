@@ -4,7 +4,7 @@
  * Bridges the existing Zerodha/Kite data pipeline to the TradingView widget's
  * IBasicDatafeed interface. Reuses the project's existing data-fetching logic:
  *   - Historical candles: Kite Historical API via aggregator proxy `/kite/historical`
- *   - Live ticks: Zustand `useTradeStore.ohlcCandles` or Tauri IPC `ohlc-tick`
+ *   - Live ticks: Zustand `useTradeStore.ohlcCandles`, fed by the /ws/* sockets
  *   - Symbol search: `/kite/quote` endpoint
  *
  * No new backend endpoints are needed — this is a pure frontend adapter.
@@ -25,7 +25,8 @@ import type {
   DatafeedConfiguration,
 } from './datafeedTypes';
 import { useTradeStore, type OhlcCandle } from '../store/useTradeStore';
-import { kiteFetch } from '../lib/tauriFetch';
+import { kiteFetch } from '../lib/kiteFetch';
+import { bridgeInvoke } from '../lib/bridge';
 
 // ── Resolution Mapping ────────────────────────────────────────────────────
 // Maps TV resolution strings to Kite Historical API interval strings.
@@ -96,9 +97,6 @@ const SUPPORTED_RESOLUTIONS: ResolutionString[] = [
   '1D', '1W', '1M',
 ];
 
-// ── Tauri Detection ───────────────────────────────────────────────────────
-const isTauri = () =>
-  typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
 // ── In-memory scroll-back cache (per symbol + timeframe) ───────────────────
 //
@@ -145,13 +143,6 @@ export function invalidateScrollBackCache(symbol: string): void {
   }
   for (const key of exhaustedWindows.keys()) {
     if (key.startsWith(prefix)) exhaustedWindows.delete(key);
-  }
-  // Also drop the Tauri IPC cache so the next load re-fetches fresh data.
-  for (const key of tauriBarCache.keys()) {
-    if (key.startsWith(prefix)) tauriBarCache.delete(key);
-  }
-  for (const key of tauriBarInflight.keys()) {
-    if (key.startsWith(prefix)) tauriBarInflight.delete(key);
   }
 }
 
@@ -273,34 +264,19 @@ async function fetchKiteBatch(
 
   pages.reverse();
 
-  // ── Tauri IPC path (single call, cached) ────────────────────────────────
-  // For FNO symbols the Tauri backend (QuestDB + Kite intraday loader) is the
-  // SOLE data source — the REST `/kite/historical` proxy cannot resolve FNO
-  // instrument tokens and always returns 0 candles. For equity symbols, Tauri
-  // seeds the result and REST extends beyond the QuestDB cache edge.
-  const symbolIsFno = isFnoSymbol(symbol);
-  let tauriBars: Bar[] = [];
-
-  if (isTauri() && timeframe) {
-    try {
-      const allBars = await fetchTauriBars(symbol, timeframe);
-      if (allBars.length > 0) {
-        const fromMs = from.getTime();
-        const toMs = to.getTime();
-        tauriBars = allBars.filter((b) => b.time >= fromMs && b.time <= toMs);
-      }
-    } catch (err) {
-      console.warn('[Datafeed] Tauri IPC get_historical_view failed:', err);
-    }
-  }
-
-  // For FNO symbols, skip REST entirely — Tauri is the only source that works.
-  if (symbolIsFno) {
-    return tauriBars;
-  }
-
-  // ── Kite Historical REST pages (equity symbols only) ────────────────────
-  const all: Bar[] = [...tauriBars];
+  // ── Kite Historical REST pages ──────────────────────────────────────────
+  //
+  // F&O symbols used to short-circuit here and return only bars fetched over
+  // Tauri IPC, on the stated grounds that "the REST /kite/historical proxy cannot
+  // resolve FNO instrument tokens and always returns 0 candles". That was false by
+  // the time the desktop shell was retired — `kite_api.rs::resolve_token` detects
+  // an F&O tradingsymbol (digits, ending CE/PE/FUT) and looks it up against the
+  // NFO exchange. Measured against the running proxy: BANKNIFTY26AUGFUT returned
+  // 104 15-minute candles and NIFTY26AUG24250CE returned 52, while an illiquid
+  // strike returned 0 — which is a real absence of trades, not a resolution
+  // failure. So F&O now pages REST exactly like equities, and the early return
+  // that would otherwise leave every F&O chart empty is gone.
+  const all: Bar[] = [];
 
   /** Fetch one page, falling back to a token lookup when the symbol form is empty. */
   const fetchPage = async (page: { from: Date; to: Date }): Promise<Bar[]> => {
@@ -346,69 +322,6 @@ async function fetchKiteBatch(
   return all;
 }
 
-// ── Tauri IPC Historical Fetch (cached, deduplicated) ─────────────────────
-//
-// The Tauri `get_historical_view` command returns ALL bars in QuestDB for a
-// (symbol, timeframe) pair — typically the full 30-day intraday lookback.
-// Calling it on every `getBars` is expensive, so we cache the result per
-// (symbol, timeframe) and deduplicate concurrent calls via an inflight map.
-//
-// The backend no longer blocks that call on the Kite backfill when the cache is
-// already warm — it refreshes in the background and emits `historical-loaded`.
-// Without the listener below, those fresh bars would sit in QuestDB unseen
-// until this 60s cache expired.
-
-const tauriBarCache = new Map<string, { bars: Bar[]; fetchedAt: number }>();
-const tauriBarInflight = new Map<string, Promise<Bar[]>>();
-
-/**
- * Drop cached bars for a symbol so the next `getBars` re-reads QuestDB.
- *
- * The event carries the BASE timeframe the loader fetched (e.g. "1m"), but
- * several UI timeframes derive from one base (1m/2m/4m all share "1m"), so
- * every entry for the symbol is invalidated rather than just the exact key.
- */
-function invalidateTauriBarCache(symbol: string): void {
-  // Keys are built by `scrollBackKey`, which uppercases the symbol.
-  const prefix = `${symbol.toUpperCase()}::`;
-  for (const key of tauriBarCache.keys()) {
-    if (key.startsWith(prefix)) tauriBarCache.delete(key);
-  }
-}
-
-// Registered once per module load; `listen` is only available under Tauri.
-if (isTauri()) {
-  void (async () => {
-    try {
-      const { listen } = await import('@tauri-apps/api/event');
-      await listen<{ symbol?: string; timeframe?: string; count?: number }>(
-        'historical-loaded',
-        (event) => {
-          const symbol = event.payload?.symbol;
-          if (!symbol) return;
-
-          // Clearing the caches is necessary but NOT sufficient: it only means
-          // "the next getBars will re-read QuestDB". TradingView has no reason to
-          // issue another getBars on its own, so freshly backfilled bars would
-          // sit invisible until the user scrolled or switched timeframe.
-          //
-          // This matters much more now that the Rust side never blocks on the
-          // Kite backfill: a cold symbol legitimately returns few or no bars on
-          // first read and fills in a second or two afterwards. Firing TV's own
-          // reset callback is what turns that into a visible refresh.
-          invalidateTauriBarCache(symbol);
-          invalidateScrollBackCache(symbol);
-          requestChartReset(symbol);
-        },
-      );
-    } catch (err) {
-      // A missing listener only costs freshness (bars appear within 60s), so
-      // this must never break chart loading.
-      console.warn('[Datafeed] historical-loaded listener unavailable:', err);
-    }
-  })();
-}
-
 /**
  * Ask TradingView to re-request bars for every live subscription on `symbol`.
  *
@@ -425,83 +338,6 @@ function requestChartReset(symbol: string): void {
       console.warn('[Datafeed] chart reset callback failed:', err);
     }
   }
-}
-
-async function fetchTauriBars(
-  symbol: string,
-  timeframe: string,
-): Promise<Bar[]> {
-  if (!isTauri()) return [];
-
-  const cacheKey = scrollBackKey(symbol, timeframe);
-
-  // Serve from cache if fetched within the last 60 seconds.
-  const cached = tauriBarCache.get(cacheKey);
-  if (cached && Date.now() - cached.fetchedAt < 60_000) {
-    return cached.bars;
-  }
-
-  // Deduplicate: if a fetch for this key is already in flight, await it.
-  const inflight = tauriBarInflight.get(cacheKey);
-  if (inflight) return inflight;
-
-  const promise = (async (): Promise<Bar[]> => {
-    try {
-      const tauri = await import('@tauri-apps/api/core');
-
-      // NOTE: there used to be a `get_pool_status` wait loop here — up to 8s of
-      // 500ms sleeps before the first bar could be requested. It was both
-      // obsolete and actively harmful:
-      //   • Obsolete: `get_pool_status` reports the QuestDB *PG write* pool, but
-      //     `get_historical_view` reads over the HTTP /exec gateway and no
-      //     longer needs that pool at all (a missing pool now only means "no
-      //     backfill", not "no data").
-      //   • Harmful: success was cached in a module flag but FAILURE was not, so
-      //     if the pool never registered, every single call burned a fresh 8s and
-      //     then returned []. TradingView paginates several windows per load, so
-      //     that alone could account for most of a minute-long chart load.
-      const response = await tauri.invoke<number[] | Uint8Array>(
-        'get_historical_view',
-        { symbol, timeframe },
-      );
-      const buffer =
-        response instanceof Uint8Array ? response : new Uint8Array(response);
-
-      const bars = parseBincodeCandles(buffer);
-      tauriBarCache.set(cacheKey, { bars, fetchedAt: Date.now() });
-      return bars;
-    } catch (err) {
-      console.warn('[Datafeed] Tauri IPC fetch failed:', err);
-      return [];
-    } finally {
-      tauriBarInflight.delete(cacheKey);
-    }
-  })();
-
-  tauriBarInflight.set(cacheKey, promise);
-  return promise;
-}
-
-/** Parse bincode-serialized BinaryCandle structs (48 bytes each). */
-function parseBincodeCandles(buffer: Uint8Array): Bar[] {
-  const bars: Bar[] = [];
-  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-  const length = Number(view.getBigUint64(0, true));
-  let offset = 8;
-  for (let i = 0; i < length; i++) {
-    const tsMicro = Number(view.getBigInt64(offset, true));
-    const open = view.getFloat64(offset + 8, true);
-    const high = view.getFloat64(offset + 16, true);
-    const low = view.getFloat64(offset + 24, true);
-    const close = view.getFloat64(offset + 32, true);
-    const volume = Number(view.getBigInt64(offset + 40, true));
-    bars.push({
-      time: Math.floor(tsMicro / 1000), // microseconds → milliseconds
-      open, high, low, close, volume,
-    });
-    offset += 48;
-  }
-  return bars;
 }
 
 // ── Live Subscription Manager ─────────────────────────────────────────────
@@ -548,60 +384,34 @@ function startLiveSubscription(
     }
   };
 
-  // ── Path 1: Zustand store subscription ────────────────────────────────
-  // Browser-only fallback. Under Tauri the direct `ohlc-tick` listener below
-  // already delivers every candle with lower latency, and registering BOTH meant
-  // each tick was forwarded to TradingView twice (the `barTimeMs >= lastBarTime`
-  // guard admits both copies of the same bar).
+  // ── Live tick path: Zustand store subscription ────────────────────────
+  // The WS feeds land in `useTradeStore.ohlcCandles` (see the socket bootstrap in
+  // `app/page.tsx`), so watching the store is how live bars reach the chart.
   //
-  // The duplication was not just redundant, it was expensive: this callback runs
-  // on EVERY store write — including the large `setHistoricalCache` writes the
-  // datafeed itself makes — and each run scans the whole `ohlcCandles` array
-  // (capped at 3 000). So loading history triggered full-array scans in the tick
-  // path. Registering it only outside Tauri keeps the browser path working
-  // without paying that cost in the desktop app.
-  const unsub = isTauri()
-    ? () => {}
-    : useTradeStore.subscribe((state) => {
-        const candles = state.ohlcCandles;
-        const matching = candles.filter(
-          (c) => c.symbol.toUpperCase() === symbolUpper,
-        );
-        if (matching.length === 0) return;
-        forwardCandle(matching[matching.length - 1]);
-      });
+  // This callback runs on EVERY store write — including the large
+  // `setHistoricalCache` writes the datafeed itself makes — and each run scans the
+  // whole `ohlcCandles` array (capped at 3 000), so loading history triggers
+  // full-array scans in the tick path. Worth revisiting if tick latency regresses;
+  // a symbol-keyed selector would avoid the scan.
+  const unsub = useTradeStore.subscribe((state) => {
+    const candles = state.ohlcCandles;
+    const matching = candles.filter((c) => c.symbol.toUpperCase() === symbolUpper);
+    if (matching.length === 0) return;
+    forwardCandle(matching[matching.length - 1]);
+  });
 
-  // ── Path 2: Direct Tauri IPC listener (lower latency) ─────────────────
-  // Listens for ohlc-tick events directly from the Rust backend, bypassing
-  // the Zustand store roundtrip for faster chart updates.
-  let unlistenTauri: (() => void) | null = null;
-  if (isTauri()) {
-    (async () => {
-      try {
-        const { listen } = await import('@tauri-apps/api/event');
-        const unlisten = await listen<{ symbol: string; start_timestamp_ms: number; open: number; high: number; low: number; close: number; volume?: number }>('ohlc-tick', (event) => {
-          forwardCandle(event.payload);
-        });
-        unlistenTauri = unlisten;
-      } catch {
-        // Not in Tauri context — Zustand path will handle it
-      }
-    })();
-  }
-
-  console.log(`[Datafeed] subscribeBars: ${symbolUpper} (resolution=${resolution}, guid=${listenerGuid.slice(0, 8)}…, tauri=${isTauri()})`);
+  console.log(
+    `[Datafeed] subscribeBars: ${symbolUpper} (resolution=${resolution}, guid=${listenerGuid.slice(0, 8)}…)`,
+  );
 
   activeSubscriptions.set(listenerGuid, {
     symbol, resolution, onTick, onResetCacheNeeded,
-    unsubscribe: () => {
-      unsub();
-      unlistenTauri?.();
-    },
+    unsubscribe: unsub,
   });
 }
 
-// ── REST fallback for symbol search (used outside Tauri or when the local
-//    `search_instruments` invoke fails). Mirrors the old REST proxy behaviour:
+// ── REST fallback for symbol search (used when the `search_instruments` adapter
+//    fails). Mirrors the old REST proxy behaviour:
 //    GET /kite/instruments?q=<query>&exchange=<ex> → equity + index rows only.
 async function fallbackRestSearch(
   userInput: string,
@@ -684,29 +494,25 @@ export function createDatafeed(): IBasicDatafeed {
       const query = userInput.trim();
 
       // ── Global search across NSE / BSE / NFO via the existing
-      // `search_instruments` command. It already returns EQ + Index + FNO
-      // (CE/PE/FUT) rows from the SQLite `instruments` + `nfo_instruments`
-      // tables, so one invoke returns the full global result set. We map every
-      // row into TV's `SearchSymbolResultItem` shape without filtering by
-      // exchange or type — the user sees equities, indexes, and F&O contracts
-      // in one flat list and can pick any of them.
-      if (isTauri()) {
-        import('@tauri-apps/api/core')
-          .then((tauri) =>
-            tauri.invoke<
-              Array<
-                | { kind: 'EQ'; symbol: string; name: string; exchange: string }
-                | {
-                    kind: 'FNO';
-                    tradingsymbol: string;
-                    underlying: string;
-                    expiry: string;
-                    strike: number | null;
-                    optionType: string;
-                  }
-              >
-            >('search_instruments', { query }),
-          )
+      // `search_instruments` command. It returns EQ + Index + FNO (CE/PE/FUT)
+      // rows — from the SQLite `instruments` + `nfo_instruments` tables on
+      // desktop, from the Kite instrument proxy in a browser — so one call
+      // returns the full global result set. We map every row into TV's
+      // `SearchSymbolResultItem` shape without filtering by exchange or type,
+      // so the user sees equities, indexes, and F&O contracts in one flat list.
+      bridgeInvoke<
+        Array<
+          | { kind: 'EQ'; symbol: string; name: string; exchange: string }
+          | {
+              kind: 'FNO';
+              tradingsymbol: string;
+              underlying: string;
+              expiry: string;
+              strike: number | null;
+              optionType: string;
+            }
+        >
+      >('search_instruments', { query })
           .then((results) => {
             const items = (results || []).map((r) => {
               if (r.kind === 'EQ') {
@@ -741,17 +547,19 @@ export function createDatafeed(): IBasicDatafeed {
                 type: 'fno',
               };
             });
+            // An empty result is not necessarily "no such symbol": on the web
+            // the NFO leg of the adapter depends on the Kite instrument proxy,
+            // so fall through to the REST search rather than showing nothing.
+            if (items.length === 0) {
+              void fallbackRestSearch(userInput, '', onResult);
+              return;
+            }
             onResult(items);
           })
           .catch((err) => {
             console.warn('[Datafeed] search_instruments failed:', err);
-            fallbackRestSearch(userInput, '', onResult);
+            void fallbackRestSearch(userInput, '', onResult);
           });
-        return;
-      }
-
-      // ── REST fallback (non-Tauri / browser dev) ──────────────────────────
-      fallbackRestSearch(userInput, '', onResult);
     },
 
     resolveSymbol(

@@ -21,10 +21,11 @@ import { render, screen, cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import fc from 'fast-check';
 
-// The (unclicked) execute handler dynamically imports the Tauri core bridge —
-// stub it so render never reaches the real IPC.
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(async () => 'ok'),
+// The (unclicked) execute handler calls the transport bridge — stub it so render
+// never reaches a real backend.
+vi.mock('@/lib/bridge', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/bridge')>()),
+  bridgeInvoke: vi.fn(async () => 'ok'),
 }));
 
 import AgentTerminal from '../AgentTerminal';

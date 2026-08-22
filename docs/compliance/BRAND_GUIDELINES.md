@@ -109,6 +109,24 @@ listing, installer metadata, release notes, conference slide.
 - [ ] Every described feature exists in the shipped build, not the roadmap
 - [ ] Any structural claim ("it cannot place an order") is still true of the current code
 
+**Screen for the licence boundary — pre-licence only, and it expires on INH grant:**
+
+Until the INH is granted, the sellable product is **TERMINAL alone** (`GO_TO_MARKET.md` §3.1, §5).
+This screen exists because the previous three can all pass on a page that is nonetheless unlawful to
+publish today.
+
+- [ ] Nothing offers, prices, or takes payment for RESEARCH — FIND, DEBATE, conviction score, journal
+      or QA mode. Naming them as *existing capability* is fine; **selling access to them is not**
+- [ ] No waitlist, "coming soon" or early-access form that implies advice arrives on a date. A date
+      we do not control is a promise we cannot keep, and the regulator reads it as pre-selling
+      unlicensed research
+- [ ] No paid financial-services advertising of any kind. Google Ads financial-services verification
+      and SEBI SI Portal advertiser verification both gate on the registration
+- [ ] No entity or registration language that could read as registered status — no INH placeholder
+      rendered, no "SEBI-registered" in any tense, including "soon" and "applied for"
+- [ ] The word "research" is not used as the *offer*. It may describe what the analysis is; it must not
+      name a thing being sold
+
 **Post-licence, additionally:**
 
 - [ ] Entity name, INH registration number, Compliance Officer contact, standard SEBI disclaimer and
@@ -268,6 +286,31 @@ counted in finding 11's 24, because nothing there was wrong.
 | 16 | Whether **any** accuracy figure appears on the public AI disclosure page. The draft AI/ML framework asks for accuracy disclosure; rule 2 and the advertisement code restrict performance figures | **[COUNSEL]** — tracked as `AI_MODEL_GOVERNANCE.md` §10 item 5 and `AI_DISCLOSURE.md` §8 item 4 |
 | 17 | Public naming of the model vendors. `AI_DISCLOSURE.md` §4 names **OpenRouter** and **freemodel.dev** for transparency, and states that both are routers rather than the labs running the models; confirm no vendor agreement prohibits naming them, and confirm the router disclosure is sufficient where the ultimate processor is not named because it is not knowable to us | Vendor terms review |
 | 20 | Whether the **omniroute** beta gateway must be named in `AI_DISCLOSURE.md` §4 at all. It is the default gateway (`AI_MODEL_GOVERNANCE.md` §2.1), so for beta users it — not OpenRouter — is the party receiving the request, and §4 currently does not mention it | Confirm the deployed `OPENROUTER_BASE_URL`, then a disclosure decision. **Do not publish §4 until this is settled** — it is the same class of error as finding 18 |
+| 23 | **Approval of the website copy.** `docs/compliance/WEBSITE_COPY.md` was drafted 19 August 2026 and screened against §1–§3 by its author. Under §5.1 lesson 3 that is not sufficient to publish | A named approver who is not the author. The Compliance Officer role is unfilled (`PLAN_OF_ACTION.md` §4.3 item 0.12), so today there is nobody eligible to sign it |
+
+### 4.6 The website — audited as a specification, not as a page
+
+The §4 audit covered **the repository**. The live website is not in the repository, so it was never in
+scope — and it is the single highest-exposure copy surface the company has. That gap is closed from the
+supply side rather than the inspection side: rather than auditing the existing page string by string
+from outside the repo, the replacement copy was **written inside it**, at
+`docs/compliance/WEBSITE_COPY.md`, where the three §3 screens and the pre-licence screen can be applied
+to it and where every claim can name the file or commit that substantiates it.
+
+Three consequences worth stating, because each is a trap this document has already walked into once:
+
+- **Substantiation is per claim, not per page.** Finding 18 happened because a table was written from
+  another document. Every row in the copy file cites code or a commit; **no row may cite a document**,
+  including this one.
+- **A claim can be safe as a message and false as a fact.** `GO_TO_MARKET.md` §2's message hierarchy is
+  approved *positioning*; it is not verified *description*. Both checks are required, and only the copy
+  file does the second.
+- **Drafting is not approval.** Item 23 above. The copy file is publishable-quality and unpublishable
+  until someone other than its author signs it.
+
+**When the live page is replaced, the old strings do not disappear from the obligation.** Blocker P10's
+advertisement register must retain what was published, with dates — so capture the current page before
+it is overwritten, rather than after.
 
 ---
 

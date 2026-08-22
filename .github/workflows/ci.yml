@@ -34,7 +34,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       frontend: ${{ steps.filter.outputs.frontend }}
-      tauri: ${{ steps.filter.outputs.tauri }}
       rust: ${{ steps.filter.outputs.rust }}
       python: ${{ steps.filter.outputs.python }}
     steps:
@@ -49,10 +48,6 @@ jobs:
               - 'frontend/package-lock.json'
               - 'frontend/tsconfig.json'
               - 'frontend/vitest.config.*'
-            tauri:
-              - 'frontend/src-tauri/**'
-              - 'quant-core/**'
-              - 'shared_protos/**'
             rust:
               - 'aggregator/**'
               - 'ingestion/**'
@@ -139,34 +134,6 @@ jobs:
             --exclude 'src/components/chart/__tests__/SplitChartContainer.test.tsx' \
             --exclude 'src/components/layout/__tests__/TerminalLayout.modeSelector.test.tsx' \
             --exclude 'src/components/panels/__tests__/LeftPanel.search.test.tsx'
-
-  tauri-backend:
-    name: Tauri backend — cargo build + test
-    needs: changes
-    if: needs.changes.outputs.tauri == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: frontend/src-tauri
-
-      # Tauri's Linux build needs GTK/WebKit system libraries.
-      - name: System deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
-            librsvg2-dev patchelf protobuf-compiler
-
-      - name: Build
-        working-directory: frontend/src-tauri
-        run: cargo build --lib --locked
-
-      - name: Test
-        working-directory: frontend/src-tauri
-        run: cargo test --lib --locked
 
   rust-services:
     name: Rust services — cargo check + test
@@ -264,7 +231,7 @@ jobs:
   ci-ok:
     name: CI
     if: always()
-    needs: [changes, frontend, tauri-backend, rust-services, python-agent]
+    needs: [changes, frontend, rust-services, python-agent]
     runs-on: ubuntu-latest
     steps:
       - name: Verify the change detector ran

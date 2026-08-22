@@ -35,10 +35,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 
-// Tauri IPC is only touched by the (unclicked) execute handler; stub it so the
-// dynamic import never reaches the real bridge during render.
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(async () => 'ok'),
+// The backend is only touched by the (unclicked) execute handler; stub the
+// transport bridge so no render path can reach a real backend.
+vi.mock('@/lib/bridge', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/bridge')>()),
+  bridgeInvoke: vi.fn(async () => 'ok'),
 }));
 
 import AgentTerminal from '../AgentTerminal';

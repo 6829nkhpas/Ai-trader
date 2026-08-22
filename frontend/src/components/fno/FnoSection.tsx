@@ -3,9 +3,7 @@
 // Falls back to cached historical data when live data is unavailable.
 import React, { useEffect, useMemo, useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
 import FnoSkeleton from './FnoSkeleton';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
 import { useTradeStore } from '../../store/useTradeStore';
 import {
@@ -21,6 +19,7 @@ import FnoServiceState from './FnoServiceState';
 import HistoricalDataBanner from './HistoricalDataBanner';
 import { useFnoSnapshotCache } from './useFnoSnapshotCache';
 import FnoChartPanel from './FnoChartPanel';
+import { bridgeInvoke, bridgeListen, type UnlistenFn } from '../../lib/bridge';
 
 /** Bridge payload delivered by both `get_fno_analytics` and `fno-snapshot`. */
 type FnoSnapshot = FnoPayload | FnoUnavailableMarker;
@@ -58,7 +57,7 @@ export default function FnoSection() {
 
     (async () => {
       try {
-        const unlistenFn = await listen<FnoSnapshot>('fno-snapshot', (event) => {
+        const unlistenFn = await bridgeListen<FnoSnapshot>('fno-snapshot', (event) => {
           if (!cancelled) {
             setViewState(toFnoViewState(event.payload));
           }
@@ -76,7 +75,7 @@ export default function FnoSection() {
     return () => {
       cancelled = true;
       unlisten?.();
-      invoke('fno_unsubscribe').catch((err) =>
+      bridgeInvoke('fno_unsubscribe').catch((err) =>
         console.warn('[FnoSection] fno_unsubscribe failed:', err),
       );
     };
@@ -88,7 +87,7 @@ export default function FnoSection() {
 
     (async () => {
       try {
-        const result = await invoke<FnoChains>('fno_list_chains');
+        const result = await bridgeInvoke<FnoChains>('fno_list_chains');
         if (!cancelled) {
           setChains(result);
         }
@@ -111,7 +110,7 @@ export default function FnoSection() {
     (async () => {
       setLoading(true);
       try {
-        const payload = await invoke<FnoSnapshot>('get_fno_analytics', {
+        const payload = await bridgeInvoke<FnoSnapshot>('get_fno_analytics', {
           underlying: fnoUnderlying,
           expiry: fnoExpiry,
         });
@@ -137,7 +136,7 @@ export default function FnoSection() {
 
       // (Re)start the scoped poll loop for the active key (R6.2, R7.1).
       try {
-        await invoke('fno_subscribe', {
+        await bridgeInvoke('fno_subscribe', {
           underlying: fnoUnderlying,
           expiry: fnoExpiry,
         });
