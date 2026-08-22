@@ -80,6 +80,11 @@ ARG NEXT_PUBLIC_ORDER_FLOW_WS_URL=
 # UI behaviour. Distinct from FEATURE_ENFORCEMENT, which is runtime and server-side.
 ARG NEXT_PUBLIC_PROD=true
 ARG NEXT_PUBLIC_SKU_ENFORCE=
+# Closed-beta escape hatch for the RESEARCH SKU gate (lib/sku.ts). Empty by
+# default: this publishes directional recommendations, which SEBI treats as a
+# regulated activity, so it must be switched on deliberately and removed before
+# public launch. See the comment on skuEnforcementEnabled().
+ARG NEXT_PUBLIC_RESEARCH_BETA_OPEN=
 ARG NEXT_PUBLIC_LLM_GATEWAY=omniroute
 
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL \
@@ -93,6 +98,7 @@ ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL \
     NEXT_PUBLIC_ORDER_FLOW_WS_URL=$NEXT_PUBLIC_ORDER_FLOW_WS_URL \
     NEXT_PUBLIC_PROD=$NEXT_PUBLIC_PROD \
     NEXT_PUBLIC_SKU_ENFORCE=$NEXT_PUBLIC_SKU_ENFORCE \
+    NEXT_PUBLIC_RESEARCH_BETA_OPEN=$NEXT_PUBLIC_RESEARCH_BETA_OPEN \
     NEXT_PUBLIC_LLM_GATEWAY=$NEXT_PUBLIC_LLM_GATEWAY \
     NEXT_TELEMETRY_DISABLED=1
 

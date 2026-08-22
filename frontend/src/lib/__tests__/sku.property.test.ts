@@ -18,7 +18,7 @@
 //      `canAccessResearch` yields RESEARCH.
 //   4. An unrecognised mode string is refused rather than silently defaulting.
 
-import { describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 
 import {
@@ -30,6 +30,7 @@ import {
   isModeAllowed,
   normaliseMode,
   resolveSku,
+  skuEnforcementEnabled,
   type AgentMode,
   type ResearchCapability,
   type Sku,
@@ -297,6 +298,68 @@ describe('P1 — checkModeGate', () => {
       expect(result.message.length).toBeGreaterThan(0);
       // The copy must frame this as a plan boundary, never as a system fault.
       expect(result.message.toLowerCase()).toContain('research');
+    }
+  });
+});
+
+// ── skuEnforcementEnabled — the closed-beta opt-out ──────────────────────────
+//
+// This decides whether the REGULATED recommendation surface renders. It is the
+// one switch in this module that is a compliance decision rather than a product
+// one, so its truth table is pinned explicitly: a silent flip in either
+// direction is either an outage (locked for paying users) or a regulatory
+// exposure (published to the public without RA registration).
+
+describe('skuEnforcementEnabled', () => {
+  const KEYS = ['NEXT_PUBLIC_PROD', 'NEXT_PUBLIC_SKU_ENFORCE', 'NEXT_PUBLIC_RESEARCH_BETA_OPEN'] as const;
+  let saved: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    saved = {};
+    for (const k of KEYS) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+  });
+
+  afterEach(() => {
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it('enforces in a production build', () => {
+    process.env.NEXT_PUBLIC_PROD = 'true';
+    expect(skuEnforcementEnabled()).toBe(true);
+  });
+
+  it('enforces when explicitly switched on for local testing', () => {
+    process.env.NEXT_PUBLIC_SKU_ENFORCE = 'true';
+    expect(skuEnforcementEnabled()).toBe(true);
+  });
+
+  it('does not enforce in a bare dev build', () => {
+    expect(skuEnforcementEnabled()).toBe(false);
+  });
+
+  it('the beta opt-out disables the gate even in a production build', () => {
+    // The closed-beta case. Deliberately overrides BOTH enforcement inputs, which
+    // is why it is checked against them set rather than absent.
+    process.env.NEXT_PUBLIC_PROD = 'true';
+    process.env.NEXT_PUBLIC_SKU_ENFORCE = 'true';
+    process.env.NEXT_PUBLIC_RESEARCH_BETA_OPEN = 'true';
+    expect(skuEnforcementEnabled()).toBe(false);
+  });
+
+  it('requires the exact string "true" — anything else keeps the gate ON', () => {
+    // Fail CLOSED on a typo. `RESEARCH_BETA_OPEN=1` or `=yes` must NOT open a
+    // regulated surface: the other feature switches accept those spellings, and
+    // someone will reasonably assume this one does too.
+    process.env.NEXT_PUBLIC_PROD = 'true';
+    for (const v of ['1', 'yes', 'on', 'TRUE', 'True', '', ' true ']) {
+      process.env.NEXT_PUBLIC_RESEARCH_BETA_OPEN = v;
+      expect(skuEnforcementEnabled(), `value ${JSON.stringify(v)} must not open the gate`).toBe(true);
     }
   });
 });

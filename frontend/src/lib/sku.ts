@@ -137,8 +137,33 @@ export function normaliseMode(raw: string | null | undefined): AgentMode | null 
  * Read `IS_PROD` lazily rather than importing it at module scope: `lib/env.ts`
  * throws when `NEXT_PUBLIC_API_BASE_URL` is unset, and the pure exports of this
  * module must stay importable in a bare unit-test environment.
+ *
+ * ── The closed-beta opt-out ──────────────────────────────────────────────────
+ * `NEXT_PUBLIC_RESEARCH_BETA_OPEN=true` disables the gate even in a production
+ * build. It exists so a CLOSED beta group can exercise the recommendation
+ * surface, and it is a deliberate, named switch rather than the alternative that
+ * was considered — setting `NEXT_PUBLIC_PROD=false` on a live deployment. That
+ * would have worked (this function ORs the two) but it would leave the box
+ * asserting it is not production, which is false, unreviewable, and would mislead
+ * the next person reading the compose file.
+ *
+ * ⚠ COMPLIANCE, not convenience. Turning this on publishes directional
+ * recommendations — buy/sell, entry, target, stop — which SEBI treats as a
+ * regulated activity requiring Research Analyst registration. It is defensible
+ * for a closed, invite-only tester group; it is NOT defensible once sign-up is
+ * open to the public. The three conditions that make it acceptable:
+ *
+ *   1. access is invite-only — no open registration;
+ *   2. the AI-disclosure and risk copy stays visible on those surfaces;
+ *   3. it is removed before public launch.
+ *
+ * This is still only an affordance. The authoritative gate is
+ * `agents/deep-quant-loop/entitlements.py` (`SKU_ENFORCE`), which the user
+ * cannot bypass — and which is separately OFF today because the remote
+ * entitlement endpoint does not exist yet.
  */
 export function skuEnforcementEnabled(): boolean {
+  if (process.env.NEXT_PUBLIC_RESEARCH_BETA_OPEN === 'true') return false;
   return (
     process.env.NEXT_PUBLIC_PROD === 'true' ||
     process.env.NEXT_PUBLIC_SKU_ENFORCE === 'true'

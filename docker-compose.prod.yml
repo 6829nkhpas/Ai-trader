@@ -444,6 +444,11 @@ services:
         NEXT_PUBLIC_INSIGHT_WS_URL: ${NEXT_PUBLIC_INSIGHT_WS_URL:-wss://app-api.stratai.live/ws/insight}
         NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-wss://app-api.stratai.live/ws/aggregator}
         NEXT_PUBLIC_PROD: ${NEXT_PUBLIC_PROD:-true}
+        # Closed-beta only: unlocks the RESEARCH recommendation surface
+        # (FIND/DEBATE/QA, conviction score, journal). Regulated output — see
+        # lib/sku.ts. Requires a REBUILD, not a restart, because NEXT_PUBLIC_* is
+        # inlined into the bundle. Remove before public launch.
+        NEXT_PUBLIC_RESEARCH_BETA_OPEN: ${NEXT_PUBLIC_RESEARCH_BETA_OPEN:-}
         NEXT_PUBLIC_LLM_GATEWAY: ${NEXT_PUBLIC_LLM_GATEWAY:-omniroute}
     container_name: stratai-frontend
     environment:
