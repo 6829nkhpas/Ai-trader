@@ -1,13 +1,13 @@
 // index.js — Sentiment Agent — Full Production Polling Loop (Subphases 34-36).
 //
 // SP35-36: Replaces the single-pass integration test with a continuous
-// `setInterval` background process that polls NewsData.io, deduplicates via
+// `setInterval` background process that polls Google News RSS, deduplicates via
 // Redis, scores with LLM, and broadcasts to Kafka as Protobuf messages.
 //
 // Pipeline (per tick per symbol):
 //   resolveProfileSeed(symbol)              → curated company name/aliases/sector
 //     ↓
-//   getProfileContext(symbol, seed)         → Finnhub profile+financials (Redis 24h cache)
+//   getProfileContext(symbol, seed)         → Yahoo profile+financials (Redis cached)
 //     ↓
 //   fetchStrategicNews(symbol, seed)        → materiality-bucketed, deduped Google News RSS
 //     ↓  category-tagged article array
@@ -19,7 +19,7 @@
 //     ↓  NewsSentiment Protobuf → Kafka topic: sentiment_signals (schema unchanged)
 //
 // Configuration (env vars):
-//   NEWSDATA_API_KEY           — NewsData.io API key         (required)
+//   (news needs no API key — Google News RSS is keyless)
 //   LLM_API_KEY                — LLM provider API key        (required for scoring)
 //   KAFKA_BROKER_URL           — Kafka broker                (default: localhost:9092)
 //   REDIS_URL                  — Redis connection string     (default: redis://localhost:6379)
@@ -81,9 +81,17 @@ const latestSentiment = new Map();
 
 // ── Profile context cache (Redis, long TTL) ───────────────────────────────────
 // Company profile + financials change slowly, so we cache them in Redis for ~24h
-// to avoid hammering Finnhub every poll cycle. Falls back to a live fetch when
+// to avoid re-requesting them every poll cycle. Falls back to a live fetch when
 // Redis is unavailable.
 const PROFILE_TTL_SECONDS = 86_400; // 24 h
+/**
+ * TTL for a NEGATIVE profile lookup (both profile and financials null).
+ *
+ * 15 min, not 24 h. See the reasoning at the cache write below: a long negative
+ * TTL converts a transient provider failure into a day of blindness that survives
+ * fixing the provider.
+ */
+const PROFILE_NEGATIVE_TTL_SECONDS = 900; // 15 min
 const PROFILE_KEY_PREFIX  = 'sentiment:profile:';
 
 // ── Redis client (for graceful shutdown reference) ────────────────────────────
@@ -99,9 +107,12 @@ let   redisClient = null; // initialised inside run()
 
 /**
  * Resolve the company profile + basic financials for a symbol, served from a
- * Redis cache (24 h TTL) when available, else fetched live from Finnhub and
- * cached. Always degrades gracefully: a Redis miss/error simply triggers a live
- * fetch; a Finnhub miss/error yields `{ profile: null, financials: null }`.
+ * Redis cache when available, else fetched live (Yahoo Finance) and cached.
+ * Always degrades gracefully: a Redis miss/error simply triggers a live fetch; an
+ * upstream miss/error yields `{ profile: null, financials: null }`.
+ *
+ * Successful lookups are cached for 24 h, failed ones for 15 min — see the write
+ * below for why that asymmetry matters.
  *
  * @param {string} symbol - NSE ticker symbol.
  * @param {{finnhubSymbol: string}} seed - Resolved profile seed.
@@ -139,13 +150,27 @@ async function getProfileContext(symbol, seed) {
     console.error(`[index] fetchBasicFinancials failed for ${symbol}: ${err.message}`);
   }
 
-  // ── Persist to Redis with a long TTL (profiles change slowly) ──────────────
+  // ── Persist to Redis ───────────────────────────────────────────────────────
+  //
+  // A SUCCESSFUL lookup is cached for 24 h: names, sectors and 52-week ranges move
+  // slowly, so there is no reason to re-request them every cycle.
+  //
+  // A FAILED lookup (both null) gets a short TTL instead. Caching a negative
+  // result for a full day is what turned the Finnhub outage into a persistent
+  // blindness: once the 403s were cached, the analyzer reported
+  // `profile=no financials=no` for 24 h per symbol, and it kept doing so even
+  // after the provider was replaced and working — the new code was never reached.
+  // A provider failure is transient by nature and must not be remembered as though
+  // it were a fact about the company.
+  const isNegative = profile === null && financials === null;
+  const ttl = isNegative ? PROFILE_NEGATIVE_TTL_SECONDS : PROFILE_TTL_SECONDS;
+
   if (redisClient) {
     try {
       await redisClient.set(
         cacheKey,
         JSON.stringify({ profile, financials }),
-        { EX: PROFILE_TTL_SECONDS }
+        { EX: ttl }
       );
     } catch (err) {
       console.warn(`[index] Profile cache write failed for ${symbol}: ${err.message}`);
@@ -161,7 +186,7 @@ async function getProfileContext(symbol, seed) {
 /**
  * Runs a single strategic poll cycle for one ticker symbol:
  *   1. Resolve the company profile seed (companyProfiles).
- *   2. Fetch + cache Finnhub profile/financials context (Redis, 24 h TTL).
+ *   2. Fetch + cache profile/financials context (Yahoo Finance, via Redis).
  *   3. Fetch materiality-bucketed, deduplicated news (googleNewsFetcher).
  *   4. Synthesize a rich strategic verdict (analyzeStrategicSentiment).
  *   5. Store the rich verdict in the in-memory cache for the HTTP API.
