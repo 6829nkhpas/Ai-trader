@@ -208,9 +208,18 @@ async function processTicker(symbol, NewsSentiment) {
   const { profile, financials } = await getProfileContext(symbol, seed);
 
   // ── Step 3: Fetch strategic, category-tagged news ──────────────────────────
+  // COLD START: the Redis dedup window (24 h) outlives `latestSentiment`, which is
+  // in-memory and dies with the container. So after a restart every article reads
+  // as already-scored, the symbol gets `new_articles=0`, and there is no previous
+  // verdict to fall back on — the panel shows "no notable headline" for a stock
+  // that plainly has news. Bypassing dedup on the FIRST cycle per symbol costs one
+  // extra scoring pass per restart and removes that hole entirely.
+  const isColdStart = !latestSentiment.has(symbol.toUpperCase());
   let categorizedNews;
   try {
-    categorizedNews = await fetchStrategicNews(symbol, seed);
+    categorizedNews = await fetchStrategicNews(symbol, seed, undefined, {
+      bypassDedup: isColdStart,
+    });
   } catch (err) {
     console.error(`\x1b[31m[index] fetchStrategicNews failed for ${symbol}: ${err.message}\x1b[0m`);
     categorizedNews = [];
@@ -244,6 +253,36 @@ async function processTicker(symbol, NewsSentiment) {
   // news_fetches_total exist alongside it.
   metrics.classificationCompleted(categorizedNews.length > 0 ? 'scored' : 'neutral_no_news');
   metrics.verdictProduced(verdict.label);
+
+  // ── Step 4b: Never overwrite a real verdict with an empty one ──────────────
+  //
+  // The dedup cache means a symbol whose news has ALREADY been scored returns
+  // `new_articles=0` on the next cycle. `analyzeStrategicSentiment` then correctly
+  // produces a neutral verdict — correct as an analysis of nothing — and this
+  // function used to cache it, destroying the real one.
+  //
+  // Observed on the live deployment: RELIANCE went from `Bullish +48, 10 headlines`
+  // to `Neutral 0, 0 headlines` roughly ten minutes later, purely because every
+  // article was `SKIP (cached)`. So the panel showed "No notable headline" for a
+  // stock with a live $300bn refinery story, and would keep showing it until
+  // genuinely new news arrived.
+  //
+  // "No FRESH catalysts since the last look" is not the same claim as "no notable
+  // news exists", and the panel renders the second. So keep serving the previous
+  // verdict — the analysis it was built from is still the most recent real read —
+  // and mirror the early-return already used for an LLM failure above.
+  //
+  // A neutral verdict IS cached when there is nothing to preserve, so a genuinely
+  // quiet symbol still reports honestly on first contact.
+  if (categorizedNews.length === 0 && latestSentiment.has(symbol.toUpperCase())) {
+    const prev = latestSentiment.get(symbol.toUpperCase());
+    console.log(
+      `\x1b[36m[index]\x1b[0m \x1b[1m${symbol}\x1b[0m: no new articles — keeping the previous verdict ` +
+      `(${prev.label} ${prev.conviction_score}, ${(prev.headlines || []).length} headlines) ` +
+      `rather than overwriting it with a neutral one.`
+    );
+    return;
+  }
 
   // ── Step 5: Cache the RICH verdict for the HTTP API ────────────────────────
   // Headline count is capped so the panel has a bounded list, not because more

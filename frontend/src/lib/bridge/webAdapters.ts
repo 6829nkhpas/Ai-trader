@@ -781,6 +781,26 @@ export const WEB_ADAPTERS: Record<string, WebAdapter> = {
       postJson({ symbol: reqStr(args, 'symbol', 'get_multi_timeframe_chart_patterns') }),
     ),
 
+  /**
+   * The consensus report — trend score, momentum/volatility/volume state, and the
+   * active candlestick patterns and strategies the HUD renders.
+   *
+   * Added because `consensusData` was otherwise populated ONLY as a side effect of
+   * a deep-quant agent run relaying its `get_consensus_report` tool result onto the
+   * bridge bus. On a fresh page load nothing had asked for it, so the panel showed
+   * "No patterns detected" for every symbol until the user launched an analysis.
+   * This is the same `quant-core` ConsensusEngine the agent's tool calls, reached
+   * directly.
+   */
+  get_consensus: async (args) =>
+    apiJson(
+      '/api/tools/get_consensus',
+      postJson({
+        symbol: reqStr(args, 'symbol', 'get_consensus'),
+        timeframe: optStr(args, 'timeframe') ?? '10m',
+      }),
+    ),
+
   // ── Misc ──────────────────────────────────────────────────────────────────
 
   // ── Paper trading ─────────────────────────────────────────────────────────

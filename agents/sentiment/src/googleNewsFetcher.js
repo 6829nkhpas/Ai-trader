@@ -290,9 +290,16 @@ export function isRecent(publishedAt, nowMs, maxAgeMs = MAX_AGE_MS) {
  * @param {string} symbol
  * @param {{companyName: string, sector: (string|null), aliases: string[]}} seed
  * @param {number} [count]
+ * @param {{bypassDedup?: boolean}} [opts] - `bypassDedup` ignores the Redis
+ *   already-seen window for this call. Used only on a COLD START: the dedup window
+ *   outlives the in-memory verdict cache, so after a restart every article reads as
+ *   already-scored and the symbol would have no verdict at all to serve. Costs one
+ *   extra LLM scoring pass per symbol per restart, which is the correct trade
+ *   against showing "no notable headline" for a stock that has news.
  * @returns {Promise<Array<{category: string, title: string, description: string, url: string, published_at: string, source: (string|null)}>>}
  */
-export async function fetchStrategicNews(symbol, seed, count) {
+export async function fetchStrategicNews(symbol, seed, count, opts = {}) {
+  const bypassDedup = opts?.bypassDedup === true;
   const maxBuckets = Number.isFinite(count) && count > 0 ? count : DEFAULT_BUCKETS;
   const buckets = MATERIALITY_BUCKETS.slice(0, maxBuckets);
 
@@ -363,13 +370,15 @@ export async function fetchStrategicNews(symbol, seed, count) {
       }
 
       let alreadyProcessed = false;
-      try {
-        alreadyProcessed = await isArticleProcessed(cacheKey);
-      } catch (err) {
-        // Treat a cache failure as "not processed" so an infra blip does not drop
-        // news. The trade is duplicate LLM spend, which is why it is counted.
-        metrics.cacheError('dedup_check');
-        console.error(`\x1b[31m[googleNews] dedup check error: ${err.message}\x1b[0m`);
+      if (!bypassDedup) {
+        try {
+          alreadyProcessed = await isArticleProcessed(cacheKey);
+        } catch (err) {
+          // Treat a cache failure as "not processed" so an infra blip does not drop
+          // news. The trade is duplicate LLM spend, which is why it is counted.
+          metrics.cacheError('dedup_check');
+          console.error(`\x1b[31m[googleNews] dedup check error: ${err.message}\x1b[0m`);
+        }
       }
 
       if (alreadyProcessed) {

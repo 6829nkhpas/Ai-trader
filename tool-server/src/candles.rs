@@ -271,12 +271,38 @@ pub async fn load_candles_with_ts(
     // Live ticks — for intraday + plain-daily only (never weekly/monthly).
     if !is_weekly && !is_monthly {
         let sample_interval = live_sample_interval(timeframe);
+        // Drop FLAT buckets: `open = high = low = close`.
+        //
+        // The tick feed keeps writing the frozen last price after the 15:30 IST
+        // close, so every post-close bucket collapses to a single repeated value
+        // with zero volume. Those are not candles — a candlestick pattern is
+        // defined by body/wick geometry, and a zero-range bar has none — but
+        // PRIO_LIVE (3) outranks historical_intraday (2), so they OVERRODE real
+        // bars in the merge below.
+        //
+        // The user-visible result, measured on the live deployment: `get_consensus`
+        // returned `active_patterns: []` and `active_strategies: []` with
+        // `atr_14: 0.0` and `rsi_14: 100.0`, so the HUD read "No patterns detected
+        // / No strategies active" — while `historical_intraday` held 1296 clean
+        // bars for the same symbol and ZERO flat ones, and `scan_radar` (which
+        // reads a different path) found 9 patterns on the same instrument. The
+        // detectors were never broken; they were being fed frozen prices.
+        //
+        // Filtered in SQL rather than after parsing so the `LIMIT` still returns
+        // `limit` USABLE buckets instead of `limit` rows mostly padded with flats.
+        //
+        // A genuinely flat real bar — an illiquid instrument that printed one
+        // price in the interval — is dropped too. That is the correct trade: it
+        // carries no pattern information either, and the intraday table remains
+        // the authority for that timestamp.
         let live = format!(
-            "SELECT timestamp AS ts, first(last_traded_price) AS open, \
-             max(last_traded_price) AS high, min(last_traded_price) AS low, \
-             last(last_traded_price) AS close, (last(volume) - first(volume)) AS volume \
-             FROM live_ticks WHERE symbol = $1 \
-             SAMPLE BY {} ALIGN TO CALENDAR ORDER BY timestamp DESC LIMIT $2",
+            "SELECT ts, open, high, low, close, volume FROM ( \
+               SELECT timestamp AS ts, first(last_traded_price) AS open, \
+               max(last_traded_price) AS high, min(last_traded_price) AS low, \
+               last(last_traded_price) AS close, (last(volume) - first(volume)) AS volume \
+               FROM live_ticks WHERE symbol = $1 \
+               SAMPLE BY {} ALIGN TO CALENDAR \
+             ) WHERE high > low ORDER BY ts DESC LIMIT $2",
             sample_interval
         );
         match &sqlx::query(&live).bind(symbol).bind(limit).fetch_all(pool).await {

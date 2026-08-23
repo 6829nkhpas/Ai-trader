@@ -49,6 +49,7 @@ export default function Home() {
   const setSidebarOpen = useChartUIStore((s) => s.setSidebarOpen);
   const setConsensusData = useQuantStore((s) => s.setConsensusData);
   const loadConsensusForSymbol = useQuantStore((s) => s.loadConsensusForSymbol);
+  const fetchConsensusForSymbol = useQuantStore((s) => s.fetchConsensusForSymbol);
   const clearAiPlan = useQuantStore((s) => s.clearAiPlan);
 
   // ── Mounted guard ─────────────────────────────────────────────────
@@ -112,9 +113,17 @@ export default function Home() {
 
   // ── Quant consensus listener ──────────────────────────────────────
   useEffect(() => {
+    // Serve the cached report instantly, then refresh from tool-server.
+    //
+    // The fetch is the fix for a panel that read "No patterns detected" for every
+    // symbol on a fresh load: `consensusData` used to arrive ONLY as a side effect
+    // of a deep-quant agent run streaming its consensus tool result onto the bridge
+    // bus, so until the user launched an analysis nothing had computed it. The
+    // detectors were never broken — nothing had asked them.
     loadConsensusForSymbol(symbol);
+    void fetchConsensusForSymbol(symbol, activeTimeframe);
     clearAiPlan();
-  }, [symbol, loadConsensusForSymbol, clearAiPlan]);
+  }, [symbol, activeTimeframe, loadConsensusForSymbol, fetchConsensusForSymbol, clearAiPlan]);
 
   useEffect(() => {
     let cancelled = false;

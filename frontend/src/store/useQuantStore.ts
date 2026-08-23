@@ -371,6 +371,7 @@ interface QuantStore {
   setConsensusData: (data: ConsensusReport) => void;
   clearConsensusData: () => void;
   loadConsensusForSymbol: (symbol: string) => void;
+  fetchConsensusForSymbol: (symbol: string, timeframe?: string) => Promise<void>;
   fetchDeepAnalysis: (
     symbol: string,
     mode?: 'FIND' | 'VERIFY',
@@ -1026,6 +1027,50 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     } else {
       console.log(`[QuantStore] ⏳ Consensus CACHE MISS symbol=${sym} — clearing stale data`);
       set({ consensusData: null });
+    }
+  },
+
+  /**
+   * Fetch the consensus report for a symbol from tool-server.
+   *
+   * WHY THIS EXISTS: `consensusData` was previously populated ONLY by the
+   * `quant-consensus` bridge event, which is emitted while a deep-quant agent run
+   * streams (see `webAdapters.ts::bridgeConsensusFrame`). So on a fresh page load —
+   * or any symbol the user had not run an analysis on — `loadConsensusForSymbol`
+   * missed the cache, set `consensusData` to null, and the HUD rendered
+   * "No patterns detected / No strategies active" indefinitely. The detectors were
+   * fine; nothing had asked them anything.
+   *
+   * `POST /api/tools/get_consensus` runs the same `quant-core` ConsensusEngine the
+   * agent's tool calls, so this is the identical computation reached directly
+   * instead of only as a side effect of an agent run.
+   *
+   * Best-effort and non-throwing: a failure leaves whatever was already displayed
+   * rather than blanking the panel, because an unreachable tool-server is not
+   * evidence that there are no patterns.
+   */
+  fetchConsensusForSymbol: async (symbol: string, timeframe = '10m') => {
+    const sym = symbol.trim().toUpperCase();
+    if (!sym) return;
+    try {
+      const report = await bridgeInvoke<ConsensusReport>('get_consensus', {
+        symbol: sym,
+        timeframe,
+      });
+      // Guard against a late response for a symbol the user has since left: the
+      // store is global, so an out-of-order resolve would show one instrument's
+      // patterns under another's name. Dynamic import mirrors the existing pattern
+      // below — a static one would create a cycle between the two stores.
+      const { useTradeStore } = await import('./useTradeStore');
+      if (useTradeStore.getState().selectedSymbol.toUpperCase() !== sym) {
+        console.log(`[QuantStore] ↩ Consensus for ${sym} discarded — symbol changed`);
+        return;
+      }
+      if (report && typeof report.trend_score === 'number') {
+        get().setConsensusData(report);
+      }
+    } catch (err) {
+      console.warn(`[QuantStore] Consensus fetch failed for ${sym}:`, err);
     }
   },
 
