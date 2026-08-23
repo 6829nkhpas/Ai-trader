@@ -169,6 +169,17 @@ export default function DeepQuantPanel() {
 
   const handleAIAnalysis = () => {
     useQuantStore.getState().resetTerminal();
+    // Compute the technical consensus for THIS press, alongside the agent run.
+    //
+    // Deliberately here and not on symbol change: it is a technical read the user
+    // asks for, so a watchlist click should not fire a tool-server computation per
+    // symbol, and an agent-run output should not be presented as ambient telemetry.
+    //
+    // Fired in parallel rather than awaited — the agent stream is the primary
+    // result and must not wait on the HUD. If the agent's own
+    // `get_consensus_report` tool result arrives first, `quant-consensus` sets the
+    // same state; whichever lands later simply wins with equivalent data.
+    void useQuantStore.getState().fetchConsensusForSymbol(activeSymbol, activeTimeframe);
     fetchDeepAnalysis(activeSymbol);
   };
 
@@ -183,6 +194,10 @@ export default function DeepQuantPanel() {
     }
 
     useQuantStore.getState().resetTerminal();
+    // VERIFY reads the same consensus indicators (ATR sizes the stop, RSI/MACD/EMA
+    // corroborate the user's direction), so the HUD is populated for this press too
+    // — same reasoning as handleAIAnalysis above.
+    void useQuantStore.getState().fetchConsensusForSymbol(activeSymbol, activeTimeframe);
     fetchDeepAnalysis(activeSymbol, 'VERIFY', {
       side,
       entry: entryNum,

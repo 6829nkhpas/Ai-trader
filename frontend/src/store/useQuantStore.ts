@@ -1033,17 +1033,22 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
   /**
    * Fetch the consensus report for a symbol from tool-server.
    *
-   * WHY THIS EXISTS: `consensusData` was previously populated ONLY by the
-   * `quant-consensus` bridge event, which is emitted while a deep-quant agent run
-   * streams (see `webAdapters.ts::bridgeConsensusFrame`). So on a fresh page load —
-   * or any symbol the user had not run an analysis on — `loadConsensusForSymbol`
-   * missed the cache, set `consensusData` to null, and the HUD rendered
-   * "No patterns detected / No strategies active" indefinitely. The detectors were
-   * fine; nothing had asked them anything.
+   * CALLED FROM THE `FIND QUANT TRADE` HANDLER ONLY (`DeepQuantPanel`), never on
+   * symbol change. The consensus is a technical read the user explicitly asks for:
+   * fetching it per symbol selection would fire a tool-server computation on every
+   * click through a watchlist, and would present what is an agent-run output as
+   * though it were always-on telemetry. `loadConsensusForSymbol` remains the
+   * cache-only path used on symbol change.
+   *
+   * WHY IT EXISTS AT ALL: `consensusData` was previously populated ONLY by the
+   * `quant-consensus` bridge event, emitted while a deep-quant run streams its
+   * `get_consensus_report` tool result. That made the HUD's patterns/strategies
+   * dependent on the agent reaching that specific tool, so a run that failed early
+   * — or a mode that never calls it — left the panel reading "No patterns
+   * detected" with nothing wrong. This computes it directly for the same press.
    *
    * `POST /api/tools/get_consensus` runs the same `quant-core` ConsensusEngine the
-   * agent's tool calls, so this is the identical computation reached directly
-   * instead of only as a side effect of an agent run.
+   * agent's tool calls, so the numbers agree either way.
    *
    * Best-effort and non-throwing: a failure leaves whatever was already displayed
    * rather than blanking the panel, because an unreachable tool-server is not

@@ -785,12 +785,12 @@ export const WEB_ADAPTERS: Record<string, WebAdapter> = {
    * The consensus report — trend score, momentum/volatility/volume state, and the
    * active candlestick patterns and strategies the HUD renders.
    *
-   * Added because `consensusData` was otherwise populated ONLY as a side effect of
-   * a deep-quant agent run relaying its `get_consensus_report` tool result onto the
-   * bridge bus. On a fresh page load nothing had asked for it, so the panel showed
-   * "No patterns detected" for every symbol until the user launched an analysis.
-   * This is the same `quant-core` ConsensusEngine the agent's tool calls, reached
-   * directly.
+   * Driven by the `FIND QUANT TRADE` press, not by symbol selection. Previously
+   * `consensusData` arrived ONLY as a side effect of a deep-quant run relaying its
+   * `get_consensus_report` tool result onto the bridge bus, so a run that failed
+   * before reaching that tool left the panel reading "No patterns detected" with
+   * nothing actually wrong. This is the same `quant-core` ConsensusEngine, reached
+   * directly for the same press.
    */
   get_consensus: async (args) =>
     apiJson(
