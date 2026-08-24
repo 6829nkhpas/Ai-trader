@@ -542,10 +542,17 @@ export const WEB_ADAPTERS: Record<string, WebAdapter> = {
   },
 
   // Live ticks reach the browser over the open `/ws/*` gateway prefix, connected
-  // directly by `useTradeStore.connectAlphaWebSocket` and friends. The desktop
-  // command exists to lazily boot the Rust WS→IPC bridges and to tell the mock
-  // emitter which symbol to produce; neither has a browser counterpart, and the
-  // WS feeds are symbol-agnostic. An honest no-op, not a stub.
+  // directly by `useTradeStore.connectAlphaWebSocket` and friends, so there is
+  // nothing for a per-symbol call to do CLIENT-side.
+  //
+  // ⚠ Do NOT read this as "tick subscription is unnecessary". An earlier version of
+  // this comment claimed the WS feeds are symbol-agnostic; they are not. The
+  // ingestion service boots with an empty instrument map and streams only the
+  // tokens pushed to its control port, so SOMETHING has to subscribe them. The
+  // desktop app used to, via this command; that work now lives server-side in
+  // `aggregator/src/spot_subscriber.rs`, which resolves the configured symbols and
+  // re-asserts them on a timer. Removing it makes the tick feed go quiet while
+  // every health check stays green.
   subscribe_ticker: async () => undefined,
 
   // ── Deployment configuration ──────────────────────────────────────────────
