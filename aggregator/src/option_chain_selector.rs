@@ -241,9 +241,11 @@ pub fn build_chain_set_payload(
 /// on the next cycle, which is the right granularity: if ingestion is restarting,
 /// a tight retry loop would just log faster.
 async fn push_chain_set(selection: &ChainSelection, interval_secs: u64) -> Result<(), String> {
-    let host = std::env::var("INGESTION_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
-    let port = std::env::var("INGESTION_CONTROL_PORT").unwrap_or_else(|_| "8085".to_string());
-    let addr = format!("{host}:{port}");
+    // Shared with `spot_subscriber` so the two cannot disagree about where
+    // ingestion lives. This used to default the host to `127.0.0.1`, which inside
+    // the aggregator container is the aggregator — so every push failed with
+    // `Connection refused (os error 111)` and no option chain was ever ingested.
+    let addr = crate::spot_subscriber::ingestion_control_addr();
 
     let cmd = format!(
         "option_chain_set:{}\n",

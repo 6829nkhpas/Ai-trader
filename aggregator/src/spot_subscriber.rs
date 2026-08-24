@@ -36,7 +36,8 @@
 // Config:
 //   SPOT_SYMBOLS  — comma-separated NSE tradingsymbols to stream. Defaults below.
 //   SPOT_SUBSCRIBE_CYCLE_SECS — re-assert cadence (default 300).
-//   INGESTION_HOST / INGESTION_CONTROL_PORT — where to push (default 127.0.0.1:8085).
+//   INGESTION_HOST / INGESTION_CONTROL_PORT — where to push (default ingestion:8085,
+//                             the compose service name — see ingestion_control_addr).
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -117,6 +118,30 @@ pub fn build_subscribe_line(token: u64, symbol: &str) -> Option<String> {
     Some(format!("subscribe:{token32}:{sym}\n"))
 }
 
+/// The ingestion control-port address.
+///
+/// Default host is the compose SERVICE NAME, not `127.0.0.1`. Inside a container
+/// `127.0.0.1` is that container itself, so a localhost default made both this and
+/// `option_chain_selector` push to the aggregator and get
+/// `Connection refused (os error 111)` on every cycle — the selector had been
+/// failing that way silently since it was written. `INGESTION_HOST` still overrides
+/// for a bare-metal / single-host run.
+///
+/// Shared by `option_chain_selector` so the two cannot drift apart again.
+pub fn ingestion_control_addr() -> String {
+    let host = std::env::var("INGESTION_HOST")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "ingestion".to_string());
+    let port = std::env::var("INGESTION_CONTROL_PORT")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "8085".to_string());
+    format!("{host}:{port}")
+}
+
 /// Push a batch of subscribe lines over one connection.
 ///
 /// One connection for the whole batch rather than per symbol: ingestion reads
@@ -125,9 +150,7 @@ async fn push_subscriptions(lines: &[String]) -> Result<(), String> {
     if lines.is_empty() {
         return Ok(());
     }
-    let host = std::env::var("INGESTION_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
-    let port = std::env::var("INGESTION_CONTROL_PORT").unwrap_or_else(|_| "8085".to_string());
-    let addr = format!("{host}:{port}");
+    let addr = ingestion_control_addr();
 
     let mut stream = tokio::net::TcpStream::connect(&addr).await.map_err(|e| {
         format!("cannot reach ingestion control port {addr} — is the ingestion service up? ({e})")
@@ -284,5 +307,25 @@ mod tests {
         assert!(syms.iter().any(|s| s == "NIFTY 50"));
         assert!(syms.iter().any(|s| s == "NIFTY BANK"));
         assert!(!syms.is_empty());
+    }
+
+    #[test]
+    fn control_addr_defaults_to_the_service_name_not_localhost() {
+        // The regression this pins. `127.0.0.1` inside the aggregator container is
+        // the aggregator, so a localhost default made every push fail with
+        // `Connection refused (os error 111)` — silently, on a timer, for both this
+        // module and option_chain_selector.
+        //
+        // Env is process-global and would race other tests, so only the no-override
+        // path is asserted; that is the one that was wrong.
+        if std::env::var("INGESTION_HOST").is_err() && std::env::var("INGESTION_CONTROL_PORT").is_err() {
+            assert_eq!(ingestion_control_addr(), "ingestion:8085");
+        }
+        // Whatever the env says, the shape stays host:port with a non-empty host —
+        // an empty INGESTION_HOST must not produce ":8085".
+        let addr = ingestion_control_addr();
+        let (host, port) = addr.rsplit_once(':').expect("addr must be host:port");
+        assert!(!host.is_empty(), "host must never be empty: {addr}");
+        assert!(!port.is_empty(), "port must never be empty: {addr}");
     }
 }
