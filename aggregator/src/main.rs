@@ -26,6 +26,7 @@ mod option_chain;
 mod option_chain_selector;
 mod proto;
 mod quant;
+mod spot_subscriber;
 mod state;
 mod ws_server;
 

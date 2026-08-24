@@ -1061,6 +1061,14 @@ pub async fn run_kite_api_server(port: &str, metrics: crate::metrics::Aggregator
     // the website's entire F&O workspace reads.
     tokio::spawn(crate::option_chain_selector::run(state.clone()));
 
+    // Equity/index tick subscriptions. The ingestion service boots with an EMPTY
+    // instrument map and streams only the tokens pushed to its control port — so
+    // without this it connects to Kite successfully and receives nothing, which
+    // looks completely healthy (WS 101, no errors, health checks green) while
+    // `live_ticks` silently stops growing. The desktop app used to send these; it
+    // is gone, and `option_chain_set` covers F&O only.
+    tokio::spawn(crate::spot_subscriber::run(state.clone()));
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
