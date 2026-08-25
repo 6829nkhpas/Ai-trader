@@ -48,13 +48,39 @@ const MODE_QUOTE: usize = 44;
 const MODE_FULL: usize = 184;
 
 // ─── Depth offset constants (Full mode only) ────────────────────────────────
+//
+// Kite's Full-mode packet is 184 bytes and ends with a 120-byte market-depth
+// block: 5 bid entries then 5 ask entries. Each entry is 12 bytes —
+// quantity (i32) + price (i32) + orders (i16) + 2 bytes padding.
+//
+// These constants were previously BID=84, ASK=124, ENTRY_LEN=10, which is
+// arithmetically impossible: with ASK=124 and 5 ask entries filling a 184-byte
+// packet, an entry must be (184 - 124) / 5 = 12 bytes, and 5 bid entries before
+// that must therefore start at 124 - 60 = 64. The declared 10-byte entry
+// contradicted the declared ask offset.
+//
+// The bug was visible in production and only on ONE side. Reading at 84 lands
+// 20 bytes into the bid block — 1.67 entries in, straddling two entries — so
+// `best_bid` was garbage, while ASK=124 happened to be right and quantity+price
+// are the first 8 bytes of an entry regardless of whether the stride is 10 or 12,
+// so `best_ask` parsed correctly. Measured in `live_ticks` before the fix:
+//
+//   RELIANCE   ltp 1305.0   best_bid    7.81   best_ask 1305.1
+//   TCS        ltp 2298.6   best_bid    0.57   best_ask 2299.0
+//   HDFCBANK   ltp  727.4   best_bid    3.16   best_ask  727.4
+//
+// A best_bid of 7.81 against a 1305 last price is not a wide spread, it is a
+// misread — and it silently poisoned every spread, mid-price and order-book
+// consumer downstream.
 
 /// Offset where the 5-level bid depth begins inside a Full-mode packet.
-const DEPTH_BID_OFFSET: usize = 84;
+const DEPTH_BID_OFFSET: usize = 64;
 /// Offset where the 5-level ask depth begins inside a Full-mode packet.
 const DEPTH_ASK_OFFSET: usize = 124;
-/// Each depth entry: 4 bytes qty + 4 bytes price + 2 bytes orders = 10 bytes.
-const DEPTH_ENTRY_LEN: usize = 10;
+/// Each depth entry: 4 bytes qty + 4 bytes price + 2 bytes orders + 2 padding.
+const DEPTH_ENTRY_LEN: usize = 12;
+/// Levels per side in the depth block.
+const DEPTH_LEVELS: usize = 5;
 
 /// Offset of the big-endian i32 `open_interest` field inside a Full-mode packet
 /// (after the 44-byte quote block + `last_traded_timestamp`).
@@ -272,6 +298,79 @@ pub fn parse_binary_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Depth layout ────────────────────────────────────────────────────────
+    //
+    // These exist because the previous constants (BID=84, ASK=124, ENTRY=10) were
+    // arithmetically impossible together, and the resulting misread was SILENT:
+    // `best_ask` parsed correctly while `best_bid` returned values like 7.81 for a
+    // stock trading at 1305. Nothing crashed; every spread and mid-price
+    // downstream was simply wrong. A self-consistency check catches that class of
+    // error without needing a live packet.
+
+    #[test]
+    fn depth_offsets_are_internally_consistent() {
+        // The depth block is the tail of the packet: 5 bids then 5 asks.
+        assert_eq!(
+            DEPTH_ASK_OFFSET,
+            DEPTH_BID_OFFSET + DEPTH_LEVELS * DEPTH_ENTRY_LEN,
+            "ask depth must begin immediately after the {DEPTH_LEVELS} bid entries"
+        );
+        assert_eq!(
+            MODE_FULL,
+            DEPTH_ASK_OFFSET + DEPTH_LEVELS * DEPTH_ENTRY_LEN,
+            "the {DEPTH_LEVELS} ask entries must fill the packet exactly"
+        );
+    }
+
+    /// Build a Full-mode packet with a known level-1 bid and ask.
+    fn make_full_packet(token: u32, ltp_paise: i32, bid_paise: i32, ask_paise: i32) -> Vec<u8> {
+        let mut buf = vec![0u8; MODE_FULL];
+        buf[0..4].copy_from_slice(&token.to_be_bytes());
+        buf[4..8].copy_from_slice(&ltp_paise.to_be_bytes());
+
+        // Level-1 bid: qty then price, at the start of the bid block.
+        buf[DEPTH_BID_OFFSET..DEPTH_BID_OFFSET + 4].copy_from_slice(&250i32.to_be_bytes());
+        buf[DEPTH_BID_OFFSET + 4..DEPTH_BID_OFFSET + 8].copy_from_slice(&bid_paise.to_be_bytes());
+
+        // Level-1 ask: same shape, at the start of the ask block.
+        buf[DEPTH_ASK_OFFSET..DEPTH_ASK_OFFSET + 4].copy_from_slice(&180i32.to_be_bytes());
+        buf[DEPTH_ASK_OFFSET + 4..DEPTH_ASK_OFFSET + 8].copy_from_slice(&ask_paise.to_be_bytes());
+
+        buf
+    }
+
+    #[test]
+    fn parses_level_one_bid_and_ask_from_a_full_packet() {
+        // RELIANCE @ 1305.00, bid 1304.90, ask 1305.10 — a realistic tick spread.
+        let packet = make_full_packet(738_561, 130_500, 130_490, 130_510);
+        let tick = parse_binary_tick(&packet, "RELIANCE").unwrap();
+
+        assert!(
+            (tick.best_bid - 1304.90).abs() < 0.01,
+            "best_bid was {} — a misaligned bid offset reads a neighbouring field",
+            tick.best_bid
+        );
+        assert!((tick.best_ask - 1305.10).abs() < 0.01, "best_ask was {}", tick.best_ask);
+    }
+
+    #[test]
+    fn the_bid_is_in_the_same_order_of_magnitude_as_the_price() {
+        // The production symptom, as a test: best_bid 7.81 against ltp 1305 is not
+        // a wide spread, it is a misread. Any offset error moves the bid by orders
+        // of magnitude, so this catches it without asserting an exact tick size.
+        let packet = make_full_packet(738_561, 130_500, 130_490, 130_510);
+        let tick = parse_binary_tick(&packet, "RELIANCE").unwrap();
+
+        let drift = (tick.best_bid - tick.last_traded_price).abs() / tick.last_traded_price;
+        assert!(
+            drift < 0.05,
+            "best_bid {} is {:.0}% away from ltp {} — offset is wrong",
+            tick.best_bid,
+            drift * 100.0,
+            tick.last_traded_price
+        );
+    }
 
     fn make_ltp_packet(token: u32, price_paise: i32) -> Vec<u8> {
         let mut buf = Vec::with_capacity(8);

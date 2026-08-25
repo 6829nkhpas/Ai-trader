@@ -61,6 +61,20 @@ pub struct QuoteData {
     pub oi: Option<u64>,
     pub change: f64,
     pub net_change: f64,
+    /// Five-level market depth, passed through from Kite verbatim:
+    /// `{ buy: [{price, quantity, orders} ×5], sell: [… ×5] }`.
+    ///
+    /// Kite's `/quote` has always returned this and this handler always dropped
+    /// it, which is why the order book had nothing to render — the frontend's
+    /// `orderbook-update` event had no producer on the web, and the only other
+    /// depth source (`live_ticks.best_bid`/`best_ask`) is level-1 only.
+    ///
+    /// `Option`, and omitted from the JSON when absent: Kite returns depth for
+    /// `/quote` but NOT for the lighter `/quote/ohlc` and `/quote/ltp` modes, and
+    /// a synthesised empty ladder would render as "no bids" — indistinguishable
+    /// from a genuinely empty book. Absent must stay absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depth: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -897,6 +911,11 @@ async fn quote_handler(
                 oi: value.get("oi").and_then(|v| v.as_u64()),
                 change: (pct_change * 100.0).round() / 100.0,
                 net_change: (net_change * 100.0).round() / 100.0,
+                // Passed through verbatim rather than reshaped: the order book
+                // renders `{price, quantity, orders}` directly, and re-modelling it
+                // here would add a second place for the field names to drift from
+                // Kite's. Absent (LTP/OHLC modes) stays absent — see the field doc.
+                depth: value.get("depth").cloned().filter(|d| !d.is_null()),
             }
         })
         .collect();

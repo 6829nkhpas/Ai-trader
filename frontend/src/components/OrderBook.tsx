@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useTradeStore } from '../store/useTradeStore';
 import { crossfade } from '../lib/motionVariants';
 import { bridgeListen } from '../lib/bridge';
+import { kiteFetch } from '../lib/kiteFetch';
 
 import {
   type OrderBookLevel,
@@ -13,7 +14,11 @@ import {
   depthPercent,
   formatSize,
   buildBookFromDepth,
+  buildBookFromKiteDepth,
 } from './orderbook/orderBookHelpers';
+
+/** Depth refresh cadence. Kite allows ~3 req/s and the watchlist shares it. */
+const DEPTH_POLL_MS = 2000;
 
 // ── Component ──────────────────────────────────────────────────────────
 export default function OrderBook() {
@@ -83,6 +88,73 @@ export default function OrderBook() {
       cleanup?.();
     };
   }, []);
+
+  // ── Poll Kite REST depth ─────────────────────────────────────────────
+  //
+  // The `orderbook-update` listener above has NO producer on the web — it was fed
+  // by the desktop app's IPC bridge, which is gone — so without this the book sat
+  // in cold standby forever showing "Order book populates when live depth feed
+  // connects". Kite's `/quote` has always returned five-level depth; the
+  // aggregator's handler simply dropped the field until now.
+  //
+  // Polling rather than streaming, deliberately: there is no depth WS in this
+  // stack (`/ws/*` carries decisions, candles, predictions and insights, none of
+  // them order book), and a REST poll is honest about its own granularity. 2s is
+  // fast enough to read as live without hammering Kite's 3 req/s ceiling — the
+  // watchlist and macro strip share that budget.
+  //
+  // If a depth stream is added later, delete this effect rather than layering it:
+  // two writers to `book` would fight, and the slower one would keep winning.
+  useEffect(() => {
+    const symbol = selectedSymbol?.trim();
+    if (!symbol) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const tick = async () => {
+      try {
+        const res = await kiteFetch(`/quote?i=NSE:${encodeURIComponent(symbol)}`);
+        if (!res.ok) throw new Error(`quote HTTP ${res.status}`);
+        const data = await res.json();
+        const quote = (data?.quotes ?? []).find(
+          (q: { symbol?: string }) => q?.symbol?.toUpperCase() === symbol.toUpperCase(),
+        ) ?? (data?.quotes ?? [])[0];
+
+        const next = buildBookFromKiteDepth(quote?.depth);
+        if (cancelled) return;
+
+        if (next) {
+          setBook(next);
+          setIsLive(true);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem(
+              `ai-trader-orderbook-${symbol.toUpperCase()}`,
+              JSON.stringify(next),
+            );
+          }
+        } else {
+          // A quote with no depth (Kite omits it outside full mode, and for some
+          // indices entirely). Leave the last book visible but stop claiming it is
+          // live, so a stale ladder is never presented as the current market.
+          setIsLive(false);
+        }
+      } catch {
+        // Transport failure or an expired broker token. Keep whatever is displayed
+        // and drop the live flag — blanking the panel would imply an empty book,
+        // which is a different and much stronger claim than "we cannot see it".
+        if (!cancelled) setIsLive(false);
+      } finally {
+        if (!cancelled) timer = setTimeout(tick, DEPTH_POLL_MS);
+      }
+    };
+
+    void tick();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [selectedSymbol]);
 
   // Depth-bar scaling and the bid/ask ratio use REAL levels only so synthetic
   // padding never distorts the liquidity picture.

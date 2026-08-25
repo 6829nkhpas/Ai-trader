@@ -70,6 +70,63 @@ export function extendLadder(
   return out;
 }
 
+/**
+ * One depth level as Kite's REST `/quote` returns it.
+ *
+ * Kite gives `{ depth: { buy: [...], sell: [...] } }` with five entries a side.
+ * "buy" is the BID side and "sell" is the ASK side — worth stating because
+ * mixing them up inverts the whole book and still renders plausibly.
+ */
+export interface KiteDepthLevel {
+  price: number;
+  quantity: number;
+  orders?: number;
+}
+
+export interface KiteDepth {
+  buy?: KiteDepthLevel[];
+  sell?: KiteDepthLevel[];
+}
+
+/**
+ * Build the book from a Kite REST depth payload.
+ *
+ * Returns null when the payload carries no usable level, rather than an empty
+ * book: an empty ladder renders identically to "no bids in the market", so a
+ * missing or malformed response must be distinguishable from a genuinely empty
+ * one. The caller keeps the previous book and its own live/stale flag.
+ *
+ * Zero-priced levels are dropped. Kite pads the ladder with `{price: 0,
+ * quantity: 0}` entries outside market hours, and a 0 would otherwise become the
+ * best bid — collapsing the spread calculation to the full price of the
+ * instrument.
+ */
+export function buildBookFromKiteDepth(depth: KiteDepth | null | undefined): OrderBookState | null {
+  if (!depth) return null;
+
+  const clean = (side: KiteDepthLevel[] | undefined) =>
+    (Array.isArray(side) ? side : []).filter(
+      (l) =>
+        l &&
+        typeof l.price === 'number' &&
+        Number.isFinite(l.price) &&
+        l.price > 0 &&
+        typeof l.quantity === 'number' &&
+        Number.isFinite(l.quantity),
+    );
+
+  const buy = clean(depth.buy);
+  const sell = clean(depth.sell);
+  if (buy.length === 0 && sell.length === 0) return null;
+
+  return buildBookFromDepth(
+    buy.map((l) => l.price),
+    buy.map((l) => l.quantity),
+    sell.map((l) => l.price),
+    sell.map((l) => l.quantity),
+  );
+}
+
 export function buildBookFromDepth(
   bidPrices: number[],
   bidSizes: number[],
