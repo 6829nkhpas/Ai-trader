@@ -5,6 +5,17 @@ import { whenChartReady } from '../charting/widgetReady';
 import { computeGhostPoints } from './ghostLineComputation';
 import { debugLog } from '../lib/debugLog';
 
+/**
+ * Minimum gap between intra-bar ghost-line redraws.
+ *
+ * A redraw costs one IPC round-trip into the chart iframe per segment (up to ~20
+ * for a curved projection), so an unthrottled tick feed would queue draws faster
+ * than they complete — the redraw storm. This was 4000ms, which was far enough
+ * apart that the line visibly lagged the price and read as static rather than
+ * live. 1500ms tracks the market while still collapsing tick bursts into one draw.
+ */
+const PULSE_THROTTLE_MS = 1500;
+
 // ── Drawing helpers ──────────────────────────────────────────────────────
 
 /**
@@ -208,7 +219,21 @@ async function drawGhostSegments(
           overrides: {
             linecolor: '#f59e0b',
             linewidth: 2,
-            linestyle: 2,          // dashed
+            // SOLID, not dashed — and this is load-bearing for a curved line.
+            //
+            // A curved projection is drawn as up to 20 joined 2-point segments
+            // (see the note above for why polyline/path can't be used here).
+            // Each segment is its own entity, so a dash pattern RESTARTS at every
+            // vertex: instead of one continuous dashed curve you get 20 short
+            // independent dash runs, which reads as a broken ladder rather than a
+            // line. Solid strokes join seamlessly at shared endpoints, so the
+            // segments render as one smooth continuous curve. The projection's
+            // "ghost" identity comes from its amber colour, not the dashes.
+            //
+            // A straight projection is a SINGLE segment, so it could keep a dash
+            // without artefacts — but both engines use one style so the two read
+            // as the same feature.
+            linestyle: 0,
             showLabel: false,
             extendLeft: false,
             extendRight: false,
@@ -292,7 +317,7 @@ export function useGhostLine(
   // They are read via `useTradeStore.getState().predictiveSignals` inside the
   // main effect (a non-reactive read), so a streaming signal does NOT re-fire
   // the effect. Previously a `predictiveKey` selector made every predictive
-  // tick re-fire the effect immediately, bypassing the 4s `pulse` throttle and
+  // tick re-fire the effect immediately, bypassing the `pulse` throttle and
   // causing a redraw storm. Signals are now consumed only on the throttled
   // cadence (lastBarTime / pulse / zoomPulse / mode·symbol·timeframe changes).
   const lastBarTime = useTradeStore((s) => {
@@ -400,7 +425,9 @@ export function useGhostLine(
   }, [widget]);
 
   // ── Realtime pulse ───────────────────────────────────────────────────
-  // Re-project intra-bar as the live price ticks (throttled to ≤ 1 / 4s).
+  // Re-project intra-bar as the live price ticks.
+  //
+  // Throttled to PULSE_THROTTLE_MS — see that constant for the reasoning.
   const [pulse, setPulse] = useState(0);
   const lastCloseRef = useRef(0);
   const lastPulseRef = useRef(0);
@@ -418,7 +445,7 @@ export function useGhostLine(
       if (close === 0 || close === lastCloseRef.current) return;
       lastCloseRef.current = close;
       const now = Date.now();
-      if (now - lastPulseRef.current < 4000) return;
+      if (now - lastPulseRef.current < PULSE_THROTTLE_MS) return;
       lastPulseRef.current = now;
       setPulse((p) => p + 1);
     });

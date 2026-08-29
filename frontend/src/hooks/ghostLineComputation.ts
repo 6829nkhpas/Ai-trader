@@ -318,7 +318,7 @@ function olsProjection(
   for (let i = 0; i <= projLen; i++) {
     pts.push({
       time:  lastTime + i * intervalSec,
-      price: +Math.max(0.01, intercept + slope * (n - 1 + i) + correction).toFixed(2),
+      price: Math.max(0.01, intercept + slope * (n - 1 + i) + correction),
     });
   }
   return pts;
@@ -345,7 +345,7 @@ function vwlrProjection(
   const anchor = candles[n - 1].close;
   const pts: { time: number; price: number }[] = [];
   for (let i = 0; i <= projLen; i++) {
-    pts.push({ time: lastTime + i * intervalSec, price: +Math.max(0.01, anchor + slope * i).toFixed(2) });
+    pts.push({ time: lastTime + i * intervalSec, price: Math.max(0.01, anchor + slope * i) });
   }
   return pts;
 }
@@ -375,7 +375,7 @@ export function vweprProjection(
   const pts: { time: number; price: number }[] = [];
   for (let i = 0; i <= projLen; i++) {
     const x = n - 1 + i;
-    pts.push({ time: lastTime + i * intervalSec, price: +Math.max(0.01, a0 + a1*x + a2*x*x + correction).toFixed(2) });
+    pts.push({ time: lastTime + i * intervalSec, price: Math.max(0.01, a0 + a1*x + a2*x*x + correction) });
   }
   return pts;
 }
@@ -527,7 +527,7 @@ export function forecastProjection(
   const anchor = closes[n - 1];
   const pts: { time: number; price: number }[] = [];
   for (let i = 0; i <= projLen; i++) {
-    pts.push({ time: lastTime + i * intervalSec, price: +Math.max(0.01, anchor * Math.exp(drift * i)).toFixed(2) });
+    pts.push({ time: lastTime + i * intervalSec, price: Math.max(0.01, anchor * Math.exp(drift * i)) });
   }
   return pts;
 }
@@ -599,9 +599,9 @@ export async function computeGhostPoints(
         const m   = (predicted - last.close) / N;
         points = Array.from({ length: N + 1 }, (_, i) => ({
           time:  last.time + i * intervalSec,
-          price: +(last.close + m * i).toFixed(2),
+          price: last.close + m * i,
         }));
-        points[points.length - 1] = { time: end, price: +predicted.toFixed(2) };
+        points[points.length - 1] = { time: end, price: predicted };
       }
     }
   }
@@ -636,7 +636,7 @@ export async function computeGhostPoints(
     if (livePrice !== null) {
       const dPrice = livePrice - points[0].price;
       if (Math.abs(dPrice) > 1e-9) {
-        points = points.map((p) => ({ time: p.time, price: +(p.price + dPrice).toFixed(2) }));
+        points = points.map((p) => ({ time: p.time, price: p.price + dPrice }));
       }
     }
   }
@@ -679,8 +679,12 @@ export async function computeGhostPoints(
       const dev = np - anchorPrice;
       if (dev >  maxTotal) np = anchorPrice + maxTotal;
       if (dev < -maxTotal) np = anchorPrice - maxTotal;
-      points[i] = { time: points[i].time, price: +np.toFixed(2) };
-      prev = points[i].price;
+      points[i] = { time: points[i].time, price: np };
+      // Carry FULL precision forward. Reading `prev` back from a 2dp-rounded
+      // value quantized every step to one paisa, so a curve whose true per-step
+      // delta is sub-paisa collapsed into flat runs with 0.01 risers — a literal
+      // staircase. This is the "ladder" artefact.
+      prev = np;
     }
   }
 

@@ -8,7 +8,8 @@
  * event. Each such event appends a `PredictiveSignal` to the store and changes
  * `predicted_close_price`; if the effect subscribed to a `predictiveKey`
  * derived from that signal, it would re-fire immediately and bypass the realtime
- * `pulse` throttle (4s), producing the redraw storm users reported.
+ * `pulse` throttle (PULSE_THROTTLE_MS), producing the redraw storm users
+ * reported.
  *
  * After Unit 4, `predictiveKey` is removed entirely: the effect reads signals
  * via `useTradeStore.getState()` inside the effect (a non-reactive read) and
