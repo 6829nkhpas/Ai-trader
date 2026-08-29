@@ -333,50 +333,6 @@ impl ConsensusEngine {
         }
     }
 
-    // ── Legacy Phase-1 entry point (backwards compatible) ───────────────
-
-    /// Phase-1 analyze (kept for backward compatibility).
-    pub fn analyze(
-        symbol: &str,
-        history: &[Candle],
-        indicators: &IndicatorSnapshot,
-    ) -> ConsensusReport {
-        let active_patterns = PatternEngine::analyze(history);
-        let active_strategies = StrategyEngine::evaluate(history, indicators);
-        let close = history.last().map(|c| c.close).unwrap_or(0.0);
-
-        // Build a minimal IndicatorState from the snapshot for scoring
-        let ind = IndicatorState {
-            sma_50: indicators.sma_50,
-            sma_200: indicators.sma_200,
-            prev_sma_50: indicators.prev_sma_50,
-            prev_sma_200: indicators.prev_sma_200,
-            macd_histogram: f64::NAN,
-            parabolic_sar: f64::NAN,
-            rsi_14: f64::NAN,
-            stoch_k: f64::NAN,
-            bb_upper: f64::NAN,
-            bb_lower: f64::NAN,
-            atr_20_ma: f64::NAN,
-            obv_current: f64::NAN,
-            obv_previous: f64::NAN,
-            cmf: f64::NAN,
-            vwap: indicators.vwap,
-            average_volume: indicators.average_volume,
-            orb_high: indicators.orb_high,
-            orb_low: indicators.orb_low,
-        };
-
-        ConsensusReport {
-            symbol: symbol.to_string(),
-            trend_score: Self::compute_trend_score(close, &ind),
-            momentum_state: Self::compute_momentum_state(&ind),
-            volatility_state: Self::compute_volatility_state(history, &ind),
-            volume_flow_state: Self::compute_volume_flow_state(&ind),
-            active_patterns,
-            active_strategies,
-        }
-    }
 }
 
 // ── Unit Tests ──────────────────────────────────────────────────────────────
@@ -629,25 +585,4 @@ mod tests {
         assert!(json.contains("\"active_strategies\":"));
     }
 
-    #[test]
-    fn legacy_analyze_still_works() {
-        let candles = vec![candle(100.0, 105.0, 95.0, 103.0, 100_000.0)];
-        let snapshot = IndicatorSnapshot {
-            sma_50: 100.0,
-            sma_200: 100.0,
-            prev_sma_50: 100.0,
-            prev_sma_200: 100.0,
-            vwap: 100.0,
-            average_volume: 100_000.0,
-            orb_high: f64::NAN,
-            orb_low: f64::NAN,
-        };
-
-        let report = ConsensusEngine::analyze("TCS", &candles, &snapshot);
-        assert_eq!(report.symbol, "TCS");
-        // With NaN MACD/SAR, only SMA components fire → +25 +25 = 50
-        // close=103 > sma50=100 (+25), > sma200=100 (+25) = 50
-        assert_eq!(report.trend_score, 50);
-        assert_eq!(report.momentum_state, "NEUTRAL");
-    }
 }

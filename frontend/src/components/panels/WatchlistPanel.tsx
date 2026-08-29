@@ -36,13 +36,13 @@ const SECTOR_COLORS: Record<string, string> = {
 interface QuoteData {
   symbol: string;
   last_price: number;
-  change: number;
-  net_change: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
+  change: number | null;
+  net_change: number | null;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  volume: number | null;
 }
 
 interface SearchInstrument {
@@ -207,12 +207,14 @@ export default function WatchlistPanel() {
     };
   }, []);
 
-  const formatPrice = (price: number) => {
+  // `null` means the upstream did not report it — render an em-dash rather than
+  // standing in a zero, which would read as a real reading of 0.
+  const formatPrice = (price: number | null) => {
     if (!price) return '—';
     return '₹' + price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
-
-  const formatChange = (change: number) => {
+  const formatChange = (change: number | null) => {
+    if (change === null) return '—';
     const sign = change >= 0 ? '+' : '';
     return `${sign}${change.toFixed(2)}%`;
   };
@@ -310,7 +312,7 @@ export default function WatchlistPanel() {
           {TOP_WATCHLIST.map((stock) => {
             const quote = quotes[stock.symbol];
             const sectorColor = SECTOR_COLORS[stock.sector] ?? 'bg-elevated text-text-muted';
-            const isPositive = quote ? quote.change >= 0 : false;
+            const isPositive = quote ? quote.change !== null && quote.change >= 0 : false;
             const isActive = selectedSymbol === stock.symbol;
 
             return (
@@ -347,8 +349,8 @@ export default function WatchlistPanel() {
                       <span className="text-[12px] font-semibold text-text-primary tabular-nums">
                         {formatPrice(quote.last_price)}
                       </span>
-                      <div className={`flex items-center gap-0.5 ${isPositive ? 'text-bull' : 'text-bear'}`}>
-                        {isPositive ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />}
+                      <div className={`flex items-center gap-0.5 ${quote.change === null ? 'text-text-muted' : isPositive ? 'text-bull' : 'text-bear'}`}>
+                        {quote.change !== null && (isPositive ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />)}
                         <span className="text-[10px] font-medium tabular-nums">
                           {formatChange(quote.change)}
                         </span>

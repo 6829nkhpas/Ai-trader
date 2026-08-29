@@ -38,9 +38,9 @@ const SECTOR_COLORS: Record<string, string> = {
 interface QuoteData {
   symbol: string;
   last_price: number;
-  change: number;
-  net_change: number;
-  open: number; high: number; low: number; close: number; volume: number;
+  change: number | null;
+  net_change: number | null;
+  open: number | null; high: number | null; low: number | null; close: number | null; volume: number | null;
 }
 
 let globalDragIndex: number | null = null;
@@ -161,7 +161,10 @@ export default function WatchlistBlock() {
         return;
       }
 
-      const data = await res.json();
+      // Typed at the boundary: `res.json()` is `any`, so without this annotation
+      // every field below is unchecked and a null `change` would flow silently
+      // into a `number` slot.
+      const data = (await res.json()) as { quotes?: QuoteData[] };
       if (data.quotes) {
         const map: Record<string, QuoteData> = {};
         for (const q of data.quotes) {
@@ -206,8 +209,11 @@ export default function WatchlistBlock() {
     }
   }, [watchlistLength]);
 
-  const formatPrice = (price: number) => price ? '₹' + price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
-  const formatChange = (change: number) => `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+  // `null` means the upstream did not report it — render an em-dash rather than
+// standing in a zero, which would read as a real reading of 0.
+  const formatPrice = (price: number | null) => price ? '₹' + price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+  const formatChange = (change: number | null) =>
+    change === null ? '—' : `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
 
   return (
     <div className="shrink-0 flex flex-col gap-0 border-b border-border-default">
@@ -279,7 +285,10 @@ export default function WatchlistBlock() {
                 : selectedSymbol;
               const isActive = chartedSymbol === item.symbol;
               const quote = quotes[item.symbol];
-              const isPositive = quote ? quote.change >= 0 : item.change >= 0;
+              // `null` when the upstream reported no previous close, in which case
+              // there is no direction to show — no arrow, no bull/bear colour.
+              const changeVal: number | null = quote ? quote.change : item.change;
+              const isPositive = changeVal !== null && changeVal >= 0;
               const sectorColor = SECTOR_COLORS[item.sector] ?? SECTOR_COLORS['EQ'] ?? 'bg-slate-500/10 text-slate-400';
               const isDragging = dragIndex === idx;
               const isDragOver = dragOverIndex === idx;
@@ -365,8 +374,8 @@ export default function WatchlistBlock() {
                     {quote ? (
                       <>
                         <span className="font-extrabold text-text-primary tabular-nums text-[13px]">{formatPrice(quote.last_price)}</span>
-                        <span className={`flex items-center gap-0.5 text-[10px] font-bold tabular-nums ${isPositive ? 'text-bull' : 'text-bear'}`}>
-                          {isPositive ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />}
+                        <span className={`flex items-center gap-0.5 text-[10px] font-bold tabular-nums ${changeVal === null ? 'text-text-muted' : isPositive ? 'text-bull' : 'text-bear'}`}>
+                          {changeVal !== null && (isPositive ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />)}
                           {formatChange(quote.change)}
                         </span>
                       </>

@@ -16,6 +16,7 @@ import {
   buildBookFromDepth,
   buildBookFromKiteDepth,
   parseCachedBook,
+  BOOK_CACHE_VERSION,
 } from './orderbook/orderBookHelpers';
 
 /** Depth refresh cadence. Kite allows ~3 req/s and the watchlist shares it. */
@@ -35,7 +36,8 @@ const DEPTH_REQUEST_TIMEOUT_MS = 1800;
 /** Write the cache at most this often; the poll itself runs every 2s. */
 const CACHE_WRITE_MIN_INTERVAL_MS = 10_000;
 
-const cacheKey = (symbol: string) => `ai-trader-orderbook-${symbol.toUpperCase()}`;
+const cacheKey = (symbol: string) =>
+  `ai-trader-orderbook-${BOOK_CACHE_VERSION}-${symbol.toUpperCase()}`;
 
 // ── Component ──────────────────────────────────────────────────────────
 export default function OrderBook() {
@@ -220,20 +222,19 @@ export default function OrderBook() {
     };
   }, [selectedSymbol]);
 
-  // Depth-bar scaling and the bid/ask ratio use REAL levels only so synthetic
-  // padding never distorts the liquidity picture.
+  // Every level here is a real broker-quoted level — the synthetic padding that
+  // used to be filtered out at this point is gone (see `buildBookFromDepth`), so
+  // the whole ladder counts toward the scaling and the bid/ask ratio.
   //
   // Memoized on `book`: these six passes over the ladder used to re-run on EVERY
   // render, including every unrelated parent re-render, not just when new depth
   // arrived.
   const { globalMaxSize, askVolPct, bidVolPct } = React.useMemo(() => {
-    const realAsks = book.asks.filter((l) => !l.synthetic);
-    const realBids = book.bids.filter((l) => !l.synthetic);
-    const maxAskSize = realAsks.length > 0 ? Math.max(...realAsks.map((l) => l.size), 0.01) : 0.01;
-    const maxBidSize = realBids.length > 0 ? Math.max(...realBids.map((l) => l.size), 0.01) : 0.01;
+    const maxAskSize = book.asks.length > 0 ? Math.max(...book.asks.map((l) => l.size), 0.01) : 0.01;
+    const maxBidSize = book.bids.length > 0 ? Math.max(...book.bids.map((l) => l.size), 0.01) : 0.01;
 
-    const totalAskVol = realAsks.reduce((s, l) => s + l.size, 0);
-    const totalBidVol = realBids.reduce((s, l) => s + l.size, 0);
+    const totalAskVol = book.asks.reduce((s, l) => s + l.size, 0);
+    const totalBidVol = book.bids.reduce((s, l) => s + l.size, 0);
     const totalVol = totalAskVol + totalBidVol || 1;
 
     return {
@@ -307,7 +308,7 @@ export default function OrderBook() {
             {book.asks.map((level, i) => (
               <div
                 key={`ask-${i}`}
-                className={`group relative grid grid-cols-3 gap-0 px-3.5 py-0.75 hover:bg-red-500/10 ${level.synthetic ? 'opacity-75' : ''}`}
+                  className="group relative grid grid-cols-3 gap-0 px-3.5 py-0.75 hover:bg-red-500/10"
               >
                 {/* Depth bar background */}
                 <div
@@ -355,7 +356,7 @@ export default function OrderBook() {
           {book.bids.map((level, i) => (
             <div
               key={`bid-${i}`}
-              className={`group relative grid grid-cols-3 gap-0 px-3.5 py-0.75 hover:bg-emerald-500/10 ${level.synthetic ? 'opacity-75' : ''}`}
+              className="group relative grid grid-cols-3 gap-0 px-3.5 py-0.75 hover:bg-emerald-500/10"
             >
               {/* Depth bar background */}
               <div

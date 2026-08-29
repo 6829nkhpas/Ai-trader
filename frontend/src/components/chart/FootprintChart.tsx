@@ -264,18 +264,35 @@ export default function FootprintChart({
             }
           }
 
-          // Synthetic indicator
-          if (fp.synthetic && fpW > 24) {
-            ctx.fillStyle = 'rgba(245, 158, 11, 0.85)';
+          // No-order-flow marker.
+          //
+          // Was "≈ EST", flagging a synthetic bid/ask distribution that the engine
+          // invented for tick-less candles. The engine no longer fabricates
+          // anything, so this now reports the honest state: there is no order flow
+          // for this candle. Drawn at a lower width threshold than the footer
+          // because the ABSENCE of data is more important to convey than any of
+          // the numbers below it.
+          if (!fp.hasOrderFlow && fpW > 14) {
+            ctx.fillStyle = 'rgba(156, 163, 175, 0.8)';
             ctx.font = '8px "JetBrains Mono", monospace';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
-            ctx.fillText('≈ EST', fpMid, 4);
+            ctx.fillText('NO FLOW', fpMid, 4);
           }
         }
 
-        // Per-Candle Footer
-        if (fp && fpW > 24) {
+        // Per-Candle Footer.
+        //
+        // Gated on `hasOrderFlow`: with no ticks every one of these is zero, and
+        // "Δ 0 / Σ n / V 0" reads as balanced two-sided flow rather than as no
+        // observation at all. A dash is the honest rendering.
+        if (fp && fpW > 24 && !fp.hasOrderFlow) {
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'top';
+          ctx.font = '9px "JetBrains Mono", monospace';
+          ctx.fillStyle = 'rgba(156, 163, 175, 0.5)';
+          ctx.fillText('—', fpMid, chartHeight + 3);
+        } else if (fp && fpW > 24) {
           const footerTop = chartHeight + 3;
           const deltaPositive = fp.delta >= 0;
           ctx.textAlign = 'center';

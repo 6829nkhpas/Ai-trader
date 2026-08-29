@@ -39,8 +39,8 @@ describe('buildBookFromKiteDepth', () => {
     // upside-down — bids above asks, a negative spread read as positive.
     const book = buildBookFromKiteDepth(DEPTH)!;
 
-    const realBids = book.bids.filter((l) => !l.synthetic);
-    const realAsks = book.asks.filter((l) => !l.synthetic);
+    const realBids = book.bids;
+    const realAsks = book.asks;
 
     expect(realBids[0].price).toBe(1304.9);
     expect(realBids[0].size).toBe(250);
@@ -57,7 +57,7 @@ describe('buildBookFromKiteDepth', () => {
 
   it('accumulates the running total down each side', () => {
     const book = buildBookFromKiteDepth(DEPTH)!;
-    const realBids = book.bids.filter((l) => !l.synthetic);
+    const realBids = book.bids;
     // 250, then 250+400, then +120 …
     expect(realBids[0].total).toBe(250);
     expect(realBids[1].total).toBe(650);
@@ -82,8 +82,8 @@ describe('buildBookFromKiteDepth', () => {
     };
     const book = buildBookFromKiteDepth(padded)!;
 
-    const realBids = book.bids.filter((l) => !l.synthetic);
-    const realAsks = book.asks.filter((l) => !l.synthetic);
+    const realBids = book.bids;
+    const realAsks = book.asks;
     expect(realBids).toHaveLength(1);
     expect(realAsks).toHaveLength(1);
     expect(book.spread).toBeCloseTo(0.2, 5);
@@ -126,8 +126,8 @@ describe('buildBookFromKiteDepth', () => {
       sell: [],
     });
     expect(book).not.toBeNull();
-    expect(book!.bids.filter((l) => !l.synthetic)).toHaveLength(1);
-    expect(book!.asks.filter((l) => !l.synthetic)).toHaveLength(0);
+    expect(book!.bids).toHaveLength(1);
+    expect(book!.asks).toHaveLength(0);
     expect(book!.spread).toBe(0);
     expect(book!.midPrice).toBe(0);
   });
@@ -140,7 +140,7 @@ describe('buildBookFromKiteDepth', () => {
       ],
       sell: [{ price: 1305.1, quantity: 180 }],
     })!;
-    const realBids = book.bids.filter((l) => !l.synthetic);
+    const realBids = book.bids;
     expect(realBids).toHaveLength(1);
     expect(realBids[0].price).toBe(1304.8);
   });
@@ -188,10 +188,10 @@ describe('parseCachedBook', () => {
     expect(parseCachedBook(raw)).toBeNull();
   });
 
-  it('restores a well-formed book, preserving levels and the synthetic flag', () => {
+  it('restores a well-formed book', () => {
     const raw = JSON.stringify({
       asks: [{ price: 1305.1, size: 180, total: 180 }],
-      bids: [{ price: 1304.8, size: 400, total: 400, synthetic: true }],
+      bids: [{ price: 1304.8, size: 400, total: 400 }],
       spread: 0.3,
       spreadPct: '0.023',
       midPrice: 1304.95,
@@ -200,10 +200,26 @@ describe('parseCachedBook', () => {
     expect(book).not.toBeNull();
     expect(book.asks).toHaveLength(1);
     expect(book.asks[0].price).toBe(1305.1);
-    expect(book.bids[0].synthetic).toBe(true);
+    expect(book.bids[0].size).toBe(400);
     expect(book.spread).toBe(0.3);
     expect(book.spreadPct).toBe('0.023');
     expect(book.midPrice).toBe(1304.95);
+  });
+
+  it('discards levels left over from the retired synthetic padding', () => {
+    // A v1 cache entry could contain padded rows that were never quoted by the
+    // broker. The versioned cache key should stop these being read at all, but a
+    // level that admits it is invented must never survive a round trip either.
+    const raw = JSON.stringify({
+      asks: [
+        { price: 1305.1, size: 180, total: 180 },
+        { price: 1305.2, size: 198, total: 378, synthetic: true },
+      ],
+      bids: [{ price: 1304.8, size: 400, total: 400 }],
+    });
+    const book = parseCachedBook(raw)!;
+    expect(book.asks).toHaveLength(1);
+    expect(book.asks[0].price).toBe(1305.1);
   });
 
   it('drops only the junk levels when a side is partially valid', () => {

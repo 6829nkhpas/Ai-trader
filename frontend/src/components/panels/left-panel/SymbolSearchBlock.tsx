@@ -216,7 +216,8 @@ export default function SymbolSearchBlock() {
       name: displayName,
       sector,
       lastPrice: 0,
-      change: 0,
+      // No quote yet — not a flat instrument. Renders '—' until one arrives.
+      change: null,
     });
 
     const closeDropdown = () => {

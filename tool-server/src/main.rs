@@ -31,7 +31,7 @@ use quant_core::{
     chart_patterns::{ChartPattern, ChartPatternEngine},
     patterns::Candle,
     predictive::calculate_dual_projection,
-    scanner::{self, RadarScan, TimedCandle},
+    scanner::{self, TimedCandle},
     vwepr::OhlcCandle,
     Action, AiExecutionPlan, ConsensusEngine, ExecutionLevels, IndicatorState, ValidatorOutcome,
 };
@@ -98,9 +98,17 @@ struct MultiTfRequest {
 #[derive(serde::Serialize)]
 struct MultiTfResponse {
     symbol: String,
-    trend_1h: String,
-    trend_4h: String,
-    trend_1d: String,
+    /// Trend per horizon, or `null` when that horizon has no usable history.
+    ///
+    /// These were plain `String`s that fell back to `"Neutral"`, so a total
+    /// QuestDB outage answered with three confident `"Neutral"` trends and an
+    /// HTTP 200 — indistinguishable from three genuinely flat horizons. The
+    /// condition was only recorded in operator metrics, which the LLM and the UI
+    /// never see. `null` says "not measured" in the response itself, and matches
+    /// what `indicators` below already does via `ema_or_null`.
+    trend_1h: Option<String>,
+    trend_4h: Option<String>,
+    trend_1d: Option<String>,
     indicators: serde_json::Value,
 }
 
@@ -577,28 +585,6 @@ struct ScanInMemoryRequest {
 /// running the scanner on 3 bars — would emit a trend score and momentum state
 /// derived from noise, which reads to the user as a real signal. Mirrors
 /// `commands/radar.rs::empty_scan`.
-fn empty_scan(
-    symbol: String,
-    timeframe: String,
-    candle_count: usize,
-    last_close: f64,
-    last_time: i64,
-) -> RadarScan {
-    RadarScan {
-        symbol,
-        timeframe,
-        candle_count,
-        last_close,
-        last_time,
-        trend_score: 0,
-        momentum_state: "NEUTRAL".into(),
-        volatility_state: "NORMAL".into(),
-        volume_flow_state: "NEUTRAL".into(),
-        patterns: vec![],
-        strategies: vec![],
-    }
-}
-
 async fn scan_radar_handler(
     State(state): State<ServerState>,
     Json(payload): Json<ScanRadarRequest>,
@@ -640,16 +626,30 @@ async fn scan_radar_handler(
 async fn scan_in_memory_handler(Json(payload): Json<ScanInMemoryRequest>) -> Response {
     // Pure CPU over caller-supplied candles — no database touch, so no pool and no
     // load-error path. Used for a zero-latency rescan of the bars already charted.
+    // Too few candles to scan → an explicit error, NOT a scan-shaped answer.
+    //
+    // This used to build an `empty_scan`: a full consensus verdict of
+    // `trend_score: 0` / NEUTRAL / NORMAL / NEUTRAL returned with HTTP 200, plus
+    // `last_close: 0.0` and `last_time: 0` when the candle array was empty — a
+    // price of zero and a Unix-epoch timestamp in the same shape as a real quote.
+    // Nothing in the payload distinguished it from a genuine reading of a flat
+    // market. The caller already treats a failed scan as "no scan"
+    // (`radarData.ts::scanInMemory` catches and returns null), so an error is both
+    // honest and handled.
     if payload.candles.len() < MIN_SCAN_CANDLES {
-        let last = payload.candles.last();
-        let scan = empty_scan(
-            payload.symbol,
-            payload.timeframe,
-            payload.candles.len(),
-            last.map(|c| c.close).unwrap_or(0.0),
-            last.map(|c| c.time).unwrap_or(0),
-        );
-        return (StatusCode::OK, Json(scan)).into_response();
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({
+                "error": format!(
+                    "insufficient candles to scan {}: {} supplied, {} required",
+                    payload.symbol, payload.candles.len(), MIN_SCAN_CANDLES
+                ),
+                "symbol": payload.symbol,
+                "timeframe": payload.timeframe,
+                "candle_count": payload.candles.len(),
+            })),
+        )
+            .into_response();
     }
 
     let lookback = payload.lookback.unwrap_or(scanner::DEFAULT_LOOKBACK);
@@ -664,15 +664,15 @@ async fn scan_in_memory_handler(Json(payload): Json<ScanInMemoryRequest>) -> Res
 
 // ── get_multi_tf_trend ────────────────────────────────────────────────────────
 
-fn horizon_trend(ema_fast: f64, ema_slow: f64) -> &'static str {
+/// Classify one horizon, or `None` when its EMAs could not be computed.
+///
+/// Returning `Some("Neutral")` for a non-finite pair — as this used to — reports a
+/// measured, balanced market when in fact nothing was measured at all.
+fn horizon_trend(ema_fast: f64, ema_slow: f64) -> Option<&'static str> {
     if ema_fast.is_finite() && ema_slow.is_finite() {
-        if ema_fast > ema_slow {
-            "Bullish"
-        } else {
-            "Bearish"
-        }
+        Some(if ema_fast > ema_slow { "Bullish" } else { "Bearish" })
     } else {
-        "Neutral"
+        None
     }
 }
 
@@ -724,9 +724,9 @@ async fn get_multi_tf_trend_handler(
 
     Ok(Json(MultiTfResponse {
         symbol: symbol.to_string(),
-        trend_1h: trend_1h.to_string(),
-        trend_4h: trend_4h.to_string(),
-        trend_1d: trend_1d.to_string(),
+        trend_1h: trend_1h.map(str::to_string),
+        trend_4h: trend_4h.map(str::to_string),
+        trend_1d: trend_1d.map(str::to_string),
         indicators,
     }))
 }

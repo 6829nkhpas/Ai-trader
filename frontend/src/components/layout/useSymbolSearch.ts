@@ -142,7 +142,8 @@ export function useSymbolSearch({ onClose }: UseSymbolSearchOptions) {
       name: displayName,
       sector,
       lastPrice: 0,
-      change: 0,
+      // No quote yet — not a flat instrument. Renders '—' until one arrives.
+      change: null,
     });
 
     // ── F&O contract selection ──────────────────────────────────────────

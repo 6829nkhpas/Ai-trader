@@ -43,7 +43,7 @@ vi.mock('framer-motion', () => ({
 
 import OrderBook from '../../OrderBook';
 import { useTradeStore } from '../../../store/useTradeStore';
-import { buildBookFromKiteDepth } from '../orderBookHelpers';
+import { buildBookFromKiteDepth, BOOK_CACHE_VERSION } from '../orderBookHelpers';
 
 /** A book deep enough on both sides to overflow a real pane. */
 function seedBook() {
@@ -64,7 +64,12 @@ describe('OrderBook — ask ladder scrollability', () => {
     useTradeStore.setState({ selectedSymbol: 'RELIANCE' });
     // Seed a populated book straight into localStorage: the component restores
     // it synchronously on mount, so no polling is needed to get rows rendered.
-    localStorage.setItem('ai-trader-orderbook-RELIANCE', JSON.stringify(seedBook()));
+    // Key must match the component's versioned key, hence the shared constant
+    // rather than a hardcoded string that would silently stop matching.
+    localStorage.setItem(
+      `ai-trader-orderbook-${BOOK_CACHE_VERSION}-RELIANCE`,
+      JSON.stringify(seedBook()),
+    );
   });
 
   afterEach(() => {

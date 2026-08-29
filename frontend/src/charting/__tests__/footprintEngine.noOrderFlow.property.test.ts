@@ -1,16 +1,21 @@
 // Feature: professional-charting-suite, Property 20
 //
-// Property-based test for Property 20: "Footprint falls back to a flagged
-// synthetic distribution" (Validates Requirement 6.3).
+// Property: a candle with no order-flow ticks produces NO cells.
 //
-// For any candle with no order-flow ticks, the engine produces a non-empty
-// cluster marked as synthetic (FootprintCandle.synthetic === true). Candles
-// that DO have ticks in their time bucket are computed from live data and are
-// flagged synthetic === false.
+// This replaces the former "falls back to a flagged synthetic distribution"
+// property, which asserted the opposite: that a tick-less candle was filled in
+// with a generated bell-curve bid/ask spread. That generated distribution was
+// never measured, and because Delta, total volume, POC, the imbalance levels and
+// the running Cumulative_Delta are all derived from the cells, inventing the cells
+// meant inventing every order-flow number the chart displays.
 //
-// Generators are deliberately bounded (price 0.0001..5000, tickSize 5..100) so
-// the synthetic path — which materializes one cell per tick-size row across a
-// candle's high–low range — cannot blow up the heap.
+// The engine now reports the absence instead: `cells` is empty, the derived
+// metrics are zero/null, and `hasOrderFlow` is false so the renderer can say so.
+// Candles that DO have ticks in their bucket are unchanged — computed from live
+// data, `hasOrderFlow: true`.
+//
+// Generators stay bounded (price 0.0001..5000, tickSize 5..100) to keep the row
+// count small.
 
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
@@ -94,35 +99,31 @@ const griddedScenario = (): fc.Arbitrary<{
       return { candles, hasTick };
     });
 
-describe('Property 20: Footprint falls back to a flagged synthetic distribution', () => {
-  it('an empty tick array forces every candle onto the synthetic path with non-empty cells', () => {
+describe('Footprint reports absent order flow instead of inventing it', () => {
+  it('an empty tick array yields no cells and no derived metrics for every candle', () => {
     fc.assert(
       fc.property(candleSeries(), tickSize(), (candles, ts) => {
-        // No ticks at all → every candle must fall back to synthetic.
+        // No ticks at all → nothing measured, so nothing reported.
         const fps = buildFootprint(candles, [] as OrderFlowTick[], { tickSize: ts });
 
         expect(fps).toHaveLength(candles.length);
 
         for (const fp of fps) {
-          expect(fp.synthetic).toBe(true);
-          expect(fp.cells.length).toBeGreaterThan(0);
-          // Synthetic cells are well-formed and finite.
-          for (const cell of fp.cells) {
-            expect(Number.isFinite(cell.price)).toBe(true);
-            expect(Number.isFinite(cell.bid)).toBe(true);
-            expect(Number.isFinite(cell.ask)).toBe(true);
-            expect(cell.bid).toBeGreaterThanOrEqual(0);
-            expect(cell.ask).toBeGreaterThanOrEqual(0);
-          }
-          // A synthetic distribution always has a defined POC.
-          expect(fp.poc).not.toBeNull();
+          expect(fp.hasOrderFlow).toBe(false);
+          // The core guarantee: no fabricated cells.
+          expect(fp.cells).toHaveLength(0);
+          // And nothing derived from them is presented as a measurement.
+          expect(fp.delta).toBe(0);
+          expect(fp.totalVolume).toBe(0);
+          expect(fp.poc).toBeNull();
+          expect(fp.imbalances).toHaveLength(0);
         }
       }),
       { numRuns: RUNS },
     );
   });
 
-  it('candles with bucketed ticks are live (synthetic=false); candles without ticks are synthetic', () => {
+  it('candles with bucketed ticks are live; candles without ticks report no flow', () => {
     fc.assert(
       fc.property(griddedScenario(), tickSize(), price(), volume(), (scenario, ts, plvl, vol) => {
         const { candles, hasTick } = scenario;
@@ -147,13 +148,17 @@ describe('Property 20: Footprint falls back to a flagged synthetic distribution'
 
         fps.forEach((fp, i) => {
           if (hasTick[i]) {
-            // Live order flow exists in this bucket → not synthetic.
-            expect(fp.synthetic).toBe(false);
+            // Real order flow in this bucket → measured cells.
+            expect(fp.hasOrderFlow).toBe(true);
             expect(fp.cells.length).toBeGreaterThan(0);
           } else {
-            // No ticks in this bucket → flagged synthetic with non-empty cells.
-            expect(fp.synthetic).toBe(true);
-            expect(fp.cells.length).toBeGreaterThan(0);
+            // No ticks in this bucket → reported as absent, NOT filled in. This is
+            // the mixed-series case: a gap must stay a gap even when its
+            // neighbours have data, which is exactly where a fabricated cluster
+            // was most misleading.
+            expect(fp.hasOrderFlow).toBe(false);
+            expect(fp.cells).toHaveLength(0);
+            expect(fp.totalVolume).toBe(0);
           }
         });
       }),

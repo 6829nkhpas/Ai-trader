@@ -38,13 +38,13 @@ export const MACRO_INDICES: MacroIndex[] = [
 export interface MacroQuote {
   symbol: string;
   last_price: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number; // previous close
-  volume: number;
-  change: number; // % change
-  net_change: number;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null; // previous close
+  volume: number | null;
+  change: number | null; // % change
+  net_change: number | null;
 }
 
 // ── Enriched indicator for rendering ─────────────────────────────────────────
@@ -162,14 +162,19 @@ export function useMacroIndicators(): UseMacroIndicatorsReturn {
       };
     }
 
+    // No reported change → 'flat' as a NEUTRAL PRESENTATION choice (no arrow, no
+    // colour), and the change string below reads '—' rather than '+0.00%'.
     const direction: 'up' | 'down' | 'flat' =
-      quote.change > 0.01 ? 'up' : quote.change < -0.01 ? 'down' : 'flat';
+      quote.change === null ? 'flat' : quote.change > 0.01 ? 'up' : quote.change < -0.01 ? 'down' : 'flat';
 
     return {
       label: idx.label,
       category: idx.category,
       value: formatIndexPrice(quote.last_price, idx.label),
-      change: `${quote.change >= 0 ? '+' : ''}${quote.change.toFixed(2)}%`,
+      change:
+        quote.change === null
+          ? '—'
+          : `${quote.change >= 0 ? '+' : ''}${quote.change.toFixed(2)}%`,
       direction,
       raw: quote,
     };

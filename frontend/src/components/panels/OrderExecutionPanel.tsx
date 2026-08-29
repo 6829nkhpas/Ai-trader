@@ -37,13 +37,13 @@ function computeATR(candles: OhlcCandle[], period: number = 14): number | null {
 interface SymbolQuote {
   symbol: string;
   last_price: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  change: number;
-  net_change: number;
-  volume: number;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  change: number | null;
+  net_change: number | null;
+  volume: number | null;
 }
 
 
@@ -119,9 +119,22 @@ export default function OrderExecutionPanel() {
       .filter((c) => c.symbol.toUpperCase() === symbol.toUpperCase())
       .sort((a, b) => a.start_timestamp_ms - b.start_timestamp_ms);
 
-    // Dynamic synthetic ATR fallback = 1.8% of entry price
-    const syntheticAtr = entry * 0.018;
-    const atr = computeATR(symbolCandles) || syntheticAtr;
+    // ATR is REQUIRED — there is no fallback.
+    //
+    // This used to be `computeATR(symbolCandles) || entry * 0.018`: when there
+    // weren't enough candles to measure true range, it invented an ATR of 1.8% of
+    // the entry price. Every number downstream is derived from it — the target is
+    // entry ± 2×ATR, the stop is entry ∓ 1×ATR, and the displayed "ATR: x.xx" — so
+    // a symbol with no candle history still rendered a complete, confident-looking
+    // risk plan whose stop-loss distance was a guess with no relationship to how
+    // that instrument actually moves. Of everything fabricated in this app, an
+    // invented stop-loss is the one that costs money.
+    //
+    // With no measurable ATR there is no risk plan, and the UI says so.
+    const atr = computeATR(symbolCandles);
+    if (atr === null || !(atr > 0)) {
+      return { entryPrice: entry, targetPrice: null, stopPrice: null, atrValue: null };
+    }
 
     const isBuy = matchedDecision?.action_type === 'BUY';
     const isSell = matchedDecision?.action_type === 'SELL';
@@ -175,7 +188,7 @@ export default function OrderExecutionPanel() {
           </div>
           <div className="mt-1 flex items-center gap-2">
             <span className="text-sm font-semibold text-text-primary">{symbol}</span>
-            {liveQuote && (
+            {liveQuote && liveQuote.change !== null && (
               <div className={`flex items-center gap-0.5 text-[10px] font-medium tabular-nums ${liveQuote.change >= 0 ? 'text-bull' : 'text-bear'}`}>
                 {liveQuote.change >= 0 ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />}
                 {liveQuote.change >= 0 ? '+' : ''}{liveQuote.change.toFixed(2)}%
@@ -185,9 +198,19 @@ export default function OrderExecutionPanel() {
           {hasDecision && (
             <div className="flex items-center gap-2 text-xs text-text-secondary">
               <span>Conviction {matchedDecision!.final_conviction_score}%</span>
-              {atrValue && (
+              {atrValue !== null ? (
                 <span className="text-[10px] text-text-muted tabular-nums">
                   ATR: {atrValue.toFixed(2)}
+                </span>
+              ) : (
+                /* Say why there are no target/stop levels. Silence here would read
+                   as "this trade has no risk levels" rather than "we cannot
+                   measure them yet". */
+                <span
+                  className="text-[10px] text-amber-600 dark:text-amber-400"
+                  title="Average True Range needs at least two candles for this symbol. Target and stop are derived from it, so they are withheld rather than estimated."
+                >
+                  ATR unavailable — no risk levels
                 </span>
               )}
               {rrRatio && (

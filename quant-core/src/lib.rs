@@ -1462,7 +1462,17 @@ impl ConsensusEngine {
         s.clamp(-100, 100)
     }
 
+    /// Momentum state, or `UNAVAILABLE` when neither oscillator could be computed.
+    ///
+    /// `NEUTRAL` used to be returned in that case too, which conflated two very
+    /// different statements: "RSI and Stochastic were measured and neither is
+    /// stretched" versus "neither could be measured at all". The second happens
+    /// routinely on a freshly-cached symbol (Stochastic needs 14 bars), and the HUD
+    /// and the LLM both read the result as a finding.
     fn momentum(ind: &IndicatorState) -> String {
+        if !ind.rsi_14.is_finite() && !ind.stoch_k.is_finite() {
+            return "UNAVAILABLE".into();
+        }
         let ob = (ind.rsi_14.is_finite() && ind.rsi_14 > RSI_OB)
             || (ind.stoch_k.is_finite() && ind.stoch_k > STOCH_OB);
         let os = (ind.rsi_14.is_finite() && ind.rsi_14 < RSI_OS)
@@ -1470,9 +1480,14 @@ impl ConsensusEngine {
         if ob { "OVERBOUGHT".into() } else if os { "OVERSOLD".into() } else { "NEUTRAL".into() }
     }
 
+    /// Volatility state, or `UNAVAILABLE` when the Bollinger/ATR inputs are absent.
+    ///
+    /// This returned `NORMAL` on the same branch — asserting ordinary volatility
+    /// without having measured any. Bollinger bands and the 20-period ATR average
+    /// both need ~20 bars, so this is the common case on a new symbol.
     fn volatility(candles: &[Candle], ind: &IndicatorState) -> String {
         if !ind.bb_upper.is_finite() || !ind.bb_lower.is_finite() || !ind.atr_20_ma.is_finite() {
-            return "NORMAL".into();
+            return "UNAVAILABLE".into();
         }
         if let Some(c) = candles.last() {
             if c.high > ind.bb_upper || c.low < ind.bb_lower {
@@ -1482,7 +1497,15 @@ impl ConsensusEngine {
         if (ind.bb_upper - ind.bb_lower) < ind.atr_20_ma { "SQUEEZING".into() } else { "NORMAL".into() }
     }
 
+    /// Volume-flow state, or `UNAVAILABLE` when CMF/OBV could not be computed.
+    ///
+    /// Unlike the two above, `NEUTRAL` here is a legitimate MEASURED outcome (flow
+    /// present but neither accumulating nor distributing), so only the genuinely
+    /// unmeasurable case is separated out.
     fn volume_flow(ind: &IndicatorState) -> String {
+        if !ind.cmf.is_finite() && !(ind.obv_current.is_finite() && ind.obv_previous.is_finite()) {
+            return "UNAVAILABLE".into();
+        }
         let rising = ind.obv_current.is_finite() && ind.obv_previous.is_finite()
             && ind.obv_current > ind.obv_previous;
         let falling = ind.obv_current.is_finite() && ind.obv_previous.is_finite()

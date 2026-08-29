@@ -3,13 +3,13 @@ import React from 'react';
 interface SymbolQuote {
   symbol: string;
   last_price: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  change: number;
-  net_change: number;
-  volume: number;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  change: number | null;
+  net_change: number | null;
+  volume: number | null;
 }
 
 interface MetricsHUDProps {
@@ -20,11 +20,15 @@ interface MetricsHUDProps {
   stopPrice: number | null;
 }
 
-function formatINR(value: number): string {
+// `null` means the upstream did not report it — render an em-dash rather than
+// standing in a zero, which would read as a real reading of 0.
+function formatINR(value: number | null): string {
+  if (value === null) return '—';
   return '₹' + value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function formatVolume(vol: number): string {
+function formatVolume(vol: number | null): string {
+  if (vol === null) return '—';
   if (vol >= 10_000_000) return (vol / 10_000_000).toFixed(2) + ' Cr';
   if (vol >= 100_000) return (vol / 100_000).toFixed(2) + ' L';
   if (vol >= 1_000) return (vol / 1_000).toFixed(1) + ' K';
@@ -49,8 +53,8 @@ export default function MetricsHUD({
           {hasDecision ? 'Entry' : 'LTP'}
         </div>
         <div className="text-sm font-semibold text-text-primary tabular-nums">{entryDisplay}</div>
-        {liveQuote && (
-          <div className={`text-[9px] tabular-nums ${liveQuote.change >= 0 ? 'text-bull' : 'text-bear'}`}>
+        {liveQuote && liveQuote.net_change !== null && (
+          <div className={`text-[9px] tabular-nums ${liveQuote.net_change >= 0 ? 'text-bull' : 'text-bear'}`}>
             {liveQuote.net_change >= 0 ? '+' : ''}{liveQuote.net_change.toFixed(2)}
           </div>
         )}

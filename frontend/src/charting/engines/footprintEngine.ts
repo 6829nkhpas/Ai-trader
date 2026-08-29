@@ -7,9 +7,9 @@
 // and the raw order-flow (L2) tick buffer, it produces, per candle, a set of
 // price-level cells (bid/ask volume grouped by tick size) plus the derived
 // order-flow metrics a footprint chart renders: per-candle Delta, the running
-// Cumulative_Delta, the imbalance levels, and the POC. When a candle has no
-// live order-flow ticks it falls back to a synthetic bid/ask distribution that
-// is flagged so the renderer can mark it as estimated.
+// Cumulative_Delta, the imbalance levels, and the POC. A candle with no live
+// order-flow ticks yields NO cells and is flagged `hasOrderFlow: false` — see
+// `buildFootprint` for why it must not be filled in.
 //
 // Everything here is deterministic and side-effect-free so it is a direct
 // property-based-testing target. The rendering component keeps only draw logic.
@@ -52,8 +52,15 @@ export interface FootprintCandle {
   poc: number | null;
   /** Price levels flagged as an imbalance (sorted ascending). */
   imbalances: number[];
-  /** True when the cells were built from a synthetic distribution. */
-  synthetic: boolean;
+  /**
+   * True when this candle's cells came from real order-flow ticks.
+   *
+   * False means no ticks fell in this candle's bucket, in which case `cells` is
+   * EMPTY and every derived metric is zero/null. It does not mean "estimated" —
+   * nothing is estimated. Renderers must branch on this rather than presenting
+   * the zeros as a measured balance.
+   */
+  hasOrderFlow: boolean;
 }
 
 /** Options accepted by {@link buildFootprint}. */
@@ -192,43 +199,6 @@ function buildLiveCells(ticks: OrderFlowTick[], tickSize: number): FootprintCell
 }
 
 /**
- * Build a synthetic bid/ask distribution for a candle that has no live ticks
- * (Requirement 6.3). Volume is spread across the candle's high–low range with a
- * bell-curve weighting peaking at the mid price; the bid/ask split is tilted by
- * the candle's direction. The result is always non-empty.
- */
-function buildSyntheticCells(candle: ChartCandle, tickSize: number): FootprintCell[] {
-  const lowIdx = tickIndex(candle.low, tickSize);
-  const highIdx = tickIndex(candle.high, tickSize);
-  const startIdx = Math.min(lowIdx, highIdx);
-  const endIdx = Math.max(lowIdx, highIdx);
-
-  const midPrice = (candle.high + candle.low) / 2;
-  const priceRange = Math.max(tickSize, candle.high - candle.low);
-  const isBullish = candle.close >= candle.open;
-  const bidRatio = isBullish ? 0.45 : 0.55;
-  const askRatio = 1 - bidRatio;
-
-  // Deterministic synthetic base volume per level.
-  const baseVolPerLevel = 100;
-
-  const cells: FootprintCell[] = [];
-  for (let idx = startIdx; idx <= endIdx; idx += 1) {
-    const price = idx * tickSize;
-    const dist = Math.abs(price - midPrice) / priceRange;
-    const weight = Math.max(0.25, 1.3 * (1.0 - dist));
-    const levelVol = baseVolPerLevel * weight;
-    cells.push({
-      price,
-      bid: Math.round(levelVol * bidRatio),
-      ask: Math.round(levelVol * askRatio),
-    });
-  }
-
-  return cells;
-}
-
-/**
  * Select the POC for a set of cells: the level with the greatest total volume,
  * breaking ties by proximity to the candle's close, then (for equidistant ties)
  * by the lower price for determinism (Requirement 6.7).
@@ -310,9 +280,20 @@ export function detectImbalances(cells: FootprintCell[], ratio: number): number[
  * Aggregate a candle series and its order-flow ticks into footprint candles.
  *
  * For each candle, ticks that fall in its time bucket are grouped by tick size
- * into bid/ask cells. Candles with no ticks fall back to a flagged synthetic
- * distribution (Requirement 6.3). Per-candle Delta, total volume, POC, and
- * imbalance levels are derived from the cells.
+ * into bid/ask cells. Per-candle Delta, total volume, POC, and imbalance levels
+ * are derived from those cells.
+ *
+ * A candle with NO ticks yields no cells and `hasOrderFlow: false`.
+ *
+ * This used to synthesise a bid/ask distribution instead: volume spread across
+ * the high-low range on a bell curve peaking at the mid price, with a base of 100
+ * units per level and the bid/ask split tilted by the candle's direction. Nothing
+ * about it was measured. Worse, every order-flow metric a footprint chart exists
+ * to show — Delta, total volume, POC, the imbalance levels, and the running
+ * Cumulative_Delta built on top of them — was then derived from those invented
+ * cells, so the whole chart read as real order flow. The only marker was a small
+ * "≈ EST" that the renderer drew solely when a candle happened to be wider than
+ * 24px. Order flow that nobody traded is not order flow.
  *
  * The function is pure: it never mutates its inputs and the output order
  * matches the input candle order.
@@ -335,8 +316,8 @@ export function buildFootprint(
     const candleTicks = ticksByCandle.get(idx) ?? [];
     const liveCells = buildLiveCells(candleTicks, tickSize);
 
-    const synthetic = liveCells === null;
-    const cells = liveCells ?? buildSyntheticCells(candle, tickSize);
+    const hasOrderFlow = liveCells !== null;
+    const cells = liveCells ?? [];
 
     let bidTotal = 0;
     let askTotal = 0;
@@ -352,7 +333,7 @@ export function buildFootprint(
       totalVolume: bidTotal + askTotal,
       poc: selectPoc(cells, candle.close),
       imbalances: detectImbalances(cells, ratio),
-      synthetic,
+      hasOrderFlow,
     };
   });
 }

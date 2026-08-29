@@ -4,13 +4,13 @@ import { Briefcase } from 'lucide-react';
 interface SymbolQuote {
   symbol: string;
   last_price: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  change: number;
-  net_change: number;
-  volume: number;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  change: number | null;
+  net_change: number | null;
+  volume: number | null;
 }
 
 interface ReasoningBlockProps {
@@ -34,7 +34,13 @@ export default function ReasoningBlock({
   const reasoning = useMemo(() => {
     if (!matchedDecision) return '';
     const raw = matchedDecision.reasoning || '';
-    const priceStr = liveQuote ? ` [LTP: ₹${liveQuote.last_price.toFixed(2)} (${liveQuote.change >= 0 ? '+' : ''}${liveQuote.change.toFixed(2)}%)]` : '';
+    // The percent move is appended only when the upstream reported one; with no
+    // previous close there is no change to quote.
+    const changeStr =
+      liveQuote && liveQuote.change !== null
+        ? ` (${liveQuote.change >= 0 ? '+' : ''}${liveQuote.change.toFixed(2)}%)`
+        : '';
+    const priceStr = liveQuote ? ` [LTP: ₹${liveQuote.last_price.toFixed(2)}${changeStr}]` : '';
     if (raw && raw !== 'Live backend decision' && !raw.includes('without a reasoning string') && raw.length > 5) {
       return raw + priceStr;
     }

@@ -276,22 +276,52 @@ impl LlmClient {
             )
         })?;
 
-        let headline = insight_json
-            .get("headline")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Market Anomaly Detected")
-            .to_string();
+        // ── Required fields: a missing one is a contract violation ───────
+        //
+        // `headline` and `sentiment_score` used to be defaulted —
+        // `.unwrap_or("Market Anomaly Detected")` and `.unwrap_or(50)`. Both
+        // values then travelled downstream indistinguishable from something the
+        // model actually said: a consumer could not tell "the model scored this 50"
+        // from "the model returned no score at all", and an alarming stock headline
+        // was attributed to an LLM that never wrote it.
+        //
+        // A field the contract requires but the response omits is the same class of
+        // failure as the malformed-JSON case handled directly above, so it is
+        // reported the same way — `llm_failed("malformed_output")` plus an `Err`.
+        // The caller already treats an Err as "no insight this cycle", which is the
+        // honest outcome.
+        let headline = match insight_json.get("headline").and_then(|v| v.as_str()) {
+            Some(h) if !h.trim().is_empty() => h.to_string(),
+            _ => {
+                self.metrics.llm_failed("malformed_output");
+                return Err(format!(
+                    "LLM response omitted the required `headline` field — raw content: {}",
+                    content_str
+                )
+                .into());
+            }
+        };
 
+        let sentiment = match insight_json.get("sentiment_score").and_then(|v| v.as_i64()) {
+            Some(s) => s as i32,
+            None => {
+                self.metrics.llm_failed("malformed_output");
+                return Err(format!(
+                    "LLM response omitted the required `sentiment_score` field — raw content: {}",
+                    content_str
+                )
+                .into());
+            }
+        };
+
+        // `analysis_text` keeps its default: "No analysis provided." is an honest
+        // statement about the absence rather than invented prose, and unlike the
+        // two above it is not a value anything computes on.
         let analysis = insight_json
             .get("analysis_text")
             .and_then(|v| v.as_str())
             .unwrap_or("No analysis provided.")
             .to_string();
-
-        let sentiment = insight_json
-            .get("sentiment_score")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(50) as i32;
 
         Ok((headline, analysis, sentiment))
     }

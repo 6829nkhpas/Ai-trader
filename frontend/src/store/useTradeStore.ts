@@ -105,7 +105,15 @@ export interface WatchlistItem {
   name: string;
   sector: string;
   lastPrice: number;
-  change: number;
+  /**
+   * Percent change against the previous close, or `null` when the upstream did
+   * not report one.
+   *
+   * Nullable because the quote API no longer substitutes `0.0` for an unknown
+   * previous close — "unchanged" is a specific claim about the market and was
+   * being made on no evidence.
+   */
+  change: number | null;
 }
 
 export interface OrderFlowTick {
@@ -238,7 +246,7 @@ interface TradeStore {
   /** Remove a symbol from the dynamic watchlist. */
   removeFromWatchlist: (symbol: string) => void;
   /** Update price/change for a watchlist item. */
-  updateWatchlistQuote: (symbol: string, lastPrice: number, change: number) => void;
+  updateWatchlistQuote: (symbol: string, lastPrice: number, change: number | null) => void;
   /** Reorder watchlist items (drag-and-drop). */
   reorderWatchlist: (fromIndex: number, toIndex: number) => void;
   /** Replace the entire watchlist (used for hydration from persistence). */
@@ -411,16 +419,16 @@ function persistWatchlist(items: WatchlistItem[]) {
 
 /** Default watchlist seeded on first boot (NIFTY 50 blue chips). */
 const DEFAULT_WATCHLIST: WatchlistItem[] = [
-  { symbol: 'RELIANCE', token: 738561, name: 'Reliance Industries', sector: 'Energy', lastPrice: 0, change: 0 },
-  { symbol: 'TCS', token: 2953217, name: 'Tata Consultancy', sector: 'IT', lastPrice: 0, change: 0 },
-  { symbol: 'HDFCBANK', token: 341249, name: 'HDFC Bank', sector: 'Banking', lastPrice: 0, change: 0 },
-  { symbol: 'INFY', token: 408065, name: 'Infosys', sector: 'IT', lastPrice: 0, change: 0 },
-  { symbol: 'ICICIBANK', token: 1270529, name: 'ICICI Bank', sector: 'Banking', lastPrice: 0, change: 0 },
-  { symbol: 'HINDUNILVR', token: 356865, name: 'Hindustan Unilever', sector: 'FMCG', lastPrice: 0, change: 0 },
-  { symbol: 'SBIN', token: 779521, name: 'State Bank of India', sector: 'Banking', lastPrice: 0, change: 0 },
-  { symbol: 'BHARTIARTL', token: 2714625, name: 'Bharti Airtel', sector: 'Telecom', lastPrice: 0, change: 0 },
-  { symbol: 'KOTAKBANK', token: 492033, name: 'Kotak Mahindra Bank', sector: 'Banking', lastPrice: 0, change: 0 },
-  { symbol: 'LT', token: 2939649, name: 'Larsen & Toubro', sector: 'Infra', lastPrice: 0, change: 0 },
+  { symbol: 'RELIANCE', token: 738561, name: 'Reliance Industries', sector: 'Energy', lastPrice: 0, change: null },
+  { symbol: 'TCS', token: 2953217, name: 'Tata Consultancy', sector: 'IT', lastPrice: 0, change: null },
+  { symbol: 'HDFCBANK', token: 341249, name: 'HDFC Bank', sector: 'Banking', lastPrice: 0, change: null },
+  { symbol: 'INFY', token: 408065, name: 'Infosys', sector: 'IT', lastPrice: 0, change: null },
+  { symbol: 'ICICIBANK', token: 1270529, name: 'ICICI Bank', sector: 'Banking', lastPrice: 0, change: null },
+  { symbol: 'HINDUNILVR', token: 356865, name: 'Hindustan Unilever', sector: 'FMCG', lastPrice: 0, change: null },
+  { symbol: 'SBIN', token: 779521, name: 'State Bank of India', sector: 'Banking', lastPrice: 0, change: null },
+  { symbol: 'BHARTIARTL', token: 2714625, name: 'Bharti Airtel', sector: 'Telecom', lastPrice: 0, change: null },
+  { symbol: 'KOTAKBANK', token: 492033, name: 'Kotak Mahindra Bank', sector: 'Banking', lastPrice: 0, change: null },
+  { symbol: 'LT', token: 2939649, name: 'Larsen & Toubro', sector: 'Infra', lastPrice: 0, change: null },
 ];
 
 /** Hydrate the watchlist from persisted storage on app boot.
@@ -436,8 +444,12 @@ export async function hydrateWatchlist() {
           token: i.token,
           name: i.name || '',
           sector: i.sector || 'EQ',
+          // The persisted watchlist deliberately stores structure only, never
+          // prices (see `persistWatchlist`), so a freshly-hydrated row has no
+          // quote yet. `null` renders '—' until the first fetch lands; `0` would
+          // have rendered "+0.00%", asserting the instrument is flat.
           lastPrice: 0,
-          change: 0,
+          change: null,
         }));
         useTradeStore.getState().setWatchlist(hydrated);
         return;
@@ -717,7 +729,7 @@ export const useTradeStore = create<TradeStore>((set) => {
       });
     },
 
-    updateWatchlistQuote: (symbol: string, lastPrice: number, change: number) => {
+    updateWatchlistQuote: (symbol: string, lastPrice: number, change: number | null) => {
       set((state) => ({
         watchlist: state.watchlist.map((w) =>
           w.symbol === symbol ? { ...w, lastPrice, change } : w

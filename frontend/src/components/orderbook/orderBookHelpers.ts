@@ -2,7 +2,6 @@ export interface OrderBookLevel {
   price: number;
   size: number;
   total: number;
-  synthetic?: boolean;
 }
 
 export interface OrderBookState {
@@ -13,8 +12,17 @@ export interface OrderBookState {
   midPrice: number;
 }
 
+/** Maximum levels rendered per side. Kite's REST depth returns five. */
 export const LEVEL_COUNT = 10;
-export const PADDED_LEVEL_COUNT = 14;
+
+/**
+ * Cache-schema version, part of the localStorage key.
+ *
+ * Bumped when a stored book from an older schema must NOT be restored. v2 drops
+ * the synthetic padding that v1 wrote (see the note on `buildBookFromDepth`), so
+ * a v1 entry would otherwise resurrect fabricated levels after this change.
+ */
+export const BOOK_CACHE_VERSION = 'v2';
 
 export function createEmptyBook(): OrderBookState {
   return {
@@ -74,11 +82,15 @@ export function parseCachedBook(raw: string | null): OrderBookState | null {
           typeof (l as OrderBookLevel).size === 'number' &&
           Number.isFinite((l as OrderBookLevel).size),
       )
+      // A level flagged `synthetic` came from the retired padding scheme and was
+      // never a real quote — drop it rather than restore it. The versioned cache
+      // key should already prevent this, but a level that admits it is invented
+      // must never survive a round trip.
+      .filter((l) => !(l as { synthetic?: boolean }).synthetic)
       .map((l) => ({
         price: l.price,
         size: l.size,
         total: typeof l.total === 'number' && Number.isFinite(l.total) ? l.total : l.size,
-        ...(l.synthetic ? { synthetic: true } : {}),
       }));
 
   const asks = levels(o.asks);
@@ -102,39 +114,6 @@ export function formatSize(size: number): string {
     return size.toLocaleString('en-IN', { maximumFractionDigits: 0 });
   }
   return size >= 100 ? Math.round(size).toString() : size.toFixed(1);
-}
-
-export function inferStep(prices: number[]): number {
-  const diffs: number[] = [];
-  for (let i = 1; i < prices.length; i++) {
-    const d = Math.abs(prices[i] - prices[i - 1]);
-    if (d > 1e-9) diffs.push(d);
-  }
-  if (diffs.length === 0) return 0.05;
-  diffs.sort((a, b) => a - b);
-  return diffs[Math.floor(diffs.length / 2)];
-}
-
-export function extendLadder(
-  levels: OrderBookLevel[],
-  step: number,
-  dir: 1 | -1,
-  target: number,
-): OrderBookLevel[] {
-  if (levels.length === 0 || levels.length >= target) return levels;
-  const out = [...levels];
-  let last = out[out.length - 1];
-  let runningTotal = last.total;
-  let size = Math.max(1, last.size);
-  for (let i = out.length; i < target; i++) {
-    const price = parseFloat((last.price + dir * step).toFixed(2));
-    size = Math.max(1, Math.round(size * 1.1));
-    runningTotal = parseFloat((runningTotal + size).toFixed(2));
-    const level: OrderBookLevel = { price, size, total: runningTotal, synthetic: true };
-    out.push(level);
-    last = level;
-  }
-  return out;
 }
 
 /**
@@ -227,10 +206,20 @@ export function buildBookFromDepth(
   const spreadPct = bestAsk > 0 ? ((spread / bestAsk) * 100).toFixed(3) : '0.000';
   const midPrice = bestAsk > 0 && bestBid > 0 ? parseFloat(((bestAsk + bestBid) / 2).toFixed(2)) : 0;
 
-  const askLadder = extendLadder(asks, inferStep(askPrices), 1, PADDED_LEVEL_COUNT);
-  const bidLadder = extendLadder(bids, inferStep(bidPrices), -1, PADDED_LEVEL_COUNT);
+  // NO synthetic padding.
+  //
+  // This used to call `extendLadder` to pad each side out to 14 rows, inventing
+  // the missing 9: prices extrapolated by a guessed tick step, and sizes grown
+  // 10% per level from the last real one. Kite's REST depth returns FIVE levels
+  // per side, so two thirds of the ladder a user was reading — prices and
+  // quantities alike — was fabricated. The rows were marked `synthetic` and
+  // rendered at 75% opacity, but nothing on screen tells you that a slightly
+  // fainter row is a number nobody ever quoted, and the depth ladder is exactly
+  // where an invented size changes how a trade looks.
+  //
+  // The ladder is now only as deep as the broker actually reports. A shorter,
+  // true book beats a full, partly-imagined one.
+  asks.reverse();
 
-  askLadder.reverse();
-
-  return { asks: askLadder, bids: bidLadder, spread, spreadPct, midPrice };
+  return { asks, bids, spread, spreadPct, midPrice };
 }

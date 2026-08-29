@@ -105,26 +105,20 @@ export function aggregateCandles(
     closes.push({ time: timeSec, value: b.close });
   }
 
-  // ── Index Volume Proxy ──────────────────────────────────────────────
-  // Indices (NIFTY 50, BANK NIFTY, etc.) have volume=0 from the Kite API
-  // because they are calculated values, not directly traded instruments.
-  // When all volume values are zero, generate synthetic "activity bars"
-  // based on the candle's price range (high - low). This gives visual
-  // context about intra-bar volatility — a common technique used by
-  // platforms like TradingView for index charts.
+  // ── Index volume ────────────────────────────────────────────────────
+  // Indices (NIFTY 50, BANK NIFTY, …) report volume=0 from Kite because they are
+  // calculated values, not directly traded instruments. That zero is the truth,
+  // and it is reported as-is; `isIndexVolume` below lets a caller label or hide
+  // the volume pane instead of drawing an empty one.
+  //
+  // This block used to OVERWRITE those zeros with the candle's price range
+  // (`high - low`) as an "activity proxy", so a volume histogram displayed values
+  // measured in rupees and nothing said so. A reader had no way to tell a real
+  // volume bar from a price-range bar, and comparing an index's "volume" against a
+  // stock's would have been meaningless. Volume that was never traded is not
+  // volume. (It was also entirely wasted work: the only caller of this function
+  // destructures `candles` and discards `volumes`.)
   const allZeroVolume = volumes.length > 0 && volumes.every((v) => v.value === 0);
-  if (allZeroVolume && candles.length > 0) {
-    for (let i = 0; i < candles.length; i++) {
-      const c = candles[i];
-      // Price spread as a proxy for activity (in absolute INR terms)
-      const spread = c.high - c.low;
-      volumes[i] = {
-        time: c.time,
-        value: spread > 0 ? spread : 0.01, // Tiny fallback so bars are visible
-        color: c.close >= c.open ? COLORS.volumeUp : COLORS.volumeDown,
-      };
-    }
-  }
 
   const ema9 = calculateEMA(closes, 9);
   const ema21 = calculateEMA(closes, 21);

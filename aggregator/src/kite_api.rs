@@ -52,15 +52,32 @@ pub struct Instrument {
 pub struct QuoteData {
     pub symbol: String,
     pub instrument_token: u64,
+    /// Last traded price. A quote WITHOUT one is never emitted at all (see the
+    /// mapper), because every consumer's primary reading is this field.
     pub last_price: f64,
-    pub open: f64,
-    pub high: f64,
-    pub low: f64,
-    pub close: f64,
-    pub volume: u64,
+    /// Session OHLC and volume.
+    ///
+    /// `Option`, serialized as `null` when Kite omits them — which it does for the
+    /// lighter `/quote/ltp` mode, for some indices, and for any malformed row.
+    /// These were previously `unwrap_or(0.0)` / `unwrap_or(0)`, so an absent field
+    /// became a hard `0.0` that a HUD then rendered as "Open ₹0.00" and a chart
+    /// would happily plot. Zero is a real price a real instrument can never trade
+    /// at; absent must stay absent, exactly as the `depth` field below already
+    /// documents.
+    pub open: Option<f64>,
+    pub high: Option<f64>,
+    pub low: Option<f64>,
+    pub close: Option<f64>,
+    pub volume: Option<u64>,
     pub oi: Option<u64>,
-    pub change: f64,
-    pub net_change: f64,
+    /// Percent and absolute change against the previous close.
+    ///
+    /// `Option` because both are DERIVED from `ohlc.close`: with no previous close
+    /// there is no change to report. They used to fall back to `0.0`, which reads
+    /// as "unchanged" — a specific, confident claim about the market — when the
+    /// truth was "we don't know the previous close".
+    pub change: Option<f64>,
+    pub net_change: Option<f64>,
     /// Five-level market depth, passed through from Kite verbatim:
     /// `{ buy: [{price, quantity, orders} ×5], sell: [… ×5] }`.
     ///
@@ -887,36 +904,60 @@ async fn quote_handler(
 
     let quotes: Vec<QuoteData> = data_map
         .iter()
-        .map(|(key, value)| {
+        // `filter_map`, not `map`: a row with no usable `last_price` is DROPPED
+        // rather than emitted with a zero price.
+        //
+        // It used to be `unwrap_or(0.0)`, so an instrument Kite returned without a
+        // last price — halted, not yet traded today, or simply a malformed row —
+        // was published as trading at ₹0.00. Every consumer displays this field as
+        // the live price, so a fabricated zero is about as wrong as a market data
+        // point can be. Omitting the row instead is a case they all already handle:
+        // the watchlist keeps its last known price, the order book keeps its last
+        // ladder and drops its live flag, and the ticker simply skips the symbol.
+        .filter_map(|(key, value)| {
             let symbol = key.split(':').nth(1).unwrap_or(key).to_string();
-            let ohlc = value.get("ohlc").cloned().unwrap_or(serde_json::json!({}));
-            let prev_close = ohlc.get("close").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let last_price = value.get("last_price").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let net_change = if prev_close > 0.0 { last_price - prev_close } else { 0.0 };
-            let pct_change = if prev_close > 0.0 {
-                (net_change / prev_close) * 100.0
-            } else {
-                0.0
+
+            let last_price = match value.get("last_price").and_then(|v| v.as_f64()) {
+                Some(p) if p.is_finite() && p > 0.0 => p,
+                _ => {
+                    log::warn!(
+                        "[Kite quote] Dropping {} — no usable last_price in the upstream response",
+                        symbol
+                    );
+                    return None;
+                }
             };
 
-            QuoteData {
+            let ohlc = value.get("ohlc").cloned().unwrap_or(serde_json::json!({}));
+            let finite = |v: Option<f64>| v.filter(|n| n.is_finite());
+            let prev_close = finite(ohlc.get("close").and_then(|v| v.as_f64())).filter(|c| *c > 0.0);
+
+            // Both change figures exist only when there is a previous close to
+            // measure against.
+            let net_change = prev_close.map(|pc| last_price - pc);
+            let pct_change = prev_close
+                .zip(net_change)
+                .map(|(pc, nc)| (nc / pc) * 100.0);
+            let round2 = |v: Option<f64>| v.map(|n| (n * 100.0).round() / 100.0);
+
+            Some(QuoteData {
                 symbol,
                 instrument_token: value.get("instrument_token").and_then(|v| v.as_u64()).unwrap_or(0),
                 last_price,
-                open: ohlc.get("open").and_then(|v| v.as_f64()).unwrap_or(0.0),
-                high: ohlc.get("high").and_then(|v| v.as_f64()).unwrap_or(0.0),
-                low: ohlc.get("low").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                open: finite(ohlc.get("open").and_then(|v| v.as_f64())),
+                high: finite(ohlc.get("high").and_then(|v| v.as_f64())),
+                low: finite(ohlc.get("low").and_then(|v| v.as_f64())),
                 close: prev_close,
-                volume: value.get("volume").and_then(|v| v.as_u64()).unwrap_or(0),
+                volume: value.get("volume").and_then(|v| v.as_u64()),
                 oi: value.get("oi").and_then(|v| v.as_u64()),
-                change: (pct_change * 100.0).round() / 100.0,
-                net_change: (net_change * 100.0).round() / 100.0,
+                change: round2(pct_change),
+                net_change: round2(net_change),
                 // Passed through verbatim rather than reshaped: the order book
                 // renders `{price, quantity, orders}` directly, and re-modelling it
                 // here would add a second place for the field names to drift from
                 // Kite's. Absent (LTP/OHLC modes) stays absent — see the field doc.
                 depth: value.get("depth").cloned().filter(|d| !d.is_null()),
-            }
+            })
         })
         .collect();
 
@@ -1046,13 +1087,28 @@ async fn historical_handler(
                 return None;
             }
 
+            // A candle is only emitted when all four prices are really present.
+            //
+            // These were `unwrap_or(0.0)`, which turned a malformed row into a
+            // candle priced at zero. That is far worse than a missing bar: it is
+            // charted as a catastrophic wick to zero, and every indicator computed
+            // over the series — SMA, RSI, ATR, Bollinger, the regression engines —
+            // is skewed by it. A gap in the series is honest and every consumer
+            // already tolerates one; a zero-priced bar is silent corruption.
+            //
+            // Volume is treated differently on purpose: an index legitimately
+            // reports no volume, so it stays optional and serializes as null rather
+            // than disqualifying an otherwise-good bar.
+            let price = |i: usize| arr[i].as_f64().filter(|p| p.is_finite() && *p > 0.0);
+            let (open, high, low, close) = (price(1)?, price(2)?, price(3)?, price(4)?);
+
             Some(serde_json::json!({
                 "time": time_sec,
-                "open": arr[1].as_f64().unwrap_or(0.0),
-                "high": arr[2].as_f64().unwrap_or(0.0),
-                "low": arr[3].as_f64().unwrap_or(0.0),
-                "close": arr[4].as_f64().unwrap_or(0.0),
-                "volume": arr[5].as_u64().unwrap_or(0),
+                "open": open,
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": arr[5].as_u64(),
             }))
         })
         .collect();

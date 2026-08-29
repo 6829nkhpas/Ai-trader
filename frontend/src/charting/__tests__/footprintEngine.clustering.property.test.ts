@@ -122,7 +122,7 @@ describe('Property 19: Footprint clustering groups by tick size and conserves vo
 
         expect(fps).toHaveLength(1);
         const fp = fps[0];
-        expect(fp.synthetic).toBe(false);
+        expect(fp.hasOrderFlow).toBe(true);
 
         const tickVolume = ticks.reduce((acc, t) => acc + t.bid_volume + t.ask_volume, 0);
         const cellVolume = fp.cells.reduce((acc, c) => acc + c.bid + c.ask, 0);
@@ -146,8 +146,8 @@ describe('Property 19: Footprint clustering groups by tick size and conserves vo
 
           // Both clusters are live (single candle owns every tick), so total
           // volume is invariant under the tick-size regrouping.
-          expect(a.synthetic).toBe(false);
-          expect(b.synthetic).toBe(false);
+          expect(a.hasOrderFlow).toBe(true);
+          expect(b.hasOrderFlow).toBe(true);
           expect(approxEqual(a.totalVolume, b.totalVolume)).toBe(true);
         },
       ),
