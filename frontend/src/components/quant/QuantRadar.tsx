@@ -21,7 +21,8 @@ import {
   type LocatedPattern,
   type LocatedStrategy,
 } from '../../utils/radarData';
-import { bridgeListen } from '../../lib/bridge';
+import { bridgeListen, bridgeInvoke } from '../../lib/bridge';
+import type { SearchResult } from '../../lib/bridge/webAdapters';
 import {
   Radar,
   X,
@@ -73,6 +74,16 @@ export default function QuantRadar() {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [radarTfDropdownOpen, setRadarTfDropdownOpen] = useState(false);
   const radarTfDropdownRef = useRef<HTMLDivElement>(null);
+
+  // ── Symbol suggestions ───────────────────────────────────────────
+  // The input previously accepted any free text straight into the radar, so a
+  // typo became a tracked "symbol" that scanned forever and only ever errored.
+  // Same debounced `search_instruments` pattern as SymbolSearchBlock.
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [suggestIndex, setSuggestIndex] = useState(-1);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+  const suggestTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const symbols = useRadarStore((s) => s.symbols);
   const scans = useRadarStore((s) => s.scans);
@@ -134,12 +145,107 @@ export default function QuantRadar() {
   }, []);
 
   // ── Add symbol handler ───────────────────────────────────────────
-  const handleAdd = useCallback(() => {
-    const sym = input.trim().toUpperCase();
-    if (!sym) return;
-    addSymbol(sym);
-    setInput('');
-  }, [input, addSymbol]);
+  const handleAdd = useCallback(
+    (override?: string) => {
+      const sym = (override ?? input).trim().toUpperCase();
+      if (!sym) return;
+      addSymbol(sym);
+      setInput('');
+      setSuggestions([]);
+      setSuggestOpen(false);
+      setSuggestIndex(-1);
+    },
+    [input, addSymbol],
+  );
+
+  // Fetch suggestions for the current query (debounced by the caller).
+  const runSuggest = useCallback(async (query: string) => {
+    const normalized = query.trim();
+    if (normalized.length < 2) {
+      setSuggestions([]);
+      setSuggestOpen(false);
+      setSuggestLoading(false);
+      return;
+    }
+    setSuggestLoading(true);
+    try {
+      const results = await bridgeInvoke<SearchResult[]>('search_instruments', {
+        query: normalized,
+      });
+      // The radar scans a single tradable ticker, so flatten the EQ/FNO union
+      // down to the symbol string each branch carries.
+      const tickers = (results ?? [])
+        .map((r) => (r.kind === 'FNO' ? r.tradingsymbol : r.symbol))
+        .filter((s): s is string => typeof s === 'string' && s.length > 0)
+        .slice(0, 8);
+      setSuggestions(tickers);
+      setSuggestOpen(tickers.length > 0);
+      setSuggestIndex(tickers.length > 0 ? 0 : -1);
+    } catch (err) {
+      // A failed lookup must not block adding a symbol the user knows is valid —
+      // fall back to free text rather than trapping them.
+      console.warn('[Radar] search_instruments failed:', err);
+      setSuggestions([]);
+      setSuggestOpen(false);
+    } finally {
+      setSuggestLoading(false);
+    }
+  }, []);
+
+  const handleInputChange = useCallback(
+    (value: string) => {
+      setInput(value);
+      if (suggestTimeoutRef.current) clearTimeout(suggestTimeoutRef.current);
+      if (value.trim().length < 2) {
+        setSuggestions([]);
+        setSuggestOpen(false);
+        setSuggestIndex(-1);
+        return;
+      }
+      suggestTimeoutRef.current = setTimeout(() => void runSuggest(value), 300);
+    },
+    [runSuggest],
+  );
+
+  // Drop a pending debounce on unmount so it can't fire into a dead component.
+  useEffect(
+    () => () => {
+      if (suggestTimeoutRef.current) clearTimeout(suggestTimeoutRef.current);
+    },
+    [],
+  );
+
+  const handleInputKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (suggestOpen && suggestions.length > 0) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          setSuggestIndex((i) => (i + 1) % suggestions.length);
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setSuggestIndex((i) => (i - 1 + suggestions.length) % suggestions.length);
+          return;
+        }
+        if (e.key === 'Escape') {
+          setSuggestOpen(false);
+          setSuggestIndex(-1);
+          return;
+        }
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        // Range-guarded, so Enter can never index past the list.
+        const picked =
+          suggestOpen && suggestIndex >= 0 && suggestIndex < suggestions.length
+            ? suggestions[suggestIndex]
+            : undefined;
+        handleAdd(picked);
+      }
+    },
+    [suggestOpen, suggestions, suggestIndex, handleAdd],
+  );
 
   // ── Visualize a detection on the chart ───────────────────────────
   const visualizePattern = useCallback(
@@ -247,22 +353,57 @@ export default function QuantRadar() {
 
           {/* ── Add Symbol + Timeframe Picker ── */}
           <div className="flex items-center gap-2 px-3 py-2 border-b border-border-default bg-surface/60">
-            <div className="flex flex-1 items-center gap-1 rounded-md border border-border-default bg-card px-2 py-1">
+            <div className="relative flex flex-1 items-center gap-1 rounded-md border border-border-default bg-card px-2 py-1">
               <Plus size={12} className="text-text-muted" />
               <input
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleAdd(); }}
+                onChange={(e) => handleInputChange(e.target.value)}
+                onKeyDown={handleInputKeyDown}
+                onFocus={() => { if (suggestions.length > 0) setSuggestOpen(true); }}
+                role="combobox"
+                aria-expanded={suggestOpen}
+                aria-controls="radar-symbol-suggestions"
+                aria-autocomplete="list"
                 placeholder="Add symbol (e.g. RELIANCE)"
                 className="w-full bg-transparent text-xs text-text-primary placeholder:text-text-muted/60 outline-none uppercase"
               />
+              {suggestLoading && <Loader2 size={10} className="shrink-0 animate-spin text-text-muted" />}
               <button
                 type="button"
-                onClick={handleAdd}
+                onClick={() => handleAdd()}
                 className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400 hover:bg-emerald-500/25"
               >
                 ADD
               </button>
+
+              {/* Suggestion dropdown */}
+              {suggestOpen && suggestions.length > 0 && (
+                <ul
+                  id="radar-symbol-suggestions"
+                  role="listbox"
+                  className="absolute left-0 right-0 top-full z-[1000] mt-1 max-h-52 overflow-y-auto rounded-md border border-border-default bg-surface/95 py-1 shadow-2xl backdrop-blur-xl scrollbar-thin"
+                >
+                  {suggestions.map((sym, i) => (
+                    <li key={sym} role="option" aria-selected={i === suggestIndex}>
+                      <button
+                        type="button"
+                        // `mouseDown` rather than `click`: the input's blur would
+                        // otherwise close the list before the click landed.
+                        onMouseDown={(e) => { e.preventDefault(); handleAdd(sym); }}
+                        onMouseEnter={() => setSuggestIndex(i)}
+                        className={`flex w-full items-center gap-2 px-2 py-1 text-left text-[11px] transition-colors ${
+                          i === suggestIndex
+                            ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                            : 'text-text-secondary hover:bg-elevated'
+                        }`}
+                      >
+                        <CandlestickChart size={9} className="shrink-0 text-text-muted" />
+                        <span className="truncate font-semibold">{sym}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
             {/* Custom Radar Timeframe Dropdown */}
             <div className="relative" ref={radarTfDropdownRef}>

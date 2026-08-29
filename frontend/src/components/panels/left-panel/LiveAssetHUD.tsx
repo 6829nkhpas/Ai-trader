@@ -10,6 +10,8 @@ import {
   Gauge,
   Waves,
   BarChart3,
+  Clock,
+  AlertTriangle,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import type { ConsensusReport } from '../../../store/useQuantStore';
@@ -17,6 +19,30 @@ import { staggerContainer, fadeInUp } from '../../../lib/motionVariants';
 
 interface LiveAssetHUDProps {
   data: ConsensusReport;
+  /**
+   * When `data` was computed (epoch ms), or null if unknown.
+   *
+   * The consensus is only recomputed on an explicit FIND/VERIFY press, so the
+   * panel legitimately shows a retained reading when you re-select a symbol.
+   * Previously it did so with no age indicator at all, which made a reading from
+   * a previous session look like current market data. Showing the age — and
+   * flagging it once it is clearly not current — is the difference between a
+   * retained measurement and an invented one.
+   */
+  computedAt?: number | null;
+}
+
+/** How old a reading may be before it is flagged as no longer current. */
+const CONSENSUS_STALE_AFTER_MS = 5 * 60 * 1000;
+
+function formatAge(ms: number): string {
+  const secs = Math.floor(ms / 1000);
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 function trendColor(score: number) {
@@ -54,7 +80,7 @@ function stateColor(state: string) {
   }
 }
 
-export default function LiveAssetHUD({ data }: LiveAssetHUDProps) {
+export default function LiveAssetHUD({ data, computedAt }: LiveAssetHUDProps) {
   const {
     symbol,
     trend_score,
@@ -65,6 +91,18 @@ export default function LiveAssetHUD({ data }: LiveAssetHUDProps) {
     active_strategies,
   } = data;
   const gaugePercent = Math.round(((trend_score + 100) / 200) * 100);
+
+  // Re-tick so the age label stays truthful while the panel sits open, rather
+  // than freezing at whatever it read on mount.
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    if (!computedAt) return;
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, [computedAt]);
+
+  const ageMs = computedAt ? Math.max(0, now - computedAt) : null;
+  const isStale = ageMs !== null && ageMs > CONSENSUS_STALE_AFTER_MS;
 
   const stateEntries = [
     { label: 'Momentum', value: momentum_state, icon: <Gauge size={10} /> },
@@ -92,6 +130,33 @@ export default function LiveAssetHUD({ data }: LiveAssetHUDProps) {
             </span>
           )}
         </div>
+
+        {/* Provenance line. A technical read is computed on an explicit
+            FIND/VERIFY press, so state WHEN it was measured — an unlabelled
+            retained reading is indistinguishable from a live one. */}
+        {ageMs !== null && (
+          <div
+            className={`mb-2 flex items-center gap-1 text-[8px] font-semibold uppercase tracking-wider ${
+              isStale ? 'text-amber-600 dark:text-amber-400' : 'text-text-muted/70'
+            }`}
+            title={
+              computedAt
+                ? `Computed at ${new Date(computedAt).toLocaleTimeString()}`
+                : undefined
+            }
+          >
+            {isStale ? <AlertTriangle size={8} className="shrink-0" /> : <Clock size={8} className="shrink-0" />}
+            <span>
+              {isStale ? 'Previous reading · ' : 'Measured '}
+              {formatAge(ageMs)}
+            </span>
+            {isStale && (
+              <span className="font-normal normal-case text-text-muted/70">
+                — re-run analysis to refresh
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Trend Score */}
         <div className="flex items-center gap-2.5 mb-2">

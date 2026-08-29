@@ -30,6 +30,73 @@ export function depthPercent(size: number, maxSize: number): number {
   return Math.min((size / maxSize) * 100, 100);
 }
 
+/**
+ * Validate an order book that came from OUTSIDE the running program.
+ *
+ * The component caches the book in `localStorage` and reads it back on mount and
+ * on every symbol change. That read used to be `JSON.parse(cached)` inside a
+ * try/catch — which guards the PARSE, not the SHAPE. Any entry that parsed
+ * successfully was accepted as an `OrderBookState`, so a `{}`, a null-ish object,
+ * or an entry written by an earlier version of this schema set `book` to something
+ * with no `asks`/`bids`. The very next render then ran `book.asks.filter(...)` and
+ * threw `TypeError: Cannot read properties of undefined (reading 'filter')`.
+ * Because that happens during render, and the sidebar has no error boundary of its
+ * own, it took the whole terminal down — the reported crash when collapsing or
+ * re-expanding the order book (which remounts this component).
+ *
+ * Returns null for anything that is not a usable book, so the caller can fall back
+ * to `createEmptyBook()` rather than trusting a cast. Levels are filtered to
+ * finite numbers: a `NaN` price would render as "NaN" and a `NaN` size would
+ * poison the depth-bar scaling for the whole ladder.
+ */
+export function parseCachedBook(raw: string | null): OrderBookState | null {
+  if (!raw) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+
+  const o = parsed as Record<string, unknown>;
+  if (!Array.isArray(o.asks) || !Array.isArray(o.bids)) return null;
+
+  const levels = (side: unknown[]): OrderBookLevel[] =>
+    side
+      .filter(
+        (l): l is OrderBookLevel =>
+          !!l &&
+          typeof l === 'object' &&
+          typeof (l as OrderBookLevel).price === 'number' &&
+          Number.isFinite((l as OrderBookLevel).price) &&
+          typeof (l as OrderBookLevel).size === 'number' &&
+          Number.isFinite((l as OrderBookLevel).size),
+      )
+      .map((l) => ({
+        price: l.price,
+        size: l.size,
+        total: typeof l.total === 'number' && Number.isFinite(l.total) ? l.total : l.size,
+        ...(l.synthetic ? { synthetic: true } : {}),
+      }));
+
+  const asks = levels(o.asks);
+  const bids = levels(o.bids);
+  // An entry whose every level was junk is not a book worth restoring.
+  if (asks.length === 0 && bids.length === 0) return null;
+
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+
+  return {
+    asks,
+    bids,
+    spread: num(o.spread),
+    spreadPct: typeof o.spreadPct === 'string' ? o.spreadPct : '0.000',
+    midPrice: num(o.midPrice),
+  };
+}
+
 export function formatSize(size: number): string {
   if (size >= 1000) {
     return size.toLocaleString('en-IN', { maximumFractionDigits: 0 });

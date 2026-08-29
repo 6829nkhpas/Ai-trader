@@ -310,6 +310,81 @@ function wsUrlIsUsable(url: string, label: string): boolean {
   return false;
 }
 
+// ── Live candle ingestion: frame-coalesced batching ───────────────────────
+//
+// Chrome reported `'message' handler took 151ms`, and the Alpha OHLC socket was
+// the reason. The handler used to do ALL of this synchronously, per message:
+//
+//   · a linear `findIndex` over up to 3 000 candles,
+//   · a full copy of that array,
+//   · sometimes another `slice(-3000)`,
+//   · and then a synchronous React commit for every component subscribed to
+//     `ohlcCandles` (charts, HUDs, panels).
+//
+// During a burst — market open, or a multi-symbol subscription — that is
+// repeated per message inside one task, which is what blocks the main thread and
+// drops frames.
+//
+// Instead we buffer arrivals and flush them in ONE `set()` per animation frame.
+// The array scan becomes one indexed pass per flush rather than one linear scan
+// per message, and N React commits collapse into 1. A frame (~16ms) is well
+// below the perceptual threshold for a price tick, so nothing reads as less live.
+const MAX_OHLC_CANDLES = 3000;
+
+let pendingCandles: OhlcCandle[] = [];
+let candleFlushHandle: number | ReturnType<typeof setTimeout> | null = null;
+
+function candleKey(symbol: string, ts: number): string {
+  return `${symbol}|${ts}`;
+}
+
+/** Apply every buffered candle in a single store write. */
+function flushPendingCandles(set: (fn: (s: TradeStore) => Partial<TradeStore>) => void): void {
+  candleFlushHandle = null;
+  const batch = pendingCandles;
+  if (batch.length === 0) return;
+  pendingCandles = [];
+
+  set((state) => {
+    // Index the existing array ONCE for this whole batch.
+    const index = new Map<string, number>();
+    for (let i = 0; i < state.ohlcCandles.length; i++) {
+      const c = state.ohlcCandles[i];
+      index.set(candleKey(c.symbol, c.start_timestamp_ms), i);
+    }
+
+    const next = [...state.ohlcCandles];
+    for (const candle of batch) {
+      const key = candleKey(candle.symbol, candle.start_timestamp_ms);
+      const at = index.get(key);
+      if (at !== undefined) {
+        next[at] = candle; // in-place update of a forming bar
+      } else {
+        index.set(key, next.length);
+        next.push(candle);
+      }
+    }
+
+    return { ohlcCandles: next.length > MAX_OHLC_CANDLES ? next.slice(-MAX_OHLC_CANDLES) : next };
+  });
+}
+
+/** Queue a candle for the next flush, scheduling one if needed. */
+function enqueueCandle(
+  candle: OhlcCandle,
+  set: (fn: (s: TradeStore) => Partial<TradeStore>) => void,
+): void {
+  pendingCandles.push(candle);
+  if (candleFlushHandle !== null) return;
+  if (typeof requestAnimationFrame === 'function') {
+    candleFlushHandle = requestAnimationFrame(() => flushPendingCandles(set));
+  } else {
+    // Non-browser (SSR/tests) or a background tab where rAF is throttled to
+    // never fire — a timer still drains the queue.
+    candleFlushHandle = setTimeout(() => flushPendingCandles(set), 16);
+  }
+}
+
 // ── Watchlist Persistence ─────────────────────────────────────────────────
 // Saves the user's watchlist to the local SQLite workspace DB on desktop, and to
 // `localStorage` in a browser (see `lib/bridge/webAdapters.ts`).
@@ -693,26 +768,9 @@ export const useTradeStore = create<TradeStore>((set) => {
               return;
             }
 
-            set((state) => {
-              const idx = state.ohlcCandles.findIndex(
-                (c) =>
-                  c.symbol === candle.symbol &&
-                  c.start_timestamp_ms === candle.start_timestamp_ms
-              );
-
-              let newCandles: OhlcCandle[];
-              if (idx !== -1) {
-                newCandles = [...state.ohlcCandles];
-                newCandles[idx] = candle;
-              } else {
-                newCandles = [...state.ohlcCandles, candle];
-                if (newCandles.length <= 5) {
-                  console.log(`[OHLC WS] Candle #${newCandles.length}:`, candle);
-                }
-              }
-
-              return { ohlcCandles: newCandles.length > 3000 ? newCandles.slice(-3000) : newCandles };
-            });
+            // Buffer + coalesce instead of committing per message — see
+            // `enqueueCandle` for why (Chrome "'message' handler took 151ms").
+            enqueueCandle(candle, set);
           } catch (e) {
             syslog('ERROR', `Alpha OHLC parse error: ${e}`);
           }

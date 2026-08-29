@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
-import { Shield, Loader2 } from 'lucide-react';
+import { Shield, Loader2, AlertTriangle, Lock } from 'lucide-react';
 import { useTradeStore } from '../../store/useTradeStore';
 import { useQuantStore, isActionableTrade } from '../../store/useQuantStore';
 
@@ -198,7 +198,7 @@ export default function AgentTerminal() {
                 title: 'text-rose-500 dark:text-rose-400',
                 body: 'text-rose-600 dark:text-rose-300/80',
                 detail: 'text-rose-500 dark:text-rose-400 bg-rose-500/5 border-rose-500/15',
-                glyph: '⚠',
+                glyph: <AlertTriangle size={11} />,
               }
             : {
                 wrap: 'bg-amber-500/5 border-amber-500/20 shadow-amber-955/20',
@@ -206,7 +206,7 @@ export default function AgentTerminal() {
                 title: 'text-amber-600 dark:text-amber-400',
                 body: 'text-amber-700 dark:text-amber-300/80',
                 detail: 'text-amber-600 dark:text-amber-400 bg-amber-500/5 border-amber-500/15',
-                glyph: '🔒',
+                glyph: <Lock size={11} />,
               };
 
           return (

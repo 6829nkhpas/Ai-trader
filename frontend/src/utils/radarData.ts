@@ -78,11 +78,59 @@ export async function scanRadarSymbol(
   timeframe: Timeframe,
   lookback = 60,
 ): Promise<RadarScan | null> {
-  return await bridgeInvoke<RadarScan>('scan_radar_symbol', {
+  const raw = await bridgeInvoke<RadarScan>('scan_radar_symbol', {
     symbol: symbol.toUpperCase(),
     timeframe,
     lookback,
   });
+  return normalizeScan(raw);
+}
+
+/**
+ * Coerce a scan response into a shape the UI can safely render.
+ *
+ * The transport blind-casts `await res.json()` to `RadarScan`, so the TypeScript
+ * type is a promise the runtime does not keep: any 200 whose body isn't a full
+ * scan (a gateway/proxy JSON envelope, an older tool-server build, a partial
+ * response) still arrives typed as `RadarScan`. `QuantRadar` then reads
+ * `scan.patterns.length` and `scan.strategies.map(...)` DURING RENDER, and an
+ * undefined there throws a TypeError inside `useMemo` — which is the
+ * "Application error: a client-side exception has occurred" seen after pressing
+ * Enter in the Radar.
+ *
+ * Validating once here fixes every consumer, instead of scattering `?.` guards
+ * across the component. A response missing both detection arrays is treated as
+ * no scan at all (`null`) rather than a scan with zero detections, because
+ * "we could not read this" and "this instrument has no patterns" are different
+ * claims and the UI renders them differently.
+ */
+export function normalizeScan(raw: unknown): RadarScan | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+
+  const hasPatterns = Array.isArray(o.patterns);
+  const hasStrategies = Array.isArray(o.strategies);
+  if (!hasPatterns && !hasStrategies) {
+    console.warn('[Radar] Discarding malformed scan payload (no patterns/strategies arrays):', raw);
+    return null;
+  }
+
+  const num = (v: unknown, fallback = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
+  const str = (v: unknown, fallback = '') => (typeof v === 'string' ? v : fallback);
+
+  return {
+    symbol: str(o.symbol),
+    timeframe: str(o.timeframe),
+    candle_count: num(o.candle_count),
+    last_close: num(o.last_close),
+    last_time: num(o.last_time),
+    trend_score: num(o.trend_score),
+    momentum_state: str(o.momentum_state, 'NEUTRAL'),
+    volatility_state: str(o.volatility_state, 'NORMAL'),
+    volume_flow_state: str(o.volume_flow_state, 'NEUTRAL'),
+    patterns: hasPatterns ? (o.patterns as LocatedPattern[]) : [],
+    strategies: hasStrategies ? (o.strategies as LocatedStrategy[]) : [],
+  };
 }
 
 /**
@@ -98,12 +146,13 @@ export async function scanInMemory(
 ): Promise<RadarScan | null> {
   if (candles.length === 0) return null;
   try {
-    return await bridgeInvoke<RadarScan>('scan_quant_radar', {
+    const raw = await bridgeInvoke<RadarScan>('scan_quant_radar', {
       symbol: symbol.toUpperCase(),
       timeframe,
       candles,
       lookback,
     });
+    return normalizeScan(raw);
   } catch (err) {
     console.warn(`[Radar] scan_quant_radar failed for ${symbol}:`, err);
     return null;

@@ -9,8 +9,49 @@ import type { IChartingLibraryWidget } from '../../charting/datafeedTypes';
 import { TIMEFRAME_TO_RESOLUTION, getThemeOverrides } from '../../utils/tvThemeOverrides';
 import { useTradingViewScript } from '../../hooks/useTradingViewScript';
 import { getTvWidgetOptions } from '../../utils/tvWidgetOptions';
+import { AlertTriangle } from 'lucide-react';
 import { showIframeDropdown, injectIframeDropdownStyles } from '../../utils/iframeDropdown';
+import { whenChartReady } from '../../charting/widgetReady';
 import { SVGS } from './toolbarIcons';
+
+/**
+ * Point the widget at `theme` and re-assert our colour overrides.
+ *
+ * `changeTheme` is promise-returning in this library version. The previous code
+ * fired it and then re-applied the overrides after a blind 150ms `setTimeout`,
+ * so whenever the theme change settled later than that the overrides landed on
+ * the OLD theme and were then overwritten — the chart kept the previous theme.
+ * Chaining off the promise removes the race; the callback form is still handled
+ * for older bundles.
+ */
+function applyChartTheme(widget: unknown, theme: 'light' | 'dark'): void {
+  const w = widget as {
+    changeTheme?: (t: string) => unknown;
+    applyOverrides?: (o: Record<string, unknown>) => void;
+  } | null;
+  if (!w || typeof w.changeTheme !== 'function') return;
+
+  const overrides = () => {
+    try {
+      w.applyOverrides?.(getThemeOverrides(theme));
+    } catch (err) {
+      // Worth seeing: a silent failure here is exactly how the "chart stays in
+      // the old theme" bug hid for so long.
+      console.warn('[TradingViewWidget] applyOverrides failed:', err);
+    }
+  };
+
+  try {
+    const result = w.changeTheme(theme === 'light' ? 'light' : 'dark');
+    if (result && typeof (result as Promise<void>).then === 'function') {
+      (result as Promise<void>).then(overrides, overrides);
+    } else {
+      overrides();
+    }
+  } catch (err) {
+    console.warn('[TradingViewWidget] changeTheme failed:', err);
+  }
+}
 
 export interface TradingViewWidgetProps {
   symbolOverride?: string;
@@ -181,7 +222,19 @@ export default function TradingViewWidget({
       widgetRef.current = tvWidget;
       setWidgetState(tvWidget);
 
-      tvWidget.onChartReady(() => {
+      whenChartReady(tvWidget, () => {
+        // Reconcile the theme now that the chart exists.
+        //
+        // TradingView restores its own saved chart properties from
+        // localStorage (`save_chart_properties_to_local_storage` /
+        // `load_last_chart`), which can carry the colours of whatever theme was
+        // last used and override the `theme` we passed at construction. The
+        // theme effect below only runs when `theme` CHANGES, so on a fresh load
+        // nothing corrected those restored properties — the shell rendered dark
+        // while the candles stayed light. Applying the overrides here makes the
+        // chart match the store on every mount, not just on a toggle.
+        applyChartTheme(tvWidget, useChartUIStore.getState().theme);
+
         // Listen to symbol changes from the TV search box
         try {
           const chartApi = tvWidget.activeChart() as any;
@@ -289,10 +342,31 @@ export default function TradingViewWidget({
         setButtonsCreated(false);
       }
     };
-  }, [scriptReady, activeSymbol]);
+    // NOTE: `activeSymbol` is deliberately NOT a dependency.
+    //
+    // It used to be, which meant every symbol change destroyed the widget
+    // (`remove()`) and constructed a brand new one. Two bugs came out of that:
+    //
+    //  · The chart "reloaded" constantly. When no symbol is explicitly
+    //    selected, `activeSymbol` falls back to the tail of the streaming
+    //    `liveDecisions` array, so each incoming decision changed it and
+    //    rebuilt the whole widget.
+    //  · It opened the tear-down race behind the GhostLine TypeError:
+    //    `remove()` runs synchronously in cleanup but `setWidgetState(null)`
+    //    only lands on the next render, so dependent effects kept operating on
+    //    a gutted widget.
+    //
+    // Symbol changes are already handled incrementally by the effect below via
+    // `activeChart().setSymbol`, which is what the library wants anyway. The
+    // widget is now built once per mount. `activeSymbol` is still read on the
+    // first run to pick the initial ticker — that is intentional and correct,
+    // since a later change is applied by the sync effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scriptReady]);
 
   // Sync symbol changes
   const prevSymbolRef = useRef(activeSymbol);
+  const prevResolutionRef = useRef(resolution);
   useEffect(() => {
     if (!activeSymbol) return;
     if (prevSymbolRef.current === activeSymbol) return;
@@ -300,26 +374,50 @@ export default function TradingViewWidget({
     // Drop the per-symbol scroll-back cache so the new symbol starts fresh
     // (TV will call getBars with its initial window immediately).
     invalidateScrollBackCache(activeSymbol);
-    if (widgetRef.current) {
-      try {
-        const sym = activeSymbol.toUpperCase();
-        const isFno = sym.endsWith('FUT') || ((sym.endsWith('CE') || sym.endsWith('PE')) && /\d/.test(sym));
-        const exchange = isFno ? 'NFO' : 'NSE';
-        widgetRef.current.setSymbol(`${exchange}:${activeSymbol}`, resolution);
-      } catch {}
-    }
+
+    const widget = widgetRef.current;
+    if (!widget) return;
+
+    const sym = activeSymbol.toUpperCase();
+    const isFno = sym.endsWith('FUT') || ((sym.endsWith('CE') || sym.endsWith('PE')) && /\d/.test(sym));
+    const exchange = isFno ? 'NFO' : 'NSE';
+    const ticker = `${exchange}:${sym}`;
+
+    // `widget.setSymbol(...)` is deprecated in favour of
+    // `widget.activeChart().setSymbol(...)` (and the deprecated overload also
+    // requires a third `callback` argument that was never being passed). Go
+    // through the chart API, and set the resolution separately — the chart-level
+    // `setSymbol` takes only the ticker.
+    whenChartReady(
+      widget,
+      () => {
+        const chart = widget.activeChart() as {
+          setSymbol: (s: string) => void;
+          setResolution?: (r: string) => void;
+        };
+        chart.setSymbol(ticker);
+        if (prevResolutionRef.current !== resolution) {
+          prevResolutionRef.current = resolution;
+          chart.setResolution?.(resolution);
+        }
+      },
+      () => widgetRef.current !== widget,
+      'TradingViewWidget',
+    );
   }, [activeSymbol, resolution]);
 
   // Sync timeframe changes
-  const prevResolutionRef = useRef(resolution);
   useEffect(() => {
     if (prevResolutionRef.current === resolution) return;
     prevResolutionRef.current = resolution;
-    if (widgetRef.current) {
-      try {
-        widgetRef.current.activeChart().setResolution(resolution);
-      } catch {}
-    }
+    const widget = widgetRef.current;
+    if (!widget) return;
+    whenChartReady(
+      widget,
+      () => widget.activeChart().setResolution(resolution),
+      () => widgetRef.current !== widget,
+      'TradingViewWidget',
+    );
   }, [resolution]);
 
   // Sync theme changes
@@ -328,17 +426,16 @@ export default function TradingViewWidget({
     if (doc) {
       injectIframeDropdownStyles(doc, theme);
     }
-    if (!widgetRef.current) return;
-    try {
-      widgetRef.current.changeTheme(theme === 'light' ? 'light' : 'dark');
-      setTimeout(() => {
-        if (widgetRef.current) {
-          try {
-            widgetRef.current.applyOverrides(getThemeOverrides(theme));
-          } catch {}
-        }
-      }, 150);
-    } catch {}
+    const widget = widgetRef.current;
+    if (!widget) return;
+    // `applyChartTheme` chains the override re-apply off `changeTheme`'s promise
+    // instead of guessing with a timeout — see its doc comment.
+    whenChartReady(
+      widget,
+      () => applyChartTheme(widget, theme),
+      () => widgetRef.current !== widget,
+      'TradingViewWidget',
+    );
   }, [theme]);
 
   // React state synchronization to iframe buttons
@@ -365,7 +462,10 @@ export default function TradingViewWidget({
       {/* Error state — script or widget failed */}
       {displayError && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-[#0a0a0a] px-6 text-center">
-          <span className="text-sm font-bold text-amber-400">⚠ Chart failed to load</span>
+          <span className="flex items-center gap-1.5 text-sm font-bold text-amber-400">
+            <AlertTriangle size={14} className="shrink-0" />
+            Chart failed to load
+          </span>
           <span className="max-w-md text-[10px] text-text-muted">{displayError}</span>
         </div>
       )}

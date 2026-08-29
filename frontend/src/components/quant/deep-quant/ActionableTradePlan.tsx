@@ -40,7 +40,7 @@ export default function ActionableTradePlan({
         takeProfit,
       });
 
-      useTradeStore.getState().addSystemLog('INFO', `🚀 [Paper Engine] ${resMsg}`);
+      useTradeStore.getState().addSystemLog('INFO', `[Paper Engine] ${resMsg}`);
 
       // Refresh positions
       await useTradeStore.getState().fetchPaperPortfolio();

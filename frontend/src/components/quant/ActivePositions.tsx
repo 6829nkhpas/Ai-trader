@@ -190,7 +190,7 @@ export default function ActivePositions() {
       if (triggered) {
         exitedRef.current.add(pos.id);
         handleClose(pos.id, price);
-        addSystemLog('INFO', `🎯 AI Strategy Target Reached. Position ${pos.symbol} ${pos.type} closed. ${reason}`);
+        addSystemLog('INFO', `AI Strategy target reached. Position ${pos.symbol} ${pos.type} closed. ${reason}`);
       }
     }
   }, [activePositions, latestPrices, handleClose, addSystemLog]);

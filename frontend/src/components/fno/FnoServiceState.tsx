@@ -5,7 +5,13 @@
  *
  * A presentational, ACTIONABLE error panel rendered whenever the F&O bridge
  * invoke (`get_fno_analytics`) is REJECTED with a transport `Err` — i.e. the
- * F&O service is unreachable or `FNO_SERVICE_URL` is misconfigured.
+ * F&O service is unreachable or `DEEP_QUANT_URL` is misconfigured.
+ *
+ * NOTE on the env var name: this panel used to tell the user to check
+ * `FNO_SERVICE_URL`, which does not exist anywhere in the codebase outside
+ * comments. The F&O snapshot is served by the deep-quant service and the upstream
+ * is resolved from `DEEP_QUANT_URL` (`app/api/_gateway.ts`), so following the old
+ * instruction could not possibly fix the problem.
  *
  * This state is DISTINCT from `FnoUnavailableState` (a resolved no-data marker,
  * an honest empty market): here the cause is a fixable setup/configuration
@@ -32,7 +38,7 @@ export interface FnoServiceStateProps {
 
 /**
  * Distinct, actionable service/configuration error panel for the F&O section.
- * Always surfaces the `FNO_SERVICE_URL` env var and a configuration framing so
+ * Always surfaces the `DEEP_QUANT_URL` env var and a configuration framing so
  * the user can tell a setup problem apart from an empty market.
  */
 export function FnoServiceState({ detail }: FnoServiceStateProps) {
@@ -59,9 +65,10 @@ export function FnoServiceState({ detail }: FnoServiceStateProps) {
 
           <span className="text-[10px] text-rose-600 dark:text-rose-300/80 mt-1 leading-relaxed">
             This is a service/configuration problem, not an empty market. The
-            F&amp;O analytics service could not be reached. Verify the service is
-            running and check that the <code className="font-mono">FNO_SERVICE_URL</code>{' '}
-            environment variable points at the correct host and port, then retry.
+            F&amp;O analytics service could not be reached. Verify the{' '}
+            <code className="font-mono">deep-quant</code> service is running and that{' '}
+            <code className="font-mono">DEEP_QUANT_URL</code> points at the correct
+            host and port, then retry.
           </span>
 
           <span className="flex items-center gap-1.5 text-[9px] font-mono text-rose-500 dark:text-rose-400 bg-rose-500/5 rounded-none border border-rose-500/20 px-2 py-1 mt-2 leading-normal">

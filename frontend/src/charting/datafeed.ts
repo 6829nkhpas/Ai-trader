@@ -27,6 +27,7 @@ import type {
 import { useTradeStore, type OhlcCandle } from '../store/useTradeStore';
 import { kiteFetch } from '../lib/kiteFetch';
 import { bridgeInvoke } from '../lib/bridge';
+import { debugLog } from '../lib/debugLog';
 
 // ── Resolution Mapping ────────────────────────────────────────────────────
 // Maps TV resolution strings to Kite Historical API interval strings.
@@ -363,25 +364,40 @@ function startLiveSubscription(
   const symbolUpper = symbol.toUpperCase();
   let lastBarTime = 0;
   let tickCount = 0;
+  let droppedOutOfOrder = 0;
 
   const forwardCandle = (candle: { symbol: string; start_timestamp_ms: number; open: number; high: number; low: number; close: number; volume?: number }) => {
     if (candle.symbol.toUpperCase() !== symbolUpper) return;
     const barTimeMs = candle.start_timestamp_ms;
-    if (barTimeMs >= lastBarTime) {
-      lastBarTime = barTimeMs;
-      tickCount++;
-      if (tickCount <= 5) {
-        console.log(`[Datafeed] Live tick #${tickCount} for ${symbolUpper}: time=${barTimeMs} O=${candle.open} H=${candle.high} L=${candle.low} C=${candle.close}`);
+
+    // TradingView requires bars in non-decreasing time order and drops (and
+    // logs a "time order violation" for) anything older than the last bar it
+    // received. An EQUAL timestamp is an in-place update of the forming bar and
+    // must still be forwarded, hence `>=`.
+    if (barTimeMs < lastBarTime) {
+      droppedOutOfOrder++;
+      if (droppedOutOfOrder <= 3) {
+        console.warn(
+          `[Datafeed] Dropping out-of-order bar for ${symbolUpper}: ` +
+          `${new Date(barTimeMs).toISOString()} arrived after ${new Date(lastBarTime).toISOString()}`,
+        );
       }
-      onTick({
-        time: barTimeMs,
-        open: candle.open,
-        high: candle.high,
-        low: candle.low,
-        close: candle.close,
-        volume: candle.volume ?? 0,
-      });
+      return;
     }
+
+    lastBarTime = barTimeMs;
+    tickCount++;
+    if (tickCount <= 5) {
+      debugLog(`[Datafeed] Live tick #${tickCount} for ${symbolUpper}: time=${barTimeMs} O=${candle.open} H=${candle.high} L=${candle.low} C=${candle.close}`);
+    }
+    onTick({
+      time: barTimeMs,
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+      volume: candle.volume ?? 0,
+    });
   };
 
   // ── Live tick path: Zustand store subscription ────────────────────────
@@ -394,13 +410,26 @@ function startLiveSubscription(
   // full-array scans in the tick path. Worth revisiting if tick latency regresses;
   // a symbol-keyed selector would avoid the scan.
   const unsub = useTradeStore.subscribe((state) => {
-    const candles = state.ohlcCandles;
-    const matching = candles.filter((c) => c.symbol.toUpperCase() === symbolUpper);
-    if (matching.length === 0) return;
-    forwardCandle(matching[matching.length - 1]);
+    // Pick the NEWEST bar for this symbol, not the array-last one.
+    //
+    // `ohlcCandles` is appended in ARRIVAL order, so a bar that reaches the
+    // feed late (a 06:50 bar arriving after 06:55) lands at the end of the
+    // array. Reading the last element therefore handed TradingView an older
+    // timestamp than the one it already had: the bar was rejected as a time
+    // order violation, AND because the real newest bar was no longer array-last
+    // its subsequent updates stopped being forwarded too — the chart froze with
+    // a gap until a brand-new bar happened to arrive. Scanning for the maximum
+    // timestamp makes the late bar a no-op instead of a stall.
+    let newest: (typeof state.ohlcCandles)[number] | null = null;
+    for (const c of state.ohlcCandles) {
+      if (c.symbol.toUpperCase() !== symbolUpper) continue;
+      if (newest === null || c.start_timestamp_ms >= newest.start_timestamp_ms) newest = c;
+    }
+    if (newest === null) return;
+    forwardCandle(newest);
   });
 
-  console.log(
+  debugLog(
     `[Datafeed] subscribeBars: ${symbolUpper} (resolution=${resolution}, guid=${listenerGuid.slice(0, 8)}…)`,
   );
 

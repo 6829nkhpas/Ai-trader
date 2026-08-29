@@ -20,6 +20,21 @@ interface AuthState {
   user: AuthUser | null;
   isBrokerConnected: boolean;
   login: () => Promise<void>;
+  /**
+   * Complete a login that was performed on ANOTHER web surface.
+   *
+   * The two web surfaces (this terminal and the dashboard) are separate origins
+   * with separate `localStorage`, so a session established on one is invisible
+   * to the other — the "on login both web should login" report. The auth service
+   * already knows how to hand a session across: it redirects back with either a
+   * one-time `token` (exchangeable straight away) or the `session` id of a
+   * desktop-login handshake. Nothing in the terminal ever read those params, so
+   * the handover dead-ended at the login overlay.
+   *
+   * Resolves `true` when a handoff was found and consumed. Idempotent and safe
+   * to call on every mount: with no handoff params it is a no-op.
+   */
+  completeLoginFromUrl: () => Promise<boolean>;
   logout: () => void;
   setBrokerConnected: (connected: boolean) => void;
   fetchProfile: () => Promise<void>;
@@ -60,12 +75,102 @@ export const useAuthStore = create<AuthState>((set, get) => {
     }
   })();
 
+  /**
+   * Trade a one-time login token for an access/refresh pair and persist it.
+   *
+   * Hoisted out of `login` so the URL-handoff path (`completeLoginFromUrl`)
+   * commits a session through exactly the same code — two copies of this would
+   * be two chances to persist an inconsistent set of keys.
+   */
+  const exchangeToken = async (loginToken: string): Promise<void> => {
+    const exchangeRes = await fetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/desktop/exchange`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: loginToken }),
+    });
+    if (!exchangeRes.ok) {
+      throw new Error('Token exchange failed');
+    }
+    const dataJson = await exchangeRes.json();
+    const { accessToken, refreshToken, user } = dataJson.data;
+
+    writeLocalStorage(AUTH_FLAG_KEY, 'true');
+    writeLocalStorage(ACCESS_TOKEN_KEY, accessToken);
+    writeLocalStorage(REFRESH_TOKEN_KEY, refreshToken);
+    writeLocalStorage(USER_KEY, JSON.stringify(user));
+
+    set({
+      isAuthenticated: true,
+      token: accessToken,
+      refreshToken,
+      user,
+      isBrokerConnected: true,
+    });
+  };
+
+  /** Read a desktop-session status once; returns its login token when ready. */
+  const readSessionToken = async (sessionId: string): Promise<string | null> => {
+    const statusRes = await fetch(
+      `${API_BASE_URL}${API_V1_PREFIX}/auth/desktop/session/${encodeURIComponent(sessionId)}`,
+    );
+    if (!statusRes.ok) return null;
+    const statusData = await statusRes.json();
+    const { status, token } = statusData.data ?? {};
+    return status === 'authenticated' && token ? (token as string) : null;
+  };
+
+  /** Strip the consumed handoff params so a reload cannot replay them. */
+  const clearHandoffParams = (): void => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    let touched = false;
+    for (const key of ['token', 'session', 'sessionId']) {
+      if (url.searchParams.has(key)) {
+        url.searchParams.delete(key);
+        touched = true;
+      }
+    }
+    if (!touched) return;
+    // `replaceState` rather than a navigation: no reload, no history entry, and
+    // the one-time token stops sitting in the address bar / referrer.
+    window.history.replaceState({}, '', url.pathname + (url.search || '') + url.hash);
+  };
+
   return {
     isAuthenticated: storedAuth && !!storedToken,
     token: storedToken,
     refreshToken: storedRefresh,
     user: storedUser,
     isBrokerConnected: true,
+
+    completeLoginFromUrl: async () => {
+      if (typeof window === 'undefined') return false;
+      if (get().isAuthenticated) {
+        // Already signed in — still clear the params so a stale token is not
+        // left in the URL.
+        clearHandoffParams();
+        return false;
+      }
+
+      const params = new URLSearchParams(window.location.search);
+      const directToken = params.get('token');
+      const sessionId = params.get('session') ?? params.get('sessionId');
+      if (!directToken && !sessionId) return false;
+
+      try {
+        const loginToken = directToken ?? (sessionId ? await readSessionToken(sessionId) : null);
+        if (!loginToken) return false;
+        await exchangeToken(loginToken);
+        clearHandoffParams();
+        return true;
+      } catch (err) {
+        // A stale/consumed handoff is an expected condition (refresh, back
+        // button), not a fault: fall through to the normal login overlay.
+        console.warn('[Auth Store] Login handoff from URL could not be completed:', err);
+        clearHandoffParams();
+        return false;
+      }
+    },
 
     login: async () => {
       const response = await fetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/desktop/session`, {
@@ -93,32 +198,6 @@ export const useAuthStore = create<AuthState>((set, get) => {
       if (!browserOpened) {
         console.error('[Auth Store] Could not open a browser for login URL:', loginUrl);
       }
-
-      const exchangeToken = async (loginToken: string) => {
-        const exchangeRes = await fetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/desktop/exchange`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: loginToken }),
-        });
-        if (!exchangeRes.ok) {
-          throw new Error('Token exchange failed');
-        }
-        const dataJson = await exchangeRes.json();
-        const { accessToken, refreshToken, user } = dataJson.data;
-
-        writeLocalStorage(AUTH_FLAG_KEY, 'true');
-        writeLocalStorage(ACCESS_TOKEN_KEY, accessToken);
-        writeLocalStorage(REFRESH_TOKEN_KEY, refreshToken);
-        writeLocalStorage(USER_KEY, JSON.stringify(user));
-
-        set({
-          isAuthenticated: true,
-          token: accessToken,
-          refreshToken,
-          user,
-          isBrokerConnected: true,
-        });
-      };
 
       let unlistenSuccess: (() => void) | undefined;
       const tauriPromise = new Promise<string>((resolve) => {

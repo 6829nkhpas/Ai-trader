@@ -230,7 +230,7 @@ export default function DeepQuantPanel() {
         stopLoss: stop_loss,
         takeProfit: take_profit,
       });
-      useTradeStore.getState().addSystemLog('INFO', `🚀 [Paper Engine] ${resMsg}`);
+      useTradeStore.getState().addSystemLog('INFO', `[Paper Engine] ${resMsg}`);
 
       // Trigger dynamic positions fetch
       await useTradeStore.getState().fetchPaperPortfolio();
@@ -371,7 +371,7 @@ export default function DeepQuantPanel() {
               {symbol} • {activeTimeframe} • {!dataReady
                 ? 'Loading…'
                 : insufficientData
-                  ? `⚠ ${symbolCandleCount} c`
+                  ? `${symbolCandleCount} candles (low)`
                   : `${symbolCandleCount} candles`}
             </span>
           </div>

@@ -1,7 +1,7 @@
 'use client';
 // SymbolSearchModal — search overlay for NSE stocks, indices, and F&O contracts.
 import React, { useEffect, useRef } from 'react';
-import { Search, X } from 'lucide-react';
+import { Search, X, Loader2 } from 'lucide-react';
 import { resultSymbol } from '../../types/searchResult';
 import FnoResultRow, { highlightText } from './FnoResultRow';
 import { useSymbolSearch, type SearchTab } from './useSymbolSearch';
@@ -163,7 +163,7 @@ export default function SymbolSearchModal({ isOpen, onClose, initialQuery }: Sym
         <div ref={listRef} className="flex-1 overflow-y-auto max-h-87.5 divide-y divide-border-default/10 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
           {isSearching && (
             <div className="flex items-center justify-center py-8 text-xs text-text-muted gap-2">
-              <span className="animate-spin text-text-primary">⚡</span>
+              <Loader2 size={12} className="animate-spin text-text-primary" />
               Searching database...
             </div>
           )}

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { ChevronUp, ChevronDown, GripVertical, Trash2, ArrowUpRight, ArrowDownRight, Loader2 } from 'lucide-react';
+import { ChevronUp, ChevronDown, GripVertical, Trash2, ArrowUpRight, ArrowDownRight, Loader2, RefreshCw, AlertTriangle } from 'lucide-react';
 import { useTradeStore, hydrateWatchlist } from '../../../store/useTradeStore';
 import { useChartUIStore } from '../../../store/useChartUIStore';
 import { isFnoSymbol } from '../../../charting/symbolUtils';
@@ -45,9 +45,14 @@ interface QuoteData {
 
 let globalDragIndex: number | null = null;
 
+/** Ceiling for a quote batch, so a hung gateway can't wedge the 30s poll. */
+const QUOTE_REQUEST_TIMEOUT_MS = 8000;
+
 export default function WatchlistBlock() {
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
   const [quotesLoading, setQuotesLoading] = useState(true);
+  /** Why the prices on screen are not current, when they are not. */
+  const [quotesError, setQuotesError] = useState<string | null>(null);
   const [watchlistCollapsed, setWatchlistCollapsed] = useState(false);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -113,10 +118,20 @@ export default function WatchlistBlock() {
   );
 
   // ── Fetch quotes for all watchlist symbols ─────────────────────
+  //
+  // Both failure paths used to be silent: `!res.ok` returned with no state at
+  // all, and a transport error only reached the console. The prices already on
+  // screen then stayed there indistinguishable from fresh ones, so a refresh
+  // that failed looked like a refresh that did nothing. `quotesError` makes the
+  // failure visible and gives the user a retry.
   const fetchQuotes = useCallback(async () => {
     try {
       const watchlistItems = useTradeStore.getState().watchlist;
-      if (watchlistItems.length === 0) { setQuotesLoading(false); return; }
+      if (watchlistItems.length === 0) {
+        setQuotesLoading(false);
+        setQuotesError(null);
+        return;
+      }
 
       const params = watchlistItems
         .map((item) => {
@@ -127,8 +142,25 @@ export default function WatchlistBlock() {
         })
         .join('&');
 
-      const res = await kiteFetch(`/quote?${params}`);
-      if (!res.ok) return;
+      // Bounded, so a hung gateway cannot leave the panel spinning forever.
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), QUOTE_REQUEST_TIMEOUT_MS);
+      let res: Response;
+      try {
+        res = await kiteFetch(`/quote?${params}`, { signal: controller.signal });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      if (!res.ok) {
+        setQuotesError(
+          res.status === 401 || res.status === 403
+            ? 'Broker session expired — reconnect your broker to resume live prices.'
+            : `Quotes unavailable (HTTP ${res.status}).`,
+        );
+        return;
+      }
+
       const data = await res.json();
       if (data.quotes) {
         const map: Record<string, QuoteData> = {};
@@ -137,9 +169,17 @@ export default function WatchlistBlock() {
           useTradeStore.getState().updateWatchlistQuote(q.symbol, q.last_price, q.change);
         }
         setQuotes(map);
+        setQuotesError(null);
       }
     } catch (err) {
+      const aborted = err instanceof DOMException && err.name === 'AbortError';
+      const message = aborted
+        ? 'Quote request timed out.'
+        : err instanceof Error
+          ? err.message
+          : String(err);
       console.error('[WatchlistBlock] Quote fetch failed:', err);
+      setQuotesError(message);
     } finally {
       setQuotesLoading(false);
     }
@@ -181,7 +221,42 @@ export default function WatchlistBlock() {
           <span>Watchlist</span>
           <ChevronDown size={12} className={`transition-transform duration-300 ${watchlistCollapsed ? '' : 'rotate-180'}`} />
         </button>
+        {/* Manual refresh. There was no way to re-request quotes other than
+            waiting out the 30s poll, which is why a failed fetch read as
+            "refresh is broken" — there was nothing to press. */}
+        <button
+          type="button"
+          onClick={() => { setQuotesLoading(true); void fetchQuotes(); }}
+          disabled={quotesLoading}
+          aria-label="Refresh watchlist quotes"
+          title={quotesError ?? 'Refresh quotes'}
+          className={`ml-1 shrink-0 rounded p-0.5 transition-colors disabled:opacity-40 ${
+            quotesError
+              ? 'text-amber-500 hover:bg-amber-500/10 dark:text-amber-400'
+              : 'text-text-muted hover:bg-elevated hover:text-text-primary'
+          }`}
+        >
+          <RefreshCw size={11} className={quotesLoading ? 'animate-spin' : ''} />
+        </button>
       </div>
+
+      {/* Quote failure banner — the prices below are the last good ones. */}
+      {quotesError && !watchlistCollapsed && (
+        <div
+          role="status"
+          className="flex items-start gap-1.5 border-b border-amber-500/25 bg-amber-500/5 px-3 py-1.5"
+        >
+          <AlertTriangle size={9} className="mt-px shrink-0 text-amber-500 dark:text-amber-400" />
+          <div className="min-w-0">
+            <p className="text-[9px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+              Prices not live
+            </p>
+            <p className="text-[9px] leading-normal text-amber-700/90 dark:text-amber-300/80 break-words">
+              {quotesError}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Watchlist content with smooth CSS Grid expand/collapse animation */}
       <div

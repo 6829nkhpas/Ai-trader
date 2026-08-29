@@ -3,12 +3,14 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import {
-  Bell,
   Sun,
   Moon,
   Search,
+  HelpCircle,
 } from 'lucide-react';
 import SymbolSearchModal from './SymbolSearchModal';
+import NotificationBell from './NotificationBell';
+import QuickStartGuide from './QuickStartGuide';
 import MarketTickerStrip from './MarketTickerStrip';
 import { useTradeStore } from '../../store/useTradeStore';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -86,6 +88,7 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
     });
   };
   const [profileOpen, setProfileOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
 
   const [leftPanelWidth, setLeftPanelWidth] = useState(224);
   const [isResizing, setIsResizing] = useState(false);
@@ -247,10 +250,17 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
             {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
           </button>
 
-          <button className="relative text-text-secondary hover:text-text-primary transition-colors p-1 hover:bg-elevated/20 rounded">
-            <Bell size={15} />
-            <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-red-500"></span>
+          <button
+            type="button"
+            onClick={() => setGuideOpen(true)}
+            aria-label="Open quick start guide"
+            title="Quick Start Guide"
+            className="rounded p-1 text-text-secondary transition-colors hover:bg-elevated/20 hover:text-text-primary"
+          >
+            <HelpCircle size={15} />
           </button>
+
+          <NotificationBell />
 
           {/* Quant Radar Dropdown */}
           <QuantRadar />
@@ -355,6 +365,9 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
 
       {/* User Profile Modal Overlay */}
       <UserProfileModal isOpen={profileOpen} onClose={() => setProfileOpen(false)} />
+
+      {/* Quick Start Guide */}
+      <QuickStartGuide open={guideOpen} onClose={() => setGuideOpen(false)} />
 
       {/* Symbol Search Modal */}
       <SymbolSearchModal 

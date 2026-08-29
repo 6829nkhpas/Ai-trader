@@ -2,23 +2,40 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { BarChart3 } from 'lucide-react';
 import { useTradeStore } from '../store/useTradeStore';
 import { crossfade } from '../lib/motionVariants';
 import { bridgeListen } from '../lib/bridge';
 import { kiteFetch } from '../lib/kiteFetch';
 
 import {
-  type OrderBookLevel,
   type OrderBookState,
   createEmptyBook,
   depthPercent,
   formatSize,
   buildBookFromDepth,
   buildBookFromKiteDepth,
+  parseCachedBook,
 } from './orderbook/orderBookHelpers';
 
 /** Depth refresh cadence. Kite allows ~3 req/s and the watchlist shares it. */
 const DEPTH_POLL_MS = 2000;
+
+/**
+ * Per-request ceiling for a depth fetch.
+ *
+ * Without this the poll had no timeout and no AbortController, so a request that
+ * never settled meant the `finally` never ran, the next tick was never scheduled,
+ * and the panel sat on "Awaiting Market Depth Data…" indefinitely with no error —
+ * the reported "order book takes forever to load". Shorter than the poll interval
+ * so a hung request is abandoned before the next one is due.
+ */
+const DEPTH_REQUEST_TIMEOUT_MS = 1800;
+
+/** Write the cache at most this often; the poll itself runs every 2s. */
+const CACHE_WRITE_MIN_INTERVAL_MS = 10_000;
+
+const cacheKey = (symbol: string) => `ai-trader-orderbook-${symbol.toUpperCase()}`;
 
 // ── Component ──────────────────────────────────────────────────────────
 export default function OrderBook() {
@@ -31,16 +48,22 @@ export default function OrderBook() {
   // ── Load cached order book data when symbol changes ──────────────────
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const cached = localStorage.getItem(`ai-trader-orderbook-${selectedSymbol.toUpperCase()}`);
-      if (cached) {
-        try {
-          const parsed = JSON.parse(cached);
-          setBook(parsed);
-          setIsLive(true);
-          return;
-        } catch {
-          // ignore
-        }
+      // `parseCachedBook` validates the SHAPE, not just that the JSON parsed —
+      // see its doc comment for why an unvalidated cast here crashed the app.
+      let cached: string | null = null;
+      try {
+        cached = localStorage.getItem(cacheKey(selectedSymbol));
+      } catch {
+        cached = null; // private mode / storage disabled
+      }
+      const restored = parseCachedBook(cached);
+      if (restored) {
+        setBook(restored);
+        // A restored book is the LAST KNOWN depth, not the current market. Saying
+        // "live" here would present a cached ladder as the live one; the poll
+        // below sets the flag once real depth actually arrives.
+        setIsLive(false);
+        return;
       }
     }
     setBook(createEmptyBook());
@@ -111,10 +134,16 @@ export default function OrderBook() {
 
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let lastCacheWrite = 0;
 
     const tick = async () => {
+      // Bound every request. `kiteFetch` forwards the signal to `fetch`.
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), DEPTH_REQUEST_TIMEOUT_MS);
       try {
-        const res = await kiteFetch(`/quote?i=NSE:${encodeURIComponent(symbol)}`);
+        const res = await kiteFetch(`/quote?i=NSE:${encodeURIComponent(symbol)}`, {
+          signal: controller.signal,
+        });
         if (!res.ok) throw new Error(`quote HTTP ${res.status}`);
         const data = await res.json();
         const quote = (data?.quotes ?? []).find(
@@ -127,11 +156,17 @@ export default function OrderBook() {
         if (next) {
           setBook(next);
           setIsLive(true);
-          if (typeof window !== 'undefined') {
-            localStorage.setItem(
-              `ai-trader-orderbook-${symbol.toUpperCase()}`,
-              JSON.stringify(next),
-            );
+          // Throttled: this is a synchronous JSON.stringify + localStorage write
+          // on the main thread, and it does not need to happen on all 30 ticks a
+          // minute. The cache only exists so a remount has something to show.
+          const now = Date.now();
+          if (typeof window !== 'undefined' && now - lastCacheWrite >= CACHE_WRITE_MIN_INTERVAL_MS) {
+            lastCacheWrite = now;
+            try {
+              localStorage.setItem(cacheKey(symbol), JSON.stringify(next));
+            } catch {
+              /* quota exceeded — the live book is unaffected */
+            }
           }
         } else {
           // A quote with no depth (Kite omits it outside full mode, and for some
@@ -145,6 +180,7 @@ export default function OrderBook() {
         // which is a different and much stronger claim than "we cannot see it".
         if (!cancelled) setIsLive(false);
       } finally {
+        clearTimeout(timeoutId);
         if (!cancelled) timer = setTimeout(tick, DEPTH_POLL_MS);
       }
     };
@@ -158,17 +194,26 @@ export default function OrderBook() {
 
   // Depth-bar scaling and the bid/ask ratio use REAL levels only so synthetic
   // padding never distorts the liquidity picture.
-  const realAsks = book.asks.filter((l) => !l.synthetic);
-  const realBids = book.bids.filter((l) => !l.synthetic);
-  const maxAskSize = realAsks.length > 0 ? Math.max(...realAsks.map((l) => l.size), 0.01) : 0.01;
-  const maxBidSize = realBids.length > 0 ? Math.max(...realBids.map((l) => l.size), 0.01) : 0.01;
-  const globalMaxSize = Math.max(maxAskSize, maxBidSize);
+  //
+  // Memoized on `book`: these six passes over the ladder used to re-run on EVERY
+  // render, including every unrelated parent re-render, not just when new depth
+  // arrived.
+  const { globalMaxSize, askVolPct, bidVolPct } = React.useMemo(() => {
+    const realAsks = book.asks.filter((l) => !l.synthetic);
+    const realBids = book.bids.filter((l) => !l.synthetic);
+    const maxAskSize = realAsks.length > 0 ? Math.max(...realAsks.map((l) => l.size), 0.01) : 0.01;
+    const maxBidSize = realBids.length > 0 ? Math.max(...realBids.map((l) => l.size), 0.01) : 0.01;
 
-  const totalAskVol = realAsks.reduce((s, l) => s + l.size, 0);
-  const totalBidVol = realBids.reduce((s, l) => s + l.size, 0);
-  const totalVol = totalAskVol + totalBidVol || 1;
-  const askVolPct = (totalAskVol / totalVol) * 100;
-  const bidVolPct = (totalBidVol / totalVol) * 100;
+    const totalAskVol = realAsks.reduce((s, l) => s + l.size, 0);
+    const totalBidVol = realBids.reduce((s, l) => s + l.size, 0);
+    const totalVol = totalAskVol + totalBidVol || 1;
+
+    return {
+      globalMaxSize: Math.max(maxAskSize, maxBidSize),
+      askVolPct: (totalAskVol / totalVol) * 100,
+      bidVolPct: (totalBidVol / totalVol) * 100,
+    };
+  }, [book]);
 
   return (
     <div
@@ -195,7 +240,7 @@ export default function OrderBook() {
           >
             <div className="flex flex-col items-center gap-2 text-center px-4">
               <div className="flex h-8 w-8 items-center justify-center rounded-none bg-elevated">
-                <span className="text-sm">📊</span>
+                <BarChart3 size={14} className="text-text-muted" />
               </div>
               <p className="text-[12px] font-bold text-text-muted leading-snug">
                 Awaiting Market Depth Data...

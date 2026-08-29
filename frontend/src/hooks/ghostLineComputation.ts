@@ -19,6 +19,7 @@ import { useChartUIStore } from '../store/useChartUIStore';
 import { useTradeStore } from '../store/useTradeStore';
 import { TIMEFRAME_MS, KITE_INTERVAL_MAP, type Timeframe } from '../utils/chartTypes';
 import { kiteFetch } from '../lib/kiteFetch';
+import { debugLog } from '../lib/debugLog';
 
 /** Fallback projection length (bars) when the visible range is unknown. */
 const PROJECTION_BARS = 6;
@@ -173,7 +174,30 @@ function readStoreCandles(symbol: string, timeframe: string): LookbackCandle[] {
   const cacheKey     = `${sym}::${timeframe}::${kiteInterval}`; // same key the datafeed writes
 
   const hist = store.historicalCache[cacheKey] ?? [];
-  const live = store.ohlcCandles.filter((c) => c.symbol?.toUpperCase() === sym);
+  const allLive = store.ohlcCandles.filter((c) => c.symbol?.toUpperCase() === sym);
+
+  // Only merge live bars that sit on the DISPLAY timeframe's grid.
+  //
+  // `ohlcCandles` carries the WS feed's own base interval, which is NOT the
+  // display interval for aggregated timeframes: a `2m` chart stores 1-minute
+  // bars, `75m` stores 15-minute bars, `2h` stores 1-hour bars. Merging those
+  // raw bars into the aggregated series mixed two resolutions in one array, so
+  // the regression was fitted over bars with inconsistent spacing and closes
+  // that never appear on the chart — the reported "ghost line shows wrong
+  // values". Filtering to grid-aligned timestamps keeps the live *update* of the
+  // forming bar (the reason live is merged at all) and discards intra-bar
+  // samples that the chart does not display as separate candles.
+  const intervalMs = TIMEFRAME_MS[timeframe as Timeframe] ?? 0;
+  const histTimes = new Set(hist.map((c) => c.start_timestamp_ms));
+  const live =
+    intervalMs > 0
+      ? allLive.filter(
+          (c) =>
+            histTimes.has(c.start_timestamp_ms) ||
+            c.start_timestamp_ms % intervalMs === 0,
+        )
+      : allLive;
+
   if (hist.length === 0 && live.length === 0) return [];
 
   const byTime = new Map<number, { close: number; volume: number; high: number; low: number }>();
@@ -189,30 +213,38 @@ function readStoreCandles(symbol: string, timeframe: string): LookbackCandle[] {
     }));
 }
 
-/** Freshest bar the chart is showing (live wins), for pinning the anchor. */
-function latestStoreBar(symbol: string): { time: number; close: number } | null {
+/**
+ * The freshest traded price for `symbol`, used to pin the projection's anchor
+ * PRICE to the live market.
+ *
+ * Price only — deliberately no timestamp. The previous version returned a
+ * `{ time, close }` pair taken from a scan over `ohlcCandles` (base interval)
+ * with a fallback that scanned EVERY `historicalCache` key beginning with
+ * `SYMBOL::`, i.e. any timeframe's bars. The caller then shifted the whole
+ * projection by `anchor.time - points[0].time`, so an anchor from a different
+ * resolution slid the entire line off the displayed candles. The anchor's TIME
+ * must come from the same series the projection was fitted on (the caller
+ * already has it as `last.time`); only the price needs to be live.
+ *
+ * `intervalMs` restricts the scan to bars on the display grid, matching
+ * `readStoreCandles`, so an intra-bar sample of an aggregated timeframe cannot
+ * win.
+ */
+function latestStorePrice(symbol: string, intervalMs: number): number | null {
   const store = useTradeStore.getState();
   const sym = symbol.toUpperCase();
   let bestMs = -1;
   let close = 0;
   for (const c of store.ohlcCandles) {
-    if (c.symbol?.toUpperCase() === sym && c.start_timestamp_ms > bestMs) {
+    if (c.symbol?.toUpperCase() !== sym) continue;
+    if (intervalMs > 0 && c.start_timestamp_ms % intervalMs !== 0) continue;
+    if (c.start_timestamp_ms > bestMs) {
       bestMs = c.start_timestamp_ms;
       close = c.close;
     }
   }
-  if (bestMs < 0) {
-    for (const key of Object.keys(store.historicalCache)) {
-      if (!key.startsWith(`${sym}::`)) continue;
-      const arr = store.historicalCache[key];
-      const lastC = arr[arr.length - 1];
-      if (lastC && lastC.start_timestamp_ms > bestMs) {
-        bestMs = lastC.start_timestamp_ms;
-        close = lastC.close;
-      }
-    }
-  }
-  return bestMs < 0 ? null : { time: Math.floor(bestMs / 1000), close };
+  if (bestMs < 0) return null;
+  return Number.isFinite(close) && close > 0 ? close : null;
 }
 
 async function fetchLookbackCandles(symbol: string, timeframe: string): Promise<LookbackCandle[]> {
@@ -221,7 +253,7 @@ async function fetchLookbackCandles(symbol: string, timeframe: string): Promise<
   // Path 0: in-memory store — authoritative, matches the chart.
   const storeBars = readStoreCandles(symbol, timeframe);
   if (storeBars.length >= 20) {
-    console.log(`[GhostLine] Store bars (chart-synced): ${storeBars.length} for ${symbol}`);
+    debugLog(`[GhostLine] Store bars (chart-synced): ${storeBars.length} for ${symbol}`);
     return storeBars;
   }
 
@@ -234,7 +266,7 @@ async function fetchLookbackCandles(symbol: string, timeframe: string): Promise<
     const from = new Date(to.getTime() - days * 86_400_000);
     const fmt  = (d: Date) => d.toISOString().slice(0, 10);
     const url  = `/historical?symbol=${encodeURIComponent(symbol)}&interval=${kiteInterval}&from=${fmt(from)}&to=${fmt(to)}`;
-    console.log('[GhostLine] Fetching candles from /kite:', url);
+    debugLog('[GhostLine] Fetching candles from /kite:', url);
     const res = await kiteFetch(url);
     if (res.ok) {
       const data = await res.json();
@@ -245,7 +277,7 @@ async function fetchLookbackCandles(symbol: string, timeframe: string): Promise<
         high: typeof c.high === 'number' ? c.high : c.close,
         low:  typeof c.low  === 'number' ? c.low  : c.close,
       }));
-      console.log(`[GhostLine] API candles: ${candles.length} bars`);
+      debugLog(`[GhostLine] API candles: ${candles.length} bars`);
       return candles;
     }
     console.warn('[GhostLine] API non-OK:', res.status);
@@ -490,7 +522,7 @@ export function forecastProjection(
                : trend === 'ranging'  ? RANGE_REVERSION_WEIGHT
                : 1.0;
   drift *= weight;
-  console.log(`[GhostLine] Forecast regime=${trend} weight=${weight}`);
+  debugLog(`[GhostLine] Forecast regime=${trend} weight=${weight}`);
 
   const anchor = closes[n - 1];
   const pts: { time: number; price: number }[] = [];
@@ -509,7 +541,7 @@ export async function computeGhostPoints(
   predictiveSignals: any[],
   visibleFromSec: number = 0,
 ): Promise<{ time: number; price: number }[]> {
-  console.log(`[GhostLine] computeGhostPoints — symbol=${activeSymbol} tf=${effectiveTimeframe} mode=${ghostLineMode}`);
+  debugLog(`[GhostLine] computeGhostPoints — symbol=${activeSymbol} tf=${effectiveTimeframe} mode=${ghostLineMode}`);
 
   const lookback = await fetchLookbackCandles(activeSymbol, effectiveTimeframe);
   if (lookback.length < 20) {
@@ -535,12 +567,12 @@ export async function computeGhostPoints(
   // Therefore the display-timeframe map wins; `barInterval` is kept only as a
   // fallback when the map has no entry for this timeframe.
   const intervalSec = resolveIntervalSec(effectiveTimeframe, lookback);
-  console.log(`[GhostLine] intervalSec=${intervalSec}`);
+  debugLog(`[GhostLine] intervalSec=${intervalSec}`);
   if (!Number.isFinite(last.close) || last.close <= 0) return [];
 
   // Length scales with the current zoom (fraction of visible bars).
   const projBars = dynamicProjectionBars(lookback, visibleFromSec);
-  console.log(`[GhostLine] projBars=${projBars} (visibleFromSec=${visibleFromSec})`);
+  debugLog(`[GhostLine] projBars=${projBars} (visibleFromSec=${visibleFromSec})`);
 
   // Single 50-bar window shared by every engine (OLS, VWLR, VWEPR) and by both
   // the Rust and JS paths, so all four agree on exactly which bars are fit.
@@ -576,7 +608,7 @@ export async function computeGhostPoints(
 
   // ── Projection engines ──────────────────────────────────────────────
   if (points.length === 0) {
-    console.log('[GhostLine] engine mode=', ghostLineMode);
+    debugLog('[GhostLine] engine mode=', ghostLineMode);
     // Window sizes stay pinned to the retired Rust engines' constants
     // (predictive::OLS_MAX_WINDOW / vwepr::MAX_WINDOW) because `quant-core` still
     // fits over the same bars server-side — the agent's read of a projection and
@@ -587,17 +619,24 @@ export async function computeGhostPoints(
       ghostLineMode === 'volume'   ? vwlrProjection(window, last.time, intervalSec, projBars) :
       ghostLineMode === 'forecast' ? forecastProjection(window, last.time, intervalSec, projBars) :
       vweprProjection(window, last.time, intervalSec, projBars);
-    console.log('[GhostLine] Path3:', points.length, 'points');
+    debugLog('[GhostLine] Path3:', points.length, 'points');
   }
 
   // ── Pin the anchor onto the last candle at its CURRENT price ─────────
+  //
+  // PRICE-ONLY shift. Every engine already anchors `points[0].time` to
+  // `last.time` — the last bar of the very series it was fitted on, which is by
+  // construction on the display grid. Re-deriving the anchor's TIME from a
+  // separate store scan was what let a bar from another resolution slide the
+  // whole line off the displayed candles. The only thing worth refreshing here
+  // is the price, so the ghost starts at the live close rather than the close of
+  // the last completed bar.
   if (points.length > 0) {
-    const anchor = latestStoreBar(activeSymbol);
-    if (anchor) {
-      const dTime  = anchor.time  - points[0].time;
-      const dPrice = anchor.close - points[0].price;
-      if (dTime !== 0 || Math.abs(dPrice) > 1e-9) {
-        points = points.map((p) => ({ time: p.time + dTime, price: +(p.price + dPrice).toFixed(2) }));
+    const livePrice = latestStorePrice(activeSymbol, TIMEFRAME_MS[effectiveTimeframe as Timeframe] ?? 0);
+    if (livePrice !== null) {
+      const dPrice = livePrice - points[0].price;
+      if (Math.abs(dPrice) > 1e-9) {
+        points = points.map((p) => ({ time: p.time, price: +(p.price + dPrice).toFixed(2) }));
       }
     }
   }
@@ -668,7 +707,7 @@ export async function computeGhostPoints(
     }
   }
 
-  console.log(
+  debugLog(
     '[GhostLine] FINAL times=', points.map((p) => p.time).join(','),
     'prices=', points.map((p) => p.price).join(','),
   );

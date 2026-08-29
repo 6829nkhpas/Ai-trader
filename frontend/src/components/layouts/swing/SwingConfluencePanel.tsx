@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { Loader2, TrendingUp, TrendingDown, Minus, Sparkles, Activity, Newspaper } from 'lucide-react';
+import { Loader2, TrendingUp, TrendingDown, Minus, Sparkles, Activity, Newspaper, AlertTriangle, RefreshCw } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { MarketInsight, useTradeStore } from '../../../store/useTradeStore';
 import { useMultiTimeframeTrend, TrendBias } from '../../../hooks/useMultiTimeframeTrend';
@@ -56,6 +56,13 @@ export default function SwingConfluencePanel() {
   
   const activeSentiment = useQuantStore((s) => s.activeSentiment);
   const loadSentimentForSymbol = useQuantStore((s) => s.loadSentimentForSymbol);
+  // The panel used to subscribe to `activeSentiment` ONLY, so a 503 from
+  // /api/sentiment ("no sentiment computed yet") rendered a permanent
+  // "Awaiting market sentiment signals..." with no spinner and no error — the
+  // feature looked idle rather than unavailable (BUG-007). The store already
+  // tracks both of these; they just were not being read.
+  const isFetchingSentiment = useQuantStore((s) => s.isFetchingSentiment);
+  const sentimentError = useQuantStore((s) => s.sentimentError);
 
   const [insightHistory, setInsightHistory] = useState<MarketInsight[]>([]);
   const [newestId, setNewestId] = useState<number | null>(null);
@@ -214,10 +221,51 @@ export default function SwingConfluencePanel() {
                 </div>
               )}
             </div>
+          ) : isFetchingSentiment ? (
+            /* Loading — the classifier can take up to ~25s on a cold symbol. */
+            <div className="rounded-lg border border-dashed border-border-default/70 bg-card/50 p-2.5">
+              <div className="flex items-center gap-1.5">
+                <Loader2 size={9} className="animate-spin text-cyan-600 dark:text-cyan-400" />
+                <span className="text-[8px] font-extrabold uppercase tracking-widest text-cyan-600 dark:text-cyan-400 leading-none">
+                  Classifying news
+                </span>
+              </div>
+              <div className="mt-1.5 space-y-1">
+                <div className="h-2 w-full animate-pulse rounded bg-elevated/60" />
+                <div className="h-2 w-3/5 animate-pulse rounded bg-elevated/40" />
+              </div>
+            </div>
+          ) : sentimentError ? (
+            /* Unavailable — say so, and say why. Silence here reads as "no news
+               exists", which is a much stronger and usually wrong claim. */
+            <div
+              role="status"
+              className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-left"
+            >
+              <div className="flex items-center gap-1.5">
+                <AlertTriangle size={9} className="shrink-0 text-amber-500 dark:text-amber-400" />
+                <span className="text-[8px] font-extrabold uppercase tracking-widest text-amber-600 dark:text-amber-400 leading-none">
+                  Sentiment unavailable
+                </span>
+              </div>
+              <p className="mt-1 text-[9px] leading-normal text-amber-700/90 dark:text-amber-300/80">
+                {sentimentError}
+              </p>
+              <button
+                type="button"
+                onClick={() => { if (selectedSymbol) void loadSentimentForSymbol(selectedSymbol); }}
+                className="mt-1.5 inline-flex items-center gap-1 rounded border border-amber-500/30 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 transition-colors hover:bg-amber-500/10"
+              >
+                <RefreshCw size={8} />
+                Retry
+              </button>
+            </div>
           ) : (
             <div className="rounded-lg border border-dashed border-border-default/70 bg-card/50 p-2.5 text-center">
               <p className="text-[9.5px] text-text-muted/80 leading-normal">
-                Awaiting market sentiment signals...
+                {selectedSymbol
+                  ? 'Awaiting market sentiment signals...'
+                  : 'Select a symbol to load sentiment.'}
               </p>
             </div>
           )}

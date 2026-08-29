@@ -33,6 +33,23 @@ export default function RootLayout({
       className={cn("h-full", "antialiased", inter.variable, "font-sans", geist.variable)}
       suppressHydrationWarning
     >
+      <head>
+        {/*
+          Apply the persisted theme BEFORE first paint.
+
+          The theme lives in `useChartUIStore` and is mirrored to
+          localStorage under `stratai.theme` (see THEME_STORAGE_KEY). Without
+          this script the document starts un-classed on every load, so a user
+          on the light theme saw the shell flash — and then stay — dark after a
+          refresh. Runs synchronously in <head>, so the class is on <html>
+          before the first frame. Keep the key in sync with useChartUIStore.
+        */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{if(localStorage.getItem('stratai.theme')==='light'){document.documentElement.classList.add('light')}}catch(e){}`,
+          }}
+        />
+      </head>
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
         {/* Inject test mode flag for client-side detection */}
         {isTestMode && (

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTradeStore } from '../store/useTradeStore';
 import { useChartUIStore } from '../store/useChartUIStore';
+import { whenChartReady } from '../charting/widgetReady';
 import { computeGhostPoints } from './ghostLineComputation';
+import { debugLog } from '../lib/debugLog';
 
 // ── Drawing helpers ──────────────────────────────────────────────────────
 
@@ -170,7 +172,7 @@ async function drawGhostSegments(
     if (clean.length === 0 || p.time > clean[clean.length - 1].time) clean.push(p);
   }
 
-  console.log(
+  debugLog(
     '[GhostLine] DRAW', clean.length, 'pts times=',
     clean.map((p) => p.time).join(','),
     'prices=', clean.map((p) => p.price).join(','),
@@ -225,7 +227,7 @@ async function drawGhostSegments(
   // zoom. Forcing a range here also caused a feedback loop with the zoom
   // subscription that drives redraws.
 
-  console.log('[GhostLine] Total segments drawn:', entityIds.length);
+  debugLog('[GhostLine] Total segments drawn:', entityIds.length);
   return entityIds;
 }
 
@@ -340,11 +342,15 @@ export function useGhostLine(
     // `setZoomPulse` on an unmounted effect.
     let disposed = false;
     // The unsubscribe handler from `subscribe`. Kept outside the ready
-    // callback so cleanup can unsubscribe even if `onChartReady` ran AFTER
+    // callback so cleanup can unsubscribe even if the chart became ready AFTER
     // cleanup began (otherwise the subscription leaks until the widget dies).
     let unsub: (() => void) | null = null;
     let subscribed = false;
-    widget.onChartReady(() => {
+    // `whenChartReady` guards the INVOCATION too, not just the callback body.
+    // The bare `widget.onChartReady(...)` this replaces threw a TypeError when
+    // the widget had already been removed, because the guards all lived inside
+    // the callback. It also uses the non-deprecated `chartReady()` promise.
+    whenChartReady(widget, () => {
       // Cleanup already ran — do NOT subscribe (would leak + setState on dead
       // effect).
       if (disposed) return;
@@ -421,11 +427,11 @@ export function useGhostLine(
 
   useEffect(() => {
     if (!widget) {
-      console.log('[GhostLine] widget is null — skipping');
+      debugLog('[GhostLine] widget is null — skipping');
       return;
     }
 
-    console.log('[GhostLine] useEffect fired — symbol=', activeSymbol, 'tf=', effectiveTimeframe, 'mode=', ghostLineMode);
+    debugLog('[GhostLine] useEffect fired — symbol=', activeSymbol, 'tf=', effectiveTimeframe, 'mode=', ghostLineMode);
 
     // This run owns generation `myGen`. It becomes stale the moment a newer run
     // bumps genRef, or when this effect is cleaned up (`cancelled`).
@@ -433,12 +439,12 @@ export function useGhostLine(
     const myGen = ++genRef.current;
     const isStale = () => cancelled || genRef.current !== myGen;
 
-    widget.onChartReady(async () => {
+    whenChartReady(widget, async () => {
       // Only the latest generation is allowed to draw. A superseded run bails
       // here before touching the chart, so two runs never both render.
       if (isStale()) return;
 
-      // The widget can be torn down between the time `onChartReady` was
+      // The widget can be torn down between the time the ready callback was
       // scheduled and now. Guard against a nulled-out `widget._tradingViewApi`
       // (and other internal tear-down state) before touching the chart.
       if (!widget || !(widget as any).activeChart) return;
@@ -539,29 +545,52 @@ export function useGhostLine(
         );
         entityIdsRef.current = [...next, ...retry];
         if (!stale) {
-          console.log('[GhostLine] Ghost line ready with', newIds.length, 'segments');
+          debugLog('[GhostLine] Ghost line ready with', newIds.length, 'segments');
         }
       } catch (err) {
         console.error('[GhostLine] draw failed:', err);
       }
-    });
+    }, isStale, 'GhostLine');
 
     return () => {
       // Mark stale so any in-flight draw aborts and no queued run draws.
       cancelled = true;
-      // Best-effort clear (on unmount the widget itself is usually torn down).
+
+      // Clear the segments we own — but only FORGET the ids we actually managed
+      // to remove.
+      //
+      // This effect re-runs on every symbol / timeframe / mode change, and (now
+      // that the widget is no longer rebuilt per symbol) the chart is usually
+      // still ALIVE across those re-runs. The previous version cleared the ref
+      // unconditionally: any `removeEntity` that failed left its segment on the
+      // chart with nothing tracking it, and the next draw stacked a fresh line
+      // on top — the reported "two ghost lines". So:
+      //
+      //  · chart reachable → keep the ids that failed to remove so the next
+      //    pass retries them (`pruneFailedIds` still bounds those retries, so a
+      //    permanently-invalid id is dropped after a couple of attempts rather
+      //    than warning forever).
+      //  · chart gone (widget removed) → the ids belong to a dead chart and can
+      //    never be removed, so drop everything. Retaining them would make
+      //    `removeEntity` throw on every redraw of the next widget.
+      // Narrowed to what the cleanup actually needs, so this isn't another `any`.
+      let chart: { removeEntity: (id: string) => void } | null = null;
       try {
-        const chart = widget.activeChart();
-        removeGhostSegments(chart, entityIdsRef.current);
-      } catch { /* widget may be removed */ }
-      // On teardown the widget (and all its entities) is going away. Any ids
-      // still in the ref are about to be invalid on the NEXT chart, so we must
-      // NOT retain them — otherwise removeEntity on the recreated widget
-      // throws on every redraw, ids accumulate unbounded, and a fresh run may
-      // transiently clear a prior run's still-valid segments via the shared
-      // ref. Drop the ref and the attempt counters for this dead widget.
-      entityIdsRef.current = [];
-      failedAttemptsRef.current.clear();
+        chart = widget.activeChart();
+      } catch { /* widget already removed */ }
+
+      if (chart) {
+        const failed = removeGhostSegments(chart, entityIdsRef.current);
+        entityIdsRef.current = pruneFailedIds(
+          failed,
+          failedAttemptsRef.current,
+          2,
+          entityIdsRef.current,
+        );
+      } else {
+        entityIdsRef.current = [];
+        failedAttemptsRef.current.clear();
+      }
     };
   }, [widget, activeSymbol, effectiveTimeframe, ghostLineMode, lastBarTime, pulse, zoomPulse]);
 }

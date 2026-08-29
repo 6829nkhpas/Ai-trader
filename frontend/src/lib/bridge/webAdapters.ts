@@ -87,6 +87,30 @@ function optStr(args: Args, key: string): string | undefined {
   return typeof v === 'string' && v.trim() !== '' ? v : undefined;
 }
 
+/**
+ * Read the thread id, accepting either `thread_id` or `threadId`.
+ *
+ * These adapters replaced a Tauri IPC layer that converted camelCase JS args to
+ * snake_case Rust params automatically. `bridgeInvoke` passes the args object
+ * through verbatim, so that conversion silently disappeared — and the callers in
+ * `useQuantStore` still send `threadId`. The result was that
+ * `cancel_deep_quant_agent` threw on its own argument check before it could
+ * abort anything, which is why the STOP button did nothing: the SSE relay kept
+ * running and `/cancel` was never sent. `ask_trade_question` had the identical
+ * defect, failing every follow-up question.
+ *
+ * Accepting both spellings here is the same tolerance `startAgentRun` already
+ * applies to `fnoExpiry`/`userId`, and it fixes every current and future caller
+ * rather than one call site.
+ */
+function reqThreadId(args: Args, cmd: string): string {
+  const v = optStr(args, 'thread_id') ?? optStr(args, 'threadId');
+  if (!v) {
+    throw new Error(`${cmd}: argument "thread_id" must be a non-empty string`);
+  }
+  return v;
+}
+
 function reqNum(args: Args, key: string, cmd: string): number {
   const v = args[key];
   if (typeof v !== 'number' || !Number.isFinite(v)) {
@@ -251,7 +275,15 @@ async function startAgentRun(args: Args): Promise<string> {
   // Same id format as the Rust command, so persisted Python threads look alike.
   const threadId = `thread_${symbol}_${Date.now()}`;
 
-  await emitPreRunConsensus(symbol, timeframe ?? '10m');
+  // Fire-and-forget, deliberately NOT awaited.
+  //
+  // This is a non-streaming proxy call bounded by the 30s PROXY_TIMEOUT_MS. When
+  // the tool-server is slow or unreachable, awaiting it meant `POST /run` was not
+  // even issued for up to 30 seconds after the user pressed "Find Quant Trade" —
+  // the press looked like it did nothing. The consensus only populates the
+  // technical HUD; the agent stream is the primary result and must not wait on
+  // it. `emitPreRunConsensus` already swallows its own failures.
+  void emitPreRunConsensus(symbol, timeframe ?? '10m');
 
   const message =
     mode === 'VERIFY' && manualTrade
@@ -583,20 +615,21 @@ export const WEB_ADAPTERS: Record<string, WebAdapter> = {
   },
 
   cancel_deep_quant_agent: async (args) => {
-    const threadId = reqStr(args, 'thread_id', 'cancel_deep_quant_agent');
+    const threadId = reqThreadId(args, 'cancel_deep_quant_agent');
     activeRuns.get(threadId)?.abort();
     activeRuns.delete(threadId);
-    // Best-effort: ask Python to break out of astream at the next step boundary.
-    try {
-      await fetch('/api/deepquant/cancel', postJson({ thread_id: threadId }));
-    } catch (err) {
-      console.warn('[bridge] cancel signal to deep-quant failed:', err);
+    // Ask Python to break out of astream at the next step boundary. NOT
+    // swallowed: if this fails the run is still burning LLM credits server-side
+    // while the UI shows it stopped, which the caller needs to know about.
+    const res = await fetch('/api/deepquant/cancel', postJson({ thread_id: threadId }));
+    if (!res.ok) {
+      throw await failure(res, `deep-quant /cancel failed with HTTP ${res.status}`);
     }
     return undefined;
   },
 
   ask_trade_question: async (args) => {
-    const threadId = reqStr(args, 'thread_id', 'ask_trade_question');
+    const threadId = reqThreadId(args, 'ask_trade_question');
     const question = reqStr(args, 'question', 'ask_trade_question');
     const payload = {
       thread_id: threadId,

@@ -35,6 +35,7 @@ export default function Home() {
   // ── Auth & Feature gates ──────────────────────────────────────────
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const fetchProfile = useAuthStore((s) => s.fetchProfile);
+  const completeLoginFromUrl = useAuthStore((s) => s.completeLoginFromUrl);
   const setFeatureAccessFlags = useFeatureStore((s) => s.setAccessFlags);
   const hydrateFeatureConfig = useFeatureStore((s) => s.hydrateConfig);
   const resetFeatureAccess = useFeatureStore((s) => s.reset);
@@ -54,6 +55,14 @@ export default function Home() {
   // ── Mounted guard ─────────────────────────────────────────────────
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+
+  // ── Cross-surface login handoff ───────────────────────────────────
+  // If we were opened with a `?token=` / `?session=` handoff from a login
+  // performed on the dashboard surface, consume it so the user lands here
+  // already signed in instead of at the login overlay. No-op otherwise.
+  useEffect(() => {
+    void completeLoginFromUrl();
+  }, [completeLoginFromUrl]);
 
   // ── Extracted hooks ───────────────────────────────────────────────
   const showConnectionLost = useConnectionMonitor(mounted);
@@ -167,8 +176,17 @@ export default function Home() {
 
   // ── Early returns ─────────────────────────────────────────────────
   if (!mounted) return <div className="flex h-screen w-screen items-center justify-center bg-background" />;
-  if (showConnectionLost) return <ConnectionLost />;
+  // Auth comes FIRST, before the feed health gate.
+  //
+  // `showConnectionLost` tracks the aggregator WebSocket, which is unauthenticated
+  // and entirely independent of being logged in. Checking it first meant a
+  // logged-out user on a machine where that socket is unreachable got the
+  // "Connectivity Interrupted" health check (Internet / Server tiles + Retry)
+  // INSTEAD of the login button, with no way to sign in. The feed-health screen
+  // is only meaningful once you are inside the terminal, so it is gated on an
+  // authenticated session.
   if (!isAuthenticated) return <AuthOverlay />;
+  if (showConnectionLost) return <ConnectionLost />;
 
   // ── Render ────────────────────────────────────────────────────────
   return (

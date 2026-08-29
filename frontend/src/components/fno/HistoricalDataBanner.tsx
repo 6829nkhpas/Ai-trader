@@ -14,10 +14,22 @@ import { AlertTriangle } from 'lucide-react';
 interface HistoricalDataBannerProps {
   /** Epoch-ms timestamp of the cached snapshot. */
   snapshotTs: number;
+  /**
+   * Why cached data is being shown.
+   *
+   * The trailing label was hardcoded to "Market Closed", which is only one of
+   * the reasons a snapshot gets served from cache. When the F&O service is
+   * unreachable, telling the user the market is closed is simply wrong — so the
+   * caller now states the actual reason.
+   */
+  reason?: 'market-closed' | 'service-unreachable';
 }
 
 /** Amber banner displayed when showing historical/cached F&O data. */
-export default function HistoricalDataBanner({ snapshotTs }: HistoricalDataBannerProps) {
+export default function HistoricalDataBanner({
+  snapshotTs,
+  reason = 'market-closed',
+}: HistoricalDataBannerProps) {
   const formatted = (() => {
     if (!Number.isFinite(snapshotTs)) return null;
     const d = new Date(snapshotTs);
@@ -44,7 +56,7 @@ export default function HistoricalDataBanner({ snapshotTs }: HistoricalDataBanne
         </span>
       )}
       <span className="ml-auto text-[9px] text-amber-400/50 uppercase tracking-wider">
-        Market Closed
+        {reason === 'service-unreachable' ? 'Service Unreachable' : 'Market Closed'}
       </span>
     </div>
   );

@@ -15,6 +15,36 @@ type CursorMode = 'cross' | 'dot' | 'arrow' | 'eraser';
 type MagnetMode = 'off' | 'weak' | 'strong';
 export type GhostLineMode = 'linear' | 'volume' | 'curved' | 'forecast';
 
+// ── Theme persistence ──────────────────────────────────────────────────
+// Shared with the inline boot script in `app/layout.tsx`, which reads the SAME
+// key to set the `light` class on <html> before first paint. Keep the key and
+// the accepted values in sync with that script.
+export const THEME_STORAGE_KEY = 'stratai.theme';
+
+/**
+ * Read the persisted theme, defaulting to `dark`.
+ *
+ * Returns `dark` on the server so SSR output is deterministic; the browser
+ * reads the real value when the store module is first evaluated client-side.
+ */
+export function readStoredTheme(): 'light' | 'dark' {
+  if (typeof window === 'undefined') return 'dark';
+  try {
+    return localStorage.getItem(THEME_STORAGE_KEY) === 'light' ? 'light' : 'dark';
+  } catch {
+    return 'dark'; // private mode / storage disabled
+  }
+}
+
+function writeStoredTheme(theme: 'light' | 'dark'): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch {
+    /* quota / private mode — the in-memory theme still applies for this session */
+  }
+}
+
 // ── Split-Chart (Dual-Pane) Model ──────────────────────────────────────
 //
 // The split-view slice models the Angel-One-style dual-pane chart layout
@@ -705,7 +735,7 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
       };
     }),
 
-  theme: 'dark',
+  theme: readStoredTheme(),
   setTheme: (theme) => {
     set({ theme });
     if (typeof document !== 'undefined') {
@@ -715,6 +745,13 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
         document.documentElement.classList.remove('light');
       }
     }
+    // Persist so a reload keeps the user's choice. Previously `theme` was
+    // in-memory only, so every refresh snapped back to dark — and because the
+    // TradingView widget restores its OWN saved chart properties from
+    // localStorage, the shell went dark while the candles stayed light. The
+    // inline boot script in `app/layout.tsx` reads this same key before first
+    // paint so there is no flash.
+    writeStoredTheme(theme);
   },
   toggleTheme: () => {
     const nextTheme = get().theme === 'dark' ? 'light' : 'dark';

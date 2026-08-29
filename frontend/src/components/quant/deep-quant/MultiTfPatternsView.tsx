@@ -9,11 +9,14 @@ import {
   Sparkles,
   Activity,
   Loader2,
-  Radio
+  Radio,
+  AlertTriangle,
+  RefreshCw
 } from 'lucide-react';
 
 export default function MultiTfPatternsView() {
-  const { multiTfPatterns, isFetchingPatterns } = useQuantStore();
+  const { multiTfPatterns, isFetchingPatterns, patternsError } = useQuantStore();
+  const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
   // `null` = no explicit user choice yet, so fall back to the auto-picked tab
   // (the timeframe carrying the most patterns). A manual tab click pins it.
   const [userSelectedTf, setUserSelectedTf] = useState<string | null>(null);
@@ -142,6 +145,35 @@ export default function MultiTfPatternsView() {
                 <div className="h-2 w-full bg-elevated/30 rounded-none" />
               </div>
             ))}
+          </div>
+        ) : patternsError ? (
+          /* Scan FAILED — distinct from "no patterns forming".
+             Reporting a failed scan as an empty result is what made a
+             heartbeat / tool-server error look like a calm, healthy market. */
+          <div
+            role="status"
+            className="flex flex-col gap-1 px-3 py-2.5 border-y border-x-0 border-amber-500/30 bg-amber-500/5 rounded-none"
+          >
+            <div className="flex items-center gap-1.5">
+              <AlertTriangle size={10} className="shrink-0 text-amber-500 dark:text-amber-400" />
+              <span className="text-[8px] font-black uppercase tracking-widest text-amber-600 dark:text-amber-400">
+                Scan unavailable
+              </span>
+            </div>
+            <p className="text-[9px] leading-relaxed text-amber-700/90 dark:text-amber-300/80 break-words">
+              {patternsError}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                const sym = selectedSymbol || 'RELIANCE';
+                void useQuantStore.getState().fetchMultiTfPatterns(sym);
+              }}
+              className="mt-0.5 inline-flex w-fit items-center gap-1 rounded-none border border-amber-500/30 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 transition-colors hover:bg-amber-500/10"
+            >
+              <RefreshCw size={8} />
+              Retry scan
+            </button>
           </div>
         ) : patterns.length === 0 ? (
           // Empty State

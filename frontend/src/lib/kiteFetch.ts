@@ -19,8 +19,12 @@
  * relative URL and not the gateway host.
  *
  * @param path the part after `/kite` — e.g. `/quote?i=NSE:TCS`.
+ * @param init standard `fetch` options. Exists so callers can pass an
+ *   `AbortSignal`: several of these are poll loops, and without a way to bound a
+ *   request a hung fetch stalls the loop forever (the order book's "Awaiting
+ *   Market Depth Data…" hang). Forwarded verbatim.
  */
-export async function kiteFetch(path: string): Promise<Response> {
+export async function kiteFetch(path: string, init?: RequestInit): Promise<Response> {
   const rel = path.startsWith('/') ? path : `/${path}`;
-  return fetch(`/kite${rel}`);
+  return fetch(`/kite${rel}`, init);
 }

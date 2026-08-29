@@ -163,9 +163,22 @@ export default function FnoSection() {
 
   // Header status label — from active viewState or cached fallback.
   const renderState = viewState;
+  // `service-error` is included here now.
+  //
+  // It used to be excluded, so a transport failure blanked the panel down to the
+  // red "unreachable" card even when a perfectly good snapshot was sitting in
+  // localStorage. The cached snapshot is REAL data that was really measured — it
+  // is just not current — so showing it behind an explicit "Service Unreachable"
+  // banner is strictly more useful than showing nothing. With no cached snapshot
+  // the service-error card still renders (see `renderBody`).
+  const hasCachedSnapshot = lastGoodViewState.current !== null;
   const isFallback =
-    (renderState === null || renderState.kind === 'unavailable') &&
-    lastGoodViewState.current !== null;
+    hasCachedSnapshot &&
+    (renderState === null ||
+      renderState.kind === 'unavailable' ||
+      renderState.kind === 'service-error');
+  const fallbackReason =
+    renderState?.kind === 'service-error' ? 'service-unreachable' : 'market-closed';
   const effectiveView = isFallback ? lastGoodViewState.current! : renderState;
 
   const statusLabel = useMemo(() => {
@@ -216,7 +229,10 @@ export default function FnoSection() {
       {isFallback &&
         effectiveView &&
         (effectiveView.kind === 'ready' || effectiveView.kind === 'partial') && (
-          <HistoricalDataBanner snapshotTs={effectiveView.snapshotTs} />
+          <HistoricalDataBanner
+            snapshotTs={effectiveView.snapshotTs}
+            reason={fallbackReason}
+          />
         )}
 
       {/* Body */}

@@ -17,9 +17,11 @@ export default function LeftPanel() {
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
   
   const consensusData = useQuantStore((s) => s.consensusData);
+  const consensusComputedAt = useQuantStore((s) => s.consensusComputedAt);
   const loadConsensusForSymbol = useQuantStore((s) => s.loadConsensusForSymbol);
   const isFetchingPatterns = useQuantStore((s) => s.isFetchingPatterns);
   const multiTfPatterns = useQuantStore((s) => s.multiTfPatterns);
+  const patternsError = useQuantStore((s) => s.patternsError);
   const fetchMultiTfPatterns = useQuantStore((s) => s.fetchMultiTfPatterns);
 
   const activeSentiment = useQuantStore((s) => s.activeSentiment);
@@ -99,11 +101,14 @@ export default function LeftPanel() {
             );
           }
 
-          return <LiveAssetHUD data={consensusData} />;
+          return <LiveAssetHUD data={consensusData} computedAt={consensusComputedAt} />;
         })()}
 
-        {/* Dynamic Pattern Scanner */}
-        {(isFetchingPatterns || multiTfPatterns) && (
+        {/* Dynamic Pattern Scanner.
+            `patternsError` is part of the condition: a failed scan leaves
+            `multiTfPatterns` null, so without it the panel unmounted entirely and
+            the failure had nowhere to be reported. */}
+        {(isFetchingPatterns || multiTfPatterns || patternsError) && (
           <MultiTfPatternsView />
         )}
       </div>

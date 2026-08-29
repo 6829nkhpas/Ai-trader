@@ -16,6 +16,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTradeStore, type OhlcCandle } from '../store/useTradeStore';
 import { kiteFetch } from '../lib/kiteFetch';
+import { debugLog } from '../lib/debugLog';
 
 export interface HistoricalCandle {
   /** Seconds since Unix epoch (lightweight-charts format) */
@@ -90,7 +91,7 @@ async function fetchFromQuestDB(symbol: string): Promise<HistoricalCandle[]> {
       if (data.error || !data.dataset || data.dataset.length === 0) continue;
 
       const parsed = parseQuestDBRows(data.dataset);
-      console.log(
+      debugLog(
         `[Historical] ${symbol}: ${parsed.length} candles loaded from QuestDB (browser proxy)`
       );
       return parsed;
@@ -228,7 +229,7 @@ async function fetchFromKiteHistorical(
       // Daily+ timeframe: only daily candles, full range
       const candles = await fetchKiteBatch(symbol, 'day', rangeDays);
       if (candles.length > 0) {
-        console.log(
+        debugLog(
           `[Historical] ${symbol}: ${candles.length} daily candles loaded (range=${rangeDays}d)`
         );
       }
@@ -239,7 +240,7 @@ async function fetchFromKiteHistorical(
     const intradayDays = Math.min(rangeDays, 60);
     const candles = await fetchKiteBatch(symbol, kiteInterval, intradayDays);
     if (candles.length > 0) {
-      console.log(
+      debugLog(
         `[Historical] ${symbol}: ${candles.length} ${kiteInterval} candles loaded (range=${intradayDays}d)`
       );
     }
@@ -280,8 +281,8 @@ export function useHistoricalData(
     // dynamically aggregates QuestDB ticks via SAMPLE BY. We pass the live
     // UI timeframe verbatim so the backend returns bars at the requested
     // resolution (no client-side resampling needed for the primary path).
-    console.log(
-      "🔥 [UI DISPATCH] Fetching History - Symbol:", symbol,
+    debugLog(
+      "[UI DISPATCH] Fetching History - Symbol:", symbol,
       "Timeframe:", effectiveTimeframe,
       "(kiteInterval:", kiteInterval, ", rangeDays:", rangeDays, ")"
     );
@@ -306,7 +307,7 @@ export function useHistoricalData(
         close: c.close,
         volume: c.volume,
       }));
-      console.log(`[Historical] ${symbol}: ${asHistorical.length} candles from cache (tf=${effectiveTimeframe}, interval=${kiteInterval})`);
+      debugLog(`[Historical] ${symbol}: ${asHistorical.length} candles from cache (tf=${effectiveTimeframe}, interval=${kiteInterval})`);
       setCandles(asHistorical);
       setLoading(false);
       return;

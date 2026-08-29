@@ -13,10 +13,21 @@ export default function AIPanel() {
   const rawScore = Math.round(latestDecision?.final_conviction_score ?? 0);
   const score = clampScore(rawScore);
   const action = latestDecision?.action_type ?? 'HOLD';
+  // These two are REAL values off the decision: the fusion weights the
+  // aggregator actually applied to each signal family for this decision.
   const technicalScore = clampScore(Math.round((latestDecision?.technical_weight_used ?? 0) * 100));
   const newsScore = clampScore(Math.round((latestDecision?.sentiment_weight_used ?? 0) * 100));
-  const optionsScore = clampScore(Math.round(score * 0.55 + technicalScore * 0.45));
-  const volumeScore = clampScore(Math.round(score * 0.45 + newsScore * 0.55));
+  //
+  // There used to be two more bars here, "Options" and "Volume":
+  //   optionsScore = score * 0.55 + technicalScore * 0.45
+  //   volumeScore  = score * 0.45 + newsScore    * 0.55
+  //
+  // Neither reads an options or volume input. They are arithmetic on the other
+  // two numbers, rendered in the same factor list and therefore indistinguishable
+  // from measured values — this is the "mock data" in the factor breakdown. The
+  // decision payload carries no options or volume weight, so there is nothing
+  // honest to put in their place and they are gone. Add them back only when the
+  // aggregator actually emits them.
 
   const tone = action === 'BUY' ? 'Bullish' : action === 'SELL' ? 'Bearish' : 'Neutral';
   
@@ -42,11 +53,12 @@ export default function AIPanel() {
     ]
     : ['Connect to the live feed for AI insights.'];
 
+  // Labelled as WEIGHTS, because that is what they are — how much the fusion
+  // engine leaned on each signal family for this decision. "News: 40" previously
+  // read as a news sentiment score of 40/100, which it never was.
   const factors = [
-    { label: 'News', value: newsScore },
-    { label: 'Technical', value: technicalScore },
-    { label: 'Options', value: optionsScore },
-    { label: 'Volume', value: volumeScore },
+    { label: 'Sentiment weight', value: newsScore },
+    { label: 'Technical weight', value: technicalScore },
   ];
 
   return (
@@ -77,7 +89,12 @@ export default function AIPanel() {
       </section>
 
       <section className="rounded-lg border border-border-default bg-card p-4 panel-shadow">
-        <div className="text-xs font-semibold uppercase tracking-widest text-text-secondary">News</div>
+        {/* Was titled "News". Its body is the DECISION's reasoning string (see
+            `headline` above), never a news item — so a user reading this panel
+            was told the engine's rationale under a News heading. The sentiment
+            headlines live in the left panel's Sentiment block, fed by
+            /api/sentiment. */}
+        <div className="text-xs font-semibold uppercase tracking-widest text-text-secondary">Decision Rationale</div>
         <div className="mt-2 text-sm font-semibold text-text-primary border-b border-border-default pb-2">{headline}</div>
         <div className="mt-2 text-xs text-text-muted">{timestamp}</div>
       </section>

@@ -8,6 +8,7 @@ import { useAuthStore } from './useAuthStore';
 import { canRunAgentMode } from './useFeatureStore';
 import { RESEARCH_LOCKED_MESSAGE } from '../lib/sku';
 import { bridgeInvoke, bridgeListen } from '../lib/bridge';
+import { debugLog } from '../lib/debugLog';
 
 // ── TypeScript interfaces matching Rust backend structs ─────────────────
 
@@ -303,6 +304,20 @@ interface QuantStore {
   consensusData: ConsensusReport | null;
   /** Per-symbol consensus cache — retains results from previous Deep Quant runs */
   consensusCache: Record<string, ConsensusReport>;
+  /**
+   * When the currently-displayed consensus was computed (epoch ms), or null when
+   * nothing is displayed.
+   *
+   * The cache has no TTL by design — a technical read is only recomputed when the
+   * user presses FIND/VERIFY, so re-selecting a symbol legitimately shows the
+   * previous reading. What was wrong is that it was shown with NO indication of
+   * age, so a report computed hours (or sessions) ago was indistinguishable from
+   * a live one. Rendering the age is what makes a retained reading honest instead
+   * of a stand-in for current market data.
+   */
+  consensusComputedAt: number | null;
+  /** Computation time per cached symbol, parallel to `consensusCache`. */
+  consensusComputedAtBySymbol: Record<string, number>;
   aiPlan: AiExecutionPlan | null;
   isAnalyzing: boolean;
   analysisError: string | null;
@@ -408,6 +423,16 @@ interface QuantStore {
   // ── Multi-Timeframe Chart Patterns ──────────────────────────────────
   multiTfPatterns: MultiTfChartPatterns[] | null;
   isFetchingPatterns: boolean;
+  /**
+   * Why the Dynamic Pattern Scanner is empty, when it is empty because of a
+   * failure rather than because no patterns exist.
+   *
+   * The fetch used to catch every error and fall back to `multiTfPatterns: []`,
+   * so an unreachable tool-server, a 30s proxy timeout, or a heartbeat/agent
+   * error all rendered as the reassuring "No patterns forming". Those are very
+   * different statements and the panel now distinguishes them.
+   */
+  patternsError: string | null;
   fetchMultiTfPatterns: (symbol: string) => Promise<void>;
 }
 
@@ -437,7 +462,23 @@ const MULTI_TF_TTL_MS = 2 * 60 * 1000;  // 2 minutes
 // was actively working. Instead we arm a per-run watchdog that is RESET on
 // every stream event: it only fires when NO event has arrived for the idle
 // window — i.e. the SSE stream is genuinely stalled/dead, not merely slow.
-const STREAM_IDLE_TIMEOUT_MS = 120_000;  // fire only after this much silence
+// Sized to match the agent service's OWN definition of a stall
+// (`service_metrics.py`: DEEP_QUANT_STALL_SECONDS, default 300). At 120s this
+// window was shorter than a single legitimate LLM turn on a reasoning model with
+// LLM_EFFORT=high, so healthy-but-slow runs were being killed with a spurious
+// "Analysis stalled" — which is the other half of the stall report: some of those
+// stalls were this timer, not the agent.
+const STREAM_IDLE_TIMEOUT_MS = 300_000;
+
+// A run parked at `watch_price_condition` is waiting for a price that may be
+// hours away, so silence there is EXPECTED and the run-idle window does not
+// apply. What is not expected is the heartbeat going quiet: the tool-server
+// watcher pulses a /resume every OPPORTUNITY_HEARTBEAT_CADENCE_SECS (200s by
+// default), and each pulse streams events. Two missed pulses plus slack means
+// the watcher is gone — previously nothing monitored this at all, so a dead
+// watcher left the panel "watching" forever with no activity and no feedback.
+const WATCH_IDLE_TIMEOUT_MS = 520_000;
+
 const streamWatchdogs = new Map<string, ReturnType<typeof setTimeout>>();
 
 const clearStreamWatchdog = (runKey: string) => {
@@ -928,7 +969,7 @@ function applyStreamEvent(session: QuantSession, payload: StreamEventPayload): Q
       if (!toolName) return session;
       return {
         ...session,
-        reasoningSteps: [...session.reasoningSteps, { id: _newStepId(), type: 'tool_end', toolName, content: `✔ Tool ${toolName} completed successfully.`, timestamp: Date.now() }],
+        reasoningSteps: [...session.reasoningSteps, { id: _newStepId(), type: 'tool_end', toolName, content: `Tool ${toolName} completed successfully.`, timestamp: Date.now() }],
         _pendingToolCalls: Math.max(0, session._pendingToolCalls - 1),
         updatedAt: Date.now(),
       };
@@ -967,6 +1008,8 @@ function applyStreamEvent(session: QuantSession, payload: StreamEventPayload): Q
 export const useQuantStore = create<QuantStore>((set, get) => ({
   consensusData: null,
   consensusCache: {},
+  consensusComputedAt: null,
+  consensusComputedAtBySymbol: {},
   aiPlan: null,
   isAnalyzing: false,
   analysisError: null,
@@ -1003,30 +1046,41 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
   // ── Multi-Timeframe Chart Patterns State ──
   multiTfPatterns: null,
   isFetchingPatterns: false,
+  patternsError: null,
 
 
   setConsensusData: (data: ConsensusReport) => {
     const sym = data.symbol?.toUpperCase();
-    console.log(`[QuantStore] ✔ Consensus SET symbol=${sym} trend=${data.trend_score} momentum=${data.momentum_state}`);
+    debugLog(`[QuantStore] Consensus SET symbol=${sym} trend=${data.trend_score} momentum=${data.momentum_state}`);
+    const computedAt = Date.now();
     set((state) => ({
       consensusData: data,
+      consensusComputedAt: computedAt,
       consensusCache: sym
         ? { ...state.consensusCache, [sym]: data }
         : state.consensusCache,
+      consensusComputedAtBySymbol: sym
+        ? { ...state.consensusComputedAtBySymbol, [sym]: computedAt }
+        : state.consensusComputedAtBySymbol,
     }));
   },
 
-  clearConsensusData: () => set({ consensusData: null }),
+  clearConsensusData: () => set({ consensusData: null, consensusComputedAt: null }),
 
   loadConsensusForSymbol: (symbol: string) => {
     const sym = symbol.toUpperCase();
     const cached = get().consensusCache[sym];
     if (cached) {
-      console.log(`[QuantStore] ✔ Consensus CACHE HIT symbol=${sym} trend=${cached.trend_score}`);
-      set({ consensusData: cached });
+      debugLog(`[QuantStore] Consensus CACHE HIT symbol=${sym} trend=${cached.trend_score}`);
+      // Carry the original computation time through, so the HUD can label how old
+      // this reading is rather than presenting it as a current measurement.
+      set((state) => ({
+        consensusData: cached,
+        consensusComputedAt: state.consensusComputedAtBySymbol[sym] ?? null,
+      }));
     } else {
-      console.log(`[QuantStore] ⏳ Consensus CACHE MISS symbol=${sym} — clearing stale data`);
-      set({ consensusData: null });
+      debugLog(`[QuantStore] Consensus CACHE MISS symbol=${sym} — clearing stale data`);
+      set({ consensusData: null, consensusComputedAt: null });
     }
   },
 
@@ -1068,7 +1122,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       // below — a static one would create a cycle between the two stores.
       const { useTradeStore } = await import('./useTradeStore');
       if (useTradeStore.getState().selectedSymbol.toUpperCase() !== sym) {
-        console.log(`[QuantStore] ↩ Consensus for ${sym} discarded — symbol changed`);
+        debugLog(`[QuantStore] ↩ Consensus for ${sym} discarded — symbol changed`);
         return;
       }
       if (report && typeof report.trend_score === 'number') {
@@ -1090,32 +1144,50 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
 
     // Serve fresh cache hit
     if (entry && (now - entry.fetchedAt) < SENTIMENT_TTL_MS) {
-      console.log(`[QuantStore] ✔ Sentiment CACHE HIT symbol=${symbol} score=${entry.payload.score} age=${Math.round((now - entry.fetchedAt) / 1000)}s`);
+      debugLog(`[QuantStore] Sentiment CACHE HIT symbol=${symbol} score=${entry.payload.score} age=${Math.round((now - entry.fetchedAt) / 1000)}s`);
       set({ activeSentiment: entry.payload, isFetchingSentiment: false, sentimentError: null });
       return;
     }
 
     // Rate-limit cooldown active?
+    //
+    // This branch used to return WITHOUT clearing `isFetchingSentiment` or
+    // setting an error, so the UI could sit on a spinner for the whole 5-minute
+    // cooldown with nothing explaining why. It also only re-showed the cached
+    // payload when one existed — and the 429 handler below can store a null
+    // payload, in which case absolutely nothing was set. Always settle the
+    // loading flag and say what is happening.
     if (entry?.rateLimitedUntil && now < entry.rateLimitedUntil) {
       const secs = Math.round((entry.rateLimitedUntil - now) / 1000);
-      console.warn(`[QuantStore] ⚠ Sentiment 429 cooldown active for ${symbol} — ${secs}s remaining`);
-      if (entry.payload) set({ activeSentiment: entry.payload });
+      console.warn(`[QuantStore] Sentiment 429 cooldown active for ${symbol} — ${secs}s remaining`);
+      set({
+        isFetchingSentiment: false,
+        ...(entry.payload
+          ? { activeSentiment: entry.payload, sentimentError: null }
+          : {
+              sentimentError:
+                `Sentiment is rate limited for ${symbol}. Retrying automatically in ${secs}s.`,
+            }),
+      });
       return;
     }
 
-    // In-flight deduplication
+    // In-flight deduplication. Reflect the in-flight state so a second caller
+    // (e.g. a panel mounting after the first request started) still renders the
+    // loading branch rather than an indefinite empty state.
     if (sentimentInFlight.has(symbol)) {
-      console.log(`[QuantStore] ⏳ Sentiment already in-flight for ${symbol} — skipping duplicate`);
+      debugLog(`[QuantStore] Sentiment already in-flight for ${symbol} — skipping duplicate`);
+      set({ isFetchingSentiment: true });
       return;
     }
 
-    console.log(`[QuantStore] ▶ Sentiment fetch symbol=${symbol}`);
+    debugLog(`[QuantStore] Sentiment fetch symbol=${symbol}`);
     sentimentInFlight.add(symbol);
     set({ isFetchingSentiment: true, sentimentError: null });
 
     try {
       const payload = await bridgeInvoke<SentimentPayload>('fetch_symbol_sentiment', { symbol });
-      console.log(`[QuantStore] ✔ Sentiment OK symbol=${symbol} score=${payload.score} label=${payload.label}`);
+      debugLog(`[QuantStore] Sentiment OK symbol=${symbol} score=${payload.score} label=${payload.label}`);
       set((state) => ({
         activeSentiment: payload,
         isFetchingSentiment: false,
@@ -1127,7 +1199,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const is429 = message.includes('429') || message.toLowerCase().includes('too many');
-      console.error(`[QuantStore] ✘ Sentiment FAIL symbol=${symbol}: ${message}`);
+      console.error(`[QuantStore] Sentiment FAIL symbol=${symbol}: ${message}`);
       set((state) => ({
         isFetchingSentiment: false,
         sentimentError: message,
@@ -1155,22 +1227,22 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     // Respect 429 cooldown even on force-refresh
     if (entry?.rateLimitedUntil && now < entry.rateLimitedUntil) {
       const secs = Math.round((entry.rateLimitedUntil - now) / 1000);
-      console.warn(`[QuantStore] ⚠ Sentiment 429 cooldown — skipping refresh for ${symbol} (${secs}s remaining)`);
+      console.warn(`[QuantStore] Sentiment 429 cooldown — skipping refresh for ${symbol} (${secs}s remaining)`);
       return;
     }
 
     if (sentimentInFlight.has(symbol)) {
-      console.log(`[QuantStore] ⏳ Sentiment already in-flight for ${symbol} — skipping refresh`);
+      debugLog(`[QuantStore] Sentiment already in-flight for ${symbol} — skipping refresh`);
       return;
     }
 
-    console.log(`[QuantStore] ▶ Sentiment REFRESH (force) symbol=${symbol}`);
+    debugLog(`[QuantStore] Sentiment REFRESH (force) symbol=${symbol}`);
     sentimentInFlight.add(symbol);
     set({ isFetchingSentiment: true, sentimentError: null });
 
     try {
       const payload = await bridgeInvoke<SentimentPayload>('fetch_symbol_sentiment', { symbol });
-      console.log(`[QuantStore] ✔ Sentiment REFRESHED symbol=${symbol} score=${payload.score}`);
+      debugLog(`[QuantStore] Sentiment REFRESHED symbol=${symbol} score=${payload.score}`);
       set((state) => ({
         activeSentiment: payload,
         isFetchingSentiment: false,
@@ -1182,7 +1254,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const is429 = message.includes('429') || message.toLowerCase().includes('too many');
-      console.error(`[QuantStore] ✘ Sentiment refresh FAIL symbol=${symbol}: ${message}`);
+      console.error(`[QuantStore] Sentiment refresh FAIL symbol=${symbol}: ${message}`);
       set((state) => ({
         isFetchingSentiment: false,
         sentimentError: message,
@@ -1224,7 +1296,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     const activeProfile = useTradeStore.getState().activeProfile;
     const fnoExpiry = useTradeStore.getState().fnoExpiry;
     const runKey = _sessionKey(symbol, activeProfile);
-    console.log(`[QuantStore] ▶ Deep analysis START key=${runKey} mode=${activeMode} tf=${activeTimeframe} ts=${new Date().toISOString()}`);
+    debugLog(`[QuantStore] Deep analysis START key=${runKey} mode=${activeMode} tf=${activeTimeframe} ts=${new Date().toISOString()}`);
 
     // ── RESEARCH SKU gate (compliance blocker P1) ─────────────────────────────
     // FIND produces a directional recommendation, which is regulated research;
@@ -1233,7 +1305,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     // analysis. This is defence in depth and a UX affordance — the gate that
     // actually holds is server-side in the agent's `entitlements.py`.
     if (!canRunAgentMode(activeMode)) {
-      console.warn(`[QuantStore] ⛔ ${activeMode} blocked: RESEARCH SKU required`);
+      console.warn(`[QuantStore] ${activeMode} blocked: RESEARCH SKU required`);
       set((s) => {
         const sess = s.sessionsByKey[runKey] ?? blankSession();
         const locked: QuantSession = {
@@ -1273,6 +1345,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       // the parallel fetch below refreshes them.
       multiTfPatterns: null,
       isFetchingPatterns: true,
+      patternsError: null,
     }));
 
     // Trigger multi-timeframe chart patterns fetch in parallel (non-blocking).
@@ -1288,10 +1361,10 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       console.warn('[QuantStore] Sentiment refresh failed, continuing with analysis...');
     });
 
-    console.log(`[QuantStore] → AI context: timeframe=${activeTimeframe} profile=${activeProfile} fnoExpiry=${fnoExpiry || '(nearest)'}`);
+    debugLog(`[QuantStore] → AI context: timeframe=${activeTimeframe} profile=${activeProfile} fnoExpiry=${fnoExpiry || '(nearest)'}`);
 
     try {
-      console.log(`[QuantStore] → invoking 'run_deep_quant_agent'…`);
+      debugLog(`[QuantStore] → invoking 'run_deep_quant_agent'…`);
       const tInvoke = (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
       const threadId = await bridgeInvoke<string>(
@@ -1330,8 +1403,8 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       });
 
       const tDone = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-      console.log(
-        `[QuantStore] ✔ Deep analysis triggered symbol=${symbol} ` +
+      debugLog(
+        `[QuantStore] Deep analysis triggered symbol=${symbol} ` +
         `ipc_ms=${Math.round(tDone - tInvoke)} total_ms=${Math.round(tDone - t0)}`
       );
 
@@ -1347,7 +1420,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       const tDone = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       const message = err instanceof Error ? err.message : String(err);
       console.error(
-        `[QuantStore] ✘ Deep analysis FAIL key=${runKey} ` +
+        `[QuantStore] Deep analysis FAIL key=${runKey} ` +
         `total_ms=${Math.round(tDone - t0)} message=${message}`
       );
       // Error ONLY this run's session (by key), mirroring to the view if active.
@@ -1372,6 +1445,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     _runFinishedProcessed: false,
     multiTfPatterns: null,
     isFetchingPatterns: false,
+    patternsError: null,
   }),
 
   activateSymbolSession: (symbol: string, profile: string) => {
@@ -1410,33 +1484,55 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       ...projectSession(target),
       multiTfPatterns: cachedPatterns,
       isFetchingPatterns: false,
+      patternsError: null,
     });
   },
 
   _armStreamWatchdog: (runKey: string) => {
     // Reset any pending watchdog for this run, then start a fresh idle timer.
     clearStreamWatchdog(runKey);
+
+    // Pick the window that matches what the run is currently DOING. A watching
+    // run is legitimately silent between heartbeat pulses, so judging it by the
+    // run-idle window would kill every price watch; judging it by nothing at all
+    // (the previous behaviour) left a dead watcher undetectable.
+    const status = get().sessionsByKey[runKey]?.sessionStatus;
+    const watching = status === 'watching';
+    const window = watching ? WATCH_IDLE_TIMEOUT_MS : STREAM_IDLE_TIMEOUT_MS;
+
     const timer = setTimeout(() => {
       streamWatchdogs.delete(runKey);
       const state = get();
       const sess = state.sessionsByKey[runKey];
-      // Only trip if the run is STILL running and no event re-armed us — i.e.
-      // the SSE stream has been silent for the whole idle window.
-      if (sess && sess.isAnalyzing && sess.sessionStatus === 'running') {
-        console.warn(`[QuantStore] ⚠ Stream stalled: no events for ${Math.round(STREAM_IDLE_TIMEOUT_MS / 1000)}s on ${runKey}. Auto-resetting.`);
-        const timedOut: QuantSession = {
-          ...sess,
-          isAnalyzing: false,
-          sessionStatus: 'error',
-          analysisError: `The agent stream stalled — no activity for ${Math.round(STREAM_IDLE_TIMEOUT_MS / 1000)}s. The Python agent server may be unreachable or the LLM request stalled. Please retry.`,
-          updatedAt: Date.now(),
-        };
-        set((s) => ({
-          sessionsByKey: { ...s.sessionsByKey, [runKey]: timedOut },
-          ...(s.activeViewKey === runKey ? projectSession(timedOut) : {}),
-        }));
-      }
-    }, STREAM_IDLE_TIMEOUT_MS);
+      if (!sess) return;
+
+      // Trip only if the run is still in the state we armed for and nothing
+      // re-armed us — i.e. the stream has been silent for the whole window.
+      const stillRunning = sess.isAnalyzing && sess.sessionStatus === 'running';
+      const stillWatching = sess.sessionStatus === 'watching';
+      if (!stillRunning && !stillWatching) return;
+
+      const secs = Math.round(window / 1000);
+      const message = stillWatching
+        ? `The price watch went quiet — no heartbeat for ${secs}s. The watcher that wakes ` +
+          `this analysis when your condition is met is no longer reporting, so it will not ` +
+          `resume on its own. Please re-run the analysis.`
+        : `The agent stream stalled — no activity for ${secs}s. The agent server may be ` +
+          `unreachable or the LLM request stalled. Please retry.`;
+
+      console.warn(`[QuantStore] Stream watchdog tripped after ${secs}s on ${runKey} (status=${sess.sessionStatus}).`);
+      const timedOut: QuantSession = {
+        ...sess,
+        isAnalyzing: false,
+        sessionStatus: 'error',
+        analysisError: message,
+        updatedAt: Date.now(),
+      };
+      set((s) => ({
+        sessionsByKey: { ...s.sessionsByKey, [runKey]: timedOut },
+        ...(s.activeViewKey === runKey ? projectSession(timedOut) : {}),
+      }));
+    }, window);
     streamWatchdogs.set(runKey, timer);
   },
 
@@ -1455,7 +1551,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       return;
     }
 
-    console.log(`[QuantStore] 📥 Stream event: ${event}`, data);
+    debugLog(`[QuantStore] Stream event: ${event}`, data);
 
     // ── Route this event to the SESSION KEY its run belongs to ─────────────
     // Every event now carries the run's thread_id (backend stamps them all), so
@@ -1485,15 +1581,6 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       ? { [threadId]: runKey }
       : {};
 
-    // Watchdog: an event = the stream is alive. Clear it once the run reaches a
-    // terminal state; otherwise re-arm the idle timer so a long-but-active run
-    // is never falsely timed out.
-    if (nextSession.sessionStatus === 'complete' || nextSession.sessionStatus === 'error') {
-      clearStreamWatchdog(runKey);
-    } else {
-      get()._armStreamWatchdog(runKey);
-    }
-
     set((state) => ({
       _streamingKey: runKey,
       sessionsByKey: { ...state.sessionsByKey, [runKey as string]: nextSession },
@@ -1502,6 +1589,21 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       // one currently on screen.
       ...(runKey === state.activeViewKey ? projectSession(nextSession) : {}),
     }));
+
+    // Watchdog: an event = the stream is alive. Clear it once the run reaches a
+    // terminal state; otherwise re-arm the idle timer so a long-but-active run
+    // is never falsely timed out.
+    //
+    // Armed AFTER the `set` above, deliberately: `_armStreamWatchdog` chooses
+    // between the run-idle and the (much longer) watch-idle window by reading
+    // the session's CURRENT status, so it has to see the status this event just
+    // produced. Arming first meant a run that had only now entered `watching`
+    // was still timed as if it were `running`.
+    if (nextSession.sessionStatus === 'complete' || nextSession.sessionStatus === 'error') {
+      clearStreamWatchdog(runKey);
+    } else {
+      get()._armStreamWatchdog(runKey);
+    }
 
     // ── Discipline counters (compliance blocker P6) ─────────────────────────
     // Count this run against the discipline statistics that replaced the removed
@@ -1538,6 +1640,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       ...projectSession(fresh),
       multiTfPatterns: null,
       isFetchingPatterns: false,
+      patternsError: null,
     }));
   },
 
@@ -1549,19 +1652,28 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     const threadId = sess?.currentThreadId;
 
     clearStreamWatchdog(runKey);
+
+    // Did the server actually accept the stop? Reported to the user below,
+    // because a failed cancel means the run is still consuming LLM credits even
+    // though the panel looks idle.
+    let cancelDetail: string | null = null;
     if (threadId) {
       cancelledThreads.add(threadId);
       try {
-        await bridgeInvoke('cancel_deep_quant_agent', { threadId });
-      } catch {
-        // best-effort
+        await bridgeInvoke('cancel_deep_quant_agent', { thread_id: threadId });
+      } catch (err) {
+        cancelDetail = err instanceof Error ? err.message : String(err);
+        console.error(`[QuantStore] Cancel request failed for ${threadId}: ${cancelDetail}`);
       }
     }
 
     const cancelStep = {
       id: `cancel-${Date.now()}`,
       type: 'message' as const,
-      content: '⏹ Analysis cancelled by user.',
+      content: cancelDetail
+        ? `Analysis stopped locally, but the server did not confirm the cancellation (${cancelDetail}). ` +
+          `It may still be running — reload if it reappears.`
+        : 'Analysis cancelled by user.',
       timestamp: Date.now(),
     };
     set((s) => {
@@ -1608,7 +1720,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     // turn so the transcript stays coherent. Server-side `entitlements.py` is
     // the authoritative check.
     if (!canRunAgentMode('QA')) {
-      console.warn('[QuantStore] ⛔ Q&A blocked: RESEARCH SKU required');
+      console.warn('[QuantStore] Q&A blocked: RESEARCH SKU required');
       const lockStamp = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       set((state) => ({
         qaMessages: [
@@ -1625,7 +1737,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       return;
     }
 
-    console.log(`[QuantStore] ▶ Trade Q&A ask thread=${threadId} q="${trimmed}"`);
+    debugLog(`[QuantStore] Trade Q&A ask thread=${threadId} q="${trimmed}"`);
 
     const stamp = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const userMsgId = `qa-user-${stamp}`;
@@ -1648,7 +1760,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     // Guards against duplicate RUN_FINISHED like the analysis run handler.
     const finalize = () => {
       if (get()._qaRunFinishedProcessed) {
-        console.log('[QuantStore] ⚠ Duplicate Q&A RUN_FINISHED ignored.');
+        debugLog('[QuantStore] Duplicate Q&A RUN_FINISHED ignored.');
         return;
       }
       set((state) => ({
@@ -1710,7 +1822,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
               set((state) => ({
                 qaMessages: state.qaMessages.map((m) =>
                   m.id === assistantMsgId
-                    ? { ...m, activity: [...(m.activity || []), `✔ ${tool}`] }
+                    ? { ...m, activity: [...(m.activity || []), `${tool}`] }
                     : m
                 ),
               }));
@@ -1722,11 +1834,11 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
             break;
           case 'ERROR': {
             const errorMsg = data?.error || 'Unknown Q&A streaming error';
-            console.error(`[QuantStore] ✘ Trade Q&A ERROR: ${errorMsg}`);
+            console.error(`[QuantStore] Trade Q&A ERROR: ${errorMsg}`);
             set((state) => ({
               qaMessages: state.qaMessages.map((m) =>
                 m.id === assistantMsgId
-                  ? { ...m, content: m.content || `⚠ ${errorMsg}`, error: true }
+                  ? { ...m, content: m.content || errorMsg, error: true }
                   : m
               ),
             }));
@@ -1738,17 +1850,19 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
         }
       });
 
-      // Invoke the proxy command (camelCase args → snake_case Rust params).
-      await bridgeInvoke<void>('ask_trade_question', { threadId, question: trimmed, model: MODEL_SELECTION_LOCKED ? null : (get().selectedModel || null), userId: useAuthStore.getState().user?.id ?? null });
+      // Invoke the proxy command. NOTE: the Tauri layer that used to convert
+      // camelCase args to snake_case params is gone — `bridgeInvoke` passes the
+      // args object through verbatim — so the snake_case key here is load-bearing.
+      await bridgeInvoke<void>('ask_trade_question', { thread_id: threadId, question: trimmed, model: MODEL_SELECTION_LOCKED ? null : (get().selectedModel || null), userId: useAuthStore.getState().user?.id ?? null });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`[QuantStore] ✘ askQuestion FAIL: ${message}`);
+      console.error(`[QuantStore] askQuestion FAIL: ${message}`);
       set((state) => ({
         qaStatus: 'idle',
         _qaRunFinishedProcessed: true,
         qaMessages: state.qaMessages.map((m) =>
           m.id === assistantMsgId
-            ? { ...m, content: m.content || `⚠ ${message}`, error: true, streaming: false }
+            ? { ...m, content: m.content || message, error: true, streaming: false }
             : m
         ),
       }));
@@ -1773,31 +1887,40 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
     // Serve a fresh cache hit instantly — no DB fan-out, no re-detection.
     const cached = multiTfCache.get(sym);
     if (cached && now - cached.fetchedAt < MULTI_TF_TTL_MS) {
-      console.log(`[QuantStore] ✔ MultiTF CACHE HIT symbol=${sym} age=${Math.round((now - cached.fetchedAt) / 1000)}s`);
-      if (isActiveSymbol()) set({ multiTfPatterns: cached.data, isFetchingPatterns: false });
+      debugLog(`[QuantStore] MultiTF CACHE HIT symbol=${sym} age=${Math.round((now - cached.fetchedAt) / 1000)}s`);
+      if (isActiveSymbol()) set({ multiTfPatterns: cached.data, isFetchingPatterns: false, patternsError: null });
       return;
     }
 
     // Collapse duplicate concurrent requests for the same symbol.
     if (multiTfInFlight.has(sym)) {
-      console.log(`[QuantStore] ⏳ MultiTF already in-flight for ${sym} — skipping duplicate`);
+      debugLog(`[QuantStore] MultiTF already in-flight for ${sym} — skipping duplicate`);
       return;
     }
 
-    console.log(`[QuantStore] ▶ fetchMultiTfPatterns starting for symbol=${sym}`);
+    debugLog(`[QuantStore] fetchMultiTfPatterns starting for symbol=${sym}`);
     multiTfInFlight.add(sym);
     // Keep any stale cached patterns visible instead of flashing empty while we refetch.
     if (isActiveSymbol()) {
-      set((state) => ({ isFetchingPatterns: true, multiTfPatterns: cached?.data ?? state.multiTfPatterns ?? null }));
+      set((state) => ({ isFetchingPatterns: true, patternsError: null, multiTfPatterns: cached?.data ?? state.multiTfPatterns ?? null }));
     }
     try {
       const data = await bridgeInvoke<MultiTfChartPatterns[]>('get_multi_timeframe_chart_patterns', { symbol });
       multiTfCache.set(sym, { data, fetchedAt: Date.now() });
-      console.log(`[QuantStore] ✔ fetchMultiTfPatterns completed symbol=${sym} (${data.length} timeframes)`);
-      if (isActiveSymbol()) set({ multiTfPatterns: data, isFetchingPatterns: false });
+      debugLog(`[QuantStore] fetchMultiTfPatterns completed symbol=${sym} (${data.length} timeframes)`);
+      if (isActiveSymbol()) set({ multiTfPatterns: data, isFetchingPatterns: false, patternsError: null });
     } catch (err) {
-      console.error(`[QuantStore] ✘ fetchMultiTfPatterns failed for ${sym}:`, err);
-      if (isActiveSymbol()) set({ isFetchingPatterns: false, multiTfPatterns: multiTfCache.get(sym)?.data ?? [] });
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[QuantStore] fetchMultiTfPatterns failed for ${sym}: ${message}`);
+      // Surface the reason instead of presenting a failed scan as "no patterns".
+      // Any stale cached data stays on screen, flagged by patternsError.
+      if (isActiveSymbol()) {
+        set({
+          isFetchingPatterns: false,
+          patternsError: message,
+          multiTfPatterns: multiTfCache.get(sym)?.data ?? null,
+        });
+      }
     } finally {
       multiTfInFlight.delete(sym);
     }
@@ -1840,7 +1963,7 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       activePositions: [...state.activePositions, position],
     }));
 
-    console.log(`[QuantStore] Position opened: ${posType} ${symbol} @ ${entryPrice} | SL: ${stopLoss} | TP: ${takeProfit}`);
+    debugLog(`[QuantStore] Position opened: ${posType} ${symbol} @ ${entryPrice} | SL: ${stopLoss} | TP: ${takeProfit}`);
   },
 
   closePosition: (id: string, exitPrice: number) => {
@@ -1884,6 +2007,6 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
       console.warn('[QuantStore] Trade persistence failed (non-fatal):', err);
     });
 
-    console.log(`[QuantStore] Position closed: ${position.type} ${position.symbol} | PNL: ${trade.pnl}`);
+    debugLog(`[QuantStore] Position closed: ${position.type} ${position.symbol} | PNL: ${trade.pnl}`);
   },
 }));
