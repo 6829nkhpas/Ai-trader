@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Shield, Target, Zap, Rocket, CheckCircle2, RotateCcw, Lock } from 'lucide-react';
+import { Shield, Target, Zap, CheckCircle2, RotateCcw, Lock } from 'lucide-react';
 import { ResearchGate } from '../../common/FeatureGate';
 
 interface AiPlanShape {
@@ -14,13 +14,6 @@ interface AiPlanShape {
 
 interface AiExecutionPlanViewProps {
   aiPlan: AiPlanShape;
-  // Whether the committed decision is a validated directional trade. When
-  // false (HOLD / stand_aside / missing levels) the deploy action is NOT
-  // offered — no APPROVE & EXECUTE control renders (R1.3/R1.6).
-  actionable: boolean;
-  deployed: boolean;
-  hasActivePosition: boolean;
-  onDeploy: () => Promise<void>;
   onClear: () => void;
 }
 
@@ -45,26 +38,12 @@ function convictionIcon(score: number) {
 
 export default function AiExecutionPlanView({
   aiPlan,
-  actionable,
-  deployed,
-  hasActivePosition,
-  onDeploy,
   onClear,
 }: AiExecutionPlanViewProps) {
-  const [isDeploying, setIsDeploying] = React.useState(false);
   // Conviction may be absent (R1.7). Use 0 for color/label/bar math and render
   // "—" for the numeric readout rather than a fabricated value.
   const score = aiPlan.conviction_score ?? 0;
   const scoreLabel = aiPlan.conviction_score ?? '—';
-
-  const handleDeployClick = async () => {
-    setIsDeploying(true);
-    try {
-      await onDeploy();
-    } finally {
-      setIsDeploying(false);
-    }
-  };
 
   return (
     <div className="flex flex-col gap-0">
@@ -154,42 +133,6 @@ export default function AiExecutionPlanView({
 
       {/* Clear & Deploy actions */}
       <div className="px-3 py-2 flex flex-col gap-1.5">
-        {/* Deploy Strategy Button — offered ONLY for a validated directional
-            trade. A HOLD / stand_aside or a plan without structured
-            execution_levels is non-actionable, so no deploy control renders
-            (R1.3/R1.6). */}
-        {actionable && (
-          <button
-            id="btn-deploy-strategy"
-            type="button"
-            disabled={deployed || hasActivePosition || isDeploying}
-            onClick={handleDeployClick}
-            className={`
-              group relative w-full flex h-8 items-center justify-center gap-2
-              rounded-none px-4 text-[10px] font-bold uppercase tracking-wider
-              transition-all duration-300 ease-out border
-              ${deployed || hasActivePosition
-                ? 'bg-elevated text-text-muted border-border-default cursor-default'
-                : 'bg-text-primary text-surface border-text-primary hover:bg-text-secondary hover:border-text-secondary active:scale-[0.98]'
-              }
-            `}
-          >
-            <span className="relative flex items-center gap-2">
-              {deployed || hasActivePosition ? (
-                <>
-                  <CheckCircle2 size={14} />
-                  STRATEGY DEPLOYED
-                </>
-              ) : (
-                <>
-                  <Rocket size={14} className={isDeploying ? 'animate-pulse' : 'group-hover:animate-bounce'} />
-                  {isDeploying ? 'DEPLOYING...' : 'DEPLOY SIMULATED STRATEGY'}
-                </>
-              )}
-            </span>
-          </button>
-        )}
-
         <button
           type="button"
           onClick={onClear}

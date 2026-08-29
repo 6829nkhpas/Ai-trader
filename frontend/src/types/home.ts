@@ -34,10 +34,3 @@ export interface SymbolQuote {
   volume: number;
 }
 
-/** Calculate realized PnL for a closed paper-trade position. */
-export const calculateRealizedPnL = (pos: any) => {
-  const isWin = pos.status === 'CLOSED_WIN';
-  const exitPrice = isWin ? pos.take_profit : pos.stop_loss;
-  const diff = exitPrice - pos.entry_price;
-  return pos.side === 'BUY' ? diff * pos.quantity : -diff * pos.quantity;
-};

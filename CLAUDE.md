@@ -195,7 +195,7 @@ What the adapters actually do, by group:
 - **Deep quant** — `run_deep_quant_agent` / `run_ai_analysis` / `run_deep_quant_analysis` all drive `startAgentRun` against `/api/deepquant/*` and relay SSE onto the event bus; `ask_trade_question` → `/api/deepquant/qa`; `cancel_deep_quant_agent` aborts the local `AbortController` and best-effort POSTs `/api/deepquant/cancel`.
 - **F&O** — `get_fno_analytics` → `/api/deepquant/options/snapshot`; `fno_subscribe`/`fno_unsubscribe` are no-ops (chain ingestion is server-side, §8); the remaining `fno_*` lookups are one QuestDB query over `option_chain_snapshots` (see `fnoWeb.ts`).
 - **Radar & patterns** — `scan_radar_symbol`, `scan_quant_radar`, `get_multi_timeframe_chart_patterns` POST to `/api/tools/{scan_radar,scan_in_memory,get_multi_tf_chart_patterns}` rather than reimplementing the detection math in TS.
-- **Local state** — `execute_paper_trade` / `get_paper_portfolio` / `log_completed_trade` (localStorage, 2%-of-balance sizing ported from the old `execution/paper.rs`), `save_workspace` / `load_workspace` (localStorage; missing ⇒ `"{}"`), `set_radar_symbols` / `get_radar_symbols`, `open_browser` (`window.open`), `get_feature_switches` (`/api/features`), `fetch_symbol_sentiment` (`/api/sentiment`), `kite_fetch` / `api_fetch`.
+- **Local state** — `save_workspace` / `load_workspace` (localStorage; missing ⇒ `"{}"`), `set_radar_symbols` / `get_radar_symbols`, `open_browser` (`window.open`), `get_feature_switches` (`/api/features`), `fetch_symbol_sentiment` (`/api/sentiment`), `kite_fetch` / `api_fetch`. The paper-trading adapters (`execute_paper_trade` / `get_paper_portfolio` / `log_completed_trade`) were removed along with the simulated portfolio feature.
 
 **`events.ts`** — the event bus. Backend pushes arrive two ways, neither of them IPC:
 1. live market data over `/ws/*` (the one gateway prefix with no basic auth), connected directly by `useTradeStore.connectAlphaWebSocket` and friends;
@@ -210,7 +210,7 @@ with `\n` before parsing, yields `null` on unparseable data rather than dropping
 the frame, and ignores blocks with no `event:` line.
 
 Names actually listened for: `fno-snapshot`, `quant-consensus`,
-`deep-quant-stream`, `deep-quant-qa-stream`, `paper_portfolio_update`,
+`deep-quant-stream`, `deep-quant-qa-stream`,
 `radar-alert`, `agent_message`, `agent_status`, `final_analysis_ready`,
 `desktop-login-success`.
 
@@ -339,7 +339,7 @@ gate is `agents/deep-quant-loop/entitlements.py`.
 auth; dev: `ws://127.0.0.1:808x`). Agent/analysis frames arrive as **SSE** over
 `/api/deepquant/*` and are relayed onto the bridge event bus by `relaySse`;
 components `bridgeListen()` for `fno-snapshot`, `quant-consensus`,
-`deep-quant-stream`, `deep-quant-qa-stream`, `paper_portfolio_update`,
+`deep-quant-stream`, `deep-quant-qa-stream`,
 `radar-alert`, `agent_message`, `agent_status`, `final_analysis_ready`,
 `desktop-login-success`.
 
@@ -358,7 +358,7 @@ via `QUANT_TOOL_SERVER_URL` / `SENTIMENT_HTTP_URL`.
 
 - **QuestDB** — the only database. `live_ticks` (cumulative day volume — use `last(volume)-first(volume)` per bucket), `historical_candles` (daily, PARTITION BY YEAR, DEDUP on ts+symbol), `historical_intraday` (PARTITION BY MONTH, DEDUP on ts+symbol+timeframe), `option_ticks`, `option_chain_snapshots`. Reached over REST (`:9000`, via `/api/questdb/*`) or PG wire (`:8812`, from the Rust services).
 - **No SQLite.** The workspace DB and the `instruments` / `nfo_instruments` masters went with the desktop shell. The instrument master is now an in-memory + on-disk JSON cache inside the aggregator (`instruments_cache_{nse,nfo}.json`, per-exchange, 24h TTL, refetched from `https://api.kite.trade/instruments/{NSE,NFO}`).
-- **Browser-local state** — `localStorage` holds the paper portfolio, the per-symbol chart workspace, the radar symbol list (`stratai.*` keys, see `webAdapters.ts`), TradingView layouts (`utils/tvSaveLoadAdapter.ts`), and the JWT/refresh token.
+- **Browser-local state** — `localStorage` holds the per-symbol chart workspace, the radar symbol list (`stratai.*` keys, see `webAdapters.ts`), TradingView layouts (`utils/tvSaveLoadAdapter.ts`), and the JWT/refresh token.
 
 ---
 

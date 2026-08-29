@@ -2,7 +2,7 @@
 
 import React, { useMemo } from 'react';
 import { Coins, Zap, Loader2, Shield, ChevronDown, Cpu, Square } from 'lucide-react';
-import { useQuantStore, isActionableTrade } from '../../store/useQuantStore';
+import { useQuantStore } from '../../store/useQuantStore';
 import type { StreamEventPayload } from '../../store/useQuantStore';
 import { useTradeStore } from '../../store/useTradeStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
@@ -86,7 +86,6 @@ export default function DeepQuantPanel() {
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
   const historicalCache = useTradeStore((s) => s.historicalCache);
   const activeTimeframe = useTradeStore((s) => s.activeTimeframe);
-  const paperPortfolio = useTradeStore((s) => s.paperPortfolio);
   const symbol = selectedSymbol || 'RELIANCE';
   const activeSymbol = symbol;
 
@@ -105,10 +104,6 @@ export default function DeepQuantPanel() {
   const dataReady = symbolCandleCount > 0;
   const insufficientData = symbolCandleCount > 0 && symbolCandleCount < 50;
 
-  const hasActivePosition = paperPortfolio?.active_positions.some(
-    (p) => p.symbol.toUpperCase() === symbol.toUpperCase()
-  ) || false;
-  const [deployed, setDeployed] = React.useState(false);
   const [agentStatus, setAgentStatus] = React.useState<string>("Awaiting trigger...");
 
   // ── Split Dropdown & Verification State ──
@@ -150,11 +145,6 @@ export default function DeepQuantPanel() {
       unlisten?.();
     };
   }, []);
-
-  // Reset deployed state when plan changes
-  React.useEffect(() => {
-    setDeployed(false);
-  }, [aiPlan]);
 
   // Persist analysis per (symbol, profile): when the active chart symbol OR the
   // workspace mode changes, load that combination's saved session (reasoning,
@@ -207,42 +197,6 @@ export default function DeepQuantPanel() {
     });
   };
 
-  // A plan is deployable only when it is a validated directional trade. A
-  // HOLD / stand_aside, an unknown/absent action, or a plan missing structured
-  // execution_levels is never deployable (R1.5/R1.6/R1.8). The deploy control
-  // itself is gated on this below so the action is not even offered.
-  const planActionable = isActionableTrade(aiPlan);
-
-  const handleDeployStrategy = async () => {
-    // Fail safe: never deploy a non-actionable plan, and never synthesize
-    // levels from prose or the last close. Levels come only from the validated
-    // Declare_Trade_Args carried in aiPlan.execution_levels.
-    if (!isActionableTrade(aiPlan)) return;
-
-    const { entry, stop_loss, take_profit } = aiPlan.execution_levels;
-    const tradeSide = aiPlan.action === 'SELL' ? 'SELL' : 'BUY';
-
-    try {
-      const resMsg = await bridgeInvoke<string>('execute_paper_trade', {
-        symbol,
-        side: tradeSide,
-        entryPrice: entry,
-        stopLoss: stop_loss,
-        takeProfit: take_profit,
-      });
-      useTradeStore.getState().addSystemLog('INFO', `[Paper Engine] ${resMsg}`);
-
-      // Trigger dynamic positions fetch
-      await useTradeStore.getState().fetchPaperPortfolio();
-
-      // Set local deployed state
-      setDeployed(true);
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      console.error('Failed to deploy strategy:', err);
-      useTradeStore.getState().addSystemLog('ERROR', `Failed to deploy strategy: ${errMsg}`);
-    }
-  };
 
   return (
     <div className="flex h-full flex-col text-sm select-none overflow-hidden">
@@ -479,10 +433,6 @@ export default function DeepQuantPanel() {
           ) : aiPlan ? (
             <AiExecutionPlanView
               aiPlan={aiPlan}
-              actionable={planActionable}
-              deployed={deployed}
-              hasActivePosition={hasActivePosition}
-              onDeploy={handleDeployStrategy}
               onClear={clearAiPlan}
             />
           ) : (

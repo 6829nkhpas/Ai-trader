@@ -1,58 +1,29 @@
-import React, { useState, useEffect } from 'react';
-import { Shield, Rocket, CheckCircle2, Loader2 } from 'lucide-react';
+import React from 'react';
+import { Shield } from 'lucide-react';
 import { AiExecutionPlan, ExecutionLevels } from '../../../store/useQuantStore';
-import { useTradeStore } from '../../../store/useTradeStore';
 import { highlightNumbers } from './textHighlighter';
-import { bridgeInvoke } from '../../../lib/bridge';
 
+/**
+ * The agent's committed trade plan, as a read-only research card.
+ *
+ * This used to carry an "Approve & Execute (Virtual)" button that opened a
+ * position in a simulated paper portfolio. That whole feature has been removed
+ * from the app, so the card is now purely what the analysis produced: the
+ * conviction, the setup rationale, and the entry/target/stop levels. Those are
+ * real outputs of the run and are unchanged.
+ *
+ * There is deliberately NO execution control here. The product has no order path
+ * of any kind — see docs/compliance/BRAND_GUIDELINES.md §1.1.
+ */
 interface ActionableTradePlanProps {
   finalTrade: AiExecutionPlan & { execution_levels: ExecutionLevels };
-  selectedSymbol: string;
 }
 
-export default function ActionableTradePlan({
-  finalTrade,
-  selectedSymbol,
-}: ActionableTradePlanProps) {
-  const [executed, setExecuted] = useState(false);
-  const [isExecuting, setIsExecuting] = useState(false);
-
-  // Reset execution status if the final trade plan changes
-  useEffect(() => {
-    setExecuted(false);
-  }, [finalTrade]);
-
+export default function ActionableTradePlan({ finalTrade }: ActionableTradePlanProps) {
   const side = finalTrade.action === 'SELL' ? 'SELL' : 'BUY';
   const entryPrice = finalTrade.execution_levels.entry;
   const takeProfit = finalTrade.execution_levels.take_profit;
   const stopLoss = finalTrade.execution_levels.stop_loss;
-
-  const handleApproveAndExecute = async () => {
-    if (executed || isExecuting) return;
-    setIsExecuting(true);
-
-    try {
-      const resMsg = await bridgeInvoke<string>('execute_paper_trade', {
-        symbol: selectedSymbol,
-        side,
-        entryPrice,
-        stopLoss,
-        takeProfit,
-      });
-
-      useTradeStore.getState().addSystemLog('INFO', `[Paper Engine] ${resMsg}`);
-
-      // Refresh positions
-      await useTradeStore.getState().fetchPaperPortfolio();
-      setExecuted(true);
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      console.error('Failed to execute paper trade:', err);
-      useTradeStore.getState().addSystemLog('ERROR', `Failed to execute paper trade: ${errMsg}`);
-    } finally {
-      setIsExecuting(false);
-    }
-  };
 
   return (
     <div className="flex justify-start animate-fade-in font-sans w-full mt-2 mb-2 select-text">
@@ -78,7 +49,7 @@ export default function ActionableTradePlan({
         )}
 
         {/* Price levels grid */}
-        <div className="grid grid-cols-3 gap-px bg-border-default/40 border-b border-border-default/60">
+        <div className="grid grid-cols-3 gap-px bg-border-default/40">
           <div className="bg-surface px-3 py-2.5 flex flex-col gap-0.5">
             <span className="text-[8px] text-text-muted font-bold uppercase tracking-widest select-none">
               Entry ({side})
@@ -103,42 +74,6 @@ export default function ActionableTradePlan({
               ₹{stopLoss.toFixed(2)}
             </span>
           </div>
-        </div>
-
-        {/* Execute button */}
-        <div className="px-3 py-2.5">
-          <button
-            type="button"
-            disabled={executed || isExecuting}
-            onClick={handleApproveAndExecute}
-            className={`
-              w-full flex items-center justify-center gap-2 rounded-sm py-2 text-[10px] font-bold uppercase tracking-widest transition-all duration-300 border
-              ${
-                executed
-                  ? 'bg-elevated text-text-muted border-border-default cursor-default'
-                  : isExecuting
-                  ? 'bg-elevated text-text-muted border-border-default cursor-wait'
-                  : 'bg-text-primary text-surface border-text-primary hover:bg-text-secondary hover:border-text-secondary active:scale-[0.98]'
-              }
-            `}
-          >
-            {isExecuting ? (
-              <>
-                <Loader2 size={12} className="animate-spin" />
-                Executing simulated trade...
-              </>
-            ) : executed ? (
-              <>
-                <CheckCircle2 size={12} />
-                Simulated Trade Executed
-              </>
-            ) : (
-              <>
-                <Rocket size={12} />
-                Approve & Execute (Virtual)
-              </>
-            )}
-          </button>
         </div>
       </div>
     </div>

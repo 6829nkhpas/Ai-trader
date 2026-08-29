@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAuthStore } from '../../store/useAuthStore';
-import { useTradeStore } from '../../store/useTradeStore';
 import {
   User,
   X,
@@ -25,7 +24,6 @@ type ModalTab = 'profile' | 'subscription' | 'billing';
 
 export default function UserProfileModal({ isOpen, onClose }: UserProfileModalProps) {
   const { user, logout, fetchProfile } = useAuthStore();
-  const { paperPortfolio, fetchPaperPortfolio } = useTradeStore();
   const [activeTab, setActiveTab] = useState<ModalTab>('profile');
 
   const { data: creditData, loading: creditLoading, error: creditError, refetch: refetchCredit } = useCredit();
@@ -34,8 +32,7 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
   useEffect(() => {
     if (!isOpen) return;
     fetchProfile();
-    fetchPaperPortfolio();
-  }, [isOpen, fetchProfile, fetchPaperPortfolio]);
+  }, [isOpen, fetchProfile]);
 
   if (!isOpen) return null;
 
@@ -123,7 +120,6 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
             <ProfileTab
               user={user}
               planName={planName}
-              paperPortfolio={paperPortfolio}
               formatDate={formatDate}
             />
           )}

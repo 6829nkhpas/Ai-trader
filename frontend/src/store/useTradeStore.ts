@@ -52,23 +52,6 @@ export interface OhlcCandle {
   volume: number;
 }
 
-export interface VirtualPosition {
-  id: string;
-  symbol: string;
-  side: string; // "BUY" or "SELL"
-  entry_price: number;
-  quantity: number;
-  take_profit: number;
-  stop_loss: number;
-  status: string; // "OPEN", "CLOSED_WIN", "CLOSED_LOSS"
-}
-
-export interface VirtualPortfolio {
-  balance: number;
-  active_positions: VirtualPosition[];
-  trade_history: VirtualPosition[];
-}
-
 export interface PredictiveSignal {
   symbol: string;
   timestamp_ms: number;
@@ -277,8 +260,6 @@ interface TradeStore {
   recordSetupAudit: (outcome: AuditOutcome) => void;
   /** Record whether a deployed plan's exit honoured its committed levels (P6). */
   recordPlanOutcome: (followed: boolean) => void;
-  paperPortfolio: VirtualPortfolio | null;
-  fetchPaperPortfolio: () => Promise<void>;
   agentChatLog: Array<{ role: string; content: string }>;
   finalTradePlan: any | null;
   clearAgentChatLog: () => void;
@@ -465,22 +446,22 @@ export async function hydrateWatchlist() {
   }
 }
 
-/** Hydrate and subscribe to paper trading virtual portfolio state.
+/**
+ * Subscribe to the legacy Path-A agent bridge events.
  *
- *  The portfolio is stored per-device in `localStorage` (see the paper-trading
- *  adapters in `lib/bridge/webAdapters.ts`). That is the same scope the desktop
- *  shell had — its portfolio lived in Tauri managed state — except it now also
- *  survives a reload. */
-export async function hydratePaperPortfolio() {
+ * Was `hydratePaperPortfolio`, which also fetched the simulated portfolio and
+ * subscribed to `paper_portfolio_update`. The paper-trading feature has been
+ * removed, so only these two listeners remain — they are named honestly now
+ * rather than under a portfolio function.
+ *
+ * NOTE: both listeners below are themselves legacy and feed state
+ * (`agentChatLog`, `finalTradePlan`) that no current component renders; the live
+ * agent transcript comes from the SSE stream in `useQuantStore`. They are kept
+ * here deliberately rather than swept up in the paper-trading removal, since
+ * that is a separate decision.
+ */
+export async function hydrateLegacyAgentBridge() {
   try {
-    const store = useTradeStore.getState();
-    await store.fetchPaperPortfolio();
-
-    await bridgeListen<VirtualPortfolio>('paper_portfolio_update', (event) => {
-      console.log('[TradeStore] Paper portfolio update event received:', event.payload);
-      useTradeStore.setState({ paperPortfolio: event.payload });
-    });
-
     await bridgeListen<{ role: string; content: string }>('agent_message', (event) => {
       console.log('[TradeStore] agent_message event received:', event.payload);
       const currentLog = useTradeStore.getState().agentChatLog;
@@ -500,7 +481,7 @@ export async function hydratePaperPortfolio() {
       // The SSE `RUN_FINISHED` handler in useQuantStore handles this correctly.
     });
   } catch (e) {
-    console.warn('[TradeStore] Failed to setup paper portfolio subscription:', e);
+    console.warn('[TradeStore] Failed to setup legacy agent bridge listeners:', e);
   }
 }
 
@@ -571,7 +552,6 @@ export const useTradeStore = create<TradeStore>((set) => {
     selectedSymbol: 'RELIANCE',
     historicalCache: {},
     watchlist: [],
-    paperPortfolio: null,
     agentChatLog: [],
     finalTradePlan: null,
     chartMode: 'STANDARD',
@@ -580,15 +560,6 @@ export const useTradeStore = create<TradeStore>((set) => {
     preFnoSymbol: '',
     fnoExpiry: '',
     clearAgentChatLog: () => set({ agentChatLog: [], finalTradePlan: null }),
-
-    fetchPaperPortfolio: async () => {
-      try {
-        const portfolio = await bridgeInvoke<VirtualPortfolio>('get_paper_portfolio');
-        set({ paperPortfolio: portfolio });
-      } catch (e) {
-        console.warn('[TradeStore] Failed to fetch paper portfolio:', e);
-      }
-    },
 
     setActiveProfile: (profile: TradeProfile) => {
       set((state) => {

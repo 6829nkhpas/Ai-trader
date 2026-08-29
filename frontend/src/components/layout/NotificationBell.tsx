@@ -10,7 +10,7 @@
  *
  * The feed is REAL: `useTradeStore.systemLogs`, the same WARN/ERROR/INFO stream
  * the terminal's system console renders, written by the WebSocket bootstrap,
- * the paper-trade engine and the agent pipeline. Nothing is synthesised here —
+ * and the agent pipeline. Nothing is synthesised here —
  * with no logs the panel says so rather than inventing entries.
  *
  * "Unread" is tracked against the timestamp of the newest log the user has seen,

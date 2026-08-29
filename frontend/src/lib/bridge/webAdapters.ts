@@ -356,31 +356,12 @@ async function startAgentRun(args: Args): Promise<string> {
 // and `set_radar_symbols` to an in-process registry. The browser equivalent is
 // `localStorage`: same per-user, per-device scope, and it survives a reload,
 // which the current browser fallback (`charting/workspace.ts` in-memory) does not.
+//
+// `readLocal`/`writeLocal` below are SHARED by both of those features. They also
+// used to back a simulated paper-trading portfolio, which has been removed.
 
 const WORKSPACE_KEY = (symbol: string) => `stratai.workspace.${symbol}`;
 const RADAR_KEY = 'stratai.radar.symbols';
-const PORTFOLIO_KEY = 'stratai.paper.portfolio';
-
-/** The opening balance from `lib.rs:204`, so both paths start from ₹10,00,000. */
-const PAPER_OPENING_BALANCE = 1000000.0;
-
-interface PaperPosition {
-  id: string;
-  symbol: string;
-  side: string;
-  entry_price: number;
-  quantity: number;
-  take_profit: number;
-  stop_loss: number;
-  status: string;
-}
-
-interface PaperPortfolio {
-  balance: number;
-  active_positions: PaperPosition[];
-  trade_history: PaperPosition[];
-}
-
 function readLocal(key: string): string | null {
   try {
     return typeof localStorage === 'undefined' ? null : localStorage.getItem(key);
@@ -403,37 +384,6 @@ function writeLocal(key: string, value: string): void {
     throw new Error('localStorage is unavailable in this environment');
   }
   localStorage.setItem(key, value); // quota / private-mode errors propagate
-}
-
-/**
- * The stored paper portfolio, or a fresh one at the opening balance.
- *
- * Total: a corrupt or partial value reads as a fresh portfolio rather than
- * throwing, because the desktop command cannot fail this way and a caller that
- * crashed here would leave the trade panel stuck.
- */
-function readPortfolio(): PaperPortfolio {
-  const fresh: PaperPortfolio = {
-    balance: PAPER_OPENING_BALANCE,
-    active_positions: [],
-    trade_history: [],
-  };
-  const raw = readLocal(PORTFOLIO_KEY);
-  if (!raw) return fresh;
-  try {
-    const parsed = JSON.parse(raw) as Partial<PaperPortfolio>;
-    return {
-      balance: Number.isFinite(parsed.balance) ? (parsed.balance as number) : PAPER_OPENING_BALANCE,
-      active_positions: Array.isArray(parsed.active_positions) ? parsed.active_positions : [],
-      trade_history: Array.isArray(parsed.trade_history) ? parsed.trade_history : [],
-    };
-  } catch {
-    return fresh;
-  }
-}
-
-function writePortfolio(portfolio: PaperPortfolio): void {
-  writeLocal(PORTFOLIO_KEY, JSON.stringify(portfolio));
 }
 
 /** Mirrors `quant::radar::RadarRegistry::set_symbols` — trim, upper, dedupe. */export function cleanRadarSymbols(input: unknown): string[] {
@@ -843,74 +793,6 @@ export const WEB_ADAPTERS: Record<string, WebAdapter> = {
 
   // ── Misc ──────────────────────────────────────────────────────────────────
 
-  // ── Paper trading ─────────────────────────────────────────────────────────
-  // Desktop keeps the virtual portfolio in Tauri managed state
-  // (`lib.rs:203` — `Mutex<VirtualPortfolio>`), so it is per-device AND resets on
-  // every app launch. `localStorage` is the same per-device scope that survives a
-  // reload, so this is a strict improvement rather than a degraded stand-in. A
-  // server-side store keyed by the JWT `user_id` is the real upgrade (it would
-  // follow the user across devices) but needs auth plumbing that does not exist.
-  execute_paper_trade: async (args) => {
-    const symbol = reqStr(args, 'symbol', 'execute_paper_trade');
-    const side = reqStr(args, 'side', 'execute_paper_trade');
-    const entryPrice = reqNum(args, 'entryPrice' in args ? 'entryPrice' : 'entry_price', 'execute_paper_trade');
-    const stopLoss = reqNum(args, 'stopLoss' in args ? 'stopLoss' : 'stop_loss', 'execute_paper_trade');
-    const takeProfit = reqNum(args, 'takeProfit' in args ? 'takeProfit' : 'take_profit', 'execute_paper_trade');
-
-    const portfolio = readPortfolio();
-
-    // Position sizing copied from `execution/paper.rs`: risk exactly 2% of balance
-    // over the stop distance, with the same degenerate-distance and minimum-size
-    // guards, so the two paths size a trade identically.
-    const riskAmount = portfolio.balance * 0.02;
-    const slDistance = Math.abs(entryPrice - stopLoss);
-    const sized = slDistance > 1e-6 ? Math.round(riskAmount / slDistance) : 10;
-    const quantity = Math.max(1, sized);
-
-    portfolio.active_positions.push({
-      id: `${symbol}-${Date.now()}`,
-      symbol,
-      side,
-      entry_price: entryPrice,
-      quantity,
-      take_profit: takeProfit,
-      stop_loss: stopLoss,
-      status: 'OPEN',
-    });
-    writePortfolio(portfolio);
-
-    // The desktop command emits this so `useTradeStore` refreshes without polling.
-    emitBridgeEvent('paper_portfolio_update', portfolio);
-
-    return `Trade executed successfully! Deployed ${quantity} units of ${symbol} (Risking 2% on stop-loss distance).`;
-  },
-
-  get_paper_portfolio: async () => readPortfolio(),
-
-  log_completed_trade: async (args) => {
-    const portfolio = readPortfolio();
-    const symbol = optStr(args, 'symbol');
-    // Move the matching open position into history; with no match, record what was
-    // supplied so the journal is not silently short an entry.
-    const idx = portfolio.active_positions.findIndex((p) => p.symbol === symbol);
-    const closed =
-      idx >= 0
-        ? { ...portfolio.active_positions.splice(idx, 1)[0], status: optStr(args, 'status') ?? 'CLOSED' }
-        : {
-            id: `${symbol ?? 'unknown'}-${Date.now()}`,
-            symbol: symbol ?? 'unknown',
-            side: optStr(args, 'side') ?? '',
-            entry_price: Number(args.entry_price ?? args.entryPrice) || 0,
-            quantity: Number(args.quantity) || 0,
-            take_profit: Number(args.take_profit ?? args.takeProfit) || 0,
-            stop_loss: Number(args.stop_loss ?? args.stopLoss) || 0,
-            status: optStr(args, 'status') ?? 'CLOSED',
-          };
-    portfolio.trade_history.push(closed);
-    writePortfolio(portfolio);
-    return undefined;
-  },
-
   open_browser: async (args) => {
     const url = reqStr(args, 'url', 'open_browser');
     window.open(url, '_blank', 'noopener,noreferrer');
@@ -1020,9 +902,9 @@ export const PENDING_SERVER_ROUTE: Record<string, string> = {};
  */
 export const NO_FRONTEND_CALLER: Record<string, string> = {
   get_trade_history:
-    'No call site. `useQuantStore` writes the journal via log_completed_trade but ' +
-    'nothing reads it back; the trade history the UI shows comes from ' +
-    'get_paper_portfolio.trade_history.',
+    'No call site. This was the read side of the simulated paper-trading journal, ' +
+    'which has been removed from the app entirely — there is no trade history to ' +
+    'show and nothing writes one.',
   deploy_ai_sentinel:
     'No call site. The sentinel monitor loop is desktop-resident background work ' +
     'with no UI entry point; a hosted deployment would run it server-side.',

@@ -10,15 +10,12 @@ import SwingLayout from '../components/layouts/SwingLayout';
 import InvestorLayout from '../components/layouts/InvestorLayout';
 import SplitChartContainer from '../components/chart/SplitChartContainer';
 import FnoSection from '../components/fno/FnoSection';
-import ActivePositions from '../components/quant/ActivePositions';
-import PortfolioDashboard from '../components/quant/PortfolioDashboard';
-import PaperPortfolioBar from '../components/panels/PaperPortfolioBar';
 import RightSidebar from '../components/panels/RightSidebar';
 import ToastContainer from '../components/common/ToastContainer';
 import AuthOverlay from '../components/auth/AuthOverlay';
 import ConnectionLost from '../components/common/ConnectionLost';
 
-import { useTradeStore, hydratePaperPortfolio } from '../store/useTradeStore';
+import { useTradeStore, hydrateLegacyAgentBridge } from '../store/useTradeStore';
 import { useQuantStore } from '../store/useQuantStore';
 import { useChartUIStore } from '../store/useChartUIStore';
 import { useFeatureStore } from '../store/useFeatureStore';
@@ -42,7 +39,7 @@ export default function Home() {
   const { data: creditData } = useCredit();
 
   // ── Store selectors ───────────────────────────────────────────────
-  const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, connectOrderFlowWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, selectedSymbol, paperPortfolio } = useTradeStore();
+  const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, connectOrderFlowWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, selectedSymbol } = useTradeStore();
   const isFullscreen = useChartUIStore((s) => s.isFullscreen);
   const setIsFullscreen = useChartUIStore((s) => s.setIsFullscreen);
   const splitView = useChartUIStore((s) => s.splitView);
@@ -68,8 +65,6 @@ export default function Home() {
   const showConnectionLost = useConnectionMonitor(mounted);
   const { toasts } = useToast();
   const { rightButtonTop, isDraggingRight, handleRightButtonMouseDown, sidebarWidth, isResizingSidebar, startResizingSidebar } = useSidebarDrag(() => setSidebarOpen(true));
-
-  const [paperPortfolioOpen, setPaperPortfolioOpen] = useState(false);
 
   // ── Derived symbol ────────────────────────────────────────────────
   const latestDecision = activeDecision ?? liveDecisions[liveDecisions.length - 1] ?? null;
@@ -98,7 +93,7 @@ export default function Home() {
   // ── WebSocket bootstrap ───────────────────────────────────────────
   useEffect(() => {
     connectWebSocket();
-    hydratePaperPortfolio();
+    hydrateLegacyAgentBridge();
     fetchProfile();
   }, [connectWebSocket, fetchProfile]);
 
@@ -212,18 +207,6 @@ export default function Home() {
                   {renderProfileContent()}
                 </div>
               </div>
-
-              {!isFullscreen && <ActivePositions />}
-
-              {!isFullscreen && (
-                paperPortfolioOpen ? (
-                  <div className="border-t border-border-default bg-surface">
-                    <PortfolioDashboard onCollapse={() => setPaperPortfolioOpen(false)} />
-                  </div>
-                ) : (
-                  <PaperPortfolioBar paperPortfolio={paperPortfolio} onExpand={() => setPaperPortfolioOpen(true)} />
-                )
-              )}
 
               {!isFullscreen && (
                 <div className="shrink-0 border-t border-border-default bg-surface rounded-none">

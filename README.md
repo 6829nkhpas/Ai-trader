@@ -16,7 +16,7 @@ Strat is a proprietary, institutional-grade, AI-driven quantitative trading plat
 - [LangGraph Reasoning Core](#-langgraph-stateful-agentic-reasoning-core)
 - [Options Data Foundation (F&O)](#-options-data-foundation-fo-sync)
 - [Protobuf Contracts](#-protobuf-data-contracts)
-- [Paper Trading Engine](#-paper-trading-engine)
+- [No Order Path, No Simulation](#-no-order-path-no-simulation)
 - [Desktop Terminal (Tauri + Next.js)](#-desktop-terminal--tauri--nextjs)
 - [Testing Foundation](#-purity--property-based-testing-foundation)
 - [Directory Map](#-complete-directory-map)
@@ -119,7 +119,7 @@ graph TD
 
 6. **Stateful ReAct Loop** — The Deep Quant Loop (FastAPI on port `8086`) runs a compiled LangGraph state machine. It invokes the Rust Tool Server (port `8084`) for market microstructure, regime classification, forecasting, and order flow analysis, then streams glass-box SSE events back to the desktop.
 
-7. **Paper Trading Execution** — The Tauri native bridge maintains a `VirtualPortfolio` in memory. Each incoming tick is evaluated against open positions for stop-loss and take-profit triggers, with all state changes emitted to the React frontend in real time.
+7. **Presentation** — The plan is rendered read-only in the terminal: conviction, setup rationale, and the entry/target/stop levels. Nothing is executed or simulated; there is no order path and no virtual portfolio.
 
 ---
 
@@ -461,15 +461,17 @@ message AggregatedDecision {
 
 ---
 
-## 💸 Paper Trading Engine
+## 🚫 No Order Path, No Simulation
 
-The Tauri native bridge includes a full paper-trading engine (`execution/paper.rs`) that simulates live trading without risking real capital:
+The product analyses markets; it does not place or simulate orders.
 
-- **Fixed Risk Model**: Every paper trade risks exactly **2% of portfolio balance** on the stop-loss distance: $\text{Qty} = \lfloor \frac{0.02 \times \text{Balance}}{|Entry - SL|} \rceil$
-- **Real-Time Position Monitoring**: Each incoming tick is evaluated against all open positions. Positions auto-close when price hits SL or TP.
-- **Instant UI Updates**: Portfolio state changes are emitted via Tauri events (`paper_portfolio_update`) for immediate React rendering.
-- **Position States**: `OPEN` → `CLOSED_WIN` | `CLOSED_LOSS`
-- **Balance Tracking**: Running P&L calculated on each closure.
+There is no broker order path of any kind, and the simulated paper-trading
+portfolio that previously shipped has been **removed entirely** — no virtual
+balance, no simulated positions, no trade journal. An analysis produces a plan
+with entry, target and stop levels for the user to act on themselves, and the
+terminal renders it read-only.
+
+See `docs/compliance/BRAND_GUIDELINES.md` §1.1.
 
 ---
 
@@ -481,7 +483,6 @@ A native desktop application combining Rust backend power with a React-based HUD
 
 - **Instrument Master Sync**: SQLite-backed instrument database with bulk sync from Kite API.
 - **Option Chain Subscriber**: Background task polling spot prices and managing F&O subscriptions.
-- **Paper Trading Engine**: Virtual portfolio with tick-by-tick position evaluation.
 - **QuestDB Connection Pool**: PostgreSQL pool for historical candle queries.
 - **IPC Commands**: Exposes 20+ Tauri commands to the React layer.
 
@@ -589,7 +590,6 @@ Ai-trader/
 ├── frontend/
 │   ├── src-tauri/                # Tauri Rust native bridge
 │   │   ├── src/
-│   │   │   ├── execution/paper.rs # Paper trading engine
 │   │   │   ├── quant/            # Option chain resolver & subscriber
 │   │   │   └── ...               # IPC commands, DB connections
 │   │   └── tests/                # Rust integration tests

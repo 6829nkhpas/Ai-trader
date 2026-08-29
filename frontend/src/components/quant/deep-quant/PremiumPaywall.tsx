@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Loader2, Lock, ArrowRight, Cpu, ShieldCheck, Activity } from 'lucide-react';
+import { Loader2, Lock, ArrowRight, Cpu, ShieldCheck } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { dashboardUrl, openExternalUrl } from '../../../lib/redirect';
 import SubscriptionIcon from './SubscriptionIcon';
@@ -59,12 +59,16 @@ export default function PremiumPaywall({ onUpgradeClick }: PremiumPaywallProps) 
           Paper Broker Sync" ("Broker Sync" implies orders reach a broker; paper
           trading is entirely local). "Autonomous" is the single worst word to sell a
           product on when its compliance position is that it cannot act — see §1.1
-          rule 11. */}
+          rule 11.
+
+          Also removed this pass: "Local Paper-Trade Simulator — No Broker Orders".
+          The simulated paper portfolio has been deleted from the product, so
+          advertising it on a paid plan would be selling something that does not
+          exist — the same §3 problem as the two labels above. */}
       <motion.div variants={fadeInUp} className="w-full max-w-sm space-y-2 text-left">
         {[
           { icon: Cpu, label: 'Multi-Step AI Research Loop with Live Tool Calls' },
           { icon: ShieldCheck, label: 'Mathematical Risk Manager & Trade Evaluator' },
-          { icon: Activity, label: 'Local Paper-Trade Simulator — No Broker Orders' },
         ].map(({ icon: Icon, label }) => (
           <div
             key={label}

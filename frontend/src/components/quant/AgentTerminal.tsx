@@ -2,7 +2,6 @@
 
 import React, { useEffect, useRef } from 'react';
 import { Shield, Loader2, AlertTriangle, Lock } from 'lucide-react';
-import { useTradeStore } from '../../store/useTradeStore';
 import { useQuantStore, isActionableTrade } from '../../store/useQuantStore';
 
 import WatchingIndicator from './deep-quant/WatchingIndicator';
@@ -20,7 +19,6 @@ export default function AgentTerminal() {
   const finalTrade = useQuantStore((s) => s.finalTrade);
   const analysisError = useQuantStore((s) => s.analysisError);
 
-  const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
 
   const qaMessages = useQuantStore((s) => s.qaMessages);
   const qaStatus = useQuantStore((s) => s.qaStatus);
@@ -259,10 +257,7 @@ export default function AgentTerminal() {
 
         {/* Actionable trade declaration */}
         {sessionStatus === 'complete' && isActionableTrade(finalTrade) && (
-          <ActionableTradePlan
-            finalTrade={finalTrade}
-            selectedSymbol={selectedSymbol}
-          />
+          <ActionableTradePlan finalTrade={finalTrade} />
         )}
 
         <div ref={terminalEndRef} />

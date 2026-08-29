@@ -53,9 +53,7 @@ describe('bridgeInvoke off-Tauri', () => {
 
   it('reports availability without throwing', () => {
     expect(isCommandAvailable('fetch_symbol_sentiment')).toBe(true);
-    // Ported to the web this pass — the paper portfolio now lives in
-    // localStorage and the radar/pattern scans call quant-core via tool-server.
-    expect(isCommandAvailable('execute_paper_trade')).toBe(true);
+    // The radar/pattern scans call quant-core via tool-server.
     expect(isCommandAvailable('scan_radar_symbol')).toBe(true);
     expect(isCommandAvailable('fno_list_chains')).toBe(true);
     // Still genuinely absent: no caller, so no adapter.

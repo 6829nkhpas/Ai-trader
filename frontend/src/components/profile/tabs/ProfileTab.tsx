@@ -7,23 +7,16 @@ import { useAuthStore } from '../../../store/useAuthStore';
 import { dashboardUrl, openExternalUrl } from '../../../lib/redirect';
 import type { AuthUser } from '../../../store/useAuthStore';
 
-interface PaperPortfolio {
-  balance?: number;
-  active_positions?: unknown[];
-  trade_history?: unknown[];
-}
 
 interface ProfileTabProps {
   user: AuthUser | null;
   planName: string | null;
-  paperPortfolio: PaperPortfolio | null;
   formatDate: (date: string | number) => string;
 }
 
 export default function ProfileTab({
   user,
   planName,
-  paperPortfolio,
   formatDate,
 }: ProfileTabProps) {
   const updateName = useAuthStore((s) => s.updateName);
@@ -141,12 +134,6 @@ export default function ProfileTab({
         <div className="flex justify-between items-center py-1.5 border-t border-border-default">
           <span className="text-[10px] uppercase tracking-widest text-text-secondary">Account Email</span>
           <span className="text-xs font-semibold text-text-primary">{user?.email || '—'}</span>
-        </div>
-        <div className="flex justify-between items-center py-1.5 border-t border-border-default">
-          <span className="text-[10px] uppercase tracking-widest text-text-secondary">Paper Trading Simulated Balance</span>
-          <span className="text-xs font-semibold text-emerald-400">
-            ₹{paperPortfolio?.balance?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '1,000,000.00'}
-          </span>
         </div>
       </div>
     </div>
