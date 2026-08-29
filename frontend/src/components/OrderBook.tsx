@@ -45,6 +45,34 @@ export default function OrderBook() {
   const [isLive, setIsLive] = useState(false);
   const updateCountRef = useRef(0);
 
+  // ── Ask-ladder scroll anchoring ──────────────────────────────────────
+  // `book.asks` is ordered farthest-ask-first (the builder reverses it), so the
+  // BEST ask — the one that matters, sitting right above the mid price — is the
+  // LAST row. A scroll container starts at scrollTop 0, i.e. showing the
+  // farthest levels, which would push the best ask out of view. Anchor to the
+  // bottom once per symbol, then leave the scroll position alone so scrolling up
+  // to inspect deeper levels isn't yanked back on the next 2s tick.
+  const asksScrollRef = useRef<HTMLDivElement>(null);
+  const asksAnchoredRef = useRef(false);
+
+  useEffect(() => {
+    asksAnchoredRef.current = false; // a new symbol is a new ladder
+  }, [selectedSymbol]);
+
+  useEffect(() => {
+    if (asksAnchoredRef.current || book.asks.length === 0) return;
+    const el = asksScrollRef.current;
+    if (!el) return;
+    // One frame later, so the row heights are settled before we measure.
+    const id = requestAnimationFrame(() => {
+      const node = asksScrollRef.current;
+      if (!node) return;
+      node.scrollTop = node.scrollHeight;
+      asksAnchoredRef.current = true;
+    });
+    return () => cancelAnimationFrame(id);
+  }, [book.asks.length]);
+
   // ── Load cached order book data when symbol changes ──────────────────
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -255,28 +283,49 @@ export default function OrderBook() {
 
       {/* ── Ask Levels (Red) — Scrollable without scrollbar ─────────── */}
       {book.asks.length > 0 && (
-        <div className="flex flex-col justify-end flex-1 min-h-0 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] font-sans">
-          {book.asks.map((level, i) => (
-            <div
-              key={`ask-${i}`}
-              className={`group relative grid grid-cols-3 gap-0 px-3.5 py-0.75 hover:bg-red-500/10 ${level.synthetic ? 'opacity-75' : ''}`}
-            >
-              {/* Depth bar background */}
+        // NOTE: no `justify-end` here, deliberately.
+        //
+        // This container used to be `flex flex-col justify-end overflow-y-auto`,
+        // and that combination is unscrollable in every major browser: with
+        // `justify-content: flex-end`, content that overflows does so past the
+        // BLOCK-START (top) edge, and `scrollTop` cannot go below 0 — so the
+        // topmost ask rows were clipped with no way to reach them. The bid side
+        // never had `justify-end`, which is exactly why green scrolled and red
+        // did not.
+        //
+        // The fix is an auto margin on the content wrapper below instead. Auto
+        // margins give the same bottom alignment when there is spare room, but
+        // resolve to 0 once the content overflows, so the scroll container
+        // behaves normally.
+        <div
+          ref={asksScrollRef}
+          className="flex flex-col flex-1 min-h-0 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] font-sans"
+        >
+          {/* `mt-auto` keeps the best ask pinned just above the mid-price row
+              when the ladder is shorter than the pane, without breaking scroll. */}
+          <div className="mt-auto">
+            {book.asks.map((level, i) => (
               <div
-                className="pointer-events-none absolute inset-y-0 right-0 bg-red-500/12"
-                style={{ width: `${depthPercent(level.size, globalMaxSize)}%` }}
-              />
-              <span className="relative z-10 tabular-nums font-extrabold text-[#ef4444]">
-                {level.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
-              <span className="relative z-10 tabular-nums text-right font-bold text-red-400/90">
-                {formatSize(level.size)}
-              </span>
-              <span className="relative z-10 tabular-nums text-right font-bold text-zinc-400">
-                {formatSize(level.total)}
-              </span>
-            </div>
-          ))}
+                key={`ask-${i}`}
+                className={`group relative grid grid-cols-3 gap-0 px-3.5 py-0.75 hover:bg-red-500/10 ${level.synthetic ? 'opacity-75' : ''}`}
+              >
+                {/* Depth bar background */}
+                <div
+                  className="pointer-events-none absolute inset-y-0 right-0 bg-red-500/12"
+                  style={{ width: `${depthPercent(level.size, globalMaxSize)}%` }}
+                />
+                <span className="relative z-10 tabular-nums font-extrabold text-[#ef4444]">
+                  {level.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                <span className="relative z-10 tabular-nums text-right font-bold text-red-400/90">
+                  {formatSize(level.size)}
+                </span>
+                <span className="relative z-10 tabular-nums text-right font-bold text-zinc-400">
+                  {formatSize(level.total)}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
