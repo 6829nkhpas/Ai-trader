@@ -97,16 +97,33 @@ export function istToday(now: Date = new Date()): string {
 }
 
 /**
- * The soonest expiry not yet past, or the latest past one when all have expired.
+ * `expiry >= '<today IST>'` — the SQL half of never offering a dead series.
  *
- * Mirrors `fno_service.rs::resolve_nearest_expiry`. Falling back to the latest
- * past expiry rather than `null` is deliberate: a stale chain is still an honest
- * view of the last data that existed, whereas `null` blanks the workspace.
+ * `expiry` is a SYMBOL holding `YYYY-MM-DD`, so a lexicographic comparison is a
+ * chronological one.
+ */
+export function liveExpiryClause(today: string = istToday()): string {
+  return `expiry >= ${quote(today)}`;
+}
+
+/**
+ * The soonest expiry not yet past, or `null` when every known expiry has expired.
+ *
+ * This used to fall back to the latest PAST expiry, on the reasoning that a stale
+ * chain is still an honest view of the last data that existed. It is not, because
+ * nothing downstream distinguishes it from a live one: the workspace charted
+ * RELIANCE26AUG1290CE five days after it expired, priced its nine-day-old
+ * snapshot against a live spot, and rendered impossible day-changes like -156%.
+ * The chart could not recover either — an expired contract is dropped from Kite's
+ * NFO instrument master, so token resolution 404s and no candle will ever arrive.
+ *
+ * `null` lets callers say "no live chain for this underlying", which is the true
+ * statement. Every caller already handles it: `useFnoAutoContract` leaves the
+ * charted symbol alone and `FnoSidebarPanel` empties the expiry selector.
  */
 export function nearestExpiry(expiries: string[], today: string = istToday()): string | null {
   const sorted = [...new Set(expiries.filter((e) => e))].sort();
-  if (sorted.length === 0) return null;
-  return sorted.find((e) => e >= today) ?? sorted[sorted.length - 1];
+  return sorted.find((e) => e >= today) ?? null;
 }
 
 /**

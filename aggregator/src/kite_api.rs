@@ -268,11 +268,32 @@ impl KiteApiState {
     /// `Ok(None)` means Kite answered but had no price for the key — a data
     /// outcome, not a fault — so the caller can skip that underlying this cycle
     /// instead of treating it as an outage.
-    pub(crate) async fn last_price_for(&self, instrument: &str) -> Result<Option<f64>, String> {
-        let url = format!(
-            "https://api.kite.trade/quote?i={}",
-            urlencoding::encode(instrument)
-        );
+    /// Last traded price for MANY instruments in ONE `/quote` call.
+    ///
+    /// Kite's quote endpoint accepts a repeated `i=` parameter and its REST limit
+    /// is per REQUEST, not per instrument, so asking for N instruments separately
+    /// burns N of a 1-per-second budget for no reason. The chain selector reads a
+    /// spot price for every configured underlying on each 60-second cycle; issuing
+    /// those back-to-back was already close to the ceiling with two underlyings and
+    /// would exceed it with nine.
+    ///
+    /// Instruments absent from the response are absent from the map rather than
+    /// zero-filled — "no quote" and "priced at zero" have to stay distinguishable,
+    /// because a zero spot would resolve an ATM strike at the bottom of the ladder.
+    pub(crate) async fn last_prices_for(
+        &self,
+        instruments: &[String],
+    ) -> Result<HashMap<String, f64>, String> {
+        if instruments.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let query: String = instruments
+            .iter()
+            .map(|i| format!("i={}", urlencoding::encode(i)))
+            .collect::<Vec<_>>()
+            .join("&");
+        let url = format!("https://api.kite.trade/quote?{query}");
+
         let response = self
             .http_client
             .get(&url)
@@ -295,14 +316,7 @@ impl KiteApiState {
             .await
             .map_err(|e| format!("quote decode error: {e}"))?;
 
-        let price = body
-            .get("data")
-            .and_then(|d| d.get(instrument))
-            .and_then(|q| q.get("last_price"))
-            .and_then(|p| p.as_f64())
-            .filter(|p| p.is_finite() && *p > 0.0);
-
-        Ok(price)
+        Ok(parse_quote_prices(&body))
     }
 
     fn auth_header(&self) -> String {
@@ -608,6 +622,29 @@ fn parse_csv_line(line: &str) -> Vec<String> {
 ///   9  instrument_type  ← "EQ", "INDEX", "FUT", "CE", "PE" etc.
 ///   10 segment
 ///   11 exchange
+/// Pure: pull `instrument -> last_price` out of a Kite `/quote` response body.
+///
+/// An instrument whose quote is missing, non-numeric, zero, or non-finite is
+/// OMITTED rather than mapped to 0.0. The caller resolves an ATM strike from this
+/// price, and a zero would silently pick the bottom of the ladder — a wrong
+/// contract presented with the same confidence as a right one. Absent means
+/// absent, and the caller skips the underlying for that cycle.
+fn parse_quote_prices(body: &serde_json::Value) -> HashMap<String, f64> {
+    let mut out = HashMap::new();
+    if let Some(data) = body.get("data").and_then(|d| d.as_object()) {
+        for (key, quote) in data {
+            if let Some(price) = quote
+                .get("last_price")
+                .and_then(|p| p.as_f64())
+                .filter(|p| p.is_finite() && *p > 0.0)
+            {
+                out.insert(key.clone(), price);
+            }
+        }
+    }
+    out
+}
+
 fn parse_instruments_csv(csv: &str) -> Vec<Instrument> {
     /// Instrument types worth serving. Anything else (bonds, ETF variants Kite
     /// tags separately, exercise rows) is noise in a symbol search.
@@ -989,12 +1026,26 @@ async fn historical_handler(
             None => {
                 state.metrics.kite_api_failed("historical");
                 log::error!("[Kite historical] Could not resolve token for symbol '{}'", symbol);
+                // Name the exchange actually searched, and say what a miss means
+                // for a derivative. This message said "NSE instruments" for every
+                // symbol, so an F&O miss read as a lookup bug in the wrong
+                // exchange when the real answer is usually that the contract has
+                // expired — Kite drops expired contracts from the NFO master, so
+                // no amount of retrying will ever produce a candle for it.
+                let is_derivative = symbol.bytes().any(|b| b.is_ascii_digit())
+                    && (symbol.ends_with("CE") || symbol.ends_with("PE") || symbol.ends_with("FUT"));
+                let error = if is_derivative {
+                    format!(
+                        "Contract '{symbol}' is not in the NFO instrument master — it has most \
+                         likely expired, or was never listed. Expired contracts are removed by \
+                         the exchange and have no further history."
+                    )
+                } else {
+                    format!("Symbol '{symbol}' not found in NSE instruments")
+                };
                 return Err((
                     StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({
-                        "error": format!("Symbol '{}' not found in NSE instruments", symbol),
-                        "candles": []
-                    })),
+                    Json(serde_json::json!({ "error": error, "candles": [] })),
                 ));
             }
         }
@@ -1463,5 +1514,46 @@ mod tests {
         assert_eq!(json["strike"], 24000.0);
         assert_eq!(json["instrument_type"], "CE");
         assert_eq!(json["exchange"], "NFO");
+    }
+
+    #[test]
+    fn batched_quote_parse_keeps_real_prices_and_omits_the_rest() {
+        // The chain selector reads one of these per underlying per cycle and turns
+        // it into an ATM strike, so a missing quote must NOT arrive as 0.0.
+        let body = serde_json::json!({
+            "data": {
+                "NSE:NIFTY 50":   { "last_price": 24175.65 },
+                "NSE:NIFTY BANK": { "last_price": 57496.30 },
+                "NSE:RELIANCE":   { "last_price": 1290.5 },
+                // Every shape that is not a price:
+                "NSE:HALTED":     { "last_price": 0 },
+                "NSE:NOFIELD":    { "volume": 100 },
+                "NSE:TEXTPRICE":  { "last_price": "1234" },
+            }
+        });
+
+        let prices = parse_quote_prices(&body);
+
+        assert_eq!(prices.get("NSE:NIFTY 50"), Some(&24175.65));
+        assert_eq!(prices.get("NSE:NIFTY BANK"), Some(&57496.30));
+        assert_eq!(prices.get("NSE:RELIANCE"), Some(&1290.5));
+        for absent in ["NSE:HALTED", "NSE:NOFIELD", "NSE:TEXTPRICE"] {
+            assert!(
+                !prices.contains_key(absent),
+                "{absent} has no usable price and must be absent, not zero-filled"
+            );
+        }
+        assert_eq!(prices.len(), 3);
+    }
+
+    #[test]
+    fn batched_quote_parse_survives_a_body_that_is_not_a_quote_response() {
+        for body in [
+            serde_json::json!({}),
+            serde_json::json!({ "data": null }),
+            serde_json::json!({ "status": "error", "message": "invalid token" }),
+        ] {
+            assert!(parse_quote_prices(&body).is_empty());
+        }
     }
 }

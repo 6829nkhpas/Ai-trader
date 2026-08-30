@@ -15,6 +15,7 @@
 import { emitBridgeEvent, relaySse } from './events';
 import {
   isSafeName,
+  liveExpiryClause,
   nearestExpiry,
   pickContract,
   quote,
@@ -419,7 +420,8 @@ async function questdbRows(query: string): Promise<unknown[][]> {
 /** The nearest non-expired expiry with snapshots, or null when there are none. */
 async function nearestExpiryFor(underlying: string): Promise<string | null> {
   const rows = await questdbRows(
-    `SELECT DISTINCT expiry FROM option_chain_snapshots WHERE ${underlyingClause(underlying)}`,
+    `SELECT DISTINCT expiry FROM option_chain_snapshots ` +
+      `WHERE ${underlyingClause(underlying)} AND ${liveExpiryClause()}`,
   );
   return nearestExpiry(rows.map(([e]) => String(e)));
 }
@@ -643,9 +645,15 @@ export const WEB_ADAPTERS: Record<string, WebAdapter> = {
   // `option_chain_snapshots` answers all of them, because that table already
   // carries the real tradingsymbol. See `fnoWeb.ts` for why, and for the one
   // behavioural difference (snapshotted strikes only).
+  // Every query below is filtered to non-expired series. `option_chain_snapshots`
+  // has no retention job, so it still holds rows for expiries that lapsed weeks
+  // ago; unfiltered, those rows made dead underlyings look tradable, and the
+  // contract they resolved to had already been dropped from Kite's instrument
+  // master — so the chart could never load a single candle for it.
   fno_list_chains: async () => {
     const rows = await questdbRows(
-      'SELECT DISTINCT underlying, expiry FROM option_chain_snapshots ORDER BY underlying, expiry',
+      `SELECT DISTINCT underlying, expiry FROM option_chain_snapshots ` +
+        `WHERE ${liveExpiryClause()} ORDER BY underlying, expiry`,
     );
     // Group under one canonical name per underlying, so `NIFTY` and `NIFTY 50`
     // rows do not present as two separate selector entries.
@@ -668,7 +676,8 @@ export const WEB_ADAPTERS: Record<string, WebAdapter> = {
     const underlying = optStr(args, 'underlying');
     if (!underlying) return []; // Rust returns an empty list, not an error.
     const rows = await questdbRows(
-      `SELECT DISTINCT expiry FROM option_chain_snapshots WHERE ${underlyingClause(underlying)} ORDER BY expiry ASC`,
+      `SELECT DISTINCT expiry FROM option_chain_snapshots ` +
+        `WHERE ${underlyingClause(underlying)} AND ${liveExpiryClause()} ORDER BY expiry ASC`,
     );
     return rows.map(([e]) => String(e)).filter(Boolean);
   },
@@ -681,7 +690,8 @@ export const WEB_ADAPTERS: Record<string, WebAdapter> = {
     const underlying = optStr(args, 'underlying');
     if (!underlying) return false;
     const rows = await questdbRows(
-      `SELECT count() FROM option_chain_snapshots WHERE ${underlyingClause(underlying)}`,
+      `SELECT count() FROM option_chain_snapshots ` +
+        `WHERE ${underlyingClause(underlying)} AND ${liveExpiryClause()}`,
     );
     return Number(rows[0]?.[0] ?? 0) > 0;
   },

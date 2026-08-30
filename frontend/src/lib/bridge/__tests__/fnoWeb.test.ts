@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isSafeName,
   istToday,
+  liveExpiryClause,
   nearestExpiry,
   pickContract,
   quote,
@@ -89,19 +90,44 @@ describe('nearestExpiry', () => {
     expect(nearestExpiry(['2026-08-22', '2026-09-24'], today)).toBe('2026-08-22');
   });
 
-  it('falls back to the latest past expiry when all have expired', () => {
-    // A stale chain is an honest view of the last data that existed; null would
-    // blank the workspace.
-    expect(nearestExpiry(['2026-07-07', '2026-07-14'], today)).toBe('2026-07-14');
+  it('refuses to resolve an expiry that has already passed', () => {
+    // This used to fall back to the latest PAST expiry, defended as "a stale chain
+    // is an honest view of the last data that existed". It was not honest, because
+    // nothing downstream marked it as stale: the workspace charted
+    // RELIANCE26AUG1290CE five days after expiry, priced a nine-day-old snapshot
+    // against a live spot, and showed impossible day-changes. The chart could not
+    // load either — the exchange drops expired contracts from the NFO instrument
+    // master, so token resolution 404s and no candle can ever arrive.
+    expect(nearestExpiry(['2026-07-07', '2026-07-14'], today)).toBeNull();
   });
 
-  it('is null only when there is nothing at all', () => {
+  it('is null when there is nothing at all', () => {
     expect(nearestExpiry([], today)).toBeNull();
     expect(nearestExpiry(['', ''], today)).toBeNull();
   });
 
+  it('ignores expired expiries but still finds a live one alongside them', () => {
+    // The realistic shape of the table: no retention job, so lapsed expiries sit
+    // next to current ones.
+    expect(nearestExpiry(['2026-07-14', '2026-08-27', '2026-09-24'], today)).toBe('2026-08-27');
+  });
+
   it('does not depend on input order or duplicates', () => {
     expect(nearestExpiry(['2026-09-24', '2026-08-27', '2026-08-27'], today)).toBe('2026-08-27');
+  });
+});
+
+describe('liveExpiryClause', () => {
+  it('keeps expiry day itself in scope', () => {
+    // `expiry` is a SYMBOL of YYYY-MM-DD, so `>=` is a date comparison. Inclusive
+    // on today for the same reason nearestExpiry is: expiry day is a trading day.
+    expect(liveExpiryClause('2026-08-30')).toBe("expiry >= '2026-08-30'");
+  });
+
+  it('quotes the date so it cannot escape the literal', () => {
+    expect(liveExpiryClause("2026-08-30' OR '1'='1")).toBe(
+      "expiry >= '2026-08-30'' OR ''1''=''1'",
+    );
   });
 });
 

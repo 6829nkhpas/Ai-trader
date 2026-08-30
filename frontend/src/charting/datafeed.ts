@@ -231,7 +231,12 @@ interface KiteCandleRaw {
   volume: number;
 }
 
-async function fetchKiteBatch(
+/**
+ * Exported for `__tests__/datafeed.fnoPaging.test.ts`, which pins the page
+ * ordering: an option contract's oldest page is legitimately empty and must not
+ * abort the fetch before the recent pages that hold its candles.
+ */
+export async function fetchKiteBatch(
   symbol: string,
   interval: string,
   from: Date,
@@ -263,7 +268,25 @@ async function fetchKiteBatch(
     pageEnd = new Date(pageStart.getTime() - dayMs);
   }
 
-  pages.reverse();
+  // `pages` is built walking BACKWARDS from `to`, so it is already newest-first,
+  // and it deliberately stays that way. It used to be reversed to oldest-first,
+  // which combined with the "stop once a page comes back empty" exit below to
+  // discard every F&O chart:
+  //
+  //   TradingView's opening window spans months, but an option contract is listed
+  //   weeks before expiry. The oldest slice of that window therefore predates the
+  //   contract's existence and Kite correctly answers `[]` — whereupon the loop
+  //   broke on its FIRST batch and returned nothing, having never requested the
+  //   recent pages that hold the actual candles. Measured against production:
+  //   RELIANCE26SEP1080CE returns 100 ten-minute candles for Aug 25-30 and 0 for
+  //   Feb 1 - Mar 2, and the chart rendered "No data here".
+  //
+  // Equities never tripped it because a cash symbol has bars in every page.
+  //
+  // Newest-first makes the early exit mean what it was meant to mean: stop
+  // extending FURTHER BACK once history runs out, rather than give up before
+  // reaching the present. Order does not matter downstream — `mergeScrollBackCache`
+  // is keyed by bar time and `getBars` sorts before handing bars to TV.
 
   // ── Kite Historical REST pages ──────────────────────────────────────────
   //
@@ -312,6 +335,11 @@ async function fetchKiteBatch(
   // Kite's 3 req/s ceiling, and it preserves the original "stop once a page
   // comes back empty" early exit (at batch granularity) so we don't fan out
   // requests for history that does not exist.
+  //
+  // Because `pages` runs newest → oldest, an empty batch means we have walked off
+  // the front of the instrument's history, so everything still unrequested is
+  // older and also empty. Stopping there is safe; stopping on an empty OLDEST
+  // batch was not.
   for (let i = 0; i < pages.length; i += KITE_PAGE_CONCURRENCY) {
     const batch = pages.slice(i, i + KITE_PAGE_CONCURRENCY);
     const settled = await Promise.all(batch.map(fetchPage));

@@ -40,7 +40,36 @@ use crate::option_chain::{
 // `frontend/src-tauri/src/services/fno_config.rs`, so an existing deployment's
 // environment keeps working unchanged.
 
-const DEFAULT_UNDERLYINGS: [&str; 2] = ["NIFTY", "BANKNIFTY"];
+/// Underlyings whose chains are ingested when `FNO_UNDERLYINGS` is unset.
+///
+/// This was `["NIFTY", "BANKNIFTY"]`, which is why F&O worked for the two indices
+/// and was silently dead for every stock. `spot_subscriber::DEFAULT_SPOT_SYMBOLS`
+/// already streams spot for these seven names — they are the watchlist the
+/// terminal ships with — so the F&O workspace offered them as underlyings while
+/// nothing ever selected a single contract for them. What the user saw was the
+/// residue of a retired producer: a chain frozen on an expiry that had since
+/// lapsed, and a chart that could never load because the exchange had already
+/// delisted the contract.
+///
+/// Size: `underlyings × nearest_expiries × (2 × band + 1) × 2` bounds this at
+/// 9 × 2 × 21 × 2 = 756 option tokens, against Kite's 3000-instrument WebSocket
+/// ceiling. Snapshot volume scales with it (~1 row per token per minute), which is
+/// the real cost of this list growing — keep that in mind before extending it.
+///
+/// Every name here must be F&O-listed. `INDIA VIX` and `NIFTY IT` are in the spot
+/// list but have no option chain, so they are deliberately absent: a non-derivative
+/// underlying costs one "no contracts selected" warning per minute.
+const DEFAULT_UNDERLYINGS: [&str; 9] = [
+    "NIFTY",
+    "BANKNIFTY",
+    "RELIANCE",
+    "TCS",
+    "HDFCBANK",
+    "INFY",
+    "ICICIBANK",
+    "SBIN",
+    "ITC",
+];
 const DEFAULT_NEAREST_EXPIRIES: usize = 2;
 const DEFAULT_STRIKE_BAND_HALF_WIDTH: usize = 10;
 const DEFAULT_ATM_RECENTER_THRESHOLD: f64 = 1.0;
@@ -309,17 +338,25 @@ pub async fn run(state: Arc<KiteApiState>) {
         // the same "today" even if the cycle straddles midnight.
         let today = Utc::now().date_naive();
 
+        // One quote request for every underlying's spot, not one per underlying:
+        // Kite's REST limit is per request, and the per-underlying loop below used
+        // to issue a separate call each cycle.
+        let quote_keys: Vec<String> = cfg.underlyings.iter().map(|u| spot_quote_key(u)).collect();
+        let spots = match state.last_prices_for(&quote_keys).await {
+            Ok(map) => map,
+            Err(e) => {
+                warn!("[chain-selector] spot quote fetch failed, retrying next cycle: {e}");
+                continue;
+            }
+        };
+
         for configured in &cfg.underlyings {
             let name = nfo_name(configured);
 
-            let spot = match state.last_price_for(&spot_quote_key(configured)).await {
-                Ok(Some(p)) => p,
-                Ok(None) => {
+            let spot = match spots.get(&spot_quote_key(configured)) {
+                Some(&p) => p,
+                None => {
                     debug!("[chain-selector] {configured}: no spot price yet, skipping cycle");
-                    continue;
-                }
-                Err(e) => {
-                    warn!("[chain-selector] {configured}: spot fetch failed: {e}");
                     continue;
                 }
             };
