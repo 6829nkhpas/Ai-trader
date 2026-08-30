@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import type { DataRange } from '../utils/chartTypes';
 import { isFnoSymbol } from '../charting/symbolUtils';
+import { getUnderlyingFromSymbol } from '../components/fno/symbolParser';
+import { spotUnderlyingName } from '../lib/bridge/fnoWeb';
 import { bridgeInvoke, bridgeListen } from '../lib/bridge';
 import { readPreferences, savePreferences } from '../lib/preferences';
 
@@ -204,21 +206,31 @@ interface TradeStore {
   /** Selected expiry for the F&O section ('' => bridge's nearest available). */
   fnoExpiry: string;
   /**
-   * The equity/index symbol the user was charting immediately before entering
-   * F&O mode, so leaving F&O can put it back.
+   * The instrument each mode is parked on, so the four workspaces keep separate
+   * charts: TCS in Investor, INFY in Swing, RELIANCE in Intraday, a contract in
+   * F&O. `setActiveProfile` swaps `selectedSymbol` to the entry for the mode
+   * being entered, and `setSelectedSymbol` records every pick under the mode
+   * that made it.
    *
-   * Entering F&O auto-substitutes `selectedSymbol` with the nearest tradable
-   * contract (see `useFnoAutoContract`). That substitution used to be permanent:
-   * `selectedSymbol` is global, so returning to INTRADAY/SWING/INVESTOR left the
-   * chart on e.g. `RELIANCE26AUGFUT` instead of `RELIANCE`. The hook that makes
-   * the substitution lives in `FnoChartPanel`, which only mounts in F&O mode, so
-   * it unmounts before it can undo anything — the round trip has to be closed
-   * here, where the mode transition is actually observed.
+   * `selectedSymbol` REMAINS the single value every consumer reads — this map is
+   * the memory behind it, not a replacement for it. Dozens of components,
+   * hooks, and the datafeed all read `selectedSymbol`; making each of them
+   * resolve `symbolByProfile[activeProfile]` themselves would be a large diff
+   * for no behavioural gain, and would give every one of them a chance to
+   * disagree about which mode is active.
    *
-   * Empty when there is nothing to restore (never entered F&O, or entered it
-   * with a contract already explicitly selected).
+   * Partial: a missing key means the user has never picked an instrument in that
+   * mode, which is the signal `setActiveProfile` uses to carry the current
+   * symbol over rather than restoring one.
+   *
+   * This subsumes the old `preFnoSymbol`, which existed only to undo F&O's
+   * automatic contract substitution (`useFnoAutoContract`) on the way out. Its
+   * flaw was restoring the pre-F&O symbol into WHICHEVER mode you left F&O for,
+   * so entering F&O from Intraday and leaving to Swing dragged Intraday's symbol
+   * into Swing. Per-mode memory answers that correctly by construction, and two
+   * mechanisms writing `selectedSymbol` on the same transition would only fight.
    */
-  preFnoSymbol: string;
+  symbolByProfile: Partial<Record<TradeProfile, string>>;
   setActiveProfile: (profile: TradeProfile) => void;
   setActiveTimeframe: (tf: ChartTimeframe) => void;
   setActiveRange: (range: DataRange) => void;
@@ -552,6 +564,21 @@ export const useTradeStore = create<TradeStore>((set) => {
     };
   };
 
+  // `selectedSymbol` is a live projection of `symbolByProfile[activeProfile]`, so
+  // the two have to agree on the very first render — otherwise the chart paints
+  // the old global symbol and only corrects itself on the first mode switch.
+  // The map wins where it has an entry: it is the record of what the user picked
+  // in THIS mode, whereas `selectedSymbol` in the blob is just whichever mode
+  // they happened to close the tab in. `selectedSymbol` remains the fallback so
+  // a blob written before this field existed still restores.
+  const initialProfile: TradeProfile = savedPrefs.activeProfile ?? 'INTRADAY';
+  const initialSymbolByProfile: Partial<Record<TradeProfile, string>> = {
+    ...savedPrefs.symbolByProfile,
+  };
+  const initialSymbol =
+    initialSymbolByProfile[initialProfile] ?? savedPrefs.selectedSymbol ?? 'RELIANCE';
+  initialSymbolByProfile[initialProfile] = initialSymbol;
+
   return {
     liveDecisions: [],
     activeDecision: null,
@@ -570,11 +597,11 @@ export const useTradeStore = create<TradeStore>((set) => {
     // VALUES rather than replayed through the setters on purpose — `setFnoUnderlying`
     // clears `fnoExpiry` as a side effect, so restoring via setters would lose the
     // expiry depending on call order.
-    activeProfile: savedPrefs.activeProfile ?? 'INTRADAY',
+    activeProfile: initialProfile,
     activeTimeframe: savedPrefs.activeTimeframe ?? '10m',
     activeRange: savedPrefs.activeRange ?? ('1Y' as DataRange),
     systemLogs: [],
-    selectedSymbol: savedPrefs.selectedSymbol ?? 'RELIANCE',
+    selectedSymbol: initialSymbol,
     historicalCache: {},
     watchlist: [],
     agentChatLog: [],
@@ -582,51 +609,68 @@ export const useTradeStore = create<TradeStore>((set) => {
     chartMode: savedPrefs.chartMode ?? 'STANDARD',
     orderFlowData: [],
     fnoUnderlying: savedPrefs.fnoUnderlying ?? '',
-    preFnoSymbol: savedPrefs.preFnoSymbol ?? '',
+    symbolByProfile: initialSymbolByProfile,
     fnoExpiry: savedPrefs.fnoExpiry ?? '',
     clearAgentChatLog: () => set({ agentChatLog: [], finalTradePlan: null }),
 
     setActiveProfile: (profile: TradeProfile) => {
       set((state) => {
-        const wasFno = state.activeProfile === 'FNO';
-        const isFno = profile === 'FNO';
+        // Re-selecting the current mode is not a transition. Returning the state
+        // object unchanged makes this a true no-op: zustand compares by identity
+        // and skips notifying subscribers entirely.
+        if (profile === state.activeProfile) return state;
 
-        // ── Entering F&O: remember what to come back to ──────────────────
-        // `useFnoAutoContract` is about to replace `selectedSymbol` with the
-        // nearest CE/PE/FUT contract for this underlying. Capture the symbol
-        // first so the exit path below can restore it.
+        // What this mode was last left on, if the user has ever chosen here.
+        const remembered = state.symbolByProfile[profile];
+
+        // First visit to this mode: carry over what the user is looking at, so
+        // the switch shows the same instrument through a different lens rather
+        // than snapping to a hard-coded default and discarding their context.
         //
-        // If a contract is ALREADY selected, the user chose it deliberately, so
-        // there is nothing to restore — clear the slot rather than leaving a
-        // stale symbol that a later exit would spuriously restore.
-        if (!wasFno && isFno) {
-          return {
-            activeProfile: profile,
-            preFnoSymbol: isFnoSymbol(state.selectedSymbol) ? '' : state.selectedSymbol,
-          };
-        }
+        // Except for F&O contracts. Entering F&O auto-substitutes `selectedSymbol`
+        // with the nearest CE/PE/FUT (`useFnoAutoContract`), and a contract is not
+        // a chart an equity mode can render — carrying `RELIANCE26AUGFUT` into
+        // Swing would show a derivative in a mode with no expiry, no strike and no
+        // chain. The underlying is the honest answer: leaving RELIANCE options for
+        // Swing puts Swing on RELIANCE. This is also what replaces the old
+        // `preFnoSymbol` restore, and it is per-mode, so leaving F&O for Swing no
+        // longer drags Intraday's symbol along.
+        //
+        // `spotUnderlyingName` finishes the job for indices: the parser returns the
+        // NFO-side name (`NIFTY`), but an equity chart needs the Kite tradingsymbol
+        // (`NIFTY 50`), and `NSE:NIFTY` would not resolve.
+        const carried =
+          profile !== 'FNO' && isFnoSymbol(state.selectedSymbol)
+            ? spotUnderlyingName(getUnderlyingFromSymbol(state.selectedSymbol))
+            : state.selectedSymbol;
 
-        // ── Leaving F&O: undo the auto-substitution ──────────────────────
-        // Only when the chart is actually sitting on a contract AND we recorded
-        // where we came from. Both guards matter: they keep this from touching
-        // `selectedSymbol` in every other case, which is what the mode-isolation
-        // property (switching modes must not disturb chart state) depends on.
-        // A symbol the user picked by hand while in F&O is not a contract, so it
-        // survives the switch untouched.
-        if (wasFno && !isFno && state.preFnoSymbol && isFnoSymbol(state.selectedSymbol)) {
-          return {
-            activeProfile: profile,
-            selectedSymbol: state.preFnoSymbol,
-            preFnoSymbol: '',
-            // The buffered ticks belong to the contract we are leaving; drop
-            // them so they can't be stitched onto the restored equity chart.
-            // Mirrors what `setSelectedSymbol` does on any symbol change.
-            ohlcCandles: [],
-            predictiveSignals: [],
-          };
-        }
+        // `carried` can be empty if the underlying is unparseable; never resolve
+        // to nothing, which would blank the chart.
+        const next = remembered || carried || state.selectedSymbol;
 
-        return { activeProfile: profile };
+        const base = {
+          activeProfile: profile,
+          symbolByProfile: { ...state.symbolByProfile, [profile]: next },
+        };
+
+        // Same instrument on both sides of the switch — the common case, and the
+        // one that was reloading. Leaving `selectedSymbol` and the live buffer
+        // untouched means nothing downstream is told anything changed: the widget's
+        // symbol effect does not fire, the datafeed is not re-seeded, and the
+        // candles already on screen stay there. With INTRADAY/SWING/INVESTOR
+        // sharing one `TerminalChartPane` element type, the chart is not remounted
+        // either, so the switch costs a wrapper attribute patch and nothing else.
+        if (next === state.selectedSymbol) return base;
+
+        return {
+          ...base,
+          selectedSymbol: next,
+          // The buffered ticks belong to the symbol we are leaving; drop them so
+          // they cannot be stitched onto the incoming one. Mirrors what
+          // `setSelectedSymbol` does on any real symbol change.
+          ohlcCandles: [],
+          predictiveSignals: [],
+        };
       });
     },
 
@@ -666,11 +710,29 @@ export const useTradeStore = create<TradeStore>((set) => {
     setSelectedSymbol: (symbol: string) => {
       const upper = symbol.toUpperCase();
       set((state) => {
+        // Attribute the pick to the mode that made it, so coming back to this
+        // mode restores it. Every route into a symbol change goes through here —
+        // the watchlist, the search box, the TradingView widget's own symbol
+        // search, `useFnoAutoContract` — so this is the one place that has to
+        // record it.
+        const symbolByProfile = { ...state.symbolByProfile, [state.activeProfile]: upper };
+
+        // Already on this symbol. Clearing the live buffer here would make a
+        // redundant call (a watchlist click on the row already selected, a hook
+        // re-asserting the contract it just set) indistinguishable from a real
+        // symbol change to every downstream effect, and the chart would refetch
+        // what it is already displaying. Return the untouched state object when
+        // there is genuinely nothing to record, so zustand skips the notify too.
+        if (upper === state.selectedSymbol) {
+          return state.symbolByProfile[state.activeProfile] === upper ? state : { symbolByProfile };
+        }
+
         // Preserve ALL cache entries across symbol switches.
         // Historical data doesn't change — there's no reason to discard
         // the old symbol's cache. Switching back will be instant (cache hit).
         return {
           selectedSymbol: upper,
+          symbolByProfile,
           ohlcCandles: [],
           predictiveSignals: [],
         };
@@ -1095,9 +1157,10 @@ export const useTradeStore = create<TradeStore>((set) => {
 // One subscription rather than a `savePreferences` call inside each setter.
 // Two reasons it belongs here and not in the setters:
 //
-//   · `setActiveProfile` changes up to three persisted fields at once (the F&O
-//     round-trip swaps `selectedSymbol` and clears `preFnoSymbol`), so a
-//     per-setter call would have to mirror that branching and stay in sync with it.
+//   · `setActiveProfile` changes up to three persisted fields at once (it swaps
+//     `selectedSymbol` to the incoming mode's instrument and records it in
+//     `symbolByProfile`), so a per-setter call would have to mirror that
+//     branching and stay in sync with it.
 //   · `selectedSymbol` is also written from outside the setters — the TradingView
 //     widget writes back the symbol the user picked in ITS own search box
 //     (`TradingViewWidget`), and that selection deserves to persist too.
@@ -1114,7 +1177,10 @@ useTradeStore.subscribe((state, prev) => {
     state.chartMode === prev.chartMode &&
     state.fnoUnderlying === prev.fnoUnderlying &&
     state.fnoExpiry === prev.fnoExpiry &&
-    state.preFnoSymbol === prev.preFnoSymbol
+    // Compared by identity, which is sound because the setters only ever build a
+    // new map when an entry is actually being added or changed — an unchanged
+    // symbol returns the previous object.
+    state.symbolByProfile === prev.symbolByProfile
   ) {
     return;
   }
@@ -1126,6 +1192,6 @@ useTradeStore.subscribe((state, prev) => {
     chartMode: state.chartMode,
     fnoUnderlying: state.fnoUnderlying,
     fnoExpiry: state.fnoExpiry,
-    preFnoSymbol: state.preFnoSymbol,
+    symbolByProfile: state.symbolByProfile,
   });
 });

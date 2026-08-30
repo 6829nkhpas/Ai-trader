@@ -32,6 +32,25 @@ const NAME_PAIRS: readonly (readonly [string, string])[] = [
   ['MIDCPNIFTY', 'NIFTY MIDCAP SELECT'],
 ];
 
+/**
+ * The NSE spot-side name for an underlying: `NIFTY` → `NIFTY 50`. Stock
+ * underlyings have one name and come back unchanged.
+ *
+ * Needed because `getUnderlyingFromSymbol` deliberately yields the NFO-side name
+ * (`NIFTY`), which is right for a chain query and wrong for an equity chart —
+ * `NSE:NIFTY` is not the index's Kite tradingsymbol. `useTradeStore` uses this
+ * when a mode switch has to turn a contract into something an equity mode can
+ * actually plot. Direction-safe: passing either name yields the spot one.
+ */
+export function spotUnderlyingName(underlying: string): string {
+  const trimmed = underlying.trim();
+  const upper = trimmed.toUpperCase();
+  for (const [short, long] of NAME_PAIRS) {
+    if (upper === short || upper === long) return long;
+  }
+  return trimmed;
+}
+
 /** Both names an underlying's rows could be stored under, deduped. */
 export function underlyingCandidates(underlying: string): string[] {
   const u = underlying.trim();

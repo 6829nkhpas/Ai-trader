@@ -68,8 +68,17 @@ export interface TerminalPreferences {
   chartMode: ChartMode;
   fnoUnderlying: string;
   fnoExpiry: string;
-  /** The pre-F&O symbol, so the mode round-trip still works after a reload. */
-  preFnoSymbol: string;
+  /**
+   * The instrument the user last charted IN EACH MODE, so Investor can sit on
+   * TCS while Swing sits on INFY and Intraday on RELIANCE — across reloads.
+   *
+   * Partial on purpose: a missing key means "this mode has no choice yet", which
+   * `setActiveProfile` treats differently from a stored one (it carries the
+   * current symbol over instead of restoring). Defaulting the absent keys to a
+   * literal here would erase that distinction and make a first visit to Swing
+   * look like a deliberate pick of `RELIANCE`.
+   */
+  symbolByProfile: Partial<Record<TradeProfile, string>>;
   // ── useChartUIStore ──────────────────────────────────────────────────────
   chartType: ChartType;
   chartTypeParams: ChartTypeParams;
@@ -152,11 +161,29 @@ function symbolOf(value: unknown): string | undefined {
   return trimmed.length > 0 && trimmed.length <= 64 ? trimmed : undefined;
 }
 
-/** A possibly-empty string field (F&O expiry / underlying / preFnoSymbol). */
+/** A possibly-empty string field (F&O expiry / underlying). */
 function optionalText(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
   return trimmed.length <= 64 ? trimmed : undefined;
+}
+
+/**
+ * The per-mode instrument map, keeping only entries that pass `symbolOf`.
+ *
+ * Iterates `PROFILES` rather than the blob's own keys, so unknown keys are
+ * dropped by construction — a blob carrying `{"__proto__": ...}` or a thousand
+ * junk modes contributes nothing. One rejected entry does not void the rest:
+ * a garbled Swing symbol should not cost the user their Investor one.
+ */
+function symbolByProfileOf(value: unknown): Partial<Record<TradeProfile, string>> | undefined {
+  if (!isObject(value)) return undefined;
+  const out: Partial<Record<TradeProfile, string>> = {};
+  for (const profile of PROFILES) {
+    const symbol = symbolOf(value[profile]);
+    if (symbol) out[profile] = symbol;
+  }
+  return out;
 }
 
 function boolOf(value: unknown): boolean | undefined {
@@ -246,7 +273,7 @@ export function parsePreferences(raw: unknown): Partial<TerminalPreferences> {
   take(out, parsed, 'chartMode', (v) => oneOf(v, CHART_MODES));
   take(out, parsed, 'fnoUnderlying', optionalText);
   take(out, parsed, 'fnoExpiry', optionalText);
-  take(out, parsed, 'preFnoSymbol', optionalText);
+  take(out, parsed, 'symbolByProfile', symbolByProfileOf);
 
   take(out, parsed, 'chartType', (v) => oneOf(v, CHART_TYPES as readonly ChartType[]));
   take(out, parsed, 'chartTypeParams', chartTypeParamsOf);

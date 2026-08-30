@@ -11,8 +11,16 @@
 //   Validates: Requirements 1.4, 6.3
 //
 // Isolation: switching workspace modes leaves the unrelated chart state
-//   (activeTimeframe, chartMode, selectedSymbol) intact.
+//   (activeTimeframe, chartMode) intact, and leaves every OTHER mode's
+//   instrument intact.
 //   Validates: Requirements 6.2, 6.3, 6.4
+//
+// `selectedSymbol` was originally part of that "unchanged" set, on the reading
+// that a mode switch must not disturb the chart at all. It is now PER-MODE: each
+// workspace remembers its own instrument (Investor on TCS while Swing is on INFY),
+// so a switch is expected to move `selectedSymbol` to the incoming mode's symbol.
+// The isolation property survives in a sharper form — a switch must not disturb
+// any mode's stored instrument except by design — which is what these now assert.
 //
 // This rewrites the former fno-frontend-section "Property 10" test, which was
 // written against the now-removed `fnoMode`/`toggleFnoMode`/`setFnoMode` flag.
@@ -45,9 +53,30 @@ function storeStateArb() {
     activeTimeframe: fc.constantFrom(...TIMEFRAMES),
     chartMode: fc.constantFrom(...CHART_MODES),
     selectedSymbol: fc.constantFrom(...SYMBOLS),
+    // Any subset of modes may already have a remembered instrument — including
+    // none, which is a first-run user.
+    symbolByProfile: fc.dictionary(fc.constantFrom(...PROFILES), fc.constantFrom(...SYMBOLS)),
     fnoUnderlying: fc.constantFrom('NIFTY 50', 'BANKNIFTY'),
     fnoExpiry: fc.constantFrom('', '2024-12-26', '2025-01-30'),
   });
+}
+
+type Seed = ReturnType<ReturnType<typeof storeStateArb>['generate']>['value'];
+
+/**
+ * Install `seed`, forcing the one invariant the store maintains for itself:
+ * `symbolByProfile[activeProfile]` IS `selectedSymbol`. The store's initialiser
+ * and both setters guarantee it, and no production code writes `selectedSymbol`
+ * outside them — so a seed that disagreed would test a state the app cannot
+ * reach, and its "failures" would say nothing about the app.
+ */
+function seedStore(seed: Seed) {
+  const symbolByProfile: Partial<Record<TradeProfile, string>> = {
+    ...(seed.symbolByProfile as Partial<Record<TradeProfile, string>>),
+    [seed.activeProfile]: seed.selectedSymbol,
+  };
+  useTradeStore.setState({ ...seed, symbolByProfile });
+  return symbolByProfile;
 }
 
 beforeEach(() => {
@@ -57,6 +86,7 @@ beforeEach(() => {
     activeTimeframe: '10m',
     chartMode: 'STANDARD',
     selectedSymbol: 'RELIANCE',
+    symbolByProfile: { INTRADAY: 'RELIANCE' },
     fnoUnderlying: 'NIFTY 50',
     fnoExpiry: '',
   });
@@ -66,7 +96,7 @@ describe('Property 1: workspace modes are mutually exclusive', () => {
   it('after any single setActiveProfile, exactly that mode is active', () => {
     fc.assert(
       fc.property(storeStateArb(), fc.constantFrom(...PROFILES), (seed, target) => {
-        useTradeStore.setState(seed);
+        seedStore(seed);
 
         store().setActiveProfile(target);
 
@@ -89,7 +119,7 @@ describe('Property 1: workspace modes are mutually exclusive', () => {
         storeStateArb(),
         fc.array(fc.constantFrom(...PROFILES), { minLength: 1, maxLength: 25 }),
         (seed, sequence) => {
-          useTradeStore.setState(seed);
+          seedStore(seed);
 
           for (const mode of sequence) {
             store().setActiveProfile(mode);
@@ -140,48 +170,102 @@ describe('Property 3: no second source of truth for F&O', () => {
 });
 
 describe('Isolation: switching modes leaves unrelated chart state intact', () => {
-  it('a single setActiveProfile leaves timeframe/chartMode/selectedSymbol unchanged', () => {
+  it('a single setActiveProfile leaves timeframe/chartMode unchanged', () => {
     fc.assert(
       fc.property(storeStateArb(), fc.constantFrom(...PROFILES), (seed, target) => {
-        useTradeStore.setState(seed);
+        seedStore(seed);
 
         const before = {
           activeTimeframe: store().activeTimeframe,
           chartMode: store().chartMode,
-          selectedSymbol: store().selectedSymbol,
         };
 
         store().setActiveProfile(target);
 
-        // Switching workspace mode never disturbs the chart state.
+        // The mode carries no timeframe or chart-type of its own: those are the
+        // user's current view settings and a workspace switch must not rewrite them.
         expect(store().activeTimeframe).toBe(before.activeTimeframe);
         expect(store().chartMode).toBe(before.chartMode);
-        expect(store().selectedSymbol).toBe(before.selectedSymbol);
       }),
       { numRuns: 200 },
     );
   });
 
-  it('any sequence of mode switches leaves timeframe/chartMode/selectedSymbol unchanged', () => {
+  it('a single setActiveProfile leaves every OTHER mode’s instrument untouched', () => {
+    fc.assert(
+      fc.property(storeStateArb(), fc.constantFrom(...PROFILES), (seed, target) => {
+        const before = seedStore(seed);
+
+        store().setActiveProfile(target);
+
+        // Only the mode being entered may gain or keep an entry. Every other
+        // mode's remembered instrument is none of this transition's business —
+        // this is what stops a switch through Intraday from clobbering the
+        // instrument Investor is parked on.
+        for (const p of PROFILES) {
+          if (p === target) continue;
+          expect(store().symbolByProfile[p]).toBe(before[p]);
+        }
+      }),
+      { numRuns: 200 },
+    );
+  });
+
+  it('for any sequence of mode switches, the chart shows the active mode’s own instrument', () => {
     fc.assert(
       fc.property(
         storeStateArb(),
         fc.array(fc.constantFrom(...PROFILES), { minLength: 0, maxLength: 25 }),
         (seed, sequence) => {
-          useTradeStore.setState(seed);
+          const before = seedStore(seed);
 
-          const before = {
+          const before2 = {
             activeTimeframe: store().activeTimeframe,
             chartMode: store().chartMode,
-            selectedSymbol: store().selectedSymbol,
           };
 
-          for (const mode of sequence) store().setActiveProfile(mode);
+          for (const mode of sequence) {
+            store().setActiveProfile(mode);
+            // The core invariant, after EVERY step: `selectedSymbol` is exactly
+            // the active mode's entry. It is a projection of the map, never an
+            // independent value that could drift out of step with it.
+            expect(store().selectedSymbol).toBe(store().symbolByProfile[store().activeProfile]);
+          }
 
-          // No number of mode switches ever leaks into the chart state.
-          expect(store().activeTimeframe).toBe(before.activeTimeframe);
-          expect(store().chartMode).toBe(before.chartMode);
-          expect(store().selectedSymbol).toBe(before.selectedSymbol);
+          // No number of mode switches leaks into the view settings.
+          expect(store().activeTimeframe).toBe(before2.activeTimeframe);
+          expect(store().chartMode).toBe(before2.chartMode);
+
+          // Modes the sequence never entered keep their instrument exactly.
+          for (const p of PROFILES) {
+            if (sequence.includes(p)) continue;
+            expect(store().symbolByProfile[p]).toBe(before[p]);
+          }
+        },
+      ),
+      { numRuns: 200 },
+    );
+  });
+
+  it('a mode round trip comes back to the instrument that mode was left on', () => {
+    fc.assert(
+      fc.property(
+        storeStateArb(),
+        fc.constantFrom(...PROFILES),
+        fc.constantFrom(...SYMBOLS),
+        (seed, other, pick) => {
+          seedStore(seed);
+          const home = store().activeProfile;
+          fc.pre(other !== home);
+
+          store().setSelectedSymbol(pick);
+          store().setActiveProfile(other);
+          store().setActiveProfile(home);
+
+          // Leaving a mode and returning restores what was on screen, whatever
+          // the detour did. None of the seeded symbols is an F&O contract, so no
+          // underlying substitution is in play here.
+          expect(store().selectedSymbol).toBe(pick.toUpperCase());
         },
       ),
       { numRuns: 200 },

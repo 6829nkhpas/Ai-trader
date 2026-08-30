@@ -33,7 +33,12 @@ function validBlob(overrides: Record<string, unknown> = {}): string {
     chartMode: 'FOOTPRINT',
     fnoUnderlying: 'RELIANCE',
     fnoExpiry: '2026-09-29',
-    preFnoSymbol: 'RELIANCE',
+    symbolByProfile: {
+      INTRADAY: 'RELIANCE',
+      SWING: 'INFY',
+      INVESTOR: 'TCS',
+      FNO: 'RELIANCE26SEP1290CE',
+    },
     chartType: 'area',
     chartTypeParams: { brickSize: 5 },
     ghostLineMode: 'forecast',
@@ -73,7 +78,12 @@ describe('parsePreferences — a good blob restores every selection', () => {
       chartMode: 'FOOTPRINT',
       fnoUnderlying: 'RELIANCE',
       fnoExpiry: '2026-09-29',
-      preFnoSymbol: 'RELIANCE',
+      symbolByProfile: {
+        INTRADAY: 'RELIANCE',
+        SWING: 'INFY',
+        INVESTOR: 'TCS',
+        FNO: 'RELIANCE26SEP1290CE',
+      },
       chartType: 'area',
       ghostLineMode: 'forecast',
       splitView: true,
@@ -165,6 +175,30 @@ describe('parsePreferences — a rejected field is indistinguishable from an abs
     expect(parsePreferences(validBlob({ selectedSymbol: '   ' }))).not.toHaveProperty(
       'selectedSymbol',
     );
+  });
+
+  it('keeps only the valid entries of the per-mode symbol map', () => {
+    const prefs = parsePreferences(
+      validBlob({
+        symbolByProfile: {
+          INVESTOR: 'tcs', // upper-cased like every other symbol
+          SWING: '   ', // empty is not a symbol
+          FNO: 42, // wrong type
+          INTRADAY: 'X'.repeat(500), // unbounded
+          NOTAMODE: 'INFY', // not a workspace mode
+        },
+      }),
+    );
+    // One junk entry must not cost the user the modes that ARE valid.
+    expect(prefs.symbolByProfile).toEqual({ INVESTOR: 'TCS' });
+  });
+
+  it('drops a symbol map that is not an object at all', () => {
+    for (const bad of ['TCS', 42, ['TCS'], null] as unknown[]) {
+      expect(parsePreferences(validBlob({ symbolByProfile: bad }))).not.toHaveProperty(
+        'symbolByProfile',
+      );
+    }
   });
 
   it('keeps only finite numeric chart-type params', () => {

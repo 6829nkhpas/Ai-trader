@@ -25,6 +25,12 @@ const STORAGE_KEY = 'stratai.preferences';
 
 /** Seed storage, then import both stores fresh so they read it on evaluation. */
 async function bootWith(prefs: Record<string, unknown> | null) {
+  // Cancel any debounced write still pending from the previous case. The module
+  // registry has not been reset yet, so this resolves to the SAME instance that
+  // holds the pending timer. Left alone, that timer fires after the clear below
+  // and re-seeds storage with the previous case's selections — which the store
+  // then reads as this case's saved preferences.
+  (await import('../../lib/preferences')).resetPreferences();
   localStorage.clear();
   if (prefs) localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, ...prefs }));
   vi.resetModules();
@@ -54,7 +60,7 @@ describe('a returning user boots into their own selections', () => {
       chartMode: 'VOLUME_PROFILE',
       fnoUnderlying: 'BANKNIFTY',
       fnoExpiry: '2026-09-29',
-      preFnoSymbol: 'HDFCBANK',
+      symbolByProfile: { INTRADAY: 'RELIANCE', SWING: 'TCS', INVESTOR: 'HDFCBANK' },
     });
 
     const s = useTradeStore.getState();
@@ -67,7 +73,12 @@ describe('a returning user boots into their own selections', () => {
     // wiped the expiry, since that setter clears it as a side effect.
     expect(s.fnoUnderlying).toBe('BANKNIFTY');
     expect(s.fnoExpiry).toBe('2026-09-29');
-    expect(s.preFnoSymbol).toBe('HDFCBANK');
+    // Each mode's own instrument comes back, not just the one the tab closed on.
+    expect(s.symbolByProfile).toMatchObject({
+      INTRADAY: 'RELIANCE',
+      SWING: 'TCS',
+      INVESTOR: 'HDFCBANK',
+    });
   });
 
   it('restores the chart type, ghost line, sidebar and the split layout', async () => {
@@ -143,6 +154,118 @@ describe('a first-time user boots into the defaults', () => {
     const { useTradeStore } = await import('../useTradeStore');
     expect(useTradeStore.getState().selectedSymbol).toBe('RELIANCE');
     expect(useTradeStore.getState().activeProfile).toBe('INTRADAY');
+  });
+});
+
+describe('each mode keeps its own instrument', () => {
+  it('remembers a per-mode pick and restores all of them after a reload', async () => {
+    const { useTradeStore } = await bootWith(null);
+    const t = () => useTradeStore.getState();
+    vi.useFakeTimers();
+
+    // The scenario verbatim: TCS in Investor, INFY in Swing, RELIANCE in Intraday.
+    t().setActiveProfile('INVESTOR');
+    t().setSelectedSymbol('TCS');
+    t().setActiveProfile('SWING');
+    t().setSelectedSymbol('INFY');
+    t().setActiveProfile('INTRADAY');
+    t().setSelectedSymbol('RELIANCE');
+    vi.runAllTimers();
+
+    expect(storedPrefs().symbolByProfile).toEqual({
+      INTRADAY: 'RELIANCE',
+      SWING: 'INFY',
+      INVESTOR: 'TCS',
+    });
+
+    // Reload the tab. Each mode still has its own chart, not one global symbol.
+    vi.useRealTimers();
+    const { useTradeStore: reloaded } = await bootWith(storedPrefs());
+    const r = () => reloaded.getState();
+
+    expect(r().activeProfile).toBe('INTRADAY');
+    expect(r().selectedSymbol).toBe('RELIANCE');
+    r().setActiveProfile('INVESTOR');
+    expect(r().selectedSymbol).toBe('TCS');
+    r().setActiveProfile('SWING');
+    expect(r().selectedSymbol).toBe('INFY');
+  });
+
+  it('does not touch the live candles when a switch lands on the same instrument', async () => {
+    const { useTradeStore } = await bootWith(null);
+    const t = () => useTradeStore.getState();
+
+    // Swing inherits RELIANCE on its first visit, so both modes now hold it.
+    t().setActiveProfile('SWING');
+    t().setActiveProfile('INTRADAY');
+
+    const candles = [
+      { symbol: 'RELIANCE', start_timestamp_ms: 1, open: 1, high: 1, low: 1, close: 1, volume: 1 },
+    ];
+    useTradeStore.setState({ ohlcCandles: candles });
+
+    t().setActiveProfile('SWING');
+
+    // Same instrument on both sides of the switch, so nothing downstream is told
+    // anything changed: the buffer is the SAME array, not a fresh empty one.
+    // This is what stops the chart refetching candles it is already displaying.
+    expect(t().ohlcCandles).toBe(candles);
+    expect(t().selectedSymbol).toBe('RELIANCE');
+  });
+
+  it('does clear the live candles when the switch changes instrument', async () => {
+    const { useTradeStore } = await bootWith(null);
+    const t = () => useTradeStore.getState();
+
+    t().setActiveProfile('INVESTOR');
+    t().setSelectedSymbol('TCS');
+    t().setActiveProfile('INTRADAY');
+    useTradeStore.setState({
+      ohlcCandles: [
+        { symbol: 'RELIANCE', start_timestamp_ms: 1, open: 1, high: 1, low: 1, close: 1, volume: 1 },
+      ],
+    });
+
+    t().setActiveProfile('INVESTOR');
+
+    // The counterpart to the case above: these ticks belong to RELIANCE and must
+    // not be stitched onto TCS's chart.
+    expect(t().selectedSymbol).toBe('TCS');
+    expect(t().ohlcCandles).toEqual([]);
+  });
+
+  it('sends an F&O contract’s underlying to an equity mode, not the contract', async () => {
+    const { useTradeStore } = await bootWith(null);
+    const t = () => useTradeStore.getState();
+
+    t().setActiveProfile('FNO');
+    // What `useFnoAutoContract` does on entering F&O.
+    t().setSelectedSymbol('RELIANCE26AUGFUT');
+
+    t().setActiveProfile('SWING');
+
+    // Swing has no expiry, strike or chain, so a contract is not a chart it can
+    // render. The underlying is.
+    expect(t().selectedSymbol).toBe('RELIANCE');
+
+    // And F&O kept the contract for the return trip — this is what the removed
+    // `preFnoSymbol` was for, now falling out of per-mode memory.
+    t().setActiveProfile('FNO');
+    expect(t().selectedSymbol).toBe('RELIANCE26AUGFUT');
+  });
+
+  it('hands an equity mode the index’s spot name, not its NFO name', async () => {
+    const { useTradeStore } = await bootWith(null);
+    const t = () => useTradeStore.getState();
+
+    t().setActiveProfile('FNO');
+    t().setSelectedSymbol('NIFTY2670724000CE');
+
+    t().setActiveProfile('INVESTOR');
+
+    // The contract parses to the NFO-side `NIFTY`, but an equity chart needs the
+    // Kite tradingsymbol — `NSE:NIFTY` does not resolve, so it would render blank.
+    expect(t().selectedSymbol).toBe('NIFTY 50');
   });
 });
 
