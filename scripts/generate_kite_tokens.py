@@ -1,221 +1,438 @@
 #!/usr/bin/env python3
 """
-Zerodha Kite Connect Authentication Helper Script.
-This script helps you generate a request_token and access_token using your
-KITE_API_KEY and KITE_API_SECRET.
+Zerodha Kite Connect daily token refresh — end to end.
+
+Kite access tokens expire at 06:00 IST every day and there is no way around the
+login: Zerodha's own docs describe the expiry as a "regulatory requirement", and
+`refresh_token` is "only available to certain approved platforms" (it comes back
+empty for an ordinary app, which is why nothing here reads one). SEBI mandates a
+fresh 2FA authentication each day.
+
+So the login stays manual — everything after it does not. This script now does the
+whole chain that used to be hand-carried:
+
+    1.  open the Kite login page                       (you: log in + 2FA)
+    2.  you paste the redirect URL back                (you: one paste)
+    3.  exchange request_token -> access_token
+    4.  update the LOCAL .env
+    5.  update the SERVER .env over SSH
+    6.  restart the two services that consume the token
+    7.  verify the feed actually came back up
+
+Steps 4-7 were previously done by hand (copy the token out of this script's
+output, SSH in, `sed` the .env, `docker compose up`, curl a quote to check).
 
 Usage:
-    python scripts/generate_kite_tokens.py
+    python scripts/generate_kite_tokens.py                # everything
+    python scripts/generate_kite_tokens.py --no-deploy    # local .env only
+    python scripts/generate_kite_tokens.py --token XXXX   # skip the browser step
+
+Server target (defaults match the production droplet, override if needed):
+    --host / KITE_DEPLOY_HOST          root@app-api.stratai.live
+    --ssh-key / KITE_DEPLOY_SSH_KEY    keys/stratai_deploy
+    --remote-path / KITE_DEPLOY_PATH   /root/Ai-trader
 """
 
-import os
-import re
-import sys
+import argparse
 import hashlib
 import json
-import webbrowser
-import urllib.request
+import os
+import re
+import subprocess
+import sys
 import urllib.parse
+import urllib.request
+import webbrowser
 from urllib.error import HTTPError, URLError
 
-def load_env_vars():
-    """Loads KITE_API_KEY and KITE_API_SECRET from the .env file in the project root."""
-    api_key = ""
-    api_secret = ""
-    
-    # Locate .env by walking up from the current directory
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(current_dir)
-    env_path = os.path.join(project_root, ".env")
-    
-    if os.path.exists(env_path):
-        print(f"[*] Reading credentials from {env_path}...")
-        try:
-            with open(env_path, "r", encoding="utf-8") as f:
-                content = f.read()
-                
-            for line in content.splitlines():
-                line = line.strip()
-                if line.startswith("#") or "=" not in line:
-                    continue
-                parts = line.split("=", 1)
-                if len(parts) == 2:
-                    key = parts[0].strip()
-                    val = parts[1].strip().strip('"').strip("'")
-                    if key == "KITE_API_KEY":
-                        api_key = val
-                    elif key == "KITE_API_SECRET":
-                        api_secret = val
-        except Exception as e:
-            print(f"[!] Error reading .env file: {e}")
-            
-    return env_path, api_key, api_secret
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-def update_env_file(env_path, request_token, access_token):
-    """Updates the .env file with the newly generated request and access tokens."""
-    if not os.path.exists(env_path):
-        print(f"[!] .env file not found at {env_path}. Skipping update.")
-        return False
-        
-    try:
-        with open(env_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-            
-        updated_request = False
-        updated_access = False
-        new_lines = []
-        
-        for line in lines:
-            trimmed = line.strip()
-            if trimmed.startswith("KITE_REQUEST_TOKEN="):
-                new_lines.append(f"KITE_REQUEST_TOKEN={request_token}\n")
-                updated_request = True
-            elif trimmed.startswith("KITE_ACCESS_TOKEN="):
-                new_lines.append(f"KITE_ACCESS_TOKEN={access_token}\n")
-                updated_access = True
-            else:
-                new_lines.append(line)
-                
-        # If they weren't in the file, append them
-        if not updated_request:
-            new_lines.append(f"KITE_REQUEST_TOKEN={request_token}\n")
-        if not updated_access:
-            new_lines.append(f"KITE_ACCESS_TOKEN={access_token}\n")
-            
-        with open(env_path, "w", encoding="utf-8") as f:
-            f.writelines(new_lines)
-            
-        print(f"[+] Successfully updated {env_path} with new tokens.")
-        return True
-    except Exception as e:
-        print(f"[!] Failed to update .env file: {e}")
+DEFAULT_HOST = os.environ.get("KITE_DEPLOY_HOST", "root@app-api.stratai.live")
+DEFAULT_SSH_KEY = os.environ.get("KITE_DEPLOY_SSH_KEY", os.path.join("keys", "stratai_deploy"))
+DEFAULT_REMOTE_PATH = os.environ.get("KITE_DEPLOY_PATH", "/root/Ai-trader")
+
+# The services that actually read KITE_ACCESS_TOKEN.
+#
+#   ingestion  — holds the upstream Kite WebSocket (the thing that dies at 06:00)
+#   aggregator — caches the token in KiteApiState::new(), so it serves the REST
+#                proxy (quotes, historical, instruments) with whatever it had at
+#                start-up
+#
+# Nothing else needs bouncing. `.env` is injected via compose `env_file:` and is
+# never volume-mounted, so a container only sees a new token by being recreated —
+# writing the file alone looks like it worked and changes nothing.
+TOKEN_CONSUMERS = ("aggregator", "ingestion")
+
+# Kite request/access tokens are alphanumeric. Checked before either value is
+# interpolated into the remote script, which is what makes that interpolation
+# safe — a token containing a quote or a shell metacharacter is refused here
+# rather than executed there.
+TOKEN_RE = re.compile(r"^[A-Za-z0-9]+$")
+
+
+def mask(secret: str) -> str:
+    """`B0ZW…MCQU` — enough to correlate against a log, useless if seen."""
+    if not secret:
+        return "(empty)"
+    if len(secret) <= 8:
+        return "*" * len(secret)
+    return f"{secret[:4]}…{secret[-4:]}"
+
+
+# ── Local .env ───────────────────────────────────────────────────────────────
+
+
+def read_env(path: str) -> dict:
+    """Parse a dotenv file into a dict. Missing file yields an empty dict."""
+    values = {}
+    if not os.path.exists(path):
+        return values
+    with open(path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            values[key.strip()] = val.strip().strip('"').strip("'")
+    return values
+
+
+def set_env_keys(path: str, updates: dict) -> bool:
+    """
+    Replace the given keys in a dotenv file in place, preserving everything else.
+
+    Exact key match on the left of the first `=`, so a value is never treated as a
+    pattern. Written to a temp file and moved into place, so an interrupted run
+    cannot leave a half-written .env — which for this file would take the whole
+    stack down.
+    """
+    if not os.path.exists(path):
+        print(f"[!] .env not found at {path}; skipping local update.")
         return False
 
-def main():
-    print("=========================================================")
-    print("      Zerodha Kite Connect Authentication Helper         ")
-    print("=========================================================")
-    
-    env_path, api_key, api_secret = load_env_vars()
-    
-    if not api_key:
-        api_key = input("Enter your KITE_API_KEY: ").strip()
-    else:
-        print(f"[+] Loaded KITE_API_KEY: {api_key}")
-        
-    if not api_secret:
-        api_secret = input("Enter your KITE_API_SECRET: ").strip()
-    else:
-        print(f"[+] Loaded KITE_API_SECRET: [MASKED]")
-        
-    if not api_key or not api_secret:
-        print("[!] API Key and API Secret are required. Exiting.")
-        sys.exit(1)
-        
-    # Generate login URL
-    login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
-    
-    print("\n---------------------------------------------------------")
-    print("Step 1: Authenticate with Zerodha")
-    print("---------------------------------------------------------")
-    print("Please visit the following URL to log in and authorize your app:")
-    print(f"\n👉  {login_url}\n")
-    
-    try:
-        print("[*] Attempting to open browser automatically...")
-        webbrowser.open(login_url)
-    except Exception:
-        print("[!] Could not open browser automatically. Please copy & paste the URL above.")
-        
-    print("\nAfter logging in, you will be redirected to your configured Redirect URL.")
-    print("The redirected URL in your browser's address bar will look like:")
-    print("   https://your-redirect-url.com/?request_token=XXXXXX&action=login&status=success")
-    
-    print("\n---------------------------------------------------------")
-    print("Step 2: Enter Redirect URL / Request Token")
-    print("---------------------------------------------------------")
-    user_input = input("Paste the FULL redirect URL or the raw request_token here: ").strip()
-    
-    if not user_input:
-        print("[!] Input cannot be empty. Exiting.")
-        sys.exit(1)
-        
-    # Extract request_token
-    request_token = ""
-    if "request_token=" in user_input:
-        match = re.search(r"request_token=([a-zA-Z0-9]+)", user_input)
-        if match:
-            request_token = match.group(1)
-            print(f"[+] Parsed request_token: {request_token}")
+    with open(path, "r", encoding="utf-8") as handle:
+        lines = handle.readlines()
+
+    seen = set()
+    out = []
+    for line in lines:
+        key = line.split("=", 1)[0].strip()
+        if key in updates:
+            out.append(f"{key}={updates[key]}\n")
+            seen.add(key)
         else:
-            print("[!] Could not parse request_token from the URL. Trying raw input.")
-            request_token = user_input
-    else:
-        request_token = user_input
-        print(f"[+] Using raw request_token input: {request_token}")
-        
-    # Compute checksum: SHA-256(api_key + request_token + api_secret)
-    raw_checksum = f"{api_key}{request_token}{api_secret}"
-    checksum = hashlib.sha256(raw_checksum.encode("utf-8")).hexdigest()
-    
-    print("\n---------------------------------------------------------")
-    print("Step 3: Exchanging Request Token for Access Token")
-    print("---------------------------------------------------------")
-    
-    url = "https://api.kite.trade/session/token"
-    post_data = urllib.parse.urlencode({
-        "api_key": api_key,
-        "request_token": request_token,
-        "checksum": checksum
-    }).encode("utf-8")
-    
-    req = urllib.request.Request(url, data=post_data, method="POST")
+            out.append(line)
+    for key, val in updates.items():
+        if key not in seen:
+            if out and not out[-1].endswith("\n"):
+                out.append("\n")
+            out.append(f"{key}={val}\n")
+
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        handle.writelines(out)
+    os.replace(tmp, path)
+    return True
+
+
+# ── Kite token exchange ──────────────────────────────────────────────────────
+
+
+def exchange_token(api_key: str, api_secret: str, request_token: str) -> dict:
+    """POST /session/token. Returns the `data` object, or raises RuntimeError."""
+    checksum = hashlib.sha256(
+        f"{api_key}{request_token}{api_secret}".encode("utf-8")
+    ).hexdigest()
+
+    body = urllib.parse.urlencode(
+        {"api_key": api_key, "request_token": request_token, "checksum": checksum}
+    ).encode("utf-8")
+
+    req = urllib.request.Request("https://api.kite.trade/session/token", data=body, method="POST")
     req.add_header("X-Kite-Version", "3")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    
+
     try:
-        with urllib.request.urlopen(req) as response:
-            res_body = response.read().decode("utf-8")
-            res_json = json.loads(res_body)
-            
-            if res_json.get("status") == "success":
-                data = res_json.get("data", {})
-                access_token = data.get("access_token", "")
-                user_id = data.get("user_id", "")
-                user_name = data.get("user_name", "")
-                
-                print("[✔] Authentication Successful!")
-                print(f"    User      : {user_name} ({user_id})")
-                print(f"    Req Token : {request_token}")
-                print(f"    Access Tok: {access_token}")
-                print("\n=========================================================")
-                print("Important: The access token is valid until 06:00 AM IST tomorrow.")
-                print("=========================================================")
-                
-                # Ask to write to .env
-                confirm = input("\nWould you like to save these tokens to your .env file? [Y/n]: ").strip().lower()
-                if confirm in ("", "y", "yes"):
-                    update_env_file(env_path, request_token, access_token)
-                else:
-                    print("[*] Did not write to .env. You can add these manually:")
-                    print(f"KITE_REQUEST_TOKEN={request_token}")
-                    print(f"KITE_ACCESS_TOKEN={access_token}")
-            else:
-                error_msg = res_json.get("message", "Unknown Kite API error")
-                print(f"[❌] Exchange failed: {error_msg}")
-                
-    except HTTPError as e:
-        error_body = e.read().decode("utf-8")
+        with urllib.request.urlopen(req, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
         try:
-            err_json = json.loads(error_body)
-            error_msg = err_json.get("message", error_body)
+            detail = json.loads(detail).get("message", detail)
         except Exception:
-            error_msg = error_body
-        print(f"[❌] HTTP Error {e.code}: {error_msg}")
-    except URLError as e:
-        print(f"[❌] Network Connection Error: {e.reason}")
-    except Exception as e:
-        print(f"[❌] Unexpected Error: {e}")
+            pass
+        raise RuntimeError(f"HTTP {exc.code} from Kite: {detail}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Network error talking to Kite: {exc.reason}") from exc
+
+    if payload.get("status") != "success":
+        raise RuntimeError(payload.get("message", "unknown Kite API error"))
+    return payload.get("data", {})
+
+
+# ── Server deploy ────────────────────────────────────────────────────────────
+
+
+def build_remote_script(remote_path: str, access_token: str) -> str:
+    """
+    The bash run on the droplet: update .env, recreate the consumers, verify.
+
+    Delivered over SSH's stdin (`bash -s`) rather than as an argument, so the
+    token never appears in the remote argv and therefore never in a process
+    listing. `set -euo pipefail` means a failed .env write cannot fall through to
+    a restart that would come up with the old token.
+    """
+    services = " ".join(TOKEN_CONSUMERS)
+    return f"""
+set -euo pipefail
+cd {remote_path}
+
+TOKEN='{access_token}'
+
+# ── 1. Update .env ─────────────────────────────────────────────────────────
+# An exact-key rewrite via python rather than `sed s/.../.../`: sed would treat
+# the value as a replacement expression, so a token containing `/` or `&` would
+# corrupt the line. Temp file + os.replace so an interrupted write cannot leave a
+# truncated .env and take the stack down.
+#
+# KITE_REQUEST_TOKEN is deliberately BLANKED, not stored. It is single-use and
+# dead within minutes of the exchange, and docs/compliance/SECRET_ROTATION_RUNBOOK.md
+# §3.3 says it should never be persisted. Nothing reads it while
+# KITE_ACCESS_TOKEN is set.
+python3 - "$TOKEN" <<'PY'
+import os, sys
+token = sys.argv[1]
+path = ".env"
+updates = {{"KITE_ACCESS_TOKEN": token, "KITE_REQUEST_TOKEN": ""}}
+with open(path, encoding="utf-8") as fh:
+    lines = fh.readlines()
+seen = set()
+out = []
+for line in lines:
+    key = line.split("=", 1)[0].strip()
+    if key in updates:
+        out.append(f"{{key}}={{updates[key]}}\\n")
+        seen.add(key)
+    else:
+        out.append(line)
+for key, val in updates.items():
+    if key not in seen:
+        if out and not out[-1].endswith("\\n"):
+            out.append("\\n")
+        out.append(f"{{key}}={{val}}\\n")
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as fh:
+    fh.writelines(out)
+os.replace(tmp, path)
+print("[server] .env updated")
+PY
+
+# Confirm the value actually landed before restarting anything.
+grep -q "^KITE_ACCESS_TOKEN=$TOKEN$" .env || {{ echo "[server] .env write did not take"; exit 1; }}
+
+# ── 2. Recreate only the token consumers ──────────────────────────────────
+# `--no-deps` is the important flag. Without it, compose also recreates
+# questdb and redpanda because the consumers depend_on them — bouncing the
+# database and the broker to rotate a token, and briefly taking every other
+# service's upstream with them.
+echo "[server] recreating: {services}"
+docker compose -f docker-compose.prod.yml up -d --force-recreate --no-deps {services}
+
+# ── 3. Verify ─────────────────────────────────────────────────────────────
+# Two independent signals, because they fail differently:
+#   quote      — the aggregator's REST path accepted the token
+#   ws gauge   — ingestion actually authenticated the WebSocket, which is what
+#                feeds everything downstream. A stale token leaves every other
+#                health check green while the whole platform serves nothing.
+set -a; . ./.env; set +a
+
+echo "[server] verifying (up to 60s for the WS handshake)…"
+QUOTE_OK=0
+WS_OK=0
+for attempt in $(seq 1 12); do
+  sleep 5
+  if [ "$QUOTE_OK" -eq 0 ]; then
+    if curl -sf --max-time 10 -u "$QUESTDB_USER:$QUESTDB_PASSWORD" \\
+        "https://app-api.stratai.live/kite/quote?i=NSE:RELIANCE" -o /tmp/kite_quote.json 2>/dev/null; then
+      if python3 -c "import json,sys; d=json.load(open('/tmp/kite_quote.json')); q=d['quotes'][0]; sys.exit(0 if q.get('last_price',0)>0 else 1)" 2>/dev/null; then
+        QUOTE_OK=1
+        python3 -c "import json; d=json.load(open('/tmp/kite_quote.json')); q=d['quotes'][0]; print('[server] quote OK  ', q['symbol'], q['last_price'])"
+      fi
+    fi
+  fi
+  if [ "$WS_OK" -eq 0 ]; then
+    VAL=$(curl -sf --max-time 10 -u "$QUESTDB_USER:$QUESTDB_PASSWORD" \\
+      "https://app-api.stratai.live/prometheus/api/v1/query?query=ingestion_kite_ws_connected" 2>/dev/null \\
+      | python3 -c "import json,sys; r=json.load(sys.stdin)['data']['result']; print(r[0]['value'][1] if r else '')" 2>/dev/null || true)
+    if [ "$VAL" = "1" ]; then
+      WS_OK=1
+      echo "[server] kite WS  OK   ingestion_kite_ws_connected=1"
+    fi
+  fi
+  [ "$QUOTE_OK" -eq 1 ] && [ "$WS_OK" -eq 1 ] && break
+done
+
+rm -f /tmp/kite_quote.json
+[ "$QUOTE_OK" -eq 1 ] || echo "[server] WARN quote check did not pass"
+[ "$WS_OK" -eq 1 ]    || echo "[server] WARN ingestion_kite_ws_connected is not 1"
+if [ "$QUOTE_OK" -eq 1 ] && [ "$WS_OK" -eq 1 ]; then
+  echo "[server] VERIFIED"
+else
+  exit 2
+fi
+"""
+
+
+def deploy(host: str, ssh_key: str, remote_path: str, access_token: str) -> bool:
+    """Push the token to the droplet, restart the consumers, verify. True on success."""
+    key_path = ssh_key if os.path.isabs(ssh_key) else os.path.join(PROJECT_ROOT, ssh_key)
+    if not os.path.exists(key_path):
+        print(f"[!] SSH key not found at {key_path}")
+        return False
+
+    cmd = [
+        "ssh",
+        "-i", key_path,
+        # `accept-new`, not `no`: pins the host key on first contact and verifies
+        # it afterwards. `no` accepts a changed key silently, which is the one
+        # case worth noticing when a broker token is about to cross the link.
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "ConnectTimeout=20",
+        host,
+        "bash -s",
+    ]
+
+    print(f"[*] Deploying to {host}:{remote_path} …")
+    try:
+        result = subprocess.run(
+            cmd,
+            input=build_remote_script(remote_path, access_token),
+            text=True,
+            capture_output=True,
+            timeout=420,
+        )
+    except FileNotFoundError:
+        print("[!] `ssh` not found on PATH.")
+        return False
+    except subprocess.TimeoutExpired:
+        print("[!] Deploy timed out.")
+        return False
+
+    for line in (result.stdout or "").splitlines():
+        print(f"    {line}")
+    if result.returncode != 0:
+        for line in (result.stderr or "").splitlines()[-15:]:
+            print(f"    ! {line}")
+        print(f"[!] Deploy failed (exit {result.returncode}).")
+        return False
+    return True
+
+
+# ── Entry point ──────────────────────────────────────────────────────────────
+
+
+def resolve_request_token(api_key: str, supplied: str) -> str:
+    """Get a request_token: use the supplied one, else drive the login flow."""
+    if supplied:
+        raw = supplied
+    else:
+        login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
+        print("\n── Step 1: authenticate with Zerodha ────────────────────────")
+        print("This step cannot be automated: the daily expiry is a regulatory")
+        print("2FA requirement, not a technical one.\n")
+        print(f"  {login_url}\n")
+        try:
+            webbrowser.open(login_url)
+            print("[*] Opened your browser.")
+        except Exception:
+            print("[!] Could not open a browser — use the URL above.")
+
+        print("\n── Step 2: paste the redirect URL ───────────────────────────")
+        print("After logging in you land on your redirect URL, which carries")
+        print("?request_token=… — paste the whole thing (or just the token).")
+        raw = input("\n> ").strip()
+
+    if not raw:
+        print("[!] No request token provided.")
+        sys.exit(1)
+
+    match = re.search(r"request_token=([A-Za-z0-9]+)", raw)
+    token = match.group(1) if match else raw
+    if not TOKEN_RE.match(token):
+        print(f"[!] '{token}' is not a valid request token (expected alphanumeric).")
+        sys.exit(1)
+    return token
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Refresh the Kite access token, locally and on the server.")
+    parser.add_argument("--no-deploy", action="store_true", help="update the local .env only")
+    parser.add_argument("--token", default="", help="a request_token or redirect URL, to skip the browser step")
+    parser.add_argument("--host", default=DEFAULT_HOST)
+    parser.add_argument("--ssh-key", default=DEFAULT_SSH_KEY)
+    parser.add_argument("--remote-path", default=DEFAULT_REMOTE_PATH)
+    args = parser.parse_args()
+
+    print("=" * 60)
+    print("  Zerodha Kite Connect — daily token refresh")
+    print("=" * 60)
+
+    env_path = os.path.join(PROJECT_ROOT, ".env")
+    env = read_env(env_path)
+    api_key = env.get("KITE_API_KEY", "")
+    api_secret = env.get("KITE_API_SECRET", "")
+
+    if api_key:
+        print(f"[+] KITE_API_KEY    {api_key}")
+    else:
+        api_key = input("KITE_API_KEY: ").strip()
+    if api_secret:
+        print("[+] KITE_API_SECRET [masked]")
+    else:
+        api_secret = input("KITE_API_SECRET: ").strip()
+    if not api_key or not api_secret:
+        print("[!] Both KITE_API_KEY and KITE_API_SECRET are required.")
+        sys.exit(1)
+
+    request_token = resolve_request_token(api_key, args.token)
+
+    print("\n── Step 3: exchange for an access token ─────────────────────")
+    try:
+        data = exchange_token(api_key, api_secret, request_token)
+    except RuntimeError as exc:
+        print(f"[!] {exc}")
+        sys.exit(1)
+
+    access_token = data.get("access_token", "")
+    if not TOKEN_RE.match(access_token or ""):
+        print("[!] Kite returned an access token in an unexpected format; refusing to deploy it.")
+        sys.exit(1)
+
+    print(f"[+] Authenticated as {data.get('user_name', '?')} ({data.get('user_id', '?')})")
+    # Masked on purpose. The old version printed it in full, which is how tokens
+    # ended up copy-pasted into chat logs and terminal scrollback; nothing
+    # downstream needs a human to read it now.
+    print(f"[+] access_token    {mask(access_token)}  (valid until 06:00 IST tomorrow)")
+
+    print("\n── Step 4: update the local .env ────────────────────────────")
+    if set_env_keys(env_path, {"KITE_ACCESS_TOKEN": access_token, "KITE_REQUEST_TOKEN": ""}):
+        print(f"[+] {env_path}")
+        print("    KITE_REQUEST_TOKEN blanked — single-use, dead within minutes,")
+        print("    and SECRET_ROTATION_RUNBOOK.md §3.3 says not to persist it.")
+
+    if args.no_deploy:
+        print("\n[*] --no-deploy: server untouched.")
+        print("    Run without the flag to update the droplet and restart the feed.")
+        return
+
+    print("\n── Steps 5-7: server .env, restart, verify ──────────────────")
+    if deploy(args.host, args.ssh_key, args.remote_path, access_token):
+        print("\n[✔] Done — token rotated, services recreated, feed verified live.")
+    else:
+        print("\n[✘] Server update did not complete. The local .env is updated;")
+        print("    the droplet may still be running the previous token.")
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
