@@ -10,7 +10,7 @@ import SplitChartContainer from '../components/chart/SplitChartContainer';
 import FnoSection from '../components/fno/FnoSection';
 import RightSidebar from '../components/panels/RightSidebar';
 import ToastContainer from '../components/common/ToastContainer';
-import AuthOverlay from '../components/auth/AuthOverlay';
+import AuthGateScreen from '../components/auth/AuthGateScreen';
 import ConnectionLost from '../components/common/ConnectionLost';
 
 import { useTradeStore, hydrateLegacyAgentBridge } from '../store/useTradeStore';
@@ -24,13 +24,14 @@ import { useSymbolQuote } from '../hooks/useSymbolQuote';
 import { useSidebarDrag } from '../hooks/useSidebarDrag';
 import { useToast } from '../hooks/useToast';
 import { bridgeListen } from '../lib/bridge';
+import { redirectToSignIn } from '../lib/authRedirect';
 import type { ConsensusReport } from '../store/useQuantStore';
 
 export default function Home() {
   // ── Auth & Feature gates ──────────────────────────────────────────
+  const authStatus = useAuthStore((s) => s.status);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const fetchProfile = useAuthStore((s) => s.fetchProfile);
-  const completeLoginFromUrl = useAuthStore((s) => s.completeLoginFromUrl);
+  const checkAuth = useAuthStore((s) => s.checkAuth);
   const setFeatureAccessFlags = useFeatureStore((s) => s.setAccessFlags);
   const hydrateFeatureConfig = useFeatureStore((s) => s.hydrateConfig);
   const resetFeatureAccess = useFeatureStore((s) => s.reset);
@@ -51,13 +52,23 @@ export default function Home() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
-  // ── Cross-surface login handoff ───────────────────────────────────
-  // If we were opened with a `?token=` / `?session=` handoff from a login
-  // performed on the dashboard surface, consume it so the user lands here
-  // already signed in instead of at the login overlay. No-op otherwise.
+  // ── Session check ─────────────────────────────────────────────────
+  // The session is an httpOnly `.stratai.live` cookie, so whether we have one is
+  // the server's answer to give — asking `/users/me` IS the check. This replaced
+  // a `?token=` / `?session=` URL handoff, which is no longer needed now that the
+  // cookie is already present on this origin when the user arrives from
+  // auth.stratai.live.
   useEffect(() => {
-    void completeLoginFromUrl();
-  }, [completeLoginFromUrl]);
+    void checkAuth();
+  }, [checkAuth]);
+
+  // ── Unauthenticated → the auth surface ────────────────────────────
+  // Only on a CONFIRMED `anonymous`. Redirecting while the status is still
+  // `unknown` would bounce every returning user out of the terminal before their
+  // own session had a chance to be confirmed.
+  useEffect(() => {
+    if (authStatus === 'anonymous') redirectToSignIn();
+  }, [authStatus]);
 
   // ── Extracted hooks ───────────────────────────────────────────────
   const showConnectionLost = useConnectionMonitor(mounted);
@@ -89,11 +100,13 @@ export default function Home() {
   }, [isAuthenticated, resetFeatureAccess]);
 
   // ── WebSocket bootstrap ───────────────────────────────────────────
+  // `fetchProfile` is gone from here: `checkAuth` above already loads the user
+  // as part of establishing the session, so calling it too was a duplicate
+  // `/users/me` on every mount.
   useEffect(() => {
     connectWebSocket();
     hydrateLegacyAgentBridge();
-    fetchProfile();
-  }, [connectWebSocket, fetchProfile]);
+  }, [connectWebSocket]);
 
   // ── Live feed bootstrap ───────────────────────────────────────────
   // `/ws/*` is the one gateway prefix with no basic auth
@@ -190,7 +203,18 @@ export default function Home() {
   // INSTEAD of the login button, with no way to sign in. The feed-health screen
   // is only meaningful once you are inside the terminal, so it is gated on an
   // authenticated session.
-  if (!isAuthenticated) return <AuthOverlay />;
+  // The terminal has no login form of its own — auth.stratai.live is the only
+  // sign-in surface. Two distinct non-authenticated states, and conflating them
+  // is what would break the experience:
+  //
+  //   `unknown`   — the session check is still in flight. Hold, do not redirect:
+  //                 a returning user with a perfectly good cookie would be
+  //                 thrown out to the auth page and (since they are signed in)
+  //                 immediately bounced back, for no reason.
+  //   `anonymous` — confirmed no session. The effect above has already started
+  //                 the redirect; render the same quiet screen while the browser
+  //                 navigates rather than flashing the terminal.
+  if (!isAuthenticated) return <AuthGateScreen status={authStatus} />;
   if (showConnectionLost) return <ConnectionLost />;
 
   // ── Render ────────────────────────────────────────────────────────

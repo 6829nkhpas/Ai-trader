@@ -104,7 +104,10 @@ export default function UserProfileModal({ isOpen, onClose }: UserProfileModalPr
 
           <button
             onClick={() => {
-              logout();
+              // Fire-and-forget: `logout` awaits the server-side cookie revoke,
+              // but the modal should close now. The redirect to sign-in is driven
+              // by the status change in `page.tsx`.
+              void logout();
               onClose();
             }}
             className="flex w-full items-center gap-3 border-t border-border-default bg-elevated hover:bg-red-500/10 hover:text-red-400 px-5 py-4 text-xs font-semibold text-text-secondary transition-all"

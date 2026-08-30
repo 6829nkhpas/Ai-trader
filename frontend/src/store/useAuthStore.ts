@@ -1,8 +1,37 @@
+// store/useAuthStore.ts — the terminal's view of the shared Strat AI session.
+//
+// The session lives in an httpOnly cookie pair (`access_token` / `refresh_token`)
+// issued by the auth API for `domain=.stratai.live`. Every Strat AI surface —
+// auth, dashboard, this terminal — is a subdomain of that, so a login performed
+// on any one of them is a login on all of them. The browser attaches the cookie
+// to our API calls; JavaScript never sees it.
+//
+// What this replaced, and why:
+//
+//   · A desktop handshake. `login()` used to POST `/auth/desktop/session`, open a
+//     browser, then race a Tauri `desktop-login-success` deep-link event against
+//     a 2-second polling loop with a 5-minute timeout, and exchange the winner
+//     for tokens. It existed to carry a session into a Tauri shell that no longer
+//     ships; on the web it was an elaborate way to reach a URL.
+//
+//   · Tokens in `localStorage`. `token`, `strat_refresh_token`, `user` and
+//     `strat_authenticated` were all JS-readable, which makes any XSS a full
+//     session theft. httpOnly cookies remove that class of exposure entirely.
+//
+//   · A GUESSED auth state. `isAuthenticated` was
+//     `localStorage['strat_authenticated'] === 'true' && !!token`, computed once
+//     at store creation with no expiry check — so a token that expired days ago
+//     read as signed in, and the app rendered the whole terminal before the first
+//     API call failed. `status` below is only ever set from an actual answer from
+//     the server.
+//
+// The `unknown` → `authenticated` | `anonymous` progression is the point of the
+// three-state model: "we have not asked yet" is not the same claim as "you are
+// not signed in", and only the second one justifies redirecting someone away.
+
 import { create } from 'zustand';
 import { API_BASE_URL, API_V1_PREFIX } from '../lib/env';
 import { usersApi } from '../lib/api/endpoints';
-import { REFRESH_TOKEN_KEY } from '../lib/api/client';
-import { bridgeInvoke, bridgeListen } from '../lib/bridge';
 import { useFeatureStore } from './useFeatureStore';
 
 export interface AuthUser {
@@ -13,300 +42,127 @@ export interface AuthUser {
   role: string;
 }
 
+/**
+ * Whether the visitor holds a live session.
+ *
+ * `unknown` until `/users/me` answers. Callers MUST NOT treat it as anonymous —
+ * see the comment on the state machine above.
+ */
+export type AuthStatus = 'unknown' | 'authenticated' | 'anonymous';
+
 interface AuthState {
+  status: AuthStatus;
+  /** True only for a confirmed session. `unknown` is deliberately not truthy. */
   isAuthenticated: boolean;
-  token: string | null;
-  refreshToken: string | null;
   user: AuthUser | null;
   isBrokerConnected: boolean;
-  login: () => Promise<void>;
   /**
-   * Complete a login that was performed on ANOTHER web surface.
-   *
-   * The two web surfaces (this terminal and the dashboard) are separate origins
-   * with separate `localStorage`, so a session established on one is invisible
-   * to the other — the "on login both web should login" report. The auth service
-   * already knows how to hand a session across: it redirects back with either a
-   * one-time `token` (exchangeable straight away) or the `session` id of a
-   * desktop-login handshake. Nothing in the terminal ever read those params, so
-   * the handover dead-ended at the login overlay.
-   *
-   * Resolves `true` when a handoff was found and consumed. Idempotent and safe
-   * to call on every mount: with no handoff params it is a no-op.
+   * Resolve `status` by asking the API who we are. Safe to call repeatedly;
+   * concurrent calls share one request.
    */
-  completeLoginFromUrl: () => Promise<boolean>;
-  logout: () => void;
+  checkAuth: () => Promise<AuthStatus>;
+  /** Drop the server-side session, then hand off to the auth surface. */
+  logout: () => Promise<void>;
+  /** Forget the local session without calling the server (401 handling). */
+  clearSession: () => void;
   setBrokerConnected: (connected: boolean) => void;
   fetchProfile: () => Promise<void>;
   fetchUserProfile: () => Promise<void>;
   updateName: (name: string) => Promise<void>;
 }
 
-const ACCESS_TOKEN_KEY = 'token';
-const AUTH_FLAG_KEY = 'strat_authenticated';
-const USER_KEY = 'user';
+/** Shared in-flight `checkAuth`, so a mount storm makes one request. */
+let checkPromise: Promise<AuthStatus> | null = null;
 
-function readLocalStorage(key: string): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(key);
-}
+export const useAuthStore = create<AuthState>((set, get) => ({
+  // No optimistic restore from storage: there is nothing readable to restore
+  // from, and guessing is what made the old store claim a dead session was live.
+  status: 'unknown',
+  isAuthenticated: false,
+  user: null,
+  isBrokerConnected: true,
 
-function writeLocalStorage(key: string, value: string): void {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(key, value);
-}
+  checkAuth: async () => {
+    if (checkPromise) return checkPromise;
 
-function removeLocalStorage(key: string): void {
-  if (typeof window === 'undefined') return;
-  localStorage.removeItem(key);
-}
-
-export const useAuthStore = create<AuthState>((set, get) => {
-  const storedAuth = readLocalStorage(AUTH_FLAG_KEY) === 'true';
-  const storedToken = readLocalStorage(ACCESS_TOKEN_KEY);
-  const storedRefresh = readLocalStorage(REFRESH_TOKEN_KEY);
-  const storedUser = (() => {
-    const raw = readLocalStorage(USER_KEY);
-    if (!raw) return null;
-    try {
-      return JSON.parse(raw) as AuthUser;
-    } catch {
-      return null;
-    }
-  })();
-
-  /**
-   * Trade a one-time login token for an access/refresh pair and persist it.
-   *
-   * Hoisted out of `login` so the URL-handoff path (`completeLoginFromUrl`)
-   * commits a session through exactly the same code — two copies of this would
-   * be two chances to persist an inconsistent set of keys.
-   */
-  const exchangeToken = async (loginToken: string): Promise<void> => {
-    const exchangeRes = await fetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/desktop/exchange`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: loginToken }),
-    });
-    if (!exchangeRes.ok) {
-      throw new Error('Token exchange failed');
-    }
-    const dataJson = await exchangeRes.json();
-    const { accessToken, refreshToken, user } = dataJson.data;
-
-    writeLocalStorage(AUTH_FLAG_KEY, 'true');
-    writeLocalStorage(ACCESS_TOKEN_KEY, accessToken);
-    writeLocalStorage(REFRESH_TOKEN_KEY, refreshToken);
-    writeLocalStorage(USER_KEY, JSON.stringify(user));
-
-    set({
-      isAuthenticated: true,
-      token: accessToken,
-      refreshToken,
-      user,
-      isBrokerConnected: true,
-    });
-  };
-
-  /** Read a desktop-session status once; returns its login token when ready. */
-  const readSessionToken = async (sessionId: string): Promise<string | null> => {
-    const statusRes = await fetch(
-      `${API_BASE_URL}${API_V1_PREFIX}/auth/desktop/session/${encodeURIComponent(sessionId)}`,
-    );
-    if (!statusRes.ok) return null;
-    const statusData = await statusRes.json();
-    const { status, token } = statusData.data ?? {};
-    return status === 'authenticated' && token ? (token as string) : null;
-  };
-
-  /** Strip the consumed handoff params so a reload cannot replay them. */
-  const clearHandoffParams = (): void => {
-    if (typeof window === 'undefined') return;
-    const url = new URL(window.location.href);
-    let touched = false;
-    for (const key of ['token', 'session', 'sessionId']) {
-      if (url.searchParams.has(key)) {
-        url.searchParams.delete(key);
-        touched = true;
-      }
-    }
-    if (!touched) return;
-    // `replaceState` rather than a navigation: no reload, no history entry, and
-    // the one-time token stops sitting in the address bar / referrer.
-    window.history.replaceState({}, '', url.pathname + (url.search || '') + url.hash);
-  };
-
-  return {
-    isAuthenticated: storedAuth && !!storedToken,
-    token: storedToken,
-    refreshToken: storedRefresh,
-    user: storedUser,
-    isBrokerConnected: true,
-
-    completeLoginFromUrl: async () => {
-      if (typeof window === 'undefined') return false;
-      if (get().isAuthenticated) {
-        // Already signed in — still clear the params so a stale token is not
-        // left in the URL.
-        clearHandoffParams();
-        return false;
-      }
-
-      const params = new URLSearchParams(window.location.search);
-      const directToken = params.get('token');
-      const sessionId = params.get('session') ?? params.get('sessionId');
-      if (!directToken && !sessionId) return false;
-
+    checkPromise = (async (): Promise<AuthStatus> => {
       try {
-        const loginToken = directToken ?? (sessionId ? await readSessionToken(sessionId) : null);
-        if (!loginToken) return false;
-        await exchangeToken(loginToken);
-        clearHandoffParams();
-        return true;
-      } catch (err) {
-        // A stale/consumed handoff is an expected condition (refresh, back
-        // button), not a fault: fall through to the normal login overlay.
-        console.warn('[Auth Store] Login handoff from URL could not be completed:', err);
-        clearHandoffParams();
-        return false;
+        // `usersApi.getMe` goes through `apiRequest`, which sends
+        // `credentials: 'include'` and transparently refreshes on a 401.
+        const user = (await usersApi.getMe()) as AuthUser;
+        set({ status: 'authenticated', isAuthenticated: true, user });
+        return 'authenticated';
+      } catch {
+        // Any failure to establish identity is treated as anonymous. That
+        // includes a network fault: the terminal cannot be entered without a
+        // confirmed session, and pretending otherwise would render a logged-out
+        // shell full of empty panels.
+        set({ status: 'anonymous', isAuthenticated: false, user: null });
+        useFeatureStore.getState().reset();
+        return 'anonymous';
       }
-    },
+    })().finally(() => {
+      checkPromise = null;
+    });
 
-    login: async () => {
-      const response = await fetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/desktop/session`, {
+    return checkPromise;
+  },
+
+  clearSession: () => {
+    // Clear the feature-gate snapshot too, so a previous session's plan flags
+    // cannot leak into the next one.
+    useFeatureStore.getState().reset();
+    set({
+      status: 'anonymous',
+      isAuthenticated: false,
+      user: null,
+      isBrokerConnected: false,
+    });
+  },
+
+  logout: async () => {
+    // Ask the server to clear the cookies. Only it can: they are httpOnly, and
+    // they are scoped to `.stratai.live`, so signing out here signs the user out
+    // of every surface — which is what a user pressing "log out" means.
+    try {
+      await fetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/logout`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
       });
-      if (!response.ok) {
-        throw new Error('Failed to initiate desktop login session');
+    } catch (err) {
+      // A failed revoke must not trap the user in a session they asked to leave;
+      // fall through to the local clear and the redirect. The cookie may outlive
+      // this, but it expires on its own and the next surface will re-check.
+      console.warn('[Auth] Server logout failed; clearing locally anyway:', err);
+    }
+    get().clearSession();
+  },
+
+  setBrokerConnected: (connected) => set({ isBrokerConnected: connected }),
+
+  fetchProfile: async () => {
+    // Unlike the old version there is no token to check first — whether a
+    // session exists is the server's answer to give.
+    try {
+      const user = (await usersApi.getMe()) as AuthUser;
+      set({ status: 'authenticated', isAuthenticated: true, user });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to fetch profile';
+      if (/401|Unauthorized|Session expired/i.test(message)) {
+        get().clearSession();
+      } else {
+        console.error('[Auth] Fetch user profile failed:', err);
       }
+    }
+  },
 
-      const resJson = await response.json();
-      const { sessionId, loginUrl } = resJson.data;
+  fetchUserProfile: async () => {
+    await get().fetchProfile();
+  },
 
-      let browserOpened = false;
-      try {
-        await bridgeInvoke('open_browser', { url: loginUrl });
-        browserOpened = true;
-      } catch (err) {
-        console.error('[Auth Store] open_browser invoke failed:', err);
-        if (typeof window !== 'undefined') {
-          const w = window.open(loginUrl, '_blank', 'noopener,noreferrer');
-          browserOpened = !!w;
-        }
-      }
-      if (!browserOpened) {
-        console.error('[Auth Store] Could not open a browser for login URL:', loginUrl);
-      }
-
-      let unlistenSuccess: (() => void) | undefined;
-      const tauriPromise = new Promise<string>((resolve) => {
-        // Desktop wins the race via the `strat://` deep-link IPC event; in a
-        // browser this listener simply never fires and the poll below completes
-        // the login. Both paths resolve the same `Promise.race`.
-        bridgeListen<{ token: string }>('desktop-login-success', (event) => {
-          resolve(event.payload.token);
-        })
-          .then((unlisten) => {
-            unlistenSuccess = unlisten;
-          })
-          .catch(() => {
-            // Not in Tauri, or the listener failed — polling will handle it.
-          });
-      });
-
-      let isCompleted = false;
-      const pollPromise = new Promise<string>((resolve, reject) => {
-        const interval = setInterval(async () => {
-          if (isCompleted) {
-            clearInterval(interval);
-            return;
-          }
-          try {
-            const statusRes = await fetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/desktop/session/${sessionId}`);
-            if (!statusRes.ok) return;
-            const statusData = await statusRes.json();
-            const { status, token } = statusData.data;
-
-            if (status === 'authenticated' && token) {
-              isCompleted = true;
-              clearInterval(interval);
-              resolve(token);
-            } else if (status === 'expired') {
-              isCompleted = true;
-              clearInterval(interval);
-              reject(new Error('Login session expired. Please try again.'));
-            }
-          } catch (err) {
-            console.error('[Auth Store] Polling session status failed:', err);
-          }
-        }, 2000);
-
-        setTimeout(() => {
-          if (!isCompleted) {
-            isCompleted = true;
-            clearInterval(interval);
-            reject(new Error('Login timed out.'));
-          }
-        }, 5 * 60 * 1000);
-      });
-
-      try {
-        const finalToken = await Promise.race([tauriPromise, pollPromise]);
-        isCompleted = true;
-        if (unlistenSuccess) unlistenSuccess();
-        await exchangeToken(finalToken);
-      } catch (err) {
-        if (unlistenSuccess) unlistenSuccess();
-        throw err;
-      }
-    },
-
-    logout: () => {
-      removeLocalStorage(AUTH_FLAG_KEY);
-      removeLocalStorage(USER_KEY);
-      removeLocalStorage(ACCESS_TOKEN_KEY);
-      removeLocalStorage(REFRESH_TOKEN_KEY);
-      // Clear the feature-gate snapshot so a stale access map from the
-      // previous session can't leak into a fresh login.
-      useFeatureStore.getState().reset();
-      set({
-        isAuthenticated: false,
-        token: null,
-        refreshToken: null,
-        user: null,
-        isBrokerConnected: false,
-      });
-    },
-
-    setBrokerConnected: (connected) => set({ isBrokerConnected: connected }),
-
-    fetchProfile: async () => {
-      const token = get().token;
-      if (!token) return;
-
-      try {
-        const user = await usersApi.getMe();
-        writeLocalStorage(USER_KEY, JSON.stringify(user));
-        set({ user });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to fetch profile';
-        if (/401|Unauthorized|Token refresh failed|No refresh token/i.test(message)) {
-          get().logout();
-        } else {
-          console.error('[Auth Store] Fetch user profile failed:', err);
-        }
-      }
-    },
-
-    fetchUserProfile: async () => {
-      await get().fetchProfile();
-    },
-
-    updateName: async (name: string) => {
-      const user = await usersApi.updateMe({ name });
-      writeLocalStorage(USER_KEY, JSON.stringify(user));
-      set({ user });
-    },
-  };
-});
+  updateName: async (name: string) => {
+    const user = (await usersApi.updateMe({ name })) as AuthUser;
+    set({ user });
+  },
+}));

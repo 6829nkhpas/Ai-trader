@@ -16,5 +16,7 @@ export async function openExternalUrl(url: string): Promise<void> {
 }
 
 export function dashboardUrl(): string {
-  return DASHBOARD_URL ?? '';
+  // `lib/env` throws on a missing value, so this is always a real URL — the old
+  // `?? ''` fallback could only ever have produced a link to nowhere.
+  return DASHBOARD_URL;
 }

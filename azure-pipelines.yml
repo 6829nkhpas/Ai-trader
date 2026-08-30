@@ -67,6 +67,7 @@ steps:
       NEXT_OUTPUT_EXPORT: '1'
       NEXT_PUBLIC_API_BASE_URL: 'https://api-web.stratai.live'
       NEXT_PUBLIC_DASHBOARD_URL: 'https://dashboard.stratai.live'
+      NEXT_PUBLIC_AUTH_URL: 'https://auth.stratai.live'
       NEXT_PUBLIC_AUTH_SERVICE_URL: 'https://api-web.stratai.live'
       NEXT_PUBLIC_PROD: 'false'
       NEXT_PUBLIC_LLM_GATEWAY: 'omniroute'

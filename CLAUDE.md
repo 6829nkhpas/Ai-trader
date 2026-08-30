@@ -66,10 +66,19 @@ the web path looks the way it does.
 and payment API is a **separate deployment** reachable at
 `NEXT_PUBLIC_API_BASE_URL` (prod: `https://api-web.stratai.live`, prefix
 `/api/v1`). The frontend consumes it over HTTP only — see `store/useAuthStore.ts`
-and `lib/api/client.ts`. There is no local auth service to start, and endpoints
-like `/auth/desktop/session` exist only on that remote deployment (the name is a
-leftover; it is the browser's login path), so failures there must be debugged
-from its logs, not from this tree.
+and `lib/api/client.ts`. There is no local auth service to start, so failures
+there must be debugged from its logs, not from this tree.
+
+**The terminal has NO login form.** Signing in happens on the dedicated auth
+surface (`NEXT_PUBLIC_AUTH_URL`, prod `https://auth.stratai.live`, source in the
+separate `thestratai/auth` repo). That deployment sets the session as an httpOnly
+cookie pair scoped to `domain=.stratai.live`, so every Strat AI subdomain shares
+one session and this origin is already authenticated when the user arrives back
+from it. `page.tsx` redirects to `signInUrl()` on a confirmed `anonymous` status;
+nothing is handed over in the URL and no token is readable from JavaScript. The
+old `/auth/desktop/session` handshake (open a browser, poll a session, race a
+`strat://` deep link, exchange for localStorage tokens) is gone — it existed to
+carry a session into a Tauri shell that no longer ships.
 
 **Deployment:** `frontend/Dockerfile` (Node 22 alpine, multi-stage, `next build
 --turbopack`) → the `frontend` service in `docker-compose.prod.yml`
@@ -358,7 +367,7 @@ via `QUANT_TOOL_SERVER_URL` / `SENTIMENT_HTTP_URL`.
 
 - **QuestDB** — the only database. `live_ticks` (cumulative day volume — use `last(volume)-first(volume)` per bucket), `historical_candles` (daily, PARTITION BY YEAR, DEDUP on ts+symbol), `historical_intraday` (PARTITION BY MONTH, DEDUP on ts+symbol+timeframe), `option_ticks`, `option_chain_snapshots`. Reached over REST (`:9000`, via `/api/questdb/*`) or PG wire (`:8812`, from the Rust services).
 - **No SQLite.** The workspace DB and the `instruments` / `nfo_instruments` masters went with the desktop shell. The instrument master is now an in-memory + on-disk JSON cache inside the aggregator (`instruments_cache_{nse,nfo}.json`, per-exchange, 24h TTL, refetched from `https://api.kite.trade/instruments/{NSE,NFO}`).
-- **Browser-local state** — `localStorage` holds the per-symbol chart workspace, the radar symbol list (`stratai.*` keys, see `webAdapters.ts`), TradingView layouts (`utils/tvSaveLoadAdapter.ts`), and the JWT/refresh token.
+- **Browser-local state** — `localStorage` holds the per-symbol chart workspace, the radar symbol list (`stratai.*` keys, see `webAdapters.ts`), TradingView layouts (`utils/tvSaveLoadAdapter.ts`), and the terminal selection preferences (`stratai.preferences`, `lib/preferences.ts`). It holds NO session material: the access/refresh tokens are httpOnly cookies on `.stratai.live` and are deliberately unreadable from JS.
 
 ---
 
@@ -366,7 +375,7 @@ via `QUANT_TOOL_SERVER_URL` / `SENTIMENT_HTTP_URL`.
 
 - **CSS tokens (Tailwind v4), not raw colors:** `bg-background/surface/card/elevated/muted`, `text-text-primary/secondary/muted`, `border-border-default/subtle`, `text-emerald-*`/`text-rose-*` for bull/bear. Dark default; `.light` on `<html>` flips (see `globals.css`).
 - **Profile-driven UI:** `activeProfile` drives both main layout and sidebar. Split-chart (dual-pane) only in INTRADAY/FNO.
-- **Auth gating:** `page.tsx` early-returns `AuthOverlay` if unauthenticated, then broker connect card if broker not connected.
+- **Auth gating:** `page.tsx` calls `checkAuth()` (a `/users/me` round trip) and early-returns `AuthGateScreen` until the session is confirmed, then the broker connect card if the broker is not connected. The status is three-state — `unknown` holds, only a confirmed `anonymous` redirects to the auth surface, because bouncing a user out mid-check would eject everyone with a valid cookie.
 - **Live data only** — no synthetic/mock generators in UI; components update only on real WS/SSE/HTTP data. `ALPHA_TEST_MODE` (`1`/`true`) only sets `window.__ALPHA_TEST_MODE__` in `app/layout.tsx`, which suppresses the "Connection Lost" overlay in `useConnectionMonitor`; it no longer swaps Kite for mock routes.
 - **Charts bypass React state** for hot paths — TV/lightweight-charts `.setData()`/`.update()` called directly.
 - **Server-only files:** `app/api/_gateway.ts`, `_proxy.ts` and `_featureSwitches.ts` must never be imported from a Client Component — they read unprefixed env (the gateway credential).

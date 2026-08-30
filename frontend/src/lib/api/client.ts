@@ -1,55 +1,62 @@
+// lib/api/client.ts — the authenticated transport to the Strat AI API.
+//
+// Authentication is the `.stratai.live` cookie pair, not a bearer token: every
+// request carries `credentials: 'include'` and the browser attaches
+// `access_token` for us. There is nothing to read, store, or attach by hand,
+// which is the whole point — the previous version kept the access and refresh
+// tokens in `localStorage` and set `Authorization` per call, so any XSS on this
+// origin was a session theft.
+//
+// The API accepts either form (`verifyJWT` reads `req.cookies.access_token`
+// before falling back to the `Authorization` header), so this is a client-side
+// change only.
+
 import { API_BASE_URL, API_V1_PREFIX } from '../env';
 import { useAuthStore } from '../../store/useAuthStore';
 import { ApiError, type ApiResponse } from './types';
-
-const ACCESS_TOKEN_KEY = 'token';
-const REFRESH_TOKEN_KEY = 'strat_refresh_token';
 
 type RequestOptions = {
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   body?: unknown;
   signal?: AbortSignal;
+  /** Send credentials and refresh on 401. Default true. */
   auth?: boolean;
   headers?: Record<string, string>;
 };
 
-let refreshPromise: Promise<string> | null = null;
+/**
+ * Single-flight refresh. Concurrent 401s share one refresh call rather than
+ * each racing to rotate the refresh token — with rotation, parallel refreshes
+ * invalidate each other and log the user out mid-session.
+ */
+let refreshPromise: Promise<void> | null = null;
 
-function readStoredRefreshToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(REFRESH_TOKEN_KEY);
-}
-
-function persistTokens(accessToken: string, refreshToken: string): void {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
-  localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
-  useAuthStore.setState({ token: accessToken, refreshToken });
-}
-
-async function refreshAccessToken(): Promise<string> {
+/**
+ * Ask the API to mint a new access cookie from the refresh cookie.
+ *
+ * No token is passed or returned: the refresh token arrives as a cookie and the
+ * new access token is set as one. A failure means the session is genuinely over,
+ * so the local state is cleared — but this does NOT redirect. Deciding where an
+ * unauthenticated user goes belongs to the app shell (`app/page.tsx`), not to
+ * every stray background request that happens to notice first.
+ */
+async function refreshSession(): Promise<void> {
   if (refreshPromise) return refreshPromise;
 
   refreshPromise = (async () => {
-    const refreshToken = readStoredRefreshToken() ?? useAuthStore.getState().refreshToken;
-    if (!refreshToken) {
-      throw new ApiError('No refresh token available', 401);
-    }
-
     const res = await fetch(`${API_BASE_URL}${API_V1_PREFIX}/auth/refresh-token`, {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh: refreshToken }),
+      // The endpoint reads `req.cookies.refresh_token || req.body.refresh`; the
+      // cookie path is the one in use, so the body is deliberately empty.
+      body: '{}',
     });
 
-    const json = (await res.json().catch(() => null)) as ApiResponse<{ accessToken: string; refreshToken: string }> | null;
-    if (!res.ok || !json?.success || !json.data?.accessToken || !json.data?.refreshToken) {
-      useAuthStore.getState().logout();
-      throw new ApiError(json?.message ?? 'Token refresh failed', res.status);
+    if (!res.ok) {
+      useAuthStore.getState().clearSession();
+      throw new ApiError('Session expired', res.status);
     }
-
-    persistTokens(json.data.accessToken, json.data.refreshToken);
-    return json.data.accessToken;
   })().finally(() => {
     refreshPromise = null;
   });
@@ -76,30 +83,29 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   if (body !== undefined && !finalHeaders['Content-Type']) {
     finalHeaders['Content-Type'] = 'application/json';
   }
-  if (auth) {
-    const token = useAuthStore.getState().token;
-    if (token) finalHeaders['Authorization'] = `Bearer ${token}`;
-  }
 
-  const init: RequestInit = {
-    method,
-    headers: finalHeaders,
-    signal,
+  const buildInit = (): RequestInit => {
+    const init: RequestInit = {
+      method,
+      headers: finalHeaders,
+      signal,
+      // Cross-origin to api-web.stratai.live, so the cookie only rides along
+      // with `include`. `same-origin` (the default) would silently send an
+      // unauthenticated request and read as a logged-out user.
+      credentials: auth ? 'include' : 'same-origin',
+    };
+    if (body !== undefined) init.body = JSON.stringify(body);
+    return init;
   };
-  if (body !== undefined) init.body = JSON.stringify(body);
 
-  const res = await fetch(url, init);
+  const res = await fetch(url, buildInit());
 
   if (res.status === 401 && auth) {
-    const newToken = await refreshAccessToken();
-    finalHeaders['Authorization'] = `Bearer ${newToken}`;
-    const retryInit: RequestInit = { method, headers: finalHeaders, signal };
-    if (body !== undefined) retryInit.body = JSON.stringify(body);
-    const retryRes = await fetch(url, retryInit);
-    return parseEnvelope<T>(retryRes);
+    // Refresh, then retry exactly once. A 401 on the retry is a real answer, not
+    // a stale access token, so it surfaces to the caller instead of looping.
+    await refreshSession();
+    return parseEnvelope<T>(await fetch(url, buildInit()));
   }
 
   return parseEnvelope<T>(res);
 }
-
-export { REFRESH_TOKEN_KEY, ACCESS_TOKEN_KEY };

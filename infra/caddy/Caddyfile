@@ -187,10 +187,16 @@ app-api.stratai.live {
 
 # ── The web app (app.stratai.live) ────────────────────────────────────────────
 # Serves the Next.js terminal to end users. Deliberately NOT behind basic_auth:
-# this is the public product and the JWT (issued by the separate
+# this is the public product and the session cookie (issued by the separate
 # api-web.stratai.live deployment) is the auth boundary. Adding a shared
 # gateway password here would mean every prospective user needed a secret that is
 # also compiled into desktop installers.
+#
+# The terminal has no login form: an unauthenticated visitor is redirected to
+# auth.stratai.live, which authenticates them and sets `access_token` /
+# `refresh_token` as httpOnly cookies for `domain=.stratai.live`. Because this
+# vhost is a subdomain of that, the browser presents the session here with no
+# handoff — which is also why the https redirect below is not optional.
 #
 # The container holds NO gateway credential. `frontend`'s compose environment
 # points each upstream at its internal service name (KITE_API_URL,
@@ -200,8 +206,14 @@ app-api.stratai.live {
 # gateway. That is why no /tools or /sentiment route was added above.
 #
 # Requires: a DNS A record for app.stratai.live -> this droplet, and
-# https://app.stratai.live added to the CORS allowlist on the api-web deployment
-# (out of this repo) or login fails preflight.
+# https://app.stratai.live on the CORS allowlist of the api-web deployment (out of
+# this repo, `src/core/security/allowed-domains.ts`) — with `credentials: true`,
+# which it has. Verified against production: an OPTIONS preflight for
+# /api/v1/users/me with `Origin: https://app.stratai.live` returns
+# `Access-Control-Allow-Origin: https://app.stratai.live` and
+# `Access-Control-Allow-Credentials: true`. Without both, every authenticated
+# request from this origin fails preflight and the app reads a live session as
+# logged out.
 app.stratai.live {
 	# Compression is not cosmetic here: the app ships a 526 kB first-load JS bundle
 	# plus the TradingView Advanced Charts library (~31 MB of static assets under
@@ -230,9 +242,10 @@ app.stratai.live {
 # redirect, which is correct for the API gateway (its clients always dial https
 # and the flag keeps port 80 free for the ACME challenge). But a HUMAN types
 # `app.stratai.live` with no scheme, and without this block that request would be
-# served over plaintext — putting the JWT and the whole session on an
-# unencrypted page, and breaking the wss:// feeds as mixed content. So the
-# redirect is restored for this one site only.
+# served over plaintext — breaking the wss:// feeds as mixed content, and
+# breaking auth outright: the session cookies are `Secure; SameSite=None`, so a
+# browser will not send them over http and every request would read as logged
+# out. So the redirect is restored for this one site only.
 http://app.stratai.live {
 	redir https://{host}{uri} permanent
 }

@@ -7,10 +7,13 @@ const BASE_URL = `${process.env.NEXT_PUBLIC_AUTH_SERVICE_URL || 'http://localhos
 /**
  * Centralised handler for protected-endpoint errors.
  *
- * - 401 (`TOKEN_EXPIRED` / `INVALID_TOKEN` / `NO_TOKEN`) → JWT problem, log
- *   the user out so the auth overlay re-appears instead of looping requests.
+ * - 401 → the session is gone. Clear it locally; the app shell watches
+ *   `status` and sends the user to the auth surface. Deliberately NOT a
+ *   redirect from here: a background portfolio poll should not be the thing
+ *   that navigates the page.
  * - 403 with the explicit broker error code → the *broker* session is dead,
- *   not the JWT, so flip `isBrokerConnected` to surface the reconnect card.
+ *   not the app session, so flip `isBrokerConnected` to surface the reconnect
+ *   card.
  * - Any other 403 is a real authorization issue and is left untouched.
  */
 function handleProtectedError(err: any): void {
@@ -20,7 +23,7 @@ function handleProtectedError(err: any): void {
 
   if (status === 401) {
     console.warn('[useAlphaData] 401 from auth service — clearing session.');
-    useAuthStore.getState().logout();
+    useAuthStore.getState().clearSession();
     return;
   }
 
@@ -58,13 +61,13 @@ interface MarginData {
 }
 
 export function useMargins() {
-  const token = useAuthStore((s) => s.token);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [data, setData] = useState<MarginData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchMargins = useCallback(async () => {
-    if (!token) {
+    if (!isAuthenticated) {
       setError('Not authenticated');
       setLoading(false);
       return;
@@ -72,11 +75,7 @@ export function useMargins() {
     setLoading(true);
     setError(null);
     try {
-      const response = await axios.get(`${BASE_URL}/portfolio/margins`, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
+      const response = await axios.get(`${BASE_URL}/portfolio/margins`, { withCredentials: true });
       setData(response.data.margins || null);
     } catch (err: any) {
       console.error('[useMargins] failed to fetch margins:', err);
@@ -86,7 +85,7 @@ export function useMargins() {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     fetchMargins();
@@ -125,13 +124,13 @@ interface PositionsPayload {
 }
 
 export function usePositions() {
-  const token = useAuthStore((s) => s.token);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [data, setData] = useState<PositionsPayload | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchPositions = useCallback(async () => {
-    if (!token) {
+    if (!isAuthenticated) {
       setError('Not authenticated');
       setLoading(false);
       return;
@@ -139,11 +138,7 @@ export function usePositions() {
     setLoading(true);
     setError(null);
     try {
-      const response = await axios.get(`${BASE_URL}/portfolio/positions`, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
+      const response = await axios.get(`${BASE_URL}/portfolio/positions`, { withCredentials: true });
       setData(response.data.positions || null);
     } catch (err: any) {
       console.error('[usePositions] failed to fetch positions:', err);
@@ -153,7 +148,7 @@ export function usePositions() {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     fetchPositions();
@@ -178,13 +173,13 @@ interface OrderItem {
 }
 
 export function useOrderBook() {
-  const token = useAuthStore((s) => s.token);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [orders, setOrders] = useState<OrderItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchOrders = useCallback(async () => {
-    if (!token) {
+    if (!isAuthenticated) {
       setError('Not authenticated');
       setLoading(false);
       return;
@@ -192,11 +187,7 @@ export function useOrderBook() {
     setLoading(true);
     setError(null);
     try {
-      const response = await axios.get(`${BASE_URL}/portfolio/orders`, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
+      const response = await axios.get(`${BASE_URL}/portfolio/orders`, { withCredentials: true });
       setOrders(response.data.orders || []);
     } catch (err: any) {
       console.error('[useOrderBook] failed to fetch orders:', err);
@@ -206,7 +197,7 @@ export function useOrderBook() {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     fetchOrders();

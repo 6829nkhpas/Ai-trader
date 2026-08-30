@@ -18,6 +18,7 @@ vi.hoisted(() => {
   // suite that transitively imports a store.
   process.env.NEXT_PUBLIC_API_BASE_URL ||= 'http://127.0.0.1:0/api/v1';
   process.env.NEXT_PUBLIC_DASHBOARD_URL ||= 'http://127.0.0.1:0/dashboard';
+  process.env.NEXT_PUBLIC_AUTH_URL ||= 'https://auth.test.invalid';
 });
 
 const STORAGE_KEY = 'stratai.preferences';

@@ -436,6 +436,9 @@ services:
         # Changing one requires a rebuild, not a restart.
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://api-web.stratai.live}
         NEXT_PUBLIC_DASHBOARD_URL: ${NEXT_PUBLIC_DASHBOARD_URL:-https://dashboard.stratai.live}
+        # The only sign-in surface. The terminal has no login form; it redirects
+        # here and reads the .stratai.live session cookie the auth app sets.
+        NEXT_PUBLIC_AUTH_URL: ${NEXT_PUBLIC_AUTH_URL:-https://auth.stratai.live}
         NEXT_PUBLIC_AUTH_SERVICE_URL: ${NEXT_PUBLIC_AUTH_SERVICE_URL:-https://api-web.stratai.live}
         # wss://, not ws:// — an https:// page cannot open an insecure socket.
         NEXT_PUBLIC_AGGREGATOR_WS_URL: ${NEXT_PUBLIC_AGGREGATOR_WS_URL:-wss://app-api.stratai.live/ws/aggregator}

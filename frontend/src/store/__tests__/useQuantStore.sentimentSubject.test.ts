@@ -23,6 +23,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 vi.hoisted(() => {
   process.env.NEXT_PUBLIC_API_BASE_URL ||= 'http://127.0.0.1:0/api/v1';
   process.env.NEXT_PUBLIC_DASHBOARD_URL ||= 'http://127.0.0.1:0/dashboard';
+  process.env.NEXT_PUBLIC_AUTH_URL ||= 'https://auth.test.invalid';
 });
 
 // `lib/bridge` is the single transport chokepoint (Tauri IPC on desktop, HTTP on

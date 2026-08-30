@@ -61,6 +61,7 @@ COPY . .
 # are the production values so a bare `docker build` still yields a working image.
 ARG NEXT_PUBLIC_API_BASE_URL=https://api-web.stratai.live
 ARG NEXT_PUBLIC_DASHBOARD_URL=https://dashboard.stratai.live
+ARG NEXT_PUBLIC_AUTH_URL=https://auth.stratai.live
 ARG NEXT_PUBLIC_AUTH_SERVICE_URL=https://api-web.stratai.live
 
 # Live feeds. `/ws/*` is the one gateway prefix with no basic auth
@@ -89,6 +90,7 @@ ARG NEXT_PUBLIC_LLM_GATEWAY=omniroute
 
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL \
     NEXT_PUBLIC_DASHBOARD_URL=$NEXT_PUBLIC_DASHBOARD_URL \
+    NEXT_PUBLIC_AUTH_URL=$NEXT_PUBLIC_AUTH_URL \
     NEXT_PUBLIC_AUTH_SERVICE_URL=$NEXT_PUBLIC_AUTH_SERVICE_URL \
     NEXT_PUBLIC_AGGREGATOR_WS_URL=$NEXT_PUBLIC_AGGREGATOR_WS_URL \
     NEXT_PUBLIC_ALPHA_WS_URL=$NEXT_PUBLIC_ALPHA_WS_URL \

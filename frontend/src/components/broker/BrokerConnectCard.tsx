@@ -8,13 +8,13 @@ export default function BrokerConnectCard() {
   const logout = useAuthStore((s) => s.logout);
   const [loading, setLoading] = useState(false);
 
-  // "Back" here means: drop the current session and return to the auth
-  // overlay (login / sign-up). The overlay is rendered automatically by
-  // page.tsx whenever `isAuthenticated` is false, so calling logout is
-  // all that's needed — no router navigation required.
+  // "Back" here means: drop the current session and return to sign-in.
+  // `logout` revokes the `.stratai.live` cookie server-side and sets the status
+  // to `anonymous`; `page.tsx` watches that and sends the user to
+  // auth.stratai.live, so no router navigation is required here.
   const handleBack = () => {
     if (loading) return;
-    logout();
+    void logout();
   };
 
   const handleConnect = async () => {

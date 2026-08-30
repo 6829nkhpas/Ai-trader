@@ -130,6 +130,7 @@ jobs:
         env:
           NEXT_PUBLIC_API_BASE_URL: https://api-web.stratai.live
           NEXT_PUBLIC_DASHBOARD_URL: https://dashboard.stratai.live
+          NEXT_PUBLIC_AUTH_URL: https://auth.stratai.live
         run: npx vitest run --reporter=dot
 
   rust-services:

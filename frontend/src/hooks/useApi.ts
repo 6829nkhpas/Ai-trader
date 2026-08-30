@@ -61,17 +61,28 @@ function useApi<T>(fetcher: Fetcher<T>, deps: ReadonlyArray<unknown> = []): Asyn
   return { data, loading, error, refetch };
 }
 
+// ── Session key ──────────────────────────────────────────────────────────────
+//
+// These three used to re-fetch when `useAuthStore.token` changed, which is no
+// longer a thing that exists: the session is an httpOnly cookie and nothing
+// about it is visible to JavaScript. The observable proxy for "the session
+// changed" is now the identity the server reported, so that is what they key on
+// — a sign-in, a sign-out, or a switch to a different account all move it, and a
+// silent cookie refresh (same user) correctly does NOT trigger a refetch.
+function useSessionKey(): string {
+  const status = useAuthStore((s) => s.status);
+  const userId = useAuthStore((s) => s.user?.id ?? '');
+  return `${status}:${userId}`;
+}
+
 export function useUserProfile(): AsyncState<User> {
-  const token = useAuthStore((s) => s.token);
-  return useApi<User>((signal) => usersApi.getMe(signal), [token]);
+  return useApi<User>((signal) => usersApi.getMe(signal), [useSessionKey()]);
 }
 
 export function useCredit(): AsyncState<CreditData> {
-  const token = useAuthStore((s) => s.token);
-  return useApi<CreditData>((signal) => creditApi.get(signal), [token]);
+  return useApi<CreditData>((signal) => creditApi.get(signal), [useSessionKey()]);
 }
 
 export function useBillingHistory(): AsyncState<Payment[]> {
-  const token = useAuthStore((s) => s.token);
-  return useApi<Payment[]>((signal) => billingApi.history(signal), [token]);
+  return useApi<Payment[]>((signal) => billingApi.history(signal), [useSessionKey()]);
 }
