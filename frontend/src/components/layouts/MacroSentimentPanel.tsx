@@ -1,16 +1,21 @@
 'use client';
 
-import React, { useEffect, useState, useMemo } from 'react';
-import { Loader2 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
-import MainTerminalChart from '../MainTerminalChart';
-import type { Timeframe } from '../../utils/chartTypes';
-import { TradeProfile, MarketInsight, useTradeStore } from '../../store/useTradeStore';
+/**
+ * MacroSentimentPanel — the INVESTOR mode's right-sidebar panel.
+ *
+ * Was the named export of `InvestorLayout.tsx`. That file's default export was a
+ * chart wrapper identical to the Intraday and Swing ones; all three were replaced
+ * by the single `TerminalChartPane` so that switching modes no longer remounts the
+ * chart. This panel is the only real component that lived there, so it now owns
+ * the file.
+ */
+
+import React, { useEffect, useState } from 'react';
+import { motion } from 'framer-motion';
+import { MarketInsight, useTradeStore } from '../../store/useTradeStore';
 import { useMacroIndicators } from '../../hooks/useMacroIndicators';
 import ClockIcon from './ClockIcon';
-import { staggerContainer, fadeInUp, crossfade, scaleIn } from '../../lib/motionVariants';
-
-interface InvestorLayoutProps { activeProfile?: TradeProfile; timeframe?: string; isExpanded?: boolean; onToggleExpand?: () => void; }
+import { staggerContainer, fadeInUp } from '../../lib/motionVariants';
 
 function dirIcon(d?: 'up' | 'down' | 'flat') { return d === 'up' ? '▲' : d === 'down' ? '▼' : '—'; }
 function dirColor(d?: 'up' | 'down' | 'flat') { return d === 'up' ? 'text-bull' : d === 'down' ? 'text-bear' : 'text-text-muted'; }
@@ -24,13 +29,6 @@ function categoryColor(cat: string) {
   }
 }
 
-function timeAgo(ms: number): string {
-  const secs = Math.floor((Date.now() - ms) / 1000);
-  if (secs < 5) return 'just now';
-  if (secs < 60) return `${secs}s ago`;
-  const mins = Math.floor(secs / 60);
-  return `${mins}m ago`;
-}
 
 
 
@@ -57,7 +55,7 @@ function IndicatorSkeleton() {
 export function MacroSentimentPanel() {
   const latestInsight = useTradeStore((s) => s.latestInsight);
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
-  const { indicators, portfolioMetrics, loading, error, lastUpdated } = useMacroIndicators();
+  const { indicators, portfolioMetrics, loading } = useMacroIndicators();
 
   const [activeInsight, setActiveInsight] = useState<MarketInsight | null>(null);
 
@@ -160,21 +158,6 @@ export function MacroSentimentPanel() {
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-// ── Layout ──────────────────────────────────────────────────────────────
-
-export default function InvestorLayout({ activeProfile = 'INVESTOR', timeframe = '1D', isExpanded = false, onToggleExpand }: InvestorLayoutProps) {
-  return (
-    <div id="investor-hud" className="flex h-full flex-col min-h-0 rounded-none border-none bg-surface overflow-hidden">
-      <MainTerminalChart
-        activeProfile={activeProfile}
-        timeframe={timeframe as Timeframe}
-        isExpanded={isExpanded}
-        onToggleExpand={onToggleExpand}
-      />
     </div>
   );
 }

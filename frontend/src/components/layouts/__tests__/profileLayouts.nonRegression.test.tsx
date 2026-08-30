@@ -1,33 +1,33 @@
 // @vitest-environment jsdom
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 /**
- * Terminal UX Overhaul (Task 11.2) — non-regression component tests for the
- * EXISTING profile layout components themselves (`IntradayLayout`, `SwingLayout`,
- * `InvestorLayout`).
+ * The chart must SURVIVE a workspace-mode switch.
  *
- * Where Task 7.2's `TerminalLayout.modeSelector.test.tsx` covers Property 9 at
- * the HARNESS level (mirroring page.tsx's `switch(activeProfile)` and asserting
- * the workspace MAPPING is unchanged across an F&O round-trip), this file adds
- * focused, complementary coverage of the actual rendered layout COMPONENTS:
+ * Reported bug: moving between Intraday → Swing → Investor reloaded the same
+ * instrument's candles every time. The cause was structural, not data-related.
+ * `page.tsx` selected between three separate layout components with
+ * `switch (activeProfile)`, so each switch changed the element TYPE at that
+ * position — and React's reconciler must unmount and remount on a type change.
+ * That tore down the entire TradingView subtree (`widget.remove()`, a fresh
+ * widget construction, a new datafeed, another `getBars` round trip) even though
+ * nothing about the chart differs across those three modes.
  *
- *  - Each existing-profile layout renders its expected workspace structure
- *    (its profile-scoped wrapper `#…-hud` + a single mounted chart instance).
- *  - Rendering the same layout BEFORE vs AFTER an F&O round-trip (set
- *    `activeProfile` to `FNO` and back via the REAL `useTradeStore`) produces a
- *    byte-for-byte identical rendered structure — the mode-model migration does
- *    not perturb these components (Property 9 / R7.1).
- *  - The split control / split container does NOT appear inside the
- *    Swing/Investor layouts — split is mode-gated to Intraday/F&O (R4.7), and
- *    these single-chart workspaces never host a pane-split surface.
+ * The three layouts were byte-for-byte identical apart from a wrapper `id` that
+ * nothing referenced, so they were replaced by one `TerminalChartPane`.
  *
- * The heavy chart child (`MainTerminalChart`) is MOCKED with a lightweight
- * stand-in so jsdom never initializes a canvas/chart engine; it echoes its
- * `activeProfile`/`timeframe` props and counts mounts so we can prove exactly
- * one chart instance is mounted per single-chart layout.
+ * WHAT THIS FILE NOW GUARDS, AND WHY IT CHANGED
  *
- * **Property 9: Non-regression of existing profiles**
- * **Validates: Requirements 7.1**
+ * The previous version of this file rendered each layout component in ISOLATION
+ * and asserted that an F&O round-trip in the store did not remount its chart.
+ * That assertion was true and stayed true — the components never subscribed to
+ * `activeProfile`. It simply could not observe the bug, because the remount was
+ * caused by the PAGE's choice of component type, one level above anything the
+ * test rendered. So the tests below drive the page-level mapping instead: they
+ * mount a harness that mirrors `renderProfileContent` and count chart mounts
+ * across real mode switches.
+ *
+ * The mount COUNT is the whole point. A test that only checked "a chart is
+ * present after switching" passes just as happily when the chart was destroyed
+ * and rebuilt, which is the exact bug.
  */
 
 import React from 'react';
@@ -36,152 +36,170 @@ import { render, screen, cleanup, act } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 
 // ── Mount registry (hoisted so the mock factory can reference it) ─────────────
-// Counts MainTerminalChart mounts so each single-chart layout proves it mounts
-// exactly one independent chart instance.
 const charts = vi.hoisted(() => ({
   mounts: 0,
+  unmounts: 0,
   reset() {
     this.mounts = 0;
+    this.unmounts = 0;
   },
 }));
 
-// Mock the heavy chart child. It renders its profile/timeframe props so the
-// layout's wiring is observable, and counts mounts. Importing the layout modules
-// pulls MainTerminalChart in transitively, so this mock keeps the test fast and
-// canvas-free.
+// Mock the heavy chart child: jsdom must never initialise a canvas/chart engine.
+// It records mounts AND unmounts, which together prove the instance is reused.
 vi.mock('../../MainTerminalChart', async () => {
   const ReactNs = await import('react');
   return {
     __esModule: true,
-    default: ({ activeProfile, timeframe }: any) => {
+    default: () => {
       ReactNs.useEffect(() => {
         charts.mounts += 1;
+        return () => {
+          charts.unmounts += 1;
+        };
       }, []);
-      return ReactNs.createElement('div', {
-        'data-testid': 'main-chart',
-        'data-active-profile': String(activeProfile ?? ''),
-        'data-timeframe': String(timeframe ?? ''),
-      });
+      return ReactNs.createElement('div', { 'data-testid': 'main-chart' });
     },
   };
 });
 
-// Import AFTER the mock so the layouts pick up the mocked chart child.
-import IntradayLayout from '../IntradayLayout';
-import SwingLayout from '../SwingLayout';
-import InvestorLayout from '../InvestorLayout';
+// Import AFTER the mock so the pane picks up the mocked chart child.
+import TerminalChartPane from '../TerminalChartPane';
 import { useTradeStore, type TradeProfile } from '../../../store/useTradeStore';
 
-type LayoutCase = {
-  profile: Exclude<TradeProfile, 'FNO'>;
-  Component: React.ComponentType<any>;
-  hudId: string;
-  timeframe: string;
-};
+/** The three modes that share one chart workspace. */
+const SHARED_CHART_MODES: Exclude<TradeProfile, 'FNO'>[] = ['INTRADAY', 'SWING', 'INVESTOR'];
 
-const LAYOUTS: LayoutCase[] = [
-  { profile: 'INTRADAY', Component: IntradayLayout, hudId: 'intraday-hud', timeframe: '1m' },
-  { profile: 'SWING', Component: SwingLayout, hudId: 'swing-hud', timeframe: '1h' },
-  { profile: 'INVESTOR', Component: InvestorLayout, hudId: 'investor-hud', timeframe: '1D' },
-];
+/**
+ * Mirrors `page.tsx`'s `renderProfileContent` for the non-split, non-F&O modes.
+ *
+ * Deliberately a mirror rather than an import of the page: `page.tsx` pulls in the
+ * whole terminal (WebSockets, auth, the feature store), which jsdom cannot host.
+ * The property under test is the MAPPING from mode to element type, which is what
+ * this reproduces.
+ */
+function Harness({ profile }: { profile: TradeProfile }) {
+  return <TerminalChartPane activeProfile={profile} />;
+}
 
 function resetStore() {
   useTradeStore.setState({ activeProfile: 'INTRADAY' });
   charts.reset();
 }
 
-describe('Existing-profile layouts render their expected workspace structure (R7.1)', () => {
+describe('Mode switching reuses the chart instead of rebuilding it', () => {
   beforeEach(() => resetStore());
   afterEach(() => cleanup());
 
-  it.each(LAYOUTS)(
-    '$profile layout renders its #$hudId wrapper with exactly one mounted chart',
-    ({ profile, Component, hudId, timeframe }) => {
-      const { container } = render(
-        <Component activeProfile={profile} timeframe={timeframe} isExpanded={false} />,
-      );
+  it('mounts the chart exactly once across Intraday → Swing → Investor', () => {
+    const { rerender } = render(<Harness profile="INTRADAY" />);
+    expect(charts.mounts).toBe(1);
 
-      // Profile-scoped workspace wrapper present.
-      const hud = container.querySelector(`#${hudId}`);
-      expect(hud).not.toBeNull();
+    // The reported journey.
+    act(() => useTradeStore.getState().setActiveProfile('SWING'));
+    rerender(<Harness profile="SWING" />);
 
-      // Exactly one independent chart instance mounted for the single-chart layout.
-      expect(screen.getAllByTestId('main-chart')).toHaveLength(1);
-      expect(charts.mounts).toBe(1);
+    act(() => useTradeStore.getState().setActiveProfile('INVESTOR'));
+    rerender(<Harness profile="INVESTOR" />);
 
-      // The chart is driven by this profile's props (wiring unchanged).
-      const chart = screen.getByTestId('main-chart');
-      expect(chart).toHaveAttribute('data-active-profile', profile);
-      expect(chart).toHaveAttribute('data-timeframe', timeframe);
-    },
-  );
-});
+    // THE ASSERTION. Still one mount and zero unmounts means the widget was never
+    // torn down, so no re-initialisation and no refetch of the same candles.
+    expect(charts.mounts).toBe(1);
+    expect(charts.unmounts).toBe(0);
+    expect(screen.getAllByTestId('main-chart')).toHaveLength(1);
+  });
 
-describe('Property 9 — layout structure is identical across an F&O round-trip (R7.1)', () => {
-  beforeEach(() => resetStore());
-  afterEach(() => cleanup());
+  it('survives switching back and forth repeatedly', () => {
+    const { rerender } = render(<Harness profile="INTRADAY" />);
+    for (let i = 0; i < 3; i++) {
+      for (const profile of SHARED_CHART_MODES) {
+        act(() => useTradeStore.getState().setActiveProfile(profile));
+        rerender(<Harness profile={profile} />);
+      }
+    }
+    expect(charts.mounts).toBe(1);
+    expect(charts.unmounts).toBe(0);
+  });
 
-  it.each(LAYOUTS)(
-    '$profile layout renders byte-for-byte identically before vs after entering/leaving F&O',
-    ({ profile, Component, timeframe }) => {
-      // Baseline render of the profile layout while that profile is active.
-      act(() => useTradeStore.getState().setActiveProfile(profile));
-      const { container, rerender } = render(
-        <Component activeProfile={profile} timeframe={timeframe} isExpanded={false} />,
-      );
-      const baseline = container.innerHTML;
+  it('keeps the same DOM node for the chart across a switch', () => {
+    // Belt-and-braces on the mount counter: an identical node proves React
+    // reconciled rather than replaced the subtree.
+    const { rerender } = render(<Harness profile="INTRADAY" />);
+    const before = screen.getByTestId('main-chart');
 
-      // Enter F&O, then leave back to the original profile via the REAL store —
-      // exercising the unified Workspace_Mode migration.
-      act(() => useTradeStore.getState().setActiveProfile('FNO'));
-      expect(useTradeStore.getState().activeProfile).toBe('FNO');
-      act(() => useTradeStore.getState().setActiveProfile(profile));
-      expect(useTradeStore.getState().activeProfile).toBe(profile);
+    rerender(<Harness profile="INVESTOR" />);
+    const after = screen.getByTestId('main-chart');
 
-      // Re-render the same layout with the same props after the round-trip.
-      rerender(<Component activeProfile={profile} timeframe={timeframe} isExpanded={false} />);
+    expect(after).toBe(before);
+  });
 
-      // The rendered structure is unchanged — the mode-model migration leaves the
-      // existing profile workspaces identical to baseline.
-      expect(container.innerHTML).toBe(baseline);
-    },
-  );
+  it('updates the workspace wrapper id per mode without remounting', () => {
+    // The `id` is the one thing that legitimately differs between these modes, so
+    // it must still track the active mode — as an attribute patch, not a rebuild.
+    const { container, rerender } = render(<Harness profile="INTRADAY" />);
+    expect(container.querySelector('#intraday-hud')).not.toBeNull();
 
-  it('the existing-profile layout components do not subscribe to activeProfile (no re-mount on F&O round-trip)', () => {
-    // Render all three single-chart layouts; 3 chart instances mount.
-    render(
-      <>
-        <IntradayLayout activeProfile="INTRADAY" timeframe="1m" />
-        <SwingLayout activeProfile="SWING" timeframe="1h" />
-        <InvestorLayout activeProfile="INVESTOR" timeframe="1D" />
-      </>,
-    );
-    expect(charts.mounts).toBe(3);
+    rerender(<Harness profile="SWING" />);
+    expect(container.querySelector('#swing-hud')).not.toBeNull();
+    expect(container.querySelector('#intraday-hud')).toBeNull();
 
-    // An F&O round-trip in the store must not cause any layout to re-mount its
-    // chart — these components are prop-driven, not store-mode-driven.
-    act(() => useTradeStore.getState().setActiveProfile('FNO'));
-    act(() => useTradeStore.getState().setActiveProfile('INTRADAY'));
-    expect(charts.mounts).toBe(3);
+    rerender(<Harness profile="INVESTOR" />);
+    expect(container.querySelector('#investor-hud')).not.toBeNull();
+
+    expect(charts.mounts).toBe(1);
   });
 });
 
-describe('Split is mode-gated — no split surface inside Swing/Investor layouts (R4.7)', () => {
+describe('The shared workspace renders one chart and no split surface (R4.7)', () => {
   beforeEach(() => resetStore());
   afterEach(() => cleanup());
 
-  it.each(LAYOUTS.filter((l) => l.profile === 'SWING' || l.profile === 'INVESTOR'))(
-    '$profile layout renders a single chart and no split container/control',
-    ({ profile, Component, timeframe }) => {
-      render(<Component activeProfile={profile} timeframe={timeframe} />);
+  it.each(SHARED_CHART_MODES)('%s renders exactly one chart', (profile) => {
+    render(<Harness profile={profile} />);
+    expect(screen.getAllByTestId('main-chart')).toHaveLength(1);
+    expect(charts.mounts).toBe(1);
+  });
 
-      // Single-chart confluence/macro workspace: exactly one chart, never two.
-      expect(screen.getAllByTestId('main-chart')).toHaveLength(1);
-
-      // No split-pane surface or single/split control is hosted by these layouts.
+  it.each(['SWING', 'INVESTOR'] as const)(
+    '%s hosts no split-pane surface or control — split is mode-gated to Intraday/F&O',
+    (profile) => {
+      render(<Harness profile={profile} />);
       expect(document.querySelector('[data-pane-id]')).toBeNull();
       expect(document.querySelector('[data-testid="split-chart-container"]')).toBeNull();
       expect(screen.queryByRole('button', { name: /split/i })).toBeNull();
     },
   );
+});
+
+describe('Property 9 — an F&O round-trip leaves the workspace unchanged (R7.1)', () => {
+  beforeEach(() => resetStore());
+  afterEach(() => cleanup());
+
+  it.each(SHARED_CHART_MODES)(
+    '%s renders byte-for-byte identically before vs after entering/leaving F&O',
+    (profile) => {
+      act(() => useTradeStore.getState().setActiveProfile(profile));
+      const { container, rerender } = render(<Harness profile={profile} />);
+      const baseline = container.innerHTML;
+
+      act(() => useTradeStore.getState().setActiveProfile('FNO'));
+      expect(useTradeStore.getState().activeProfile).toBe('FNO');
+      act(() => useTradeStore.getState().setActiveProfile(profile));
+      expect(useTradeStore.getState().activeProfile).toBe(profile);
+
+      rerender(<Harness profile={profile} />);
+      expect(container.innerHTML).toBe(baseline);
+    },
+  );
+
+  it('does not subscribe to activeProfile, so a store-only mode change is inert', () => {
+    render(<Harness profile="INTRADAY" />);
+    expect(charts.mounts).toBe(1);
+
+    act(() => useTradeStore.getState().setActiveProfile('FNO'));
+    act(() => useTradeStore.getState().setActiveProfile('INTRADAY'));
+
+    expect(charts.mounts).toBe(1);
+    expect(charts.unmounts).toBe(0);
+  });
 });

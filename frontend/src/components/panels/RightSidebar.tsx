@@ -6,8 +6,8 @@ import { SIDEBAR_CONFIG, type SidebarTab } from '../../types/home';
 import type { TradeProfile } from '../../store/useTradeStore';
 import DeepQuantPanel from '../quant/DeepQuantPanel';
 import OrderBook from '../OrderBook';
-import { SwingConfluencePanel } from '../layouts/SwingLayout';
-import { MacroSentimentPanel } from '../layouts/InvestorLayout';
+import SwingConfluencePanel from '../layouts/swing/SwingConfluencePanel';
+import { MacroSentimentPanel } from '../layouts/MacroSentimentPanel';
 import FnoSidebarPanel from '../fno/FnoSidebarPanel';
 
 interface RightSidebarProps {

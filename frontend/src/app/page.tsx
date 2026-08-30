@@ -5,9 +5,7 @@ import { SVGS } from '../components/chart/toolbarIcons';
 import TerminalLayout from '../components/layout/TerminalLayout';
 import LeftPanel from '../components/panels/LeftPanel';
 import OrderExecutionPanel from '../components/panels/OrderExecutionPanel';
-import IntradayLayout from '../components/layouts/IntradayLayout';
-import SwingLayout from '../components/layouts/SwingLayout';
-import InvestorLayout from '../components/layouts/InvestorLayout';
+import TerminalChartPane from '../components/layouts/TerminalChartPane';
 import SplitChartContainer from '../components/chart/SplitChartContainer';
 import FnoSection from '../components/fno/FnoSection';
 import RightSidebar from '../components/panels/RightSidebar';
@@ -39,7 +37,7 @@ export default function Home() {
   const { data: creditData } = useCredit();
 
   // ── Store selectors ───────────────────────────────────────────────
-  const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, connectOrderFlowWebSocket, activeDecision, liveDecisions, activeProfile, activeTimeframe, selectedSymbol } = useTradeStore();
+  const { connectWebSocket, connectAlphaWebSocket, connectPredictiveWebSocket, connectInsightWebSocket, connectOrderFlowWebSocket, activeDecision, liveDecisions, activeProfile, selectedSymbol } = useTradeStore();
   const isFullscreen = useChartUIStore((s) => s.isFullscreen);
   const setIsFullscreen = useChartUIStore((s) => s.setIsFullscreen);
   const splitView = useChartUIStore((s) => s.splitView);
@@ -153,21 +151,33 @@ export default function Home() {
   useEffect(() => () => setIsFullscreen(false), [setIsFullscreen]);
 
   // ── Profile content renderer ──────────────────────────────────────
+  // Mode switching must NOT rebuild the chart.
+  //
+  // INTRADAY / SWING / INVESTOR all resolve to the SAME element type
+  // (`TerminalChartPane`), so React reconciles the subtree instead of unmounting
+  // it. Previously each mode returned its own layout component, and the resulting
+  // type change forced a full remount of the TradingView widget — a
+  // `widget.remove()`, a fresh construction, a new datafeed and another `getBars`
+  // round trip — on every switch, even though nothing about the chart differs
+  // between those three modes. See `TerminalChartPane` for the detail.
+  //
+  // F&O and split view stay separate branches: those really are different trees,
+  // so remounting for them is correct.
+  //
+  // `activeTimeframe` / `sidebarOpen` are deliberately NOT dependencies. The old
+  // layouts accepted them as props and `MainTerminalChart` discarded them, so
+  // including them only churned this callback (and the returned element) on every
+  // timeframe change and sidebar toggle. The chart reads the timeframe from the
+  // store itself.
   const renderProfileContent = useCallback(() => {
-    const split = splitView && (activeProfile === 'INTRADAY' || activeProfile === 'FNO');
-    switch (activeProfile) {
-      case 'INTRADAY':
-        return split ? <SplitChartContainer mode="INTRADAY" /> : <IntradayLayout activeProfile={activeProfile} timeframe={activeTimeframe} isExpanded={!sidebarOpen} onToggleExpand={() => setSidebarOpen(!sidebarOpen)} />;
-      case 'SWING':
-        return <SwingLayout activeProfile={activeProfile} timeframe={activeTimeframe} isExpanded={!sidebarOpen} onToggleExpand={() => setSidebarOpen(!sidebarOpen)} />;
-      case 'INVESTOR':
-        return <InvestorLayout activeProfile={activeProfile} timeframe={activeTimeframe} isExpanded={!sidebarOpen} onToggleExpand={() => setSidebarOpen(!sidebarOpen)} />;
-      case 'FNO':
-        return split ? <SplitChartContainer mode="FNO" /> : <FnoSection />;
-      default:
-        return <IntradayLayout activeProfile={activeProfile} timeframe={activeTimeframe} isExpanded={!sidebarOpen} onToggleExpand={() => setSidebarOpen(!sidebarOpen)} />;
+    if (activeProfile === 'FNO') {
+      return splitView ? <SplitChartContainer mode="FNO" /> : <FnoSection />;
     }
-  }, [activeProfile, activeTimeframe, splitView, sidebarOpen, setSidebarOpen]);
+    if (activeProfile === 'INTRADAY' && splitView) {
+      return <SplitChartContainer mode="INTRADAY" />;
+    }
+    return <TerminalChartPane activeProfile={activeProfile} />;
+  }, [activeProfile, splitView]);
 
   // ── Early returns ─────────────────────────────────────────────────
   if (!mounted) return <div className="flex h-screen w-screen items-center justify-center bg-background" />;
