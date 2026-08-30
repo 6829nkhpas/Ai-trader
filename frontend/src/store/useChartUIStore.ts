@@ -10,9 +10,12 @@ import {
   type WorkspaceState,
 } from '../charting/workspace';
 import { useTradeStore, type ChartTimeframe } from './useTradeStore';
+import { readPreferences, savePreferences } from '../lib/preferences';
 
 type CursorMode = 'cross' | 'dot' | 'arrow' | 'eraser';
-type MagnetMode = 'off' | 'weak' | 'strong';
+// Exported so `lib/preferences.ts` can assert its validation allowlist covers
+// the whole union — a private type there would make that assertion vacuous.
+export type MagnetMode = 'off' | 'weak' | 'strong';
 export type GhostLineMode = 'linear' | 'volume' | 'curved' | 'forecast';
 
 // ── Theme persistence ──────────────────────────────────────────────────
@@ -313,30 +316,51 @@ interface ChartUIState {
   toggleTheme: () => void;
 }
 
+/**
+ * The user's saved chart selections, read once at module evaluation.
+ *
+ * Same reasoning as `useTradeStore`: restoring in an effect would paint one frame
+ * of the defaults first, so the chart would mount as a single candlestick pane and
+ * then rearrange itself. `{}` on the server keeps the prerender deterministic.
+ *
+ * `splitView` is already cross-checked against the restored `activeProfile` inside
+ * `parsePreferences`, so it cannot come back `true` in a mode where `setSplitView`
+ * would refuse to re-enable it.
+ */
+const savedChartPrefs = readPreferences();
+
 export const useChartUIStore = create<ChartUIState>((set, get) => ({
+  // Transient by design — the active tool, the current selection, and which
+  // panels are open all start fresh. `isFullscreen` especially: `page.tsx` clears
+  // it on unmount, and restoring it would reopen the app in an overlay the user
+  // has to find their way out of.
   activeCursor: 'cross',
   activeDrawingTool: null,
-  magnetMode: 'off',
-  drawingsVisible: true,
-  drawingsLocked: false,
-  drawings: [],
   selectedDrawingId: null,
   hoveredDrawingId: null,
-  drawingColor: '#FF5722',
-  ghostLineMode: 'curved',
   accelerationCoefficient: 0.0,
   isFullscreen: false,
-  chartType: 'candlestick',
-  chartTypeParams: {},
-  activeStrategyId: null,
-  strategyParams: {},
   showIndicatorManager: false,
   showLayersPanel: false,
-  splitView: false,
-  panes: [defaultPane('A'), defaultPane('B')],
-  activePaneId: 'A',
+  activeStrategyId: null,
+  strategyParams: {},
+  drawings: [],
   activeIndicators: {},
-  sidebarOpen: true,
+
+  // Restored selections. Assigned as initial values rather than replayed through
+  // the setters: `setSplitView(true)` re-seeds pane symbols from the active
+  // selection, which would overwrite the per-pane symbols being restored here.
+  magnetMode: savedChartPrefs.magnetMode ?? 'off',
+  drawingsVisible: savedChartPrefs.drawingsVisible ?? true,
+  drawingsLocked: savedChartPrefs.drawingsLocked ?? false,
+  drawingColor: savedChartPrefs.drawingColor ?? '#FF5722',
+  ghostLineMode: savedChartPrefs.ghostLineMode ?? 'curved',
+  chartType: savedChartPrefs.chartType ?? 'candlestick',
+  chartTypeParams: savedChartPrefs.chartTypeParams ?? {},
+  splitView: savedChartPrefs.splitView ?? false,
+  panes: savedChartPrefs.panes ?? [defaultPane('A'), defaultPane('B')],
+  activePaneId: savedChartPrefs.activePaneId ?? 'A',
+  sidebarOpen: savedChartPrefs.sidebarOpen ?? true,
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setActiveCursor: (cursor) => set({ activeCursor: cursor, activeDrawingTool: null }),
   setActiveDrawingTool: (tool) => set({ activeDrawingTool: tool, selectedDrawingId: null }),
@@ -758,3 +782,49 @@ export const useChartUIStore = create<ChartUIState>((set, get) => ({
     get().setTheme(nextTheme);
   },
 }));
+
+// ── Selection persistence ─────────────────────────────────────────────────
+//
+// The chart-selection half of the shared preferences blob. `savePreferences`
+// merges, so this and `useTradeStore`'s subscription cannot erase each other.
+//
+// `panes` is compared field-by-field rather than by reference because every
+// per-pane setter rebuilds the array, so a reference check would schedule a write
+// on unrelated state changes.
+useChartUIStore.subscribe((state, prev) => {
+  const samePanes =
+    state.panes[0].symbol === prev.panes[0].symbol &&
+    state.panes[0].timeframe === prev.panes[0].timeframe &&
+    state.panes[0].chartType === prev.panes[0].chartType &&
+    state.panes[1].symbol === prev.panes[1].symbol &&
+    state.panes[1].timeframe === prev.panes[1].timeframe &&
+    state.panes[1].chartType === prev.panes[1].chartType;
+  if (
+    samePanes &&
+    state.chartType === prev.chartType &&
+    state.chartTypeParams === prev.chartTypeParams &&
+    state.ghostLineMode === prev.ghostLineMode &&
+    state.splitView === prev.splitView &&
+    state.activePaneId === prev.activePaneId &&
+    state.sidebarOpen === prev.sidebarOpen &&
+    state.drawingColor === prev.drawingColor &&
+    state.magnetMode === prev.magnetMode &&
+    state.drawingsVisible === prev.drawingsVisible &&
+    state.drawingsLocked === prev.drawingsLocked
+  ) {
+    return;
+  }
+  savePreferences({
+    chartType: state.chartType,
+    chartTypeParams: state.chartTypeParams,
+    ghostLineMode: state.ghostLineMode,
+    splitView: state.splitView,
+    panes: state.panes,
+    activePaneId: state.activePaneId,
+    sidebarOpen: state.sidebarOpen,
+    drawingColor: state.drawingColor,
+    magnetMode: state.magnetMode,
+    drawingsVisible: state.drawingsVisible,
+    drawingsLocked: state.drawingsLocked,
+  });
+});

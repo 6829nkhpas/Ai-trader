@@ -2,8 +2,18 @@ import { create } from 'zustand';
 import type { DataRange } from '../utils/chartTypes';
 import { isFnoSymbol } from '../charting/symbolUtils';
 import { bridgeInvoke, bridgeListen } from '../lib/bridge';
+import { readPreferences, savePreferences } from '../lib/preferences';
 
 export type TradeProfile = 'INTRADAY' | 'SWING' | 'INVESTOR' | 'FNO';
+
+/**
+ * How the chart renders its price data.
+ *
+ * Named and exported so `lib/preferences.ts` can assert its validation allowlist
+ * covers the whole union; an inline union at each use site made that assertion
+ * vacuous and let the three declarations drift.
+ */
+export type ChartMode = 'STANDARD' | 'VOLUME_PROFILE' | 'FOOTPRINT';
 
 /**
  * Chart timeframe options. The backend predictive ML engine operates
@@ -187,7 +197,7 @@ interface TradeStore {
   historicalCache: Record<string, OhlcCandle[]>;
   /** Dynamic watchlist — user-curated list of symbols from search. */
   watchlist: WatchlistItem[];
-  chartMode: 'STANDARD' | 'VOLUME_PROFILE' | 'FOOTPRINT';
+  chartMode: ChartMode;
   orderFlowData: OrderFlowTick[];
   /** Selected configured index underlying for the F&O section (default 'NIFTY 50'). */
   fnoUnderlying: string;
@@ -234,7 +244,7 @@ interface TradeStore {
   reorderWatchlist: (fromIndex: number, toIndex: number) => void;
   /** Replace the entire watchlist (used for hydration from persistence). */
   setWatchlist: (items: WatchlistItem[]) => void;
-  setChartMode: (mode: 'STANDARD' | 'VOLUME_PROFILE' | 'FOOTPRINT') => void;
+  setChartMode: (mode: ChartMode) => void;
   addOrderFlowTick: (tick: OrderFlowTick) => void;
   /** Set the selected F&O underlying (R2.2, R9.3); resets fnoExpiry to ''. */
   setFnoUnderlying: (underlying: string) => void;
@@ -485,6 +495,16 @@ export async function hydrateLegacyAgentBridge() {
   }
 }
 
+/**
+ * The user's saved selections, read once when this module is first evaluated.
+ *
+ * Read at module scope rather than in an effect, matching how `theme` is
+ * restored: an effect would render one frame of the default selection first, so
+ * the chart would load RELIANCE/10m and then immediately reload whatever the user
+ * actually had. On the server this is `{}`, so the prerender is deterministic.
+ */
+const savedPrefs = readPreferences();
+
 export const useTradeStore = create<TradeStore>((set) => {
   let ws: WebSocket | null = null;
 
@@ -545,20 +565,25 @@ export const useTradeStore = create<TradeStore>((set) => {
     latestInsight: null,
     connectionStatus: 'DISCONNECTED',
     wsStatus: 'disconnected',
-    activeProfile: 'INTRADAY',
-    activeTimeframe: '10m',
-    activeRange: '1Y' as DataRange,
+    // Each `?? <literal>` is the cold-start default for a user who has never
+    // made this selection; a returning user gets their own. Assigned as INITIAL
+    // VALUES rather than replayed through the setters on purpose — `setFnoUnderlying`
+    // clears `fnoExpiry` as a side effect, so restoring via setters would lose the
+    // expiry depending on call order.
+    activeProfile: savedPrefs.activeProfile ?? 'INTRADAY',
+    activeTimeframe: savedPrefs.activeTimeframe ?? '10m',
+    activeRange: savedPrefs.activeRange ?? ('1Y' as DataRange),
     systemLogs: [],
-    selectedSymbol: 'RELIANCE',
+    selectedSymbol: savedPrefs.selectedSymbol ?? 'RELIANCE',
     historicalCache: {},
     watchlist: [],
     agentChatLog: [],
     finalTradePlan: null,
-    chartMode: 'STANDARD',
+    chartMode: savedPrefs.chartMode ?? 'STANDARD',
     orderFlowData: [],
-    fnoUnderlying: '',
-    preFnoSymbol: '',
-    fnoExpiry: '',
+    fnoUnderlying: savedPrefs.fnoUnderlying ?? '',
+    preFnoSymbol: savedPrefs.preFnoSymbol ?? '',
+    fnoExpiry: savedPrefs.fnoExpiry ?? '',
     clearAgentChatLog: () => set({ agentChatLog: [], finalTradePlan: null }),
 
     setActiveProfile: (profile: TradeProfile) => {
@@ -849,7 +874,7 @@ export const useTradeStore = create<TradeStore>((set) => {
       connect();
     },
 
-    setChartMode: (mode: 'STANDARD' | 'VOLUME_PROFILE' | 'FOOTPRINT') => {
+    setChartMode: (mode: ChartMode) => {
       set({ chartMode: mode });
     },
 
@@ -1063,4 +1088,44 @@ export const useTradeStore = create<TradeStore>((set) => {
       connect();
     },
   };
+});
+
+// ── Selection persistence ─────────────────────────────────────────────────
+//
+// One subscription rather than a `savePreferences` call inside each setter.
+// Two reasons it belongs here and not in the setters:
+//
+//   · `setActiveProfile` changes up to three persisted fields at once (the F&O
+//     round-trip swaps `selectedSymbol` and clears `preFnoSymbol`), so a
+//     per-setter call would have to mirror that branching and stay in sync with it.
+//   · `selectedSymbol` is also written from outside the setters — the TradingView
+//     widget writes back the symbol the user picked in ITS own search box
+//     (`TradingViewWidget`), and that selection deserves to persist too.
+//
+// The guard matters: this store also holds the live tick buffer, so it updates
+// many times a second. Diffing the projection first means a write is scheduled
+// only when a SELECTION actually changed, not on every candle.
+useTradeStore.subscribe((state, prev) => {
+  if (
+    state.activeProfile === prev.activeProfile &&
+    state.selectedSymbol === prev.selectedSymbol &&
+    state.activeTimeframe === prev.activeTimeframe &&
+    state.activeRange === prev.activeRange &&
+    state.chartMode === prev.chartMode &&
+    state.fnoUnderlying === prev.fnoUnderlying &&
+    state.fnoExpiry === prev.fnoExpiry &&
+    state.preFnoSymbol === prev.preFnoSymbol
+  ) {
+    return;
+  }
+  savePreferences({
+    activeProfile: state.activeProfile,
+    selectedSymbol: state.selectedSymbol,
+    activeTimeframe: state.activeTimeframe,
+    activeRange: state.activeRange,
+    chartMode: state.chartMode,
+    fnoUnderlying: state.fnoUnderlying,
+    fnoExpiry: state.fnoExpiry,
+    preFnoSymbol: state.preFnoSymbol,
+  });
 });
