@@ -965,7 +965,12 @@ async fn get_news_context(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let url = sentiment_service_url();
     let client = reqwest::Client::new();
-    let rss_headlines: Vec<String> = news::fetch_news_headlines(&payload.symbol).await;
+    // Look the news up under the instrument it is actually published about. An
+    // option contract has no news of its own, so both of the fetches below used
+    // to come back empty for every F&O symbol and the agent got an `Unavailable`
+    // catalyst it could do nothing with. See `news::news_subject`.
+    let subject = news::news_subject(&payload.symbol);
+    let rss_headlines: Vec<String> = news::fetch_news_headlines(&subject).await;
 
     // Every degraded path in this handler funnels through here, so the marker
     // goes in the closure rather than at each of the four return sites.
@@ -981,7 +986,8 @@ async fn get_news_context(
             unavailable_news(&reason)
         } else {
             serde_json::json!({
-                "symbol": payload.symbol.clone(),
+                "symbol": subject.clone(),
+                "symbol_requested": payload.symbol.clone(),
                 "headlines": rss_headlines.clone(),
                 "sentiment": "Unavailable",
                 "sentiment_classified": false,
@@ -993,7 +999,7 @@ async fn get_news_context(
 
     let resp = client
         .get(&url)
-        .query(&[("symbol", &payload.symbol)])
+        .query(&[("symbol", &subject)])
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await;
@@ -1052,7 +1058,8 @@ async fn get_news_context(
             _ => sentiment.clone(),
         };
         let mut response = serde_json::json!({
-            "symbol": payload.symbol,
+            "symbol": subject,
+            "symbol_requested": payload.symbol,
             "headlines": headlines,
             "sentiment": sentiment,
             "sentiment_summary": sentiment_summary,
@@ -1074,7 +1081,8 @@ async fn get_news_context(
         Some(score) if score.is_finite() => {
             let mut mapped = map_sentiment_classification(score, headlines);
             if let Some(obj) = mapped.as_object_mut() {
-                obj.insert("symbol".to_string(), serde_json::json!(payload.symbol));
+                obj.insert("symbol".to_string(), serde_json::json!(subject));
+                obj.insert("symbol_requested".to_string(), serde_json::json!(payload.symbol));
             }
             Ok(Json(mapped))
         }

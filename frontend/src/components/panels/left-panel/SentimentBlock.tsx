@@ -11,18 +11,29 @@ interface SentimentBlockProps {
   sentiment: SentimentPayload | null;
   isLoading: boolean;
   error: string | null;
-}
-
-function sentimentImpactColor(impact: string) {
-  return 'text-text-primary bg-elevated border-border-default';
+  /**
+   * The symbol currently on the chart. Used only to decide whether the verdict
+   * has to name its own subject — see `subjectDiffers` below.
+   */
+  symbol?: string;
 }
 
 export default function SentimentBlock({
   sentiment,
   isLoading,
   error,
+  symbol,
 }: SentimentBlockProps) {
   const [headlinesExpanded, setHeadlinesExpanded] = useState(false);
+
+  // An option contract has no news of its own, so the store looks up its
+  // underlying instead (`sentimentSubject` in useQuantStore). Rendering
+  // RELIANCE's headlines under the heading RELIANCE26AUG1290CE without saying so
+  // would silently attribute one instrument's news to another, so name the
+  // subject whenever it is not the symbol the user is looking at.
+  const subject = sentiment?.symbol?.trim() ?? '';
+  const subjectDiffers =
+    !!subject && !!symbol?.trim() && subject.toUpperCase() !== symbol.trim().toUpperCase();
 
   return (
     <div className="border-b border-border-default py-2.5 px-0">
@@ -31,6 +42,14 @@ export default function SentimentBlock({
         <h3 className="text-[9px] font-bold text-text-secondary uppercase tracking-wider">
           AI News Sentiment
         </h3>
+        {subjectDiffers && !isLoading && (
+          <span
+            title={`No news is published about ${symbol}. This verdict is based on news about its underlying, ${subject}.`}
+            className="inline-flex items-center rounded-none border border-border-default bg-elevated px-1 py-px text-[7.5px] font-bold uppercase tracking-wider text-text-muted"
+          >
+            on {subject}
+          </span>
+        )}
         {isLoading && (
           <Loader2 size={9} className="ml-auto animate-spin text-text-muted" />
         )}

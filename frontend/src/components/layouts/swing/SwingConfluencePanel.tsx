@@ -5,7 +5,7 @@ import { Loader2, TrendingUp, TrendingDown, Minus, Sparkles, Activity, Newspaper
 import { motion } from 'framer-motion';
 import { MarketInsight, useTradeStore } from '../../../store/useTradeStore';
 import { useMultiTimeframeTrend, TrendBias } from '../../../hooks/useMultiTimeframeTrend';
-import { useQuantStore } from '../../../store/useQuantStore';
+import { useQuantStore, sentimentSubject } from '../../../store/useQuantStore';
 import ClockIcon from '../ClockIcon';
 import InsightCard from './InsightCard';
 import { staggerContainer, fadeInUp } from '../../../lib/motionVariants';
@@ -100,9 +100,16 @@ export default function SwingConfluencePanel() {
     return () => clearTimeout(timer);
   }, [latestInsight]);
 
-  // Determine active score & display payload
+  // Determine active score & display payload.
+  //
+  // The payload is keyed by the NEWS SUBJECT, not by the charted symbol: news on
+  // RELIANCE26AUG1290CE is news on RELIANCE. Comparing against the raw
+  // `selectedSymbol` would never match for an F&O contract and this panel would
+  // sit on "Awaiting market sentiment signals..." forever while a perfectly good
+  // verdict was in the store.
   const sentimentPayload = useMemo(() => {
-    if (activeSentiment && activeSentiment.symbol.toUpperCase() === selectedSymbol.toUpperCase()) {
+    const subject = sentimentSubject(selectedSymbol).toUpperCase();
+    if (activeSentiment && activeSentiment.symbol.toUpperCase() === subject) {
       return activeSentiment;
     }
     return null;
@@ -206,6 +213,16 @@ export default function SwingConfluencePanel() {
                   <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-500"></span>
                 </span>
                 <span className="text-[8px] font-extrabold text-cyan-600 dark:text-cyan-400 uppercase tracking-widest leading-none">Latest Catalyst</span>
+                {/* An option contract's catalyst is its underlying's news — say
+                    so rather than letting the headline read as the contract's own. */}
+                {sentimentPayload.symbol.toUpperCase() !== selectedSymbol.trim().toUpperCase() && (
+                  <span
+                    title={`No news is published about ${selectedSymbol}. This catalyst is news about its underlying, ${sentimentPayload.symbol}.`}
+                    className="ml-auto text-[7.5px] font-bold uppercase tracking-wider text-text-muted leading-none"
+                  >
+                    on {sentimentPayload.symbol}
+                  </span>
+                )}
               </div>
               <p className="text-[10px] font-bold text-text-primary leading-snug line-clamp-1">
                 {sentimentPayload.top_headline}

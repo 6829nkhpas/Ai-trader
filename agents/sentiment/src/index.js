@@ -79,6 +79,29 @@ const HTTP_PORT = parseInt(process.env.SENTIMENT_HTTP_PORT ?? '8090', 10);
  */
 const latestSentiment = new Map();
 
+/**
+ * Why the last classification attempt for a symbol produced no verdict.
+ *
+ * Without this the HTTP API could only answer 404 with "no sentiment computed
+ * yet", and the web proxy turns that into "Classification is running in the
+ * background — try again shortly." When the real cause is a provider that keeps
+ * answering `429 usage limit reached`, that sentence is simply false: nothing is
+ * running, the next attempt will fail identically, and it sends whoever reads it
+ * to wait for a result that is never coming. An unavailable classification has to
+ * say what actually went wrong.
+ *
+ * Cleared as soon as a verdict is cached, so a recovered symbol carries no stale
+ * excuse.
+ *
+ * @type {Map<string, { reason: string, at: number }>}
+ */
+const lastFailure = new Map();
+
+/** Record why `symbol` produced no verdict, for the HTTP API to report. */
+function noteFailure(symbol, reason) {
+  lastFailure.set(String(symbol).toUpperCase(), { reason, at: Date.now() });
+}
+
 // ── Profile context cache (Redis, long TTL) ───────────────────────────────────
 // Company profile + financials change slowly, so we cache them in Redis for ~24h
 // to avoid re-requesting them every poll cycle. Falls back to a live fetch when
@@ -222,7 +245,14 @@ async function processTicker(symbol, NewsSentiment) {
     });
   } catch (err) {
     console.error(`\x1b[31m[index] fetchStrategicNews failed for ${symbol}: ${err.message}\x1b[0m`);
-    categorizedNews = [];
+    // An outage is NOT the same finding as "no news". Continuing with an empty
+    // list walked straight into the no-LLM neutral path below and cached
+    // `Neutral, 0 headlines` — a fetch that never completed, served to the panel
+    // as a genuine verdict of no notable news and indistinguishable from one.
+    // Report the outage and keep whatever real verdict is already cached.
+    metrics.classificationCompleted('failed');
+    noteFailure(symbol, `news fetch failed: ${err.message}`);
+    return;
   }
 
   console.log(
@@ -241,6 +271,7 @@ async function processTicker(symbol, NewsSentiment) {
     // Not work — see metrics.js. Counting a failure as a beat would let an agent
     // failing every symbol on every cycle report a perfectly fresh heartbeat.
     metrics.classificationCompleted('failed');
+    noteFailure(symbol, `sentiment classification failed: ${err.message}`);
     return; // Keep the last good verdict served by the HTTP API.
   }
 
@@ -310,6 +341,9 @@ async function processTicker(symbol, NewsSentiment) {
     industry:          profile?.industry ?? seed.sector ?? null,
     updated_at:        Date.now(),
   });
+
+  // A verdict landed, so any recorded reason for its absence is now stale.
+  lastFailure.delete(symbol.toUpperCase());
 
   // Set from the map's own size rather than incremented, so the gauge cannot
   // drift from reality on a path that forgets to adjust it.
@@ -437,9 +471,20 @@ function startSentimentHttpServer(NewsSentiment) {
           // while `failed` means it finished with nothing and the next request
           // will pay the same cost again. The in-flight map is the evidence —
           // classifyOnDemand deletes the entry in its .finally.
-          metrics.onDemandCompleted(onDemandInFlight.has(symbol) ? 'timeout' : 'failed');
+          const stillRunning = onDemandInFlight.has(symbol);
+          metrics.onDemandCompleted(stillRunning ? 'timeout' : 'failed');
           metrics.httpRequestCompleted('/sentiment', 404);
-          return sendJson(404, { error: `no sentiment computed yet for ${symbol}` });
+          // Report WHICH of the two it was. "Try again shortly" is only true
+          // while the work is still running; when it finished with nothing, the
+          // caller deserves the actual cause (a 429'd provider, an unreachable
+          // news source) instead of being told to keep waiting for a result that
+          // is not coming.
+          const failure = stillRunning ? null : lastFailure.get(symbol);
+          return sendJson(404, {
+            error: `no sentiment computed yet for ${symbol}`,
+            still_running: stillRunning,
+            ...(failure ? { reason: failure.reason, failed_at: failure.at } : {}),
+          });
         }
         if (wasMiss) metrics.onDemandCompleted('served');
         metrics.httpRequestCompleted('/sentiment', 200);

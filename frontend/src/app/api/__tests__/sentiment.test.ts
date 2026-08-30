@@ -6,9 +6,10 @@
 // (score -100..+100). The desktop translation lives in `commands/sentiment.rs`;
 // these tests pin the browser twin to the same arithmetic and thresholds.
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  GET,
   convictionToScore,
   scoreToImpact,
   scoreToLabel,
@@ -88,5 +89,60 @@ describe('toSentimentPayload', () => {
     expect(toSentimentPayload('SBIN', { conviction_score: 50, symbol: 'SBIN-EQ' }).symbol).toBe(
       'SBIN-EQ',
     );
+  });
+});
+
+// ── The two very different reasons a verdict can be missing ─────────────────
+//
+// The upstream answers 404 both while a classification is still running and
+// after one finished with nothing. Collapsing them into "try again shortly" is
+// how a permanently 429'd LLM provider spent its outage being reported as work in
+// progress: the panel promised a verdict that could not arrive, and the actual
+// fault was invisible to everyone reading the UI.
+describe('GET — a missing verdict reports which kind of missing it is', () => {
+  const upstreamResponding = (status: number, body: unknown) =>
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('passes the real cause through when the attempt already failed', async () => {
+    upstreamResponding(404, {
+      error: 'no sentiment computed yet for RELIANCE',
+      still_running: false,
+      reason: 'sentiment classification failed: LLM HTTP 429 usage limit reached',
+    });
+
+    const res = await GET(new Request('http://localhost/api/sentiment?symbol=RELIANCE'));
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('429');
+    expect(body.error).not.toContain('try again shortly');
+  });
+
+  it('still says "try again" while the classification is genuinely running', async () => {
+    upstreamResponding(404, {
+      error: 'no sentiment computed yet for RELIANCE',
+      still_running: true,
+    });
+
+    const res = await GET(new Request('http://localhost/api/sentiment?symbol=RELIANCE'));
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('try again shortly');
+  });
+
+  it('degrades to the generic message when the upstream body carries no reason', async () => {
+    upstreamResponding(404, { error: 'no sentiment computed yet for RELIANCE' });
+
+    const res = await GET(new Request('http://localhost/api/sentiment?symbol=RELIANCE'));
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { error: string }).error).toContain('try again shortly');
   });
 });

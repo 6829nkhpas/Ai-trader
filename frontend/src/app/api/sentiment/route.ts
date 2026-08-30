@@ -130,6 +130,17 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   if (upstream.status === 404) {
+    // The upstream distinguishes "still classifying" from "tried and failed", and
+    // only the first justifies telling the user to wait. Reporting a 429'd LLM as
+    // work-in-progress kept the panel promising a verdict that was never going to
+    // arrive, so pass the real cause through when there is one.
+    const detail = (await upstream
+      .json()
+      .catch(() => null)) as { still_running?: boolean; reason?: string } | null;
+    const reason = typeof detail?.reason === 'string' ? detail.reason.trim() : '';
+    if (reason && detail?.still_running !== true) {
+      return proxyError(503, `Sentiment unavailable for ${symbol}: ${reason}`);
+    }
     return proxyError(
       503,
       `No sentiment computed yet for ${symbol}. Classification is running in the background — try again shortly.`,

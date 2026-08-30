@@ -72,6 +72,7 @@ export default function LeftPanel() {
       <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin">
         {/* Sentiment Block */}
         <SentimentBlock 
+          symbol={selectedSymbol}
           sentiment={activeSentiment} 
           isLoading={isFetchingSentiment} 
           error={sentimentError} 

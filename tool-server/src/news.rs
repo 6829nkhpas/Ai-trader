@@ -70,3 +70,93 @@ pub async fn fetch_news_headlines(symbol: &str) -> Vec<String> {
 
     headlines
 }
+
+/// Whether `symbol` looks like an NFO tradingsymbol (a CE / PE / FUT contract).
+///
+/// Mirrors `frontend/src/charting/symbolUtils.ts::isFnoSymbol`.
+fn is_fno_symbol(symbol: &str) -> bool {
+    let upper = symbol.trim().to_uppercase();
+    if upper.is_empty() {
+        return false;
+    }
+    if upper.ends_with("FUT") {
+        return true;
+    }
+    if upper.ends_with("CE") || upper.ends_with("PE") {
+        return upper.chars().any(|c| c.is_ascii_digit());
+    }
+    false
+}
+
+/// The instrument whose news a symbol should be looked up under.
+///
+/// Nobody publishes news about a single option contract — it is published about
+/// the company or the index the contract derives from. Both news paths keyed off
+/// the raw tradingsymbol, so an F&O run searched Google News for
+/// "RELIANCE26AUG1290CE stock NSE India" (no such article exists) and asked the
+/// sentiment service for a ticker it has no profile for, and the agent was handed
+/// an `Unavailable` news catalyst on every single derivatives run. Resolve to the
+/// underlying first: `RELIANCE26AUG1290CE` -> `RELIANCE`,
+/// `BANKNIFTY24DECFUT` -> `BANKNIFTY`.
+///
+/// Only genuine contracts are rewritten, which is why this is gated on
+/// `is_fno_symbol` rather than just cutting at the first digit: the equity
+/// tickers V2RETAIL and A2ZINFRA would otherwise collapse to "V" and "A".
+/// Anything else — cash tickers, index spot names like "NIFTY 50" — is returned
+/// with only whitespace trimmed. Mirrors `sentimentSubject` in
+/// `frontend/src/store/useQuantStore.ts`.
+pub fn news_subject(symbol: &str) -> String {
+    let trimmed = symbol.trim();
+    if !is_fno_symbol(trimmed) {
+        return trimmed.to_string();
+    }
+    let upper = trimmed.to_uppercase();
+    // The leading run of letters is the underlying's derivative name: the expiry
+    // and strike that follow always begin with a digit.
+    let prefix: String = upper.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+    if prefix.is_empty() || prefix.len() == upper.len() {
+        // No digit boundary to cut at (e.g. a bare "...FUT" with no expiry) —
+        // there is nothing to strip, so do not guess.
+        return trimmed.to_string();
+    }
+    prefix
+}
+
+#[cfg(test)]
+mod tests {
+    use super::news_subject;
+
+    #[test]
+    fn resolves_contracts_to_their_underlying() {
+        // Options: the reported case, plus weekly/monthly index formats.
+        assert_eq!(news_subject("RELIANCE26AUG1290CE"), "RELIANCE");
+        assert_eq!(news_subject("RELIANCE24DEC2500PE"), "RELIANCE");
+        assert_eq!(news_subject("NIFTY2670724000CE"), "NIFTY");
+        assert_eq!(news_subject("BANKNIFTY26AUG52000PE"), "BANKNIFTY");
+        // Futures.
+        assert_eq!(news_subject("BANKNIFTY24DECFUT"), "BANKNIFTY");
+        assert_eq!(news_subject("RELIANCE26AUGFUT"), "RELIANCE");
+        // Lower case in, canonical upper case out.
+        assert_eq!(news_subject("reliance26aug1290ce"), "RELIANCE");
+    }
+
+    #[test]
+    fn leaves_non_contracts_untouched() {
+        assert_eq!(news_subject("RELIANCE"), "RELIANCE");
+        assert_eq!(news_subject("NIFTY 50"), "NIFTY 50");
+        assert_eq!(news_subject("M&M"), "M&M");
+        assert_eq!(news_subject(""), "");
+        assert_eq!(news_subject("  TCS  "), "TCS");
+    }
+
+    #[test]
+    fn does_not_truncate_equities_that_merely_contain_a_digit() {
+        // The whole reason this is gated on is_fno_symbol: cutting at the first
+        // digit unconditionally would turn these real NSE tickers into "V"/"A".
+        assert_eq!(news_subject("V2RETAIL"), "V2RETAIL");
+        assert_eq!(news_subject("A2ZINFRA"), "A2ZINFRA");
+        assert_eq!(news_subject("3MINDIA"), "3MINDIA");
+        // Ends in "CE" but is an equity with no digit — Action Construction Equipment.
+        assert_eq!(news_subject("ACE"), "ACE");
+    }
+}

@@ -9,6 +9,8 @@ import { canRunAgentMode } from './useFeatureStore';
 import { RESEARCH_LOCKED_MESSAGE } from '../lib/sku';
 import { bridgeInvoke, bridgeListen } from '../lib/bridge';
 import { debugLog } from '../lib/debugLog';
+import { isFnoSymbol } from '../charting/symbolUtils';
+import { getUnderlyingFromSymbol } from '../components/fno/symbolParser';
 
 // ── TypeScript interfaces matching Rust backend structs ─────────────────
 
@@ -405,6 +407,32 @@ interface QuantStore {
    */
   patternsError: string | null;
   fetchMultiTfPatterns: (symbol: string) => Promise<void>;
+}
+
+/**
+ * The instrument news is actually published *about*.
+ *
+ * Nobody writes news about one option contract — it is written about the company
+ * or the index the contract derives from. Asking the sentiment service for
+ * `RELIANCE26AUG1290CE` therefore matched no article at all, and because an
+ * unknown ticker falls back to using the bare symbol as the company name
+ * (`agents/sentiment/src/companyProfiles.js::resolveProfileSeed`) the panel
+ * rendered "0 headlines · Neutral · No notable headline for
+ * RELIANCE26AUG1290CE" — a total absence of data wearing the costume of a real
+ * neutral verdict. Resolve F&O tradingsymbols to their underlying first.
+ *
+ * The `isFnoSymbol` guard is load-bearing, not decoration:
+ * `getUnderlyingFromSymbol` cuts the symbol at its first digit, which would turn
+ * the *equity* tickers V2RETAIL and A2ZINFRA into "V" and "A". Only genuine
+ * CE / PE / FUT contracts are rewritten; index spot names ("NIFTY 50") and every
+ * cash ticker pass through untouched, so no existing lookup changes.
+ *
+ * Keying the cache, the in-flight set, and the payload's `symbol` off the
+ * subject rather than the contract is a bonus: all 200-odd strikes on one
+ * underlying now share a single cache entry and a single request.
+ */
+export function sentimentSubject(symbol: string): string {
+  return isFnoSymbol(symbol) ? getUnderlyingFromSymbol(symbol) : symbol;
 }
 
 // ── Module-level in-flight deduplication set ─────────────────────────────
@@ -1080,7 +1108,12 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
   //   • Data is fresh (< 10 minutes old)
   //   • Same symbol is already being fetched (deduplication)
   //   • HF returned 429 recently (5-minute cooldown per symbol)
-  loadSentimentForSymbol: async (symbol: string) => {
+  loadSentimentForSymbol: async (requested: string) => {
+    // Resolved once, here, so every use below — the cache key, the in-flight
+    // key, the bridge argument, the user-facing rate-limit message — refers to
+    // the instrument the news is about rather than to an option contract no
+    // journalist has ever written a word about.
+    const symbol = sentimentSubject(requested);
     const entry = get().sentimentCache[symbol];
     const now = Date.now();
 
@@ -1162,7 +1195,8 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
 
   // Force-refresh: bypasses TTL cache (but still respects 429 cooldown).
   // Called from AI Quant Analysis button.
-  refreshSentimentForSymbol: async (symbol: string) => {
+  refreshSentimentForSymbol: async (requested: string) => {
+    const symbol = sentimentSubject(requested);
     const entry = get().sentimentCache[symbol];
     const now = Date.now();
 
