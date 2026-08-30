@@ -385,7 +385,14 @@ export default function SymbolSearchBlock() {
           </button>
         )}
         {showDropdown && (
-          <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-72 overflow-y-auto scrollbar-none rounded-none border border-border-default bg-surface shadow-lg panel-shadow">
+          // Named region: the results were an anonymous div of buttons, so a
+          // screen reader announced each row with no indication that it belonged
+          // to the search results rather than to the panel behind them.
+          <div
+            role="group"
+            aria-label="Search results"
+            className="absolute left-0 right-0 top-full z-50 mt-1 max-h-72 overflow-y-auto scrollbar-none rounded-none border border-border-default bg-surface shadow-lg panel-shadow"
+          >
             {!isSearching && !searchError && hasFno && (
               <div className="sticky top-0 z-10 flex flex-wrap gap-1 border-b border-border-default bg-surface px-2 py-1.5">
                 {underlyingOptions.map((u) => (

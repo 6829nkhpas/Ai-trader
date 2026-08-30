@@ -24,7 +24,7 @@
 
 import React from 'react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 
 // ── Mount registry (hoisted so the mock factory can reference it) ─────────────
@@ -96,6 +96,11 @@ function paneEl(id: 'A' | 'B'): HTMLElement {
   return document.querySelector(`[data-pane-id="${id}"]`) as HTMLElement;
 }
 
+/** The chart instance rendered INSIDE a given pane. */
+function chartIn(pane: HTMLElement): HTMLElement {
+  return pane.querySelector('[data-testid="main-chart"]') as HTMLElement;
+}
+
 beforeEach(() => {
   charts.reset();
   resetStores();
@@ -120,50 +125,80 @@ describe('SplitChartContainer — dual-pane render (R4.2)', () => {
 
     // Each pane drives its OWN independent symbol + timeframe into its chart
     // instance (proving panes can chart different stocks at once — R4.3).
-    const timeframes = chartInstances.map((c) => c.getAttribute('data-timeframe'));
-    expect(timeframes).toContain('10m');
-    expect(timeframes).toContain('1h');
+    //
+    // Asserted PER PANE rather than as an unordered list over both charts. The
+    // pane used to also print its symbol in a header, which is what pinned each
+    // setting to a specific pane; the header was deliberately removed so the
+    // chart gets the full pane height, so the binding is checked where it now
+    // lives — on the chart instance each pane actually renders.
+    expect(chartIn(a)).toHaveAttribute('data-symbol', 'RELIANCE');
+    expect(chartIn(a)).toHaveAttribute('data-timeframe', '10m');
+    expect(chartIn(b)).toHaveAttribute('data-symbol', 'TCS');
+    expect(chartIn(b)).toHaveAttribute('data-timeframe', '1h');
+  });
 
-    const symbols = chartInstances.map((c) => c.getAttribute('data-symbol'));
-    expect(symbols).toContain('RELIANCE');
-    expect(symbols).toContain('TCS');
+  it('renders no chrome of its own — the chart fills the pane', () => {
+    render(<SplitChartContainer mode="INTRADAY" />);
 
-    // Each pane surfaces its own independent symbol in its header.
-    expect(a).toHaveTextContent('RELIANCE');
-    expect(b).toHaveTextContent('TCS');
+    // The panes are intentionally header-free. This is the guard against a
+    // per-pane toolbar creeping back in and stealing chart height.
+    for (const id of ['A', 'B'] as const) {
+      const pane = paneEl(id);
+      expect(pane.querySelectorAll('button')).toHaveLength(0);
+      // Its only child subtree is the chart.
+      expect(pane).toContainElement(chartIn(pane));
+    }
   });
 });
 
-describe('SplitChartContainer — per-pane controls are independent (R4.3)', () => {
+// The panes carry independent settings (R4.3), but the controls that change them
+// are NOT inside the pane — the pane is chrome-free by design, and the command bar
+// / left panel route a change to whichever pane is active. So the input to these
+// tests is the per-pane store setter (the same one those controls call), and the
+// assertion is that the change lands on one pane only and is reflected in that
+// pane's own chart instance.
+describe('SplitChartContainer — per-pane settings are independent (R4.3)', () => {
   it('changing pane B timeframe leaves pane A timeframe untouched', () => {
     render(<SplitChartContainer mode="INTRADAY" />);
 
-    // Open pane B's timeframe selector and pick a different timeframe.
-    const bTimeframeBtn = paneEl('B').querySelector(
-      '[aria-label="Pane timeframe"]',
-    ) as HTMLElement;
-    fireEvent.click(bTimeframeBtn);
-    fireEvent.click(screen.getByRole('button', { name: '15m' }));
+    act(() => {
+      useChartUIStore.getState().setPaneTimeframe('B', '15m');
+    });
 
     const panes = useChartUIStore.getState().panes;
     expect(panes.find((p) => p.id === 'B')?.timeframe).toBe('15m');
     // Pane A keeps its own timeframe — the two panes are independent.
     expect(panes.find((p) => p.id === 'A')?.timeframe).toBe('10m');
+
+    // And each pane's chart re-rendered with only its own timeframe.
+    expect(chartIn(paneEl('B'))).toHaveAttribute('data-timeframe', '15m');
+    expect(chartIn(paneEl('A'))).toHaveAttribute('data-timeframe', '10m');
   });
 
   it('changing pane A chart type leaves pane B chart type untouched', () => {
     render(<SplitChartContainer mode="INTRADAY" />);
 
-    const aTypeBtn = paneEl('A').querySelector(
-      '[aria-label="Pane chart type"]',
-    ) as HTMLElement;
-    fireEvent.click(aTypeBtn);
-    fireEvent.click(screen.getByRole('button', { name: 'Area' }));
+    act(() => {
+      useChartUIStore.getState().setPaneChartType('A', 'area');
+    });
 
     const panes = useChartUIStore.getState().panes;
     expect(panes.find((p) => p.id === 'A')?.chartType).toBe('area');
     // Pane B keeps its own chart type.
     expect(panes.find((p) => p.id === 'B')?.chartType).toBe('line');
+  });
+
+  it('changing one pane symbol leaves the sibling pane charting its own', () => {
+    render(<SplitChartContainer mode="INTRADAY" />);
+
+    act(() => {
+      useChartUIStore.getState().setPaneSymbol('B', 'INFY');
+    });
+
+    // This is the property the removed header used to make visible: two panes,
+    // two different instruments, at the same time.
+    expect(chartIn(paneEl('B'))).toHaveAttribute('data-symbol', 'INFY');
+    expect(chartIn(paneEl('A'))).toHaveAttribute('data-symbol', 'RELIANCE');
   });
 });
 
@@ -219,10 +254,12 @@ describe('SplitChartContainer — single-view round-trip uses active pane settin
     // Return to single view (split off), then back to split view (split on).
     // Single view renders the Active_Pane's settings as the sole chart, so the
     // active pane's symbol/timeframe/chartType must survive the round-trip.
-    useChartUIStore.getState().setSplitView(false);
+    // Wrapped in act(): these setters re-render the mounted container, and an
+    // unwrapped update logged a React act() warning on every run.
+    act(() => useChartUIStore.getState().setSplitView(false));
     expect(useChartUIStore.getState().splitView).toBe(false);
 
-    useChartUIStore.getState().setSplitView(true);
+    act(() => useChartUIStore.getState().setSplitView(true));
     expect(useChartUIStore.getState().splitView).toBe(true);
 
     const afterState = useChartUIStore.getState();

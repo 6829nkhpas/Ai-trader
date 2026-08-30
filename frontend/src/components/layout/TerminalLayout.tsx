@@ -216,6 +216,12 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
                   ref={(el) => { profileBtnRefs.current[key] = el; }}
                   id={`profile-btn-${key.toLowerCase()}`}
                   type="button"
+                  // The active mode was conveyed ONLY visually — by the sliding
+                  // `.profile-indicator` pill behind the buttons and the badge's
+                  // emerald treatment. Neither is perceivable to a screen reader,
+                  // so which workspace you were in was unannounced. `aria-pressed`
+                  // is the segmented-control equivalent of a selected state.
+                  aria-pressed={isActive}
                   onClick={() => setActiveProfile(key)}
                   className={`
                     profile-tab-btn relative z-10 flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold

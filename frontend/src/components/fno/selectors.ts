@@ -29,18 +29,25 @@ import type { FnoChains } from './viewModel';
  *
  * Pure, total, deterministic.
  */
-const DEFAULT_UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY', 'MIDCPNIFTY', 'BANKEX'];
-
 export function deriveUnderlyingOptions(
   chains: FnoChains | null,
   selectedUnderlying?: string,
 ): string[] {
+  // This used to union the chain list with a hardcoded
+  // ['NIFTY','BANKNIFTY','SENSEX','FINNIFTY','MIDCPNIFTY','BANKEX'], which
+  // contradicted the guarantee documented directly above it and offered
+  // underlyings nothing ingests. Picking one of those led straight to an empty
+  // workspace: no chain snapshots, so no expiries, no strikes, and no contract to
+  // chart — the same shape of failure as offering an expiry that has already
+  // lapsed. What the bridge publishes is the set that actually has a chain, so
+  // that is the set the selector offers.
   const chainList = Array.isArray(chains?.underlyings) ? chains!.underlyings : [];
-  const combined = Array.from(new Set([...DEFAULT_UNDERLYINGS, ...chainList]));
-  if (selectedUnderlying && !combined.includes(selectedUnderlying)) {
-    return [selectedUnderlying, ...combined];
+  if (selectedUnderlying && !chainList.includes(selectedUnderlying)) {
+    // Kept selectable so the active selection cannot dangle while
+    // `fno_list_chains` is still in flight — prepended, never substituted.
+    return [selectedUnderlying, ...chainList];
   }
-  return combined;
+  return Array.from(new Set(chainList));
 }
 
 /**

@@ -103,18 +103,32 @@ describe('Mode_Selector — four peer modes render and switch (R1.1, R1.2, R1.4,
     }
   });
 
-  it('visually indicates the active mode, including F&O (R1.6)', () => {
+  it('indicates the active mode, including F&O (R1.6)', () => {
     render(<TerminalLayout leftPanel={<div />}>{<div />}</TerminalLayout>);
 
-    // Capture the inactive F&O class set, then activate F&O and confirm the
-    // class set changes (the active emerald/elevated treatment is applied).
+    // This used to assert the active button carried `bg-elevated`. The segmented
+    // control has since moved its highlight onto a single sliding
+    // `.profile-indicator` element behind the buttons, so no button ever carries
+    // that class — the assertion was pinned to an implementation detail of the
+    // old design rather than to "the active mode is indicated".
+    //
+    // Assert the indication itself, on the two channels that exist:
+    //   · `aria-pressed`, so the state is announced and not colour-only;
+    //   · the button's own class set changing, so it is visually distinguishable.
     const inactiveClass = modeButton('FNO').className;
+    expect(modeButton('FNO')).toHaveAttribute('aria-pressed', 'false');
+
     fireEvent.click(modeButton('FNO'));
-    const activeClass = modeButton('FNO').className;
 
     expect(useTradeStore.getState().activeProfile).toBe('FNO');
-    expect(activeClass).not.toBe(inactiveClass);
-    expect(activeClass).toContain('bg-elevated');
+    expect(modeButton('FNO')).toHaveAttribute('aria-pressed', 'true');
+    expect(modeButton('FNO').className).not.toBe(inactiveClass);
+
+    // Exactly one mode is ever indicated as active.
+    const pressed = ALL_PROFILES.filter(
+      ({ key }) => modeButton(key).getAttribute('aria-pressed') === 'true',
+    );
+    expect(pressed.map((p) => p.key)).toEqual(['FNO']);
   });
 });
 

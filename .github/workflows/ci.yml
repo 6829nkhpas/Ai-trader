@@ -117,31 +117,20 @@ jobs:
       # down every suite that transitively imports a store. Both are public
       # URLs, not secrets — the same values `.env.example` ships. Vitest does
       # not read `.env.local`, so the job has to supply them itself.
-      # KNOWN-FAILING SUITES, excluded so this job reports regressions only.
-      # Every one of these fails on a clean `develop` too — they were invisible
-      # until the env vars above let them load at all, so none has ever run in
-      # CI. Two separate causes, neither a product bug:
       #
-      #   selectors.bounding, scopeBoundary  — property tests asserting behaviour
-      #     the selector does not implement yet (documented in CLAUDE.md).
-      #   SplitChartContainer, TerminalLayout.modeSelector, LeftPanel.search
-      #     — jsdom gaps: relative fetch URLs have no base to resolve against,
-      #     and state updates are not wrapped in act().
-      #
-      # Delete an entry here as its suite is fixed; do not add to it to make a
-      # change go green.
+      # There is no exclude list any more: the whole suite runs. The five suites
+      # that used to be skipped here are fixed, and the note that justified
+      # skipping them ("jsdom gaps ... property tests asserting behaviour the
+      # selector does not implement yet") turned out to be wrong on both counts —
+      # two were real product defects and the rest were stale or racy assertions.
+      # If a suite starts failing, fix the suite; do not reintroduce a skip to
+      # make a change go green.
       - name: Tests
         working-directory: frontend
         env:
           NEXT_PUBLIC_API_BASE_URL: https://api-web.stratai.live
           NEXT_PUBLIC_DASHBOARD_URL: https://dashboard.stratai.live
-        run: |
-          npx vitest run --reporter=dot \
-            --exclude 'src/components/fno/__tests__/selectors.bounding.property.test.ts' \
-            --exclude 'src/components/fno/__tests__/scopeBoundary.test.ts' \
-            --exclude 'src/components/chart/__tests__/SplitChartContainer.test.tsx' \
-            --exclude 'src/components/layout/__tests__/TerminalLayout.modeSelector.test.tsx' \
-            --exclude 'src/components/panels/__tests__/LeftPanel.search.test.tsx'
+        run: npx vitest run --reporter=dot
 
   rust-services:
     name: Rust services — cargo check + test

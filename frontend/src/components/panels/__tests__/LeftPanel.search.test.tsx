@@ -26,7 +26,7 @@
 
 import React from 'react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 
 // ── Controllable `bridgeInvoke` boundary ─────────────────────────────────────
@@ -114,6 +114,19 @@ function typeQuery(value: string) {
   fireEvent.change(input, { target: { value } });
 }
 
+/**
+ * The search-results region, once the 400ms debounce has fired and the dropdown
+ * has rendered.
+ *
+ * Every assertion about a result row must be scoped through this. The panel
+ * renders `selectedSymbol` in its "No Technical Data for <symbol>" placeholder,
+ * so an unscoped `findByText('RELIANCE')` matches that placeholder instantly and
+ * never waits for the dropdown at all.
+ */
+function searchResults(): Promise<HTMLElement> {
+  return screen.findByRole('group', { name: 'Search results' });
+}
+
 beforeEach(() => {
   resetStores();
   ipc.search = async () => [];
@@ -154,7 +167,13 @@ describe('LeftPanel — symbol selection routes to the active pane in split view
     render(<LeftPanel />);
 
     typeQuery('RELI');
-    const eqRow = await screen.findByText('RELIANCE');
+    // Scoped to the results region on purpose. A bare findByText('RELIANCE')
+    // matched the consensus placeholder ("No Technical Data for RELIANCE", which
+    // renders `selectedSymbol` — 'RELIANCE' in this fixture) and resolved
+    // IMMEDIATELY, before the 400ms search debounce had even fired. The test then
+    // clicked a non-interactive span and asserted on a dropdown that had not
+    // rendered yet.
+    const eqRow = await within(await searchResults()).findByText('RELIANCE');
     const selectedBefore = useTradeStore.getState().selectedSymbol;
     fireEvent.click(eqRow);
 
@@ -173,19 +192,24 @@ describe('LeftPanel search — distinct EQ vs FNO rows (R3.4)', () => {
 
     typeQuery('NIFTY');
 
+    // Scoped to the results region — see `searchResults`. Unscoped, 'RELIANCE'
+    // resolved off the consensus placeholder before the debounce fired, so the
+    // company-name assertion below ran against a dropdown that did not exist.
+    const results = within(await searchResults());
+
     // Equity row: symbol + company name.
-    expect(await screen.findByText('RELIANCE')).toBeInTheDocument();
-    expect(screen.getByText('Reliance Industries')).toBeInTheDocument();
+    expect(await results.findByText('RELIANCE')).toBeInTheDocument();
+    expect(results.getByText('Reliance Industries')).toBeInTheDocument();
 
     // F&O row: the full trading symbol is shown.
-    expect(screen.getByText('NIFTY24DEC24000CE')).toBeInTheDocument();
+    expect(results.getByText('NIFTY24DEC24000CE')).toBeInTheDocument();
 
     // F&O row carries the distinguishing underlying·expiry·strike meta so it is
     // visually distinct from an equity (R3.4).
-    expect(screen.getByText(/NIFTY · 24DEC · 24000/)).toBeInTheDocument();
+    expect(results.getByText(/NIFTY · 24DEC · 24000/)).toBeInTheDocument();
 
     // F&O type badge (CE/PE/FUT) renders — there should be exactly one CE badge.
-    const ceBadges = screen.getAllByText('CE');
+    const ceBadges = results.getAllByText('CE');
     expect(ceBadges.length).toBeGreaterThanOrEqual(1);
   });
 });
