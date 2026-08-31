@@ -143,7 +143,7 @@ export default function MultiTfPatternsView() {
               aria-pressed={isActive}
               aria-label={`${tf} timeframe, ${count} pattern${count === 1 ? '' : 's'}`}
               className={`
-                flex items-center gap-1 px-2 py-0.5 rounded-none text-[9px] font-bold shrink-0 border
+                flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-bold shrink-0 border
                 transition-colors duration-150
                 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-neutral
                 ${isActive
@@ -162,7 +162,7 @@ export default function MultiTfPatternsView() {
                 <Loader2 size={8} className="animate-spin text-neutral" />
               ) : count > 0 ? (
                 <span className={`
-                  flex h-3.5 min-w-3.5 items-center justify-center rounded-none px-0.5 text-[8px] font-black border
+                  flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-[8px] font-black border
                   ${isActive
                     ? 'bg-surface text-text-primary border-surface'
                     : 'bg-neutral/15 text-neutral border-neutral/40'}
@@ -185,10 +185,10 @@ export default function MultiTfPatternsView() {
             {[1, 2].map((i) => (
               <div key={i} className="animate-pulse flex flex-col gap-1 px-3 py-2 border-y border-x-0 border-border-default/40 bg-elevated/10">
                 <div className="flex justify-between items-center">
-                  <div className="h-3 w-16 bg-elevated/60 rounded-none" />
-                  <div className="h-3 w-10 bg-elevated/60 rounded-none" />
+                  <div className="h-3 w-16 bg-elevated/60 rounded-full" />
+                  <div className="h-3 w-10 bg-elevated/60 rounded-full" />
                 </div>
-                <div className="h-2 w-full bg-elevated/30 rounded-none" />
+                <div className="h-2 w-full bg-elevated/30 rounded-full" />
               </div>
             ))}
           </div>
@@ -198,15 +198,19 @@ export default function MultiTfPatternsView() {
              heartbeat / tool-server error look like a calm, healthy market. */
           <div
             role="status"
-            className="flex flex-col gap-1 px-3 py-2.5 border-y border-x-0 border-amber-500/30 bg-amber-500/5 rounded-none"
+            className="mx-3 flex flex-col gap-1 rounded-lg border border-neutral/30 bg-neutral/5 px-3 py-2.5"
           >
             <div className="flex items-center gap-1.5">
-              <AlertTriangle size={10} className="shrink-0 text-amber-500 dark:text-amber-400" />
-              <span className="text-[8px] font-black uppercase tracking-widest text-amber-600 dark:text-amber-400">
+              <AlertTriangle size={10} className="shrink-0 text-neutral" />
+              <span className="text-[8px] font-black uppercase tracking-widest text-neutral">
                 Scan unavailable
               </span>
             </div>
-            <p className="text-[9px] leading-relaxed text-amber-700/90 dark:text-amber-300/80 break-words">
+            {/* Was `text-amber-700/90 dark:text-amber-300/80`. The `dark:` half
+                never applied — nothing in this app adds a `.dark` class — so the
+                dark theme was rendering amber-700 on near-black. The `neutral`
+                token is defined per theme and lands the right way up in both. */}
+            <p className="text-[9px] leading-relaxed text-text-secondary break-words">
               {patternsError}
             </p>
             <button
@@ -215,7 +219,7 @@ export default function MultiTfPatternsView() {
                 const sym = selectedSymbol || 'RELIANCE';
                 void useQuantStore.getState().fetchMultiTfPatterns(sym);
               }}
-              className="mt-0.5 inline-flex w-fit items-center gap-1 rounded-none border border-amber-500/30 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 transition-colors hover:bg-amber-500/10"
+              className="mt-0.5 inline-flex w-fit items-center gap-1 rounded-full border border-neutral/40 px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider text-neutral transition-colors hover:bg-neutral/10"
             >
               <RefreshCw size={8} />
               Retry scan
@@ -223,7 +227,7 @@ export default function MultiTfPatternsView() {
           </div>
         ) : patterns.length === 0 ? (
           // Empty State
-          <div className="flex flex-col items-center justify-center py-4 text-center border-y border-x-0 border-border-default/50 bg-elevated/10 rounded-none">
+          <div className="mx-3 flex flex-col items-center justify-center rounded-lg border border-border-default/50 bg-elevated/10 py-4 text-center">
             <Activity size={12} className="text-text-muted mb-0.5" />
             <span className="text-[9px] font-medium text-text-muted">No patterns forming</span>
             <span className="text-[8px] text-text-muted/40">Timeframe: {selectedTf}</span>
@@ -271,7 +275,7 @@ export default function MultiTfPatternsView() {
                     keeps a soft glow; a settled one lights up on hover. The card
                     itself no longer animates — see the note in globals.css. */}
                 <div className={`
-                  absolute top-0 bottom-0 left-0 w-0.5 rounded-none transition-opacity duration-200
+                  absolute top-1 bottom-1 left-0 w-0.5 rounded-full transition-opacity duration-200
                   ${tone.edge}
                   ${isForming ? `opacity-100 ${tone.glow}` : 'opacity-50 group-hover:opacity-100'}
                 `} />
@@ -291,7 +295,7 @@ export default function MultiTfPatternsView() {
                         than a direction — it must not read as the pattern's own
                         bias. The ping is the only motion left on the badge. */}
                     {isForming && (
-                      <span className="flex items-center gap-1 px-1 py-0.5 rounded-none text-[7px] font-black uppercase tracking-wider border bg-neutral/12 text-neutral border-neutral/40">
+                      <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[7px] font-black uppercase tracking-wider border bg-neutral/12 text-neutral border-neutral/40">
                         <span className="relative flex h-1 w-1 shrink-0">
                           <span className="absolute inline-flex h-full w-full rounded-full bg-neutral animate-pattern-ping" />
                           <span className="relative inline-flex h-1 w-1 rounded-full bg-neutral" />
@@ -299,7 +303,7 @@ export default function MultiTfPatternsView() {
                         FORMING
                       </span>
                     )}
-                    <span className={`flex items-center gap-0.5 px-1 py-0.5 rounded-none text-[8px] font-black uppercase tracking-wider border ${tone.badge}`}>
+                    <span className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider border ${tone.badge}`}>
                       {isBullish ? (
                         <TrendingUp size={8} />
                       ) : isBearish ? (
@@ -327,10 +331,10 @@ export default function MultiTfPatternsView() {
                       aria-valuemin={0}
                       aria-valuemax={100}
                       aria-label={`${p.pattern_type} formation progress`}
-                      className="relative grow h-1.5 bg-surface border border-border-default rounded-none overflow-hidden"
+                      className="relative grow h-1.5 bg-surface border border-border-default rounded-full overflow-hidden"
                     >
                       <div
-                        className={`relative h-full rounded-none bg-gradient-to-r ${tone.bar} transition-[width] duration-500 ease-out`}
+                        className={`relative h-full rounded-full bg-gradient-to-r ${tone.bar} transition-[width] duration-500 ease-out`}
                         style={{ width: `${progressPct}%` }}
                       >
                         {/* A sheen travelling along the filled portion: the bar is
@@ -358,14 +362,14 @@ export default function MultiTfPatternsView() {
                     aria-valuemin={0}
                     aria-valuemax={100}
                     aria-label={`${p.pattern_type} confidence`}
-                    className="grow h-1 bg-surface border border-border-default/45 rounded-none overflow-hidden"
+                    className="grow h-1 bg-surface border border-border-default/45 rounded-full overflow-hidden"
                   >
                     {/* Same hue as the sentiment so the two bars read as one
                         object, but dimmed by confidence band — a 30% reading must
                         not look as emphatic as a 90% one just because both are
                         bearish. */}
                     <div
-                      className={`h-full rounded-none bg-gradient-to-r ${tone.bar} ${confOpacity} transition-[width] duration-300 ease-out`}
+                      className={`h-full rounded-full bg-gradient-to-r ${tone.bar} ${confOpacity} transition-[width] duration-300 ease-out`}
                       style={{ width: `${confPct}%` }}
                     />
                   </div>
@@ -381,19 +385,19 @@ export default function MultiTfPatternsView() {
                     return (
                       <span
                         title={`Volume: ${p.volume_validation}`}
-                        className={`inline-flex items-center gap-0.5 px-1 py-px rounded-none text-[7px] font-bold uppercase tracking-wider border ${vol.badge}`}
+                        className={`inline-flex items-center gap-0.5 px-1.5 py-px rounded-full text-[7px] font-bold uppercase tracking-wider border ${vol.badge}`}
                       >
                         {vol.glyph} Vol
                       </span>
                     );
                   })()}
                   {p.breakout_status && (
-                    <span className={`inline-flex items-center gap-0.5 px-1 py-px rounded-none text-[7px] font-bold tracking-wider border ${breakoutTag(p.breakout_status, sentiment)}`}>
+                    <span className={`inline-flex items-center gap-0.5 px-1.5 py-px rounded-full text-[7px] font-bold tracking-wider border ${breakoutTag(p.breakout_status, sentiment)}`}>
                       {p.breakout_status}
                     </span>
                   )}
                   {p.structural_bias && (
-                    <span className={`inline-flex items-center px-1 py-px rounded-none text-[7px] font-bold tracking-wider border ${MUTED_TAG}`}>
+                    <span className={`inline-flex items-center px-1.5 py-px rounded-full text-[7px] font-bold tracking-wider border ${MUTED_TAG}`}>
                       {p.structural_bias}
                     </span>
                   )}
