@@ -431,6 +431,25 @@ export function useGhostLine(
   const [pulse, setPulse] = useState(0);
   const lastCloseRef = useRef(0);
   const lastPulseRef = useRef(0);
+  /**
+   * True while the draw effect is mid-flight.
+   *
+   * A pulse re-runs the draw effect, and that effect's CLEANUP removes the
+   * segments currently on the chart before the new run starts drawing. The draw
+   * itself is ~20 awaited IPC round-trips into the TradingView iframe, so it is
+   * far slower than the pulse interval: with a live price ticking, the line was
+   * being wiped every PULSE_THROTTLE_MS and superseded before it could finish, so
+   * a draw never completed and no ghost line was ever visible. Nothing was wrong
+   * with the projection — it just never got to render.
+   *
+   * Interrupting a draw to start an identical-but-newer one gains nothing, so a
+   * pulse that lands mid-draw is remembered instead of applied, and fired once
+   * the draw finishes. Each draw therefore completes, and the redraw cadence
+   * self-limits to the real cost of a draw rather than a fixed timer.
+   */
+  const drawInFlightRef = useRef(false);
+  /** A price moved while a draw was in flight; re-pulse when it finishes. */
+  const pendingPulseRef = useRef(false);
   useEffect(() => {
     const sym = activeSymbol.toUpperCase();
     const unsub = useTradeStore.subscribe((s) => {
@@ -446,6 +465,11 @@ export function useGhostLine(
       lastCloseRef.current = close;
       const now = Date.now();
       if (now - lastPulseRef.current < PULSE_THROTTLE_MS) return;
+      // Let the in-flight draw finish and re-pulse from its completion instead.
+      if (drawInFlightRef.current) {
+        pendingPulseRef.current = true;
+        return;
+      }
       lastPulseRef.current = now;
       setPulse((p) => p + 1);
     });
@@ -497,6 +521,11 @@ export function useGhostLine(
       // Read signals at run-time (not as a render subscription) so the effect
       // isn't re-fired by every predictive tick's new array reference.
       const predictiveSignals = useTradeStore.getState().predictiveSignals;
+
+      // From here to the `finally` below is the slow part: projecting, then one
+      // awaited IPC round-trip per segment. A live price pulse arriving inside
+      // this window must not restart it — see `drawInFlightRef`.
+      drawInFlightRef.current = true;
       const points = await computeGhostPoints(
         activeSymbol,
         effectiveTimeframe,
@@ -504,7 +533,10 @@ export function useGhostLine(
         predictiveSignals,
         visibleFromSec,
       );
-      if (isStale()) return;
+      if (isStale()) {
+        drawInFlightRef.current = false;
+        return;
+      }
 
       // Straight engines (OLS 'linear' / VWLR 'volume') render as a SINGLE
       // trend_line entity (anchor → end) that can never fragment or ladder.
@@ -576,12 +608,31 @@ export function useGhostLine(
         }
       } catch (err) {
         console.error('[GhostLine] draw failed:', err);
+      } finally {
+        drawInFlightRef.current = false;
+        // A price moved while we were drawing. Apply it now that the chart holds
+        // a complete line, so the projection still tracks the live market — just
+        // at the cadence a draw can actually sustain instead of a fixed timer
+        // that outran it. Skipped when stale: a newer run already owns the chart
+        // and will draw the fresher price itself.
+        if (pendingPulseRef.current && !isStale()) {
+          pendingPulseRef.current = false;
+          lastPulseRef.current = Date.now();
+          setPulse((p) => p + 1);
+        }
       }
     }, isStale, 'GhostLine');
 
     return () => {
       // Mark stale so any in-flight draw aborts and no queued run draws.
       cancelled = true;
+
+      // Backstop for the in-flight flag. The `finally` above clears it on every
+      // path that reaches the draw, but `computeGhostPoints` is awaited before
+      // that try block, so a throw there would leak the flag and wedge the pulse
+      // permanently. Cleanup always runs before the next effect run, so clearing
+      // here bounds the damage to nothing.
+      drawInFlightRef.current = false;
 
       // Clear the segments we own — but only FORGET the ids we actually managed
       // to remove.

@@ -393,10 +393,33 @@ function startLiveSubscription(
   let lastBarTime = 0;
   let tickCount = 0;
   let droppedOutOfOrder = 0;
+  /** Fingerprint of the last bar handed to TradingView — see the dedupe below. */
+  let lastForwarded = '';
 
   const forwardCandle = (candle: { symbol: string; start_timestamp_ms: number; open: number; high: number; low: number; close: number; volume?: number }) => {
     if (candle.symbol.toUpperCase() !== symbolUpper) return;
     const barTimeMs = candle.start_timestamp_ms;
+
+    // Drop bars that are byte-identical to the one we last forwarded.
+    //
+    // This subscription fires on EVERY store write, and the live feed rebroadcasts
+    // the in-progress candle for every tick of every subscribed instrument (755 of
+    // them in production). The store coalesces those into one write per animation
+    // frame, so this ran ~60×/s and called `onTick` every time — even when THIS
+    // symbol's bar had not changed at all, because some unrelated symbol ticked.
+    //
+    // `onTick` is an IPC call into the TradingView iframe. Sixty redundant ones a
+    // second saturate that channel, and everything else that has to cross it gets
+    // slower — including `createMultipointShape`, which the ghost line needs ~20
+    // awaited round-trips of per redraw. That is how a working ghost line stopped
+    // completing a draw once live ticks started flowing: not a fault in the ghost
+    // line, but starvation of the bridge it draws over.
+    //
+    // Forwarding an identical bar tells TradingView nothing it does not already
+    // have, so this is a pure saving.
+    const fingerprint = `${barTimeMs}|${candle.open}|${candle.high}|${candle.low}|${candle.close}|${candle.volume ?? 0}`;
+    if (fingerprint === lastForwarded) return;
+    lastForwarded = fingerprint;
 
     // TradingView requires bars in non-decreasing time order and drops (and
     // logs a "time order violation" for) anything older than the last bar it
