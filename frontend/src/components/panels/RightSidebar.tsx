@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useState } from 'react';
-import type { IconType } from 'react-icons';
-import { RiBrainAi3Line } from 'react-icons/ri';
-import { MdLibraryBooks } from 'react-icons/md';
+// Remix Icon `brain-ai-3-line` and Material `library_books`, inlined rather than
+// imported from `react-icons` — see `sidebarIcons.tsx` for why that import breaks
+// the turbopack production build.
+import { BrainAiIcon, LibraryBooksIcon } from './sidebarIcons';
 import { SIDEBAR_CONFIG, type SidebarTab } from '../../types/home';
 import type { TradeProfile } from '../../store/useTradeStore';
 import DeepQuantPanel from '../quant/DeepQuantPanel';
@@ -62,9 +63,13 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
   // The two destinations. `label` stays per-profile (INTRADAY / SWING /
   // INVESTOR / F&O) so the tooltip still says which workspace the left one opens,
   // even though the glyph is the same for all four.
-  const destinations: { key: SidebarTab; label: string; Icon: IconType }[] = [
-    { key: 'profile', label: sidebarCfg.badge, Icon: MdLibraryBooks },
-    { key: 'deepquant', label: 'AI Agent', Icon: RiBrainAi3Line },
+  const destinations: {
+    key: SidebarTab;
+    label: string;
+    Icon: typeof BrainAiIcon;
+  }[] = [
+    { key: 'profile', label: sidebarCfg.badge, Icon: LibraryBooksIcon },
+    { key: 'deepquant', label: 'AI Agent', Icon: BrainAiIcon },
   ];
 
   /**
@@ -151,7 +156,7 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
                   isShowing ? 'opacity-100' : 'opacity-0'
                 }`}
               />
-              <Icon size={22} aria-hidden="true" />
+              <Icon size={22} />
             </button>
           );
         })}

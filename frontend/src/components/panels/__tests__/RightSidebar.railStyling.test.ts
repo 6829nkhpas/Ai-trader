@@ -113,9 +113,24 @@ describe('the rail is the only switcher, and the panel gets the full height', ()
   });
 
   it('uses the requested glyphs', () => {
-    expect(RIGHT_SIDEBAR).toContain("import { RiBrainAi3Line } from 'react-icons/ri';");
-    expect(RIGHT_SIDEBAR).toContain("import { MdLibraryBooks } from 'react-icons/md';");
-    expect(RIGHT_SIDEBAR).toContain('Icon: MdLibraryBooks');
-    expect(RIGHT_SIDEBAR).toContain('Icon: RiBrainAi3Line');
+    expect(RIGHT_SIDEBAR).toContain("import { BrainAiIcon, LibraryBooksIcon } from './sidebarIcons';");
+    expect(RIGHT_SIDEBAR).toContain('Icon: LibraryBooksIcon');
+    expect(RIGHT_SIDEBAR).toContain('Icon: BrainAiIcon');
+  });
+
+  it('imports no `react-icons` barrel, which breaks the turbopack build', () => {
+    // `react-icons` v5 has no per-icon entry points, so any set import drags the
+    // whole set (~4000 modules for `md`) into the client graph and overflows
+    // turbopack's 10-bit module header:
+    //   "The high bits of the position 2248738 are not all 0s or 1s"
+    // `next build` tolerates it; `next build --turbopack` — which `build:web` and
+    // the Docker image use — does not, so it only fails on the server.
+    expect(RIGHT_SIDEBAR).not.toMatch(/from 'react-icons/);
+    const icons = readFileSync(path.resolve(HERE, '../sidebarIcons.tsx'), 'utf8');
+    expect(icons).not.toMatch(/from 'react-icons/);
+    // The art is still the requested pair, so the paths must actually be there.
+    expect(icons).toContain('export function BrainAiIcon');
+    expect(icons).toContain('export function LibraryBooksIcon');
+    expect(icons.match(/<path/g)?.length).toBeGreaterThanOrEqual(3);
   });
 });
