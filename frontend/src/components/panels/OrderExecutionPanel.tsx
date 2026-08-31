@@ -96,6 +96,7 @@ export default function OrderExecutionPanel() {
 
   useEffect(() => {
     // Reset quote on symbol change for instant visual feedback
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLiveQuote(null);
     if (symbol) {
       fetchQuote();
@@ -159,7 +160,6 @@ export default function OrderExecutionPanel() {
   // ── Always show the strip with real-time data for the selected symbol ──
   const isBuy = matchedDecision?.action_type === 'BUY';
   const isSell = matchedDecision?.action_type === 'SELL';
-  const isHold = matchedDecision?.action_type === 'HOLD';
   const hasDecision = !!matchedDecision;
 
   // Risk:Reward ratio
@@ -238,7 +238,6 @@ export default function OrderExecutionPanel() {
         <ReasoningBlock
           hasDecision={hasDecision}
           matchedDecision={matchedDecision}
-          symbol={symbol}
           liveQuote={liveQuote}
           positions={positions}
         />

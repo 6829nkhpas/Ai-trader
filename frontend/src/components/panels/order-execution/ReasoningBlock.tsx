@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import type { AggregatedDecision } from '../../../store/useTradeStore';
 
 interface SymbolQuote {
   symbol: string;
@@ -14,8 +15,7 @@ interface SymbolQuote {
 
 interface ReasoningBlockProps {
   hasDecision: boolean;
-  matchedDecision: any;
-  symbol: string;
+  matchedDecision: AggregatedDecision | null;
   liveQuote: SymbolQuote | null;
   positions: Record<string, number>;
 }
@@ -23,7 +23,6 @@ interface ReasoningBlockProps {
 export default function ReasoningBlock({
   hasDecision,
   matchedDecision,
-  symbol,
   liveQuote,
   positions,
 }: ReasoningBlockProps) {
@@ -42,7 +41,7 @@ export default function ReasoningBlock({
       return raw + priceStr;
     }
     return `Quant signal: ${matchedDecision.action_type} with ${Math.round(matchedDecision.final_conviction_score)}% conviction.` + priceStr;
-  }, [matchedDecision, symbol, liveQuote]);
+  }, [matchedDecision, liveQuote]);
 
   if (hasDecision) {
     return (
