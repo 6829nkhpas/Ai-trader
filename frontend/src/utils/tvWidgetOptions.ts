@@ -46,6 +46,23 @@ export function getTvWidgetOptions({
       backgroundColor: theme === 'light' ? '#f0eee9' : '#1e1e1e',
       foregroundColor: '#10b981',
     },
+    // ── On the 1–8 pane layout grid ───────────────────────────────────────────
+    // Do NOT add `header_layouttoggle` / `support_multicharts` here. They gate
+    // TradingView's own multiple-chart layout selector, and they belong to
+    // `TradingTerminalFeatureset` — the Trading Platform edition — not to
+    // `ChartingLibraryFeatureset`, which is what the Advanced Charts build we
+    // vendor accepts. An unknown featureset is ignored SILENTLY, so passing them
+    // reads like the feature is enabled while nothing appears.
+    //
+    // It looks available, which is the trap: `setLayout`, `chartsCount`,
+    // `layout_about_to_be_changed` and `MultipleChartsLayoutType`'s 40
+    // arrangements are all declared in `charting_library.d.ts`, and the "Select
+    // layout" / "Sync in layout" strings are in `bundles/library.*.js`. The
+    // type definitions and localisation assets are shared across editions; the
+    // featureset unions are what actually differ.
+    //
+    // `__tests__/tvWidgetOptions.featuresets.test.ts` enforces this by checking
+    // every name below against the base union.
     disabled_features: [],
     enabled_features: [
       'use_localstorage_for_settings',
