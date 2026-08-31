@@ -516,6 +516,7 @@ async function fallbackRestSearch(
       name: string;
       exchange: string;
       instrument_type: string;
+      segment?: string;
     }[];
     onResult(
       results.map((inst) => ({
@@ -524,7 +525,11 @@ async function fallbackRestSearch(
         description: inst.name,
         exchange: inst.exchange,
         ticker: `${inst.exchange}:${inst.tradingsymbol}`,
-        type: inst.instrument_type === 'INDEX' ? 'index' : 'stock',
+        // `segment`, not `instrument_type`. Kite reports `instrument_type: "EQ"`
+        // for index rows too — `NIFTY 50` comes back as segment `INDICES`, type
+        // `EQ` — so the old `instrument_type === 'INDEX'` test matched nothing
+        // and every index was labelled a stock.
+        type: (inst.segment ?? '').toUpperCase() === 'INDICES' ? 'index' : 'stock',
       })),
     );
   } catch {
@@ -582,7 +587,7 @@ export function createDatafeed(): IBasicDatafeed {
       // so the user sees equities, indexes, and F&O contracts in one flat list.
       bridgeInvoke<
         Array<
-          | { kind: 'EQ'; symbol: string; name: string; exchange: string }
+          | { kind: 'EQ'; symbol: string; name: string; exchange: string; segment?: string }
           | {
               kind: 'FNO';
               tradingsymbol: string;
@@ -597,14 +602,20 @@ export function createDatafeed(): IBasicDatafeed {
             const items = (results || []).map((r) => {
               if (r.kind === 'EQ') {
                 const upper = r.symbol.toUpperCase();
-                const isIndex =
-                  upper === 'NIFTY' ||
-                  upper === 'NIFTY 50' ||
-                  upper === 'BANKNIFTY' ||
-                  upper === 'NIFTY BANK' ||
-                  upper === 'FINNIFTY' ||
-                  upper === 'MIDCPNIFTY' ||
-                  upper === 'SENSEX';
+                // Kite's `INDICES` segment is the authoritative answer, and it
+                // covers all 209 index rows the NSE and BSE masters publish. The
+                // seven names hardcoded here before meant every other index —
+                // NIFTY IT, NIFTY MIDCAP 100, BANKEX, the lot — was labelled a
+                // stock in TradingView's own search list.
+                const isIndex = r.segment
+                  ? r.segment.toUpperCase() === 'INDICES'
+                  : upper === 'NIFTY' ||
+                    upper === 'NIFTY 50' ||
+                    upper === 'BANKNIFTY' ||
+                    upper === 'NIFTY BANK' ||
+                    upper === 'FINNIFTY' ||
+                    upper === 'MIDCPNIFTY' ||
+                    upper === 'SENSEX';
                 return {
                   symbol: r.symbol,
                   full_name: `${r.exchange}:${r.symbol}`,

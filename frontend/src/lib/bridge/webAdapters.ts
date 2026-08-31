@@ -130,11 +130,19 @@ interface InstrumentRow {
   instrument_type: string;
   expiry?: string;
   strike?: number;
+  /** Kite's segment. `INDICES` marks an index; see `EquityResult.segment`. */
+  segment?: string;
 }
 
-/** The tagged union `commands/instruments.rs::SearchResult` serializes to. */
+/**
+ * The tagged union `commands/instruments.rs::SearchResult` serializes to.
+ *
+ * Structurally compatible with `types/searchResult.ts`, which is the contract the
+ * UI consumes. Keep `segment` on the EQ arm in step with `EquityResult.segment`:
+ * this copy silently lacking it is what dropped the field on the way through.
+ */
 export type SearchResult =
-  | { kind: 'EQ'; symbol: string; name: string; exchange: string }
+  | { kind: 'EQ'; symbol: string; name: string; exchange: string; segment?: string }
   | {
       kind: 'FNO';
       tradingsymbol: string;
@@ -173,6 +181,7 @@ export function rowsToSearchResults(rows: InstrumentRow[]): SearchResult[] {
         symbol: r.tradingsymbol,
         name: r.name,
         exchange: r.exchange,
+        segment: r.segment,
       });
     }
   }
@@ -501,12 +510,20 @@ export const WEB_ADAPTERS: Record<string, WebAdapter> = {
     const query = (args.query as string | undefined)?.trim() ?? '';
     if (!query) return [];
     // `search_in_db` queries `instruments` then `nfo_instruments` and returns
-    // equities first; two exchange calls in parallel reproduce that ordering.
-    const [eq, fno] = await Promise.all([
+    // equities first; parallel exchange calls reproduce that ordering.
+    //
+    // BSE is searched as well as NSE, which it previously was not — and that is
+    // why SENSEX could never be found. SENSEX is a BSE index (segment `INDICES`,
+    // token 265), as are BANKEX and 71 others; searching "SENSEX" against NSE
+    // alone returns only the ETFs that track it (`SENSEXETF`, `SENSEXBEES`,
+    // `HDFCSENSEX`…) and never the index itself. NSE stays first so its listings
+    // outrank the BSE duplicate for dually-listed scrips.
+    const [nse, bse, fno] = await Promise.all([
       searchExchange(query, 'NSE'),
+      searchExchange(query, 'BSE'),
       searchExchange(query, 'NFO'),
     ]);
-    return rowsToSearchResults([...eq, ...fno]);
+    return rowsToSearchResults([...nse, ...bse, ...fno]);
   },
 
   fetch_questdb: async (args) => {

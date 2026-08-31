@@ -20,12 +20,25 @@ export type OptionType = 'CE' | 'PE' | 'FUT';
 /** The valid option types, exported for generators and runtime checks. */
 export const OPTION_TYPES: readonly OptionType[] = ['CE', 'PE', 'FUT'] as const;
 
-/** An equity (NSE cash) search result. */
+/** An equity (NSE/BSE cash) or index search result. */
 export interface EquityResult {
   kind: 'EQ';
   symbol: string;
   name: string;
   exchange: string;
+  /**
+   * Kite's segment for the row: `INDICES` for an index, the exchange code
+   * (`NSE` / `BSE`) for a tradable scrip.
+   *
+   * Carried so an index can be recognised by what the exchange says it is rather
+   * than by matching its name against a hand-written list — see `isIndex`. NSE
+   * publishes 136 index rows and BSE 73, so any list is wrong the moment the
+   * exchange adds one.
+   *
+   * Optional: desktop's `search_instruments` predates the field, and a result
+   * without it is still a valid equity result.
+   */
+  segment?: string;
 }
 
 /** An NFO option (CE/PE) or future (FUT) search result. */

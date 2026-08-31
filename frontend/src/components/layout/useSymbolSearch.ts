@@ -26,14 +26,33 @@ const INDEX_NFO_ALIASES: Record<string, string> = {
   'NIFTYNXT50': 'NIFTYNXT50',
 };
 
-/** Whether a search result represents a market index. */
+/**
+ * Names that identify an index when the row carries no segment.
+ *
+ * Only a fallback now. Desktop's `search_instruments` predates the `segment`
+ * field, and F&O results are classified by their underlying, which has no
+ * segment of its own.
+ */
+const INDEX_NAME_FALLBACK = [
+  'NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX', 'MIDCPNIFTY', 'BANKEX',
+  'NIFTY_50', 'NIFTY 50', 'NIFTY BANK', 'NIFTY FINANCIAL SERVICES',
+];
+
+/**
+ * Whether a search result represents a market index.
+ *
+ * Prefers Kite's own `segment`, which is `INDICES` for every index on both
+ * exchanges. The name list below it used to be the ONLY test, and it recognised
+ * nine names out of the 209 index rows the two masters actually publish — so
+ * NIFTY IT, NIFTY MIDCAP 100, BANKEX and ~200 others were filed as stocks and
+ * vanished from the Index tab.
+ */
 export function isIndex(r: SearchResult): boolean {
+  if (r.kind === 'EQ' && r.segment) {
+    return r.segment.toUpperCase() === 'INDICES';
+  }
   const name = r.kind === 'EQ' ? r.symbol : r.underlying;
-  const upperName = name?.toUpperCase() || '';
-  return [
-    'NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX', 'MIDCPNIFTY',
-    'NIFTY_50', 'NIFTY 50', 'NIFTY BANK', 'NIFTY FINANCIAL SERVICES'
-  ].includes(upperName);
+  return INDEX_NAME_FALLBACK.includes(name?.toUpperCase() || '');
 }
 
 export type SearchTab = 'ALL' | 'Stock' | 'Index' | 'F&O';

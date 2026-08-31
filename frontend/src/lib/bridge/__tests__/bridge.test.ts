@@ -110,21 +110,61 @@ describe('adapters that talk HTTP', () => {
     await expect(bridgeInvoke('get_pool_status')).resolves.toBe(true);
   });
 
-  it('queries both exchanges for instrument search and survives one failing', async () => {
+  it('queries all three exchanges for instrument search and survives one failing', async () => {
     fetchMock.mockImplementation((url: string) =>
       url.includes('NFO')
         ? Promise.reject(new Error('NFO cache cold'))
-        : Promise.resolve(
-            jsonRes({
-              results: [
-                { tradingsymbol: 'TCS', name: 'TCS', exchange: 'NSE', instrument_type: 'EQ' },
-              ],
-            }),
-          ),
+        : url.includes('BSE')
+          ? Promise.resolve(jsonRes({ results: [] }))
+          : Promise.resolve(
+              jsonRes({
+                results: [
+                  { tradingsymbol: 'TCS', name: 'TCS', exchange: 'NSE', instrument_type: 'EQ' },
+                ],
+              }),
+            ),
     );
     const out = (await bridgeInvoke('search_instruments', { query: 'TCS' })) as unknown[];
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(out).toEqual([{ kind: 'EQ', symbol: 'TCS', name: 'TCS', exchange: 'NSE' }]);
+    // NSE, BSE and NFO. BSE is the leg that was missing, and without it no BSE
+    // index — SENSEX, BANKEX — could ever be found.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const exchangesQueried = fetchMock.mock.calls.map(
+      (c: unknown[]) => String(c[0]).match(/exchange=(\w+)/)?.[1],
+    );
+    expect(exchangesQueried).toEqual(expect.arrayContaining(['NSE', 'BSE', 'NFO']));
+    expect(out).toEqual([
+      { kind: 'EQ', symbol: 'TCS', name: 'TCS', exchange: 'NSE', segment: undefined },
+    ]);
+  });
+
+  it('finds SENSEX, which only exists on BSE', async () => {
+    // SENSEX is a BSE index (segment INDICES, token 265). NSE's master carries
+    // only the ETFs that track it, so an NSE-only search returned SENSEXETF and
+    // friends and never the index — the reported "SENSEX is not in search".
+    fetchMock.mockImplementation((url: string) =>
+      url.includes('exchange=BSE')
+        ? Promise.resolve(
+            jsonRes({
+              results: [
+                {
+                  tradingsymbol: 'SENSEX',
+                  name: 'SENSEX',
+                  exchange: 'BSE',
+                  instrument_type: 'EQ',
+                  segment: 'INDICES',
+                },
+              ],
+            }),
+          )
+        : Promise.resolve(jsonRes({ results: [] })),
+    );
+
+    const out = (await bridgeInvoke('search_instruments', { query: 'SENSEX' })) as Array<
+      Record<string, unknown>
+    >;
+
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ kind: 'EQ', symbol: 'SENSEX', segment: 'INDICES' });
   });
 
   it('short-circuits an empty search without a request', async () => {
@@ -203,11 +243,41 @@ describe('search result mapping', () => {
         strike: 0,
       },
     ]);
-    expect(out[0]).toEqual({ kind: 'EQ', symbol: 'NIFTY 50', name: 'NIFTY 50', exchange: 'NSE' });
+    expect(out[0]).toMatchObject({
+      kind: 'EQ',
+      symbol: 'NIFTY 50',
+      name: 'NIFTY 50',
+      exchange: 'NSE',
+    });
     expect(out[1]).toMatchObject({ kind: 'FNO', optionType: 'CE', strike: 24000 });
     // A future has no strike; `SearchResult::Fno.strike` is None there, and
     // datafeed.ts branches on optionType === 'FUT' for the description.
     expect(out[2]).toMatchObject({ kind: 'FNO', optionType: 'FUT', strike: null });
+  });
+
+  it('carries the segment through so an index can be recognised as one', () => {
+    // Kite reports index rows as segment INDICES with instrument_type EQ, so the
+    // segment is the only field that distinguishes `NIFTY BANK` from `NIFTYETF`.
+    // Dropping it here forced every consumer back onto a hand-written name list.
+    const out = rowsToSearchResults([
+      {
+        tradingsymbol: 'NIFTY BANK',
+        name: 'NIFTY BANK',
+        exchange: 'NSE',
+        instrument_type: 'EQ',
+        segment: 'INDICES',
+      },
+      {
+        tradingsymbol: 'NIFTYETF',
+        name: 'Nifty ETF',
+        exchange: 'NSE',
+        instrument_type: 'EQ',
+        segment: 'NSE',
+      },
+    ]);
+
+    expect(out[0]).toMatchObject({ kind: 'EQ', symbol: 'NIFTY BANK', segment: 'INDICES' });
+    expect(out[1]).toMatchObject({ kind: 'EQ', symbol: 'NIFTYETF', segment: 'NSE' });
   });
 });
 

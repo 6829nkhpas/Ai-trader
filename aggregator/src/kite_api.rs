@@ -220,10 +220,13 @@ impl KiteApiState {
         }
 
         // Pre-load from disk cache on startup so the first request is instant.
-        // Both exchanges are loaded: an F&O chart must not have to wait on a cold
-        // 100k-row NFO fetch just because the last process only warmed NSE.
+        // All three exchanges are loaded: an F&O chart must not have to wait on a
+        // cold 100k-row NFO fetch just because the last process only warmed NSE,
+        // and instrument search now queries BSE on every keystroke — that is where
+        // SENSEX, BANKEX and 71 other indices live — so a cold 13k-row BSE fetch
+        // would otherwise stall the first search after every restart.
         let mut cache: HashMap<String, InstrumentCache> = HashMap::new();
-        for exchange in ["NSE", "NFO"] {
+        for exchange in ["NSE", "NFO", "BSE"] {
             let instruments = Self::load_disk_cache(exchange);
             if !instruments.is_empty() {
                 cache.insert(
@@ -710,8 +713,21 @@ fn parse_instruments_csv(csv: &str) -> Vec<Instrument> {
 // browser path comes through here, and the two must agree or the same keystroke
 // yields different results on desktop and on the website.
 
-/// Cash-side result cap — matches the desktop equity query's `LIMIT 10`.
-const EQ_SEARCH_LIMIT: usize = 10;
+/// Cash-side result cap.
+///
+/// Was 10, to match the desktop equity query's `LIMIT 10`, and that was far too
+/// tight for the index families. NSE's master carries 136 rows in the `INDICES`
+/// segment and BSE another 73, and they share long common prefixes with a crowd
+/// of ETFs: searching "NIFTY" scored 10 results out of well over a hundred
+/// candidates and `NIFTY BANK` was not among them — it lost the length tiebreak
+/// to `NIFTY 50`, `NIFTY EV`, `NIFTY IT`, `NIFTY 100`, `NIFTY 200` and to plain
+/// ETFs like `NIFTY1` and `NIFTYETF`. The most-traded index in the country was
+/// unreachable from the obvious query.
+///
+/// 50 is chosen to comfortably clear one index family (NIFTY has ~40 rows in the
+/// NSE master) while still bounding the payload; the ranking below is what puts
+/// the right rows at the top, and this only decides how many survive.
+const EQ_SEARCH_LIMIT: usize = 50;
 /// Derivative-side result cap — matches the desktop NFO query's `LIMIT 25`.
 const FNO_SEARCH_LIMIT: usize = 25;
 
@@ -735,15 +751,37 @@ fn normalize_option_type(token: &str) -> Option<&'static str> {
 /// `name` match (e.g. "Reliance Industries") is admitted but ranks after the
 /// symbol prefixes, exactly as `CASE WHEN tradingsymbol LIKE ?1 THEN 0 ELSE 1`
 /// does.
+/// Whether an instrument row is an exchange INDEX rather than a tradable scrip.
+///
+/// Kite puts indices in their own segment (`INDICES`) on both NSE and BSE, so the
+/// segment is the authoritative test. Matching on the NAME instead needs a
+/// hand-maintained list and silently misfiles every index nobody remembered to
+/// add — which is what the frontend's `isIndex` did.
+fn is_index_row(inst: &Instrument) -> bool {
+    inst.segment.eq_ignore_ascii_case("INDICES")
+}
+
 fn search_cash(instruments: &[Instrument], query: &str) -> Vec<Instrument> {
     let mut scored: Vec<(u8, usize, &Instrument)> = Vec::new();
 
     for inst in instruments {
         let sym = inst.tradingsymbol.to_uppercase();
-        let rank = if sym.starts_with(query) {
-            0
+        let is_index = is_index_row(inst);
+        // Ranking, best first. The index tiers exist because an index shares its
+        // prefix with a pile of ETFs that track it: "NIFTY" matches `NIFTY1`,
+        // `NIFTYADD`, `NIFTYETF`, `NIFTYBEES` and ~40 rows in the INDICES segment,
+        // and a plain prefix-then-shortest ordering handed the top slots to the
+        // ETFs. Someone typing an index name wants the index.
+        let rank = if sym == query {
+            0 // exact ticker — never outranked
+        } else if is_index && sym.starts_with(query) {
+            1 // NIFTY 50 / NIFTY BANK for "NIFTY", SENSEX for "SENS"
+        } else if is_index && sym.contains(query) {
+            2 // "BSE BANKEX" for "BANKEX"
+        } else if sym.starts_with(query) {
+            3
         } else if sym.contains(query) || inst.name.to_uppercase().contains(query) {
-            1
+            4
         } else {
             continue;
         };
@@ -1387,10 +1425,89 @@ mod tests {
     }
 
     #[test]
-    fn cash_search_caps_at_the_desktop_limit() {
-        let list: Vec<Instrument> =
-            (0..40).map(|n| eq(&format!("SYM{:03}", n), "Something")).collect();
+    fn cash_search_caps_at_the_result_limit() {
+        let list: Vec<Instrument> = (0..EQ_SEARCH_LIMIT + 20)
+            .map(|n| eq(&format!("SYM{:03}", n), "Something"))
+            .collect();
         assert_eq!(search_cash(&list, "SYM").len(), EQ_SEARCH_LIMIT);
+    }
+
+    // ── search_cash: indices ────────────────────────────────────────────────
+    //
+    // An index shares its prefix with every ETF that tracks it, and the masters
+    // carry 209 index rows against a handful of memorable names. Before this,
+    // "NIFTY" returned ten rows chosen by prefix-then-shortest and NIFTY BANK was
+    // not one of them — it lost to NIFTY 50 / NIFTY EV / NIFTY IT on length and to
+    // NIFTY1 / NIFTYETF on nothing at all. The most-traded index in the country
+    // could not be found by typing its own name.
+
+    /// An index row: Kite reports these in the `INDICES` segment with type `EQ`.
+    fn idx(symbol: &str, exchange: &str) -> Instrument {
+        Instrument {
+            segment: "INDICES".to_string(),
+            exchange: exchange.to_string(),
+            ..eq(symbol, symbol)
+        }
+    }
+
+    #[test]
+    fn cash_search_puts_real_indices_above_the_etfs_that_track_them() {
+        let list = vec![
+            eq("NIFTY1", "Nifty ETF"),
+            eq("NIFTYETF", "Nifty ETF"),
+            eq("NIFTYADD", "Nifty Additive"),
+            eq("NIFTYBEES", "Nippon Nifty ETF"),
+            idx("NIFTY 50", "NSE"),
+            idx("NIFTY BANK", "NSE"),
+            idx("NIFTY IT", "NSE"),
+        ];
+
+        let syms: Vec<String> = search_cash(&list, "NIFTY")
+            .iter()
+            .map(|i| i.tradingsymbol.clone())
+            .collect();
+
+        // Every index outranks every tracker, and BANK is reachable at all.
+        assert_eq!(&syms[..3], &["NIFTY 50", "NIFTY IT", "NIFTY BANK"]);
+        assert!(syms.contains(&"NIFTY BANK".to_string()));
+        assert!(
+            syms.iter().position(|s| s == "NIFTY BANK")
+                < syms.iter().position(|s| s == "NIFTY1"),
+            "an ETF must not outrank the index it tracks: {syms:?}"
+        );
+    }
+
+    #[test]
+    fn cash_search_finds_sensex_the_index_not_just_its_etfs() {
+        // Every one of these is a real NSE/BSE row. SENSEX itself is a BSE index
+        // (segment INDICES, token 265) — which is why searching NSE alone could
+        // never surface it, and why the web adapter now queries BSE too.
+        let list = vec![
+            eq("SENSEXETF", "Sensex ETF"),
+            eq("SENSEXBEES", "Nippon Sensex ETF"),
+            eq("HDFCSENSEX", "HDFC Sensex ETF"),
+            idx("SENSEX", "BSE"),
+            idx("BANKEX", "BSE"),
+        ];
+
+        let syms: Vec<String> = search_cash(&list, "SENSEX")
+            .iter()
+            .map(|i| i.tradingsymbol.clone())
+            .collect();
+
+        assert_eq!(syms[0], "SENSEX", "the index itself must come first: {syms:?}");
+    }
+
+    #[test]
+    fn cash_search_still_puts_an_exact_ticker_first() {
+        // The index boost must not bury a scrip the user named exactly.
+        let list = vec![
+            idx("NIFTY IT", "NSE"),
+            idx("NIFTY 50", "NSE"),
+            eq("TCS", "Tata Consultancy"),
+        ];
+        let hits = search_cash(&list, "TCS");
+        assert_eq!(hits[0].tradingsymbol, "TCS");
     }
 
     // ── search_derivatives ──────────────────────────────────────────────────
