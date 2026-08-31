@@ -49,8 +49,16 @@ describe('Property 16: clear removes unlocked drawings and retains locked ones',
       fc.property(arbDrawings, (drawings) => {
         const result = clearUnlocked(drawings);
 
-        // Snapshot for purity check (deep clone of input).
-        const before = JSON.parse(JSON.stringify(drawings));
+        // Snapshot for the purity check below.
+        //
+        // `structuredClone`, NOT a JSON round-trip. `JSON.stringify(-0)` emits
+        // "0", so parsing it back yields POSITIVE zero — the snapshot silently
+        // differed from the input before `clearUnlocked` was even called, and the
+        // purity assertion then failed on `-0` vs `0`, which Vitest distinguishes.
+        // `fc.double` generates -0 readily, so this failed roughly one run in five
+        // on an unpinned seed and looked like flakiness in the engine. The engine
+        // is a one-line filter and was never involved.
+        const before = structuredClone(drawings);
 
         // The result is exactly the locked-subset (same elements, same order).
         const expected = drawings.filter((d) => d.locked === true);
