@@ -97,6 +97,30 @@
   --reasoning-green-300: #15803d;
   --reasoning-green-400: #166534;
   --reasoning-green-500: #14532d;
+
+  /*
+   * Sentiment colours, darkened for a light background.
+   *
+   * `:root` (the dark theme) uses #10b981 / #ef4444 / #f59e0b. Measured against
+   * white those are 2.54:1, 3.76:1 and 2.15:1 — all three under the 4.5:1 WCAG AA
+   * floor, and this UI renders them as text at 8-10px. Without an override here
+   * `text-bull` and `text-neutral` were effectively illegible on the light theme.
+   * The same three on the dark surface are 8.28:1, 5.58:1 and 9.78:1, so only the
+   * light side needed changing.
+   *
+   * Overriding the TOKEN rather than sprinkling variants means every existing
+   * `bg-bull` / `text-bear` adapts automatically. Worth knowing why that matters:
+   * this app has no working `dark:` variant to reach for. `globals.css` declares
+   * `@custom-variant dark (&:is(.dark *))`, which needs a `.dark` ancestor, and
+   * nothing ever adds that class — light is opt-in via `.light` and dark is the
+   * bare default. Every `dark:` utility in the codebase is inert.
+   *
+   * Candle colours stay vivid: `--candle-green` / `--candle-red` are separate
+   * tokens owned by the chart, which manages its own contrast.
+   */
+  --color-bull: #047857; /* emerald-700 · 5.48:1 on #fff, 5.24:1 on #f8fafc */
+  --color-bear: #b91c1c; /* red-700     · 6.47:1 / 6.18:1 */
+  --color-neutral: #b45309; /* amber-700   · 5.02:1 / 4.80:1 */
 }
 
 @theme inline {
@@ -812,6 +836,62 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .animate-marquee {
     animation: none;
+  }
+}
+
+/* ================================================
+   Pattern scanner — live formation feedback
+   ================================================
+   A forming pattern is a live, incomplete reading, and the panel should say so
+   without hurting legibility. The previous version pulsed the ENTIRE card
+   (`animate-[pulse_3s_ease-in-out_infinite]`), so the description text and both
+   percentages faded in and out along with it — motion applied to the one thing
+   that has to stay readable. Motion now lives only on the accent elements: a
+   ping on the live dot, and a sheen travelling along the progress bar. */
+
+/* A highlight travelling left→right across the filled part of a progress bar. */
+@keyframes pattern-bar-sheen {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+.animate-pattern-sheen {
+  animation: pattern-bar-sheen 2.1s ease-in-out infinite;
+  will-change: transform;
+}
+
+/* Expanding halo behind the "live" dot on a forming pattern. */
+@keyframes pattern-live-ping {
+  0% {
+    opacity: 0.85;
+    transform: scale(0.6);
+  }
+  70% {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+.animate-pattern-ping {
+  animation: pattern-live-ping 1.9s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* `animation: none` is wrong for the sheen: it would park the highlight at
+     translateX(0), i.e. sitting visibly on top of the bar. It has no meaning of
+     its own — the width and the numeric label carry the value — so remove it. */
+  .animate-pattern-sheen {
+    display: none;
+  }
+  .animate-pattern-ping {
+    animation: none;
+    opacity: 0;
   }
 }
 

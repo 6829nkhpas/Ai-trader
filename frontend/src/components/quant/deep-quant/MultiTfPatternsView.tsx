@@ -13,6 +13,15 @@ import {
   AlertTriangle,
   RefreshCw
 } from 'lucide-react';
+import {
+  CONFIDENCE_BAND_OPACITY,
+  MUTED_TAG,
+  breakoutTag,
+  confidenceBand,
+  patternSentiment,
+  sentimentTheme,
+  volumeTag,
+} from './patternStyles';
 
 export default function MultiTfPatternsView() {
   const { multiTfPatterns, isFetchingPatterns, patternsError } = useQuantStore();
@@ -46,6 +55,12 @@ export default function MultiTfPatternsView() {
     const data = multiTfPatterns?.find(p => p.timeframe === tf);
     return data?.patterns.length || 0;
   };
+
+  /** Across every timeframe — drives the header's live badge. */
+  const totalPatterns = useMemo(
+    () => (multiTfPatterns ?? []).reduce((n, p) => n + p.patterns.length, 0),
+    [multiTfPatterns],
+  );
 
   const handlePatternClick = (p: ChartPattern) => {
     const symbol = useTradeStore.getState().selectedSymbol || 'RELIANCE';
@@ -86,12 +101,32 @@ export default function MultiTfPatternsView() {
   return (
     <div className="border-b border-border-default py-2.5 px-0 bg-transparent select-none">
       <div className="flex items-center gap-1.5 mb-2 px-3">
-        <Sparkles size={10} className="text-text-muted" />
+        <Sparkles size={10} className="text-neutral" />
         <h3 className="text-[9px] font-bold text-text-secondary uppercase tracking-wider">
           Dynamic Pattern Scanner
         </h3>
-        {isFetchingPatterns && (
-          <Loader2 size={9} className="ml-auto animate-spin text-text-muted" />
+        {isFetchingPatterns ? (
+          <span className="ml-auto flex items-center gap-1">
+            <Loader2 size={9} className="animate-spin text-neutral" />
+            <span className="text-[8px] font-bold uppercase tracking-wider text-neutral">
+              Scanning
+            </span>
+          </span>
+        ) : (
+          totalPatterns > 0 && (
+            <span className="ml-auto flex items-center gap-1">
+              {/* A live indicator, not decoration: the scan is current and found
+                  something. The dot is paired with a count so the state is not
+                  conveyed by colour alone. */}
+              <span className="relative flex h-1.5 w-1.5 shrink-0">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-bull animate-pattern-ping" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-bull" />
+              </span>
+              <span className="text-[8px] font-bold uppercase tracking-wider text-text-muted">
+                {totalPatterns} live
+              </span>
+            </span>
+          )
         )}
       </div>
 
@@ -105,21 +140,32 @@ export default function MultiTfPatternsView() {
               key={tf}
               type="button"
               onClick={() => setSelectedTf(tf)}
+              aria-pressed={isActive}
+              aria-label={`${tf} timeframe, ${count} pattern${count === 1 ? '' : 's'}`}
               className={`
-                flex items-center gap-1 px-2 py-0.5 rounded-none text-[9px] font-bold transition-all duration-150 shrink-0 border
+                flex items-center gap-1 px-2 py-0.5 rounded-none text-[9px] font-bold shrink-0 border
+                transition-colors duration-150
+                focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-neutral
                 ${isActive
-                  ? 'bg-text-primary text-surface border-text-primary scale-[1.01]'
-                  : 'bg-elevated/40 text-text-muted hover:bg-elevated/70 hover:text-text-secondary border-border-default/40'
+                  ? 'bg-text-primary text-surface border-text-primary'
+                  : count > 0
+                    // A timeframe carrying patterns is worth looking at even when
+                    // it is not the open tab, so it keeps a tint of the accent
+                    // instead of sitting at the same weight as an empty one.
+                    ? 'bg-neutral/8 text-text-secondary border-neutral/30 hover:bg-neutral/15 hover:text-text-primary'
+                    : 'bg-elevated/40 text-text-muted hover:bg-elevated/70 hover:text-text-secondary border-border-default/40'
                 }
               `}
             >
               <span>{tf}</span>
               {isFetchingPatterns ? (
-                <Loader2 size={8} className="animate-spin text-text-muted" />
+                <Loader2 size={8} className="animate-spin text-neutral" />
               ) : count > 0 ? (
                 <span className={`
                   flex h-3.5 min-w-3.5 items-center justify-center rounded-none px-0.5 text-[8px] font-black border
-                  ${isActive ? 'bg-text-primary text-surface border-text-primary' : 'bg-elevated text-text-primary border-border-default'}
+                  ${isActive
+                    ? 'bg-surface text-text-primary border-surface'
+                    : 'bg-neutral/15 text-neutral border-neutral/40'}
                 `}>
                   {count}
                 </span>
@@ -184,11 +230,15 @@ export default function MultiTfPatternsView() {
           </div>
         ) : (
           patterns.map((p, idx) => {
-            const isBullish = p.sentiment.toLowerCase() === 'bullish';
-            const isBearish = p.sentiment.toLowerCase() === 'bearish';
+            const sentiment = patternSentiment(p.sentiment);
+            const tone = sentimentTheme(sentiment);
+            const isBullish = sentiment === 'bullish';
+            const isBearish = sentiment === 'bearish';
             const isForming = p.is_forming ?? false;
             const progress = p.formation_progress ?? 0;
             const progressPct = Math.round(progress * 100);
+            const confPct = Math.round((p.confidence ?? 0) * 100);
+            const confOpacity = CONFIDENCE_BAND_OPACITY[confidenceBand(p.confidence ?? 0)];
             // Stable key from the pattern's identity (type + candle span) so
             // re-sorting by progress/confidence doesn't churn the DOM via
             // index-based reconciliation. Fall back to idx only on collision.
@@ -197,37 +247,59 @@ export default function MultiTfPatternsView() {
             return (
               <div
                 key={key}
+                role="button"
+                tabIndex={0}
+                aria-label={`${p.pattern_type}, ${p.sentiment}${isForming ? `, forming ${progressPct}%` : ''}, confidence ${confPct}%`}
                 onClick={() => handlePatternClick(p)}
+                onKeyDown={(e) => {
+                  // The card was a plain onClick div: unreachable by keyboard and
+                  // invisible to assistive tech. It behaves as a button, so it now
+                  // says so and answers to Enter/Space like one.
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handlePatternClick(p);
+                  }
+                }}
                 className={`
-                  group relative flex flex-col gap-1 px-3 py-2 border-y border-x-0 border-border-default/45 bg-elevated/5 hover:bg-elevated/20 transition-all duration-200 cursor-pointer
-                  ${isForming ? 'animate-[pulse_3s_ease-in-out_infinite]' : ''}
+                  group relative flex flex-col gap-1 px-3 py-2 pl-3.5 cursor-pointer
+                  border-y border-x-0 border-border-default/45 bg-elevated/5
+                  transition-colors duration-200 ${tone.wash}
+                  focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-neutral
                 `}
               >
-                {/* Glowing edge indicator — pulsing for forming patterns */}
+                {/* Leading edge, carrying the pattern's direction. A live pattern
+                    keeps a soft glow; a settled one lights up on hover. The card
+                    itself no longer animates — see the note in globals.css. */}
                 <div className={`
-                  absolute top-0 bottom-0 left-0 w-0.5 rounded-none transition-opacity
-                  ${isForming ? 'opacity-80 animate-pulse' : 'opacity-40 group-hover:opacity-100'}
-                  ${isBullish ? 'bg-text-primary' : isBearish ? 'bg-text-muted' : 'bg-border-default'}
+                  absolute top-0 bottom-0 left-0 w-0.5 rounded-none transition-opacity duration-200
+                  ${tone.edge}
+                  ${isForming ? `opacity-100 ${tone.glow}` : 'opacity-50 group-hover:opacity-100'}
                 `} />
 
                 {/* Pattern Header */}
                 <div className="flex justify-between items-start pl-1">
                   <div className="flex items-center gap-1 truncate max-w-40">
                     {isForming && (
-                      <Radio size={8} className="shrink-0 animate-pulse text-text-secondary" />
+                      <Radio size={8} className={`shrink-0 ${tone.text}`} />
                     )}
                     <span className="text-[10px] font-bold text-text-primary tracking-tight truncate">
                       {p.pattern_type}
                     </span>
                   </div>
                   <div className="flex items-center gap-1">
-                    {/* FORMING badge */}
+                    {/* FORMING: amber, because "incomplete" is a caution rather
+                        than a direction — it must not read as the pattern's own
+                        bias. The ping is the only motion left on the badge. */}
                     {isForming && (
-                      <span className="flex items-center gap-0.5 px-1 py-0.5 rounded-none text-[7px] font-black uppercase tracking-wider border bg-elevated text-text-primary border-border-default animate-pulse">
+                      <span className="flex items-center gap-1 px-1 py-0.5 rounded-none text-[7px] font-black uppercase tracking-wider border bg-neutral/12 text-neutral border-neutral/40">
+                        <span className="relative flex h-1 w-1 shrink-0">
+                          <span className="absolute inline-flex h-full w-full rounded-full bg-neutral animate-pattern-ping" />
+                          <span className="relative inline-flex h-1 w-1 rounded-full bg-neutral" />
+                        </span>
                         FORMING
                       </span>
                     )}
-                    <span className="flex items-center gap-0.5 px-1 py-0.5 rounded-none text-[8px] font-black uppercase tracking-wider border bg-elevated text-text-primary border-border-default">
+                    <span className={`flex items-center gap-0.5 px-1 py-0.5 rounded-none text-[8px] font-black uppercase tracking-wider border ${tone.badge}`}>
                       {isBullish ? (
                         <TrendingUp size={8} />
                       ) : isBearish ? (
@@ -249,13 +321,29 @@ export default function MultiTfPatternsView() {
                 {isForming && progress > 0 && (
                   <div className="flex items-center gap-1.5 pl-1 mt-0.5">
                     <span className="text-[8px] text-text-secondary font-bold">Progress:</span>
-                    <div className="grow h-1.5 bg-surface border border-border-default rounded-none overflow-hidden">
+                    <div
+                      role="progressbar"
+                      aria-valuenow={progressPct}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-label={`${p.pattern_type} formation progress`}
+                      className="relative grow h-1.5 bg-surface border border-border-default rounded-none overflow-hidden"
+                    >
                       <div
-                        className="h-full rounded-none transition-all duration-500 bg-text-primary"
+                        className={`relative h-full rounded-none bg-gradient-to-r ${tone.bar} transition-[width] duration-500 ease-out`}
                         style={{ width: `${progressPct}%` }}
-                      />
+                      >
+                        {/* A sheen travelling along the filled portion: the bar is
+                            still growing. Purely decorative — the width and the
+                            percentage already state the value — so it is removed
+                            outright under prefers-reduced-motion. */}
+                        <span
+                          aria-hidden="true"
+                          className="pointer-events-none absolute inset-y-0 -left-4 w-4 bg-gradient-to-r from-transparent via-white/45 to-transparent animate-pattern-sheen"
+                        />
+                      </div>
                     </div>
-                    <span className="text-[8px] font-black text-text-primary">
+                    <span className={`text-[8px] font-black tabular-nums ${tone.text}`}>
                       {progressPct}%
                     </span>
                   </div>
@@ -264,39 +352,48 @@ export default function MultiTfPatternsView() {
                 {/* Confidence Bar */}
                 <div className="flex items-center gap-1.5 pl-1 mt-0.5">
                   <span className="text-[8px] text-text-muted/60 font-bold">Conf:</span>
-                  <div className="grow h-1 bg-surface border border-border-default/45 rounded-none overflow-hidden">
+                  <div
+                    role="progressbar"
+                    aria-valuenow={confPct}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-label={`${p.pattern_type} confidence`}
+                    className="grow h-1 bg-surface border border-border-default/45 rounded-none overflow-hidden"
+                  >
+                    {/* Same hue as the sentiment so the two bars read as one
+                        object, but dimmed by confidence band — a 30% reading must
+                        not look as emphatic as a 90% one just because both are
+                        bearish. */}
                     <div
-                      className={`
-                        h-full rounded-none transition-all duration-300
-                        ${isBullish
-                          ? 'bg-text-primary'
-                          : isBearish
-                            ? 'bg-text-muted'
-                            : 'bg-text-secondary'
-                        }
-                      `}
-                      style={{ width: `${p.confidence * 100}%` }}
+                      className={`h-full rounded-none bg-gradient-to-r ${tone.bar} ${confOpacity} transition-[width] duration-300 ease-out`}
+                      style={{ width: `${confPct}%` }}
                     />
                   </div>
-                  <span className="text-[8px] font-black text-text-secondary">
-                    {Math.round(p.confidence * 100)}%
+                  <span className="text-[8px] font-black tabular-nums text-text-secondary">
+                    {confPct}%
                   </span>
                 </div>
 
                 {/* Volume Validation & Breakout Status */}
                 <div className="flex items-center gap-1 pl-1 mt-0.5 flex-wrap">
-                  {p.volume_validation && (
-                    <span className="inline-flex items-center gap-0.5 px-1 py-px rounded-none text-[7px] font-bold uppercase tracking-wider border bg-elevated text-text-primary border-border-default">
-                      {p.volume_validation.includes('Confirmed') ? '✓' : p.volume_validation === 'Forming' ? '◎' : '○'} Vol
-                    </span>
-                  )}
+                  {p.volume_validation && (() => {
+                    const vol = volumeTag(p.volume_validation);
+                    return (
+                      <span
+                        title={`Volume: ${p.volume_validation}`}
+                        className={`inline-flex items-center gap-0.5 px-1 py-px rounded-none text-[7px] font-bold uppercase tracking-wider border ${vol.badge}`}
+                      >
+                        {vol.glyph} Vol
+                      </span>
+                    );
+                  })()}
                   {p.breakout_status && (
-                    <span className="inline-flex items-center gap-0.5 px-1 py-px rounded-none text-[7px] font-bold tracking-wider border bg-elevated text-text-primary border-border-default">
+                    <span className={`inline-flex items-center gap-0.5 px-1 py-px rounded-none text-[7px] font-bold tracking-wider border ${breakoutTag(p.breakout_status, sentiment)}`}>
                       {p.breakout_status}
                     </span>
                   )}
                   {p.structural_bias && (
-                    <span className="inline-flex items-center px-1 py-px rounded-none text-[7px] font-bold tracking-wider bg-elevated text-text-primary border border-border-default">
+                    <span className={`inline-flex items-center px-1 py-px rounded-none text-[7px] font-bold tracking-wider border ${MUTED_TAG}`}>
                       {p.structural_bias}
                     </span>
                   )}
