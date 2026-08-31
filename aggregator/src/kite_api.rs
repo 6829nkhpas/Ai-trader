@@ -724,10 +724,12 @@ fn parse_instruments_csv(csv: &str) -> Vec<Instrument> {
 /// ETFs like `NIFTY1` and `NIFTYETF`. The most-traded index in the country was
 /// unreachable from the obvious query.
 ///
-/// 50 is chosen to comfortably clear one index family (NIFTY has ~40 rows in the
-/// NSE master) while still bounding the payload; the ranking below is what puts
-/// the right rows at the top, and this only decides how many survive.
-const EQ_SEARCH_LIMIT: usize = 50;
+/// 100 clears a whole index family — "NIFTY" alone matches ~50 rows in the NSE
+/// INDICES segment before any ETF is considered, and at a cap of 50 the tail of
+/// that family (NIFTY MIDCAP 100 among them) was still being cut off. The ranking
+/// below is what puts the right rows at the top; this only decides how many
+/// survive, and the rows are small.
+const EQ_SEARCH_LIMIT: usize = 100;
 /// Derivative-side result cap — matches the desktop NFO query's `LIMIT 25`.
 const FNO_SEARCH_LIMIT: usize = 25;
 
@@ -761,6 +763,29 @@ fn is_index_row(inst: &Instrument) -> bool {
     inst.segment.eq_ignore_ascii_case("INDICES")
 }
 
+/// The headline indices, promoted above the rest of their own family.
+///
+/// Ranking indices as one block was not enough. NSE's INDICES segment has ~50
+/// rows beginning "NIFTY", and the length tiebreak that orders them is arbitrary
+/// with respect to importance: it puts `NIFTY EV` and `NIFTY IT` above
+/// `NIFTY BANK` (10 chars, landed 11th) and pushed `NIFTY FIN SERVICE` (17)
+/// off the end of the results entirely. Measured against production.
+///
+/// These are the benchmarks that carry derivatives or are the ones a trader means
+/// by "the index", so they are guaranteed to surface. Deliberately short and
+/// explicit: the long tail is still reachable through the generic index tiers
+/// below, and this only decides what appears FIRST.
+const BENCHMARK_INDICES: &[&str] = &[
+    "NIFTY 50",
+    "NIFTY BANK",
+    "NIFTY FIN SERVICE",
+    "NIFTY MIDCAP SELECT",
+    "NIFTY NEXT 50",
+    "SENSEX",
+    "BANKEX",
+    "INDIA VIX",
+];
+
 fn search_cash(instruments: &[Instrument], query: &str) -> Vec<Instrument> {
     let mut scored: Vec<(u8, usize, &Instrument)> = Vec::new();
 
@@ -772,16 +797,19 @@ fn search_cash(instruments: &[Instrument], query: &str) -> Vec<Instrument> {
         // `NIFTYADD`, `NIFTYETF`, `NIFTYBEES` and ~40 rows in the INDICES segment,
         // and a plain prefix-then-shortest ordering handed the top slots to the
         // ETFs. Someone typing an index name wants the index.
+        let is_benchmark = is_index && BENCHMARK_INDICES.contains(&sym.as_str());
         let rank = if sym == query {
             0 // exact ticker — never outranked
+        } else if is_benchmark && (sym.starts_with(query) || sym.contains(query)) {
+            1 // NIFTY BANK and NIFTY FIN SERVICE for "NIFTY"
         } else if is_index && sym.starts_with(query) {
-            1 // NIFTY 50 / NIFTY BANK for "NIFTY", SENSEX for "SENS"
+            2 // the rest of the family: NIFTY IT, NIFTY 100, NIFTY MIDCAP 100 …
         } else if is_index && sym.contains(query) {
-            2 // "BSE BANKEX" for "BANKEX"
+            3 // "BSE SENSEX SIXTY" for "SENSEX"
         } else if sym.starts_with(query) {
-            3
-        } else if sym.contains(query) || inst.name.to_uppercase().contains(query) {
             4
+        } else if sym.contains(query) || inst.name.to_uppercase().contains(query) {
+            5
         } else {
             continue;
         };
@@ -1467,14 +1495,39 @@ mod tests {
             .map(|i| i.tradingsymbol.clone())
             .collect();
 
-        // Every index outranks every tracker, and BANK is reachable at all.
-        assert_eq!(&syms[..3], &["NIFTY 50", "NIFTY IT", "NIFTY BANK"]);
-        assert!(syms.contains(&"NIFTY BANK".to_string()));
+        // The benchmarks come first — and NIFTY BANK is one of them, so it is no
+        // longer buried behind whichever index happens to have a shorter name.
+        assert_eq!(&syms[..2], &["NIFTY 50", "NIFTY BANK"]);
+        // Then the rest of the family, and only then the trackers.
         assert!(
-            syms.iter().position(|s| s == "NIFTY BANK")
+            syms.iter().position(|s| s == "NIFTY IT")
                 < syms.iter().position(|s| s == "NIFTY1"),
             "an ETF must not outrank the index it tracks: {syms:?}"
         );
+    }
+
+    #[test]
+    fn cash_search_surfaces_finnifty_which_the_length_tiebreak_used_to_drop() {
+        // Measured against production: at a cap of 50 with indices ranked as one
+        // block, "NIFTY" put NIFTY BANK 11th and dropped NIFTY FIN SERVICE (17
+        // chars) off the end altogether. Both carry derivatives; neither may lose
+        // its slot to NIFTY EV on length.
+        let mut list = vec![
+            idx("NIFTY FIN SERVICE", "NSE"),
+            idx("NIFTY BANK", "NSE"),
+            idx("NIFTY 50", "NSE"),
+        ];
+        // Plenty of shorter, less important index rows to lose the tiebreak to.
+        for n in 0..60 {
+            list.push(idx(&format!("NIFTY X{n}"), "NSE"));
+        }
+
+        let syms: Vec<String> = search_cash(&list, "NIFTY")
+            .iter()
+            .map(|i| i.tradingsymbol.clone())
+            .collect();
+
+        assert_eq!(&syms[..3], &["NIFTY 50", "NIFTY BANK", "NIFTY FIN SERVICE"]);
     }
 
     #[test]
