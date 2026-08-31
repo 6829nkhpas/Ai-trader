@@ -34,7 +34,15 @@ export function useFnoExpiryChange(): (expiry: string) => void {
     (expiry: string) => {
       setFnoExpiry(expiry);
       if (!fnoUnderlying) return;
-      if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) return;
+      // No `__TAURI_INTERNALS__` gate.
+      //
+      // This used to return here in any browser, so picking an expiry set the
+      // store field and nothing else: the chart kept showing the old contract,
+      // and — because `FnoSidebarPanel` re-derives the expiry FROM the charted
+      // symbol — the dropdown then snapped straight back to the old date. That is
+      // the reported "cannot change the expiry". `fno_resolve_option_contract`
+      // and `fno_resolve_nearest_contract` are both implemented for the web in
+      // `webAdapters.ts`, so the resolve below works in either runtime.
 
       const strike = getStrikeFromSymbol(selectedSymbol);
       const side = getOptionTypeFromSymbol(selectedSymbol);

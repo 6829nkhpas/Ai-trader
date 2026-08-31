@@ -49,30 +49,43 @@ export default function FnoOptionChainTable({
   const activeExpiry = viewState.hud.context.expiry || '';
 
   const openContractChart = (strike: number, type: 'CE' | 'PE') => {
-    const shortSymbol = `${underlying}${strike}${type}`;
-    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
-      bridgeInvoke<{ tradingsymbol?: string } | null>('fno_resolve_option_contract', {
-        underlying,
-        strike,
-        optionType: type,
-        expiry: activeExpiry || null,
+    // Always resolve the REAL tradingsymbol — no desktop-only gate, and no
+    // fabricated fallback.
+    //
+    // This used to run the resolver only when `__TAURI_INTERNALS__` was present
+    // and otherwise write `` `${underlying}${strike}${type}` `` straight into
+    // `selectedSymbol`. In a browser that is always the second branch, and the
+    // string it builds (`NIFTY24500CE`) is not a tradingsymbol: a real NFO symbol
+    // carries the expiry (`NIFTY25JAN24500CE`). `isFnoSymbol` accepts it anyway
+    // (ends in CE, contains a digit), so the chart dutifully tried to plot a
+    // contract that does not exist and drew nothing — the reported "clicking the
+    // ladder does not load the chart". The web adapter has implemented
+    // `fno_resolve_option_contract` all along, reading the true tradingsymbol out
+    // of `option_chain_snapshots`.
+    //
+    // On a miss the chart is LEFT ALONE rather than pointed at a guess. The
+    // adapter returns null for an unresolvable strike by contract, and a symbol
+    // nobody quoted is exactly the fabricated data this codebase refuses to show.
+    bridgeInvoke<{ tradingsymbol?: string } | null>('fno_resolve_option_contract', {
+      underlying,
+      strike,
+      optionType: type,
+      expiry: activeExpiry || null,
+    })
+      .then((resolved) => {
+        if (resolved?.tradingsymbol) {
+          setSelectedSymbol(resolved.tradingsymbol);
+        } else {
+          console.warn(
+            `[FnoOptionChainTable] no listed contract for ${underlying} ${strike}${type}` +
+              `${activeExpiry ? ` @ ${activeExpiry}` : ''}; leaving the chart unchanged`,
+          );
+        }
       })
-        .then((resolved) => {
-          setSelectedSymbol(resolved?.tradingsymbol || shortSymbol);
-        })
-        .catch(() => setSelectedSymbol(shortSymbol));
-    } else {
-      setSelectedSymbol(shortSymbol);
-    }
+      .catch((err) =>
+        console.warn('[FnoOptionChainTable] contract resolve failed:', err),
+      );
   };
-
-  if (rows.length === 0) {
-    return (
-      <div className="p-4 text-center text-xs text-text-muted">
-        No Option Chain Strikes Available
-      </div>
-    );
-  }
 
   // Find index where spot price belongs
   const spotIndex = useMemo(() => {
@@ -94,6 +107,28 @@ export default function FnoOptionChainTable({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // The empty-chain return sits AFTER every hook, deliberately.
+  //
+  // It used to sit above the four hooks below, which is a rules-of-hooks
+  // violation and the reason F&O was blank until a refresh. The first render has
+  // no snapshot yet, so `rows` is empty and the component returned early having
+  // called 3 hooks; when the snapshot arrived `rows` was populated, the function
+  // ran to the end and called 7. React compares the count against the previous
+  // render, throws "Rendered more hooks than during the previous render", and the
+  // whole F&O subtree unmounts — which is why the panel showed nothing on a cold
+  // load. A refresh appeared to fix it because `useFnoSnapshotCache` restores a
+  // cached snapshot, so `rows` was already non-empty on the FIRST render and the
+  // count stayed at 7 for the component's whole life.
+  //
+  // Any early return here must stay below this line.
+  if (rows.length === 0) {
+    return (
+      <div className="p-4 text-center text-xs text-text-muted">
+        No Option Chain Strikes Available
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col w-full bg-surface dark:bg-black select-none font-sans">

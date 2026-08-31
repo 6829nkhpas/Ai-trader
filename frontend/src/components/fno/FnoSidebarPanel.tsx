@@ -12,6 +12,7 @@ import {
   type FnoViewState,
 } from './viewModel';
 import { deriveUnderlyingOptions } from './selectors';
+import { isFnoSymbol } from '../../charting/symbolUtils';
 import {
   getUnderlyingFromSymbol,
   matchExpiryFromSymbol,
@@ -63,24 +64,56 @@ export default function FnoSidebarPanel() {
     return () => { cancelled = true; };
   }, [fnoUnderlying]);
 
-  // Auto-sync underlying & expiry when user selects an option contract in the app
+  // Auto-sync the underlying when the user charts a different contract/symbol.
+  //
+  // Only adopts an underlying that actually HAS a live chain. It used to adopt
+  // whatever `getUnderlyingFromSymbol` returned, and that helper echoes any
+  // unrecognised name straight back — so charting a cash equity pointed the whole
+  // F&O panel at, say, `RELIANCE`, which usually has no rows in
+  // `option_chain_snapshots`. The panel then reported "no chain snapshot" and the
+  // expiry list came back empty, leaving the expiry dropdown with nothing to pick
+  // but "Nearest". Where the chain list is not loaded yet, an F&O contract symbol
+  // is still trusted (its underlying is a real chain by construction); anything
+  // else waits, and `FnoSection`'s seeding effect resolves a real underlying.
   useEffect(() => {
     if (!selectedSymbol || selectedSymbol === prevSymbolRef.current) return;
-    prevSymbolRef.current = selectedSymbol;
 
     const extractedUnderlying = getUnderlyingFromSymbol(selectedSymbol);
-    if (extractedUnderlying) {
-      setFnoUnderlying(extractedUnderlying);
-    }
-  }, [selectedSymbol, setFnoUnderlying]);
+    if (!extractedUnderlying) return;
 
+    const available = chains?.underlyings ?? [];
+    const known = available.some(
+      (u) => u.toUpperCase() === extractedUnderlying.toUpperCase(),
+    );
+    if (available.length > 0 && !known && !isFnoSymbol(selectedSymbol)) return;
+
+    prevSymbolRef.current = selectedSymbol;
+    setFnoUnderlying(extractedUnderlying);
+  }, [selectedSymbol, chains, setFnoUnderlying]);
+
+  // Sync the expiry FROM the charted contract — but only when the contract
+  // actually changes, never in response to the expiry itself changing.
+  //
+  // This effect used to list `fnoExpiry` in its deps and compare against it, which
+  // made it fight the user: picking 2025-01-30 called `setFnoExpiry`, which
+  // re-ran this effect, which re-derived the expiry from the UNCHANGED
+  // `selectedSymbol` (still the old contract), found a mismatch, and wrote the old
+  // date back. The dropdown visibly reverted and the choice "did not take" — the
+  // reported bug. It only appeared on the web because `useFnoExpiryChange` bailed
+  // early there and never moved the chart, so the symbol never caught up.
+  //
+  // Keyed off the symbol via a ref instead: one sync per contract change, and a
+  // user's expiry pick is left alone until the chart follows it.
+  const lastExpirySyncedSymbolRef = useRef('');
   useEffect(() => {
     if (!selectedSymbol || !expiries.length) return;
+    if (selectedSymbol === lastExpirySyncedSymbolRef.current) return;
+    lastExpirySyncedSymbolRef.current = selectedSymbol;
     const matched = matchExpiryFromSymbol(selectedSymbol, expiries);
-    if (matched && matched !== fnoExpiry) {
+    if (matched) {
       setFnoExpiry(matched);
     }
-  }, [selectedSymbol, expiries, fnoExpiry, setFnoExpiry]);
+  }, [selectedSymbol, expiries, setFnoExpiry]);
 
   // Initial fetch of available chains
   useEffect(() => {
@@ -103,6 +136,16 @@ export default function FnoSidebarPanel() {
         });
       } catch { /* not in Tauri */ }
 
+      // Same guard as `FnoSection`: a blank underlying fails
+      // `get_fno_analytics`'s own argument check before any request is made, and
+      // that rejection used to surface as an F&O service error on every cold load.
+      // `FnoSection` seeds the underlying from the live chain list; until it does,
+      // stay in the loading state. (The panel also renders its own
+      // "Select a symbol…" placeholder while `fnoUnderlying` is empty.)
+      if (!fnoUnderlying) {
+        if (!cancelled) setLoading(false);
+        return;
+      }
       setLoading(true);
       try {
         const payload = await bridgeInvoke<FnoSnapshot>('get_fno_analytics', {
