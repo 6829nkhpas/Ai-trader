@@ -221,6 +221,9 @@ describe('F4 scope boundary — invokes no trade-execution command (R9.2)', () =
     // DB reads — they place no trade, so they stay within the F&O boundary (R9.2).
     'fno_resolve_option_contract',
     'fno_resolve_nearest_contract',
+    // Read-only listing check: "is this tradingsymbol currently listed?". Used to
+    // decide whether the charted contract needs repairing. No analytic, no trade.
+    'fno_symbol_is_listed',
   ]);
 
   // Matches `invoke('cmd'`, `invoke("cmd"`, and `invoke<T>('cmd'` (Tauri's

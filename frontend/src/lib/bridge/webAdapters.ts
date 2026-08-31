@@ -713,6 +713,39 @@ export const WEB_ADAPTERS: Record<string, WebAdapter> = {
     return Number(rows[0]?.[0] ?? 0) > 0;
   },
 
+  /**
+   * Is `symbol` a currently-listed option contract?
+   *
+   * Answers "can this be charted at all", which `isFnoSymbol` cannot: that is a
+   * shape test (ends in CE/PE, contains a digit) and it happily accepts a symbol
+   * that no exchange ever listed. Two kinds of unchartable symbol reach the chart
+   * and look identical to a valid one:
+   *
+   *   · a FABRICATED short symbol — `BANKNIFTY57000CE`, missing the expiry
+   *     segment a real NFO symbol carries. The ladder used to write these, and
+   *     because `selectedSymbol` is persisted to preferences, one saved before
+   *     that was fixed is restored on every load and keeps the chart empty.
+   *     Measured: `BANKNIFTY26SEP57000CE` returns 234 candles, the fabricated
+   *     `BANKNIFTY57000CE` returns 0.
+   *   · an EXPIRED contract — a persisted `BANKNIFTY26AUG57000CE` after 25 Aug.
+   *     Kite drops expired contracts from the instrument master, so it has no
+   *     candles and never will again.
+   *
+   * Filtered to live expiries, so an expired contract correctly answers false.
+   * Returns false rather than throwing for a malformed argument: the caller uses
+   * this to decide whether to REPAIR the charted symbol, and an error there
+   * should not be mistaken for "listed".
+   */
+  fno_symbol_is_listed: async (args) => {
+    const symbol = optStr(args, 'symbol');
+    if (!symbol || !isSafeName(symbol)) return false;
+    const rows = await questdbRows(
+      `SELECT count() FROM option_chain_snapshots ` +
+        `WHERE symbol = ${quote(symbol.trim().toUpperCase())} AND ${liveExpiryClause()}`,
+    );
+    return Number(rows[0]?.[0] ?? 0) > 0;
+  },
+
   fno_resolve_nearest_contract: async (args) => {
     const underlying = reqStr(args, 'underlying', 'fno_resolve_nearest_contract');
     return resolveContract(underlying, optStr(args, 'expiry'));
