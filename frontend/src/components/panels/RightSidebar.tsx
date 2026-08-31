@@ -59,15 +59,24 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
     setSidebarOpen(true);
   };
 
-  // ── Collapsed — a slim always-visible rail, mirroring the left NavRail's
-  // collapsed look. Not a floating chevron the user has to hunt for: both
-  // confluence destinations sit here as icons, and pressing either one opens
-  // straight into that section instead of opening blind and re-clicking a tab.
+  // ── Collapsed — a slim always-visible rail. Not a floating chevron the user
+  // has to hunt for: both confluence destinations sit here as icons, and pressing
+  // either one opens straight into that section instead of opening blind and
+  // re-clicking a tab.
+  //
+  // Styled to match `NavRail`'s collapsed state exactly, because the two rails
+  // bracket the same screen and read as one component. The active destination
+  // used to be a filled `bg-emerald-500/10` rounded tile and hover painted a
+  // `bg-elevated` box — which made a 40px app-icon tile out of a 22px glyph and
+  // looked nothing like the left edge. Same treatment as NavRail now: no
+  // background in any state, colour alone carries hover, and the active
+  // destination is marked by a thin accent bar on the rail's OUTER edge — the
+  // mirror of NavRail's, which sits on its own outer edge.
   if (!sidebarOpen) {
     return (
       <nav
         aria-label="Confluence rail (collapsed)"
-        className="flex h-full w-11 shrink-0 flex-col items-center gap-1 border-l border-border-default bg-surface py-2.5"
+        className="flex h-full w-11 shrink-0 flex-col border-l border-border-default bg-surface py-2.5"
       >
         {destinations.map(({ key, label, Icon }) => {
           const isActive = sidebarTab === key;
@@ -79,14 +88,21 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
               title={`Open ${label}`}
               aria-label={`Open ${label} panel`}
               className={`
-                relative flex h-10 w-10 shrink-0 items-center justify-center rounded-md transition-colors duration-150
+                relative flex h-11 w-full shrink-0 cursor-pointer items-center justify-center
+                rounded-none transition-colors duration-150
                 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/50
                 ${isActive
-                  ? 'bg-emerald-500/10 text-emerald-500 dark:text-emerald-400'
-                  : 'text-text-secondary hover:bg-elevated hover:text-emerald-500 dark:hover:text-emerald-400'}
+                  ? 'text-emerald-500 dark:text-emerald-400'
+                  : 'text-text-secondary hover:text-emerald-500 dark:hover:text-emerald-400'}
               `}
             >
-              <Icon size={18} strokeWidth={isActive ? 2.4 : 2} />
+              {/* Active accent bar (thin, non-boxy) — mirrors NavRail's */}
+              <span
+                className={`absolute right-0 top-1/2 h-6 w-0.5 -translate-y-1/2 rounded-l-full bg-emerald-500 transition-opacity duration-150 ${
+                  isActive ? 'opacity-100' : 'opacity-0'
+                }`}
+              />
+              <Icon size={22} strokeWidth={isActive ? 2.4 : 2} />
             </button>
           );
         })}
@@ -119,9 +135,14 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
       <div className="flex shrink-0 flex-col border-b border-border-default bg-elevated/10 rounded-none">
         <div className="flex items-center justify-between px-3 py-2">
           <div className="flex items-center gap-2">
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-500 dark:text-emerald-400">
-              <ProfileIcon size={13} strokeWidth={2.4} />
-            </span>
+            {/* Bare glyph, no tinted tile. The left panel's headers colour their
+                icon and stop there; a filled swatch here was the only one of its
+                kind on screen. */}
+            <ProfileIcon
+              size={14}
+              strokeWidth={2.4}
+              className="shrink-0 text-emerald-500 dark:text-emerald-400"
+            />
             <span className="text-xs font-black uppercase tracking-wider text-text-primary">Confluence</span>
           </div>
           <button
@@ -134,8 +155,12 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
           </button>
         </div>
 
-        {/* Switch — the two confluence surfaces, side by side as pill toggles */}
-        <div className="flex gap-1 px-2.5 pb-2">
+        {/* Switch — the two confluence surfaces, side by side.
+            Flat tabs with an inset underline, the same treatment
+            `left-panel/AnalysisSheet` gives its tab bar. They were green pills
+            with a tinted fill and a ring, which put a third shade of emerald in
+            a header that already had two. */}
+        <div className="flex items-stretch">
           {destinations.map(({ key, label, Icon }) => {
             const active = sidebarTab === key;
             return (
@@ -145,12 +170,12 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
                 onClick={() => setSidebarTab(key)}
                 aria-pressed={active}
                 className={`
-                  flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5
-                  text-[10px] font-bold uppercase tracking-wide transition-all duration-150
-                  focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/50
+                  flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-none px-2 py-2
+                  text-[10px] font-bold uppercase tracking-wide transition-colors duration-150
+                  focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-emerald-500/50
                   ${active
-                    ? 'bg-emerald-500/12 text-emerald-500 dark:text-emerald-400 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.35)]'
-                    : 'text-text-muted hover:bg-elevated/70 hover:text-text-secondary'}
+                    ? 'text-text-primary shadow-[inset_0_-2px_0_0_var(--color-primary)]'
+                    : 'text-text-muted hover:text-text-secondary'}
                 `}
               >
                 <Icon size={12} strokeWidth={active ? 2.6 : 2.2} />
