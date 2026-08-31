@@ -46,7 +46,21 @@ function timeAgo(ts: number): string {
   return `${Math.floor(diff / 86_400_000)}d ago`;
 }
 
-export default function NotificationBell() {
+interface NotificationBellProps {
+  /**
+   * `header` (default) drops the panel down-and-left. `rail` renders a
+   * full-width row trigger and opens the panel to the right of the NavRail.
+   */
+  align?: 'header' | 'rail';
+  /**
+   * Rail-only: label shown to the right of the bell when the rail is expanded.
+   * The whole row (icon + label) toggles the panel.
+   */
+  label?: string;
+}
+
+export default function NotificationBell({ align = 'header', label }: NotificationBellProps) {
+  const isRail = align === 'rail';
   const systemLogs = useTradeStore((s) => s.systemLogs);
   const [isOpen, setIsOpen] = useState(false);
   const [seenUpTo, setSeenUpTo] = useState(0);
@@ -82,7 +96,7 @@ export default function NotificationBell() {
   };
 
   return (
-    <div className="relative" ref={containerRef}>
+    <div className={isRail ? 'relative w-full' : 'relative'} ref={containerRef}>
       <button
         type="button"
         onClick={handleToggle}
@@ -93,21 +107,49 @@ export default function NotificationBell() {
         }
         aria-expanded={isOpen}
         title={unreadCount > 0 ? `${unreadCount} unread notification${unreadCount === 1 ? '' : 's'}` : 'Notifications'}
-        className={`relative rounded p-1 transition-colors hover:bg-elevated/20 ${
-          isOpen ? 'text-text-primary bg-elevated/20' : 'text-text-secondary hover:text-text-primary'
-        }`}
+        className={
+          isRail
+            ? `flex h-11 w-full cursor-pointer items-center transition-colors ${
+                isOpen ? 'text-emerald-500 dark:text-emerald-400' : 'text-text-secondary hover:text-emerald-500 dark:hover:text-emerald-400'
+              }`
+            : `relative rounded p-1 transition-colors hover:bg-elevated/20 ${
+                isOpen ? 'text-text-primary bg-elevated/20' : 'text-text-secondary hover:text-text-primary'
+              }`
+        }
       >
-        <Bell size={15} />
-        {/* Shown only when there is genuinely something unread. */}
-        {unreadCount > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 flex h-3 min-w-3 items-center justify-center rounded-full bg-red-500 px-0.5 text-[8px] font-black leading-none text-white tabular-nums">
-            {unreadCount > 9 ? '9+' : unreadCount}
-          </span>
+        {isRail ? (
+          <>
+            <span className="relative flex w-14 shrink-0 items-center justify-center">
+              <Bell size={20} />
+              {unreadCount > 0 && (
+                <span className="absolute right-2 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white tabular-nums">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </span>
+            {label && (
+              <span className="max-w-0 overflow-hidden whitespace-nowrap pr-4 text-sm font-semibold opacity-0 transition-all duration-200 ease-out group-hover:max-w-[150px] group-hover:opacity-100">
+                {label}
+              </span>
+            )}
+          </>
+        ) : (
+          <>
+            <Bell size={15} />
+            {/* Shown only when there is genuinely something unread. */}
+            {unreadCount > 0 && (
+              <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white tabular-nums">
+                {unreadCount > 9 ? '9+' : unreadCount}
+              </span>
+            )}
+          </>
         )}
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 top-full z-[999] mt-2 flex w-80 flex-col rounded-none border border-border-default bg-surface/95 shadow-2xl backdrop-blur-xl">
+        <div className={`absolute z-[999] flex w-80 flex-col rounded-none border border-border-default bg-surface/95 shadow-2xl backdrop-blur-xl ${
+          isRail ? 'left-14 bottom-0 ml-1' : 'right-0 top-full mt-2'
+        }`}>
           <div className="flex items-center justify-between border-b border-border-default px-3 py-2">
             <div className="flex items-center gap-2">
               <Bell size={13} className="text-text-secondary" />

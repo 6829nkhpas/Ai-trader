@@ -43,7 +43,7 @@ export function getTvWidgetOptions({
       'volume.volume.transparency': 50,
     },
     loading_screen: {
-      backgroundColor: theme === 'light' ? '#f9fafb' : '#000000',
+      backgroundColor: theme === 'light' ? '#f0eee9' : '#1e1e1e',
       foregroundColor: '#10b981',
     },
     disabled_features: [],

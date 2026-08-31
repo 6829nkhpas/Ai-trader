@@ -216,9 +216,18 @@ export default function WatchlistBlock() {
     change === null ? '—' : `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
 
   return (
-    <div className="shrink-0 flex flex-col gap-0 border-b border-border-default">
+    /* Fills the panel column when expanded, and shrinks to just its header when
+       collapsed. It used to be `shrink-0` with a 300px cap on the list because
+       three analytical blocks sat underneath and had to be reachable; those are
+       now one-line strips pinned at the bottom, so the watchlist gets the height
+       that was being rationed. */
+    <div
+      className={`flex min-h-0 flex-col gap-0 border-b border-border-default ${
+        watchlistCollapsed ? 'shrink-0' : 'flex-1'
+      }`}
+    >
       {/* Watchlist toggle header */}
-      <div className="flex items-center justify-between px-3 py-1.5 bg-surface/50 border-b border-border-subtle">
+      <div className="flex shrink-0 items-center justify-between px-3 py-1.5 bg-surface/50 border-b border-border-subtle">
         <button
           type="button"
           onClick={() => setWatchlistCollapsed(!watchlistCollapsed)}
@@ -250,7 +259,7 @@ export default function WatchlistBlock() {
       {quotesError && !watchlistCollapsed && (
         <div
           role="status"
-          className="flex items-start gap-1.5 border-b border-amber-500/25 bg-amber-500/5 px-3 py-1.5"
+          className="flex shrink-0 items-start gap-1.5 border-b border-amber-500/25 bg-amber-500/5 px-3 py-1.5"
         >
           <AlertTriangle size={9} className="mt-px shrink-0 text-amber-500 dark:text-amber-400" />
           <div className="min-w-0">
@@ -266,12 +275,14 @@ export default function WatchlistBlock() {
 
       {/* Watchlist content with smooth CSS Grid expand/collapse animation */}
       <div
-        className={`grid transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] border-b border-border-default ${
-          watchlistCollapsed ? 'grid-rows-[0fr] opacity-0 pointer-events-none' : 'grid-rows-[1fr] opacity-100'
+        className={`grid min-h-0 transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] border-b border-border-default ${
+          watchlistCollapsed
+            ? 'grid-rows-[0fr] opacity-0 pointer-events-none'
+            : 'flex-1 grid-rows-[1fr] opacity-100'
         }`}
       >
         <div className="overflow-hidden min-h-0">
-          <div className="shrink-0 max-h-[300px] overflow-y-auto scrollbar-thin">
+          <div className="h-full overflow-y-auto scrollbar-thin">
             {quotesLoading ? (
               <WatchlistSkeleton rows={5} />
             ) : watchlist.length === 0 ? (
@@ -279,7 +290,14 @@ export default function WatchlistBlock() {
                 <p className="text-xs text-text-muted/60 italic">Search and add symbols to your watchlist</p>
               </div>
             ) : (
-            watchlist.map((item, idx) => {
+            // Rendered newest-first: reverse a copy for display while keeping
+            // `idx` bound to the item's real position in the store array, so
+            // drag-and-drop reordering (reorderWatchlist) and the drag/hover
+            // highlights still operate on the true indices.
+            watchlist
+              .map((item, originalIdx) => ({ item, idx: originalIdx }))
+              .reverse()
+              .map(({ item, idx }) => {
               const chartedSymbol = splitView
                 ? panes.find((p) => p.id === activePaneId)?.symbol
                 : selectedSymbol;

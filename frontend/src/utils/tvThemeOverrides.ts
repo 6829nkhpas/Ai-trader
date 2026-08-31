@@ -14,11 +14,11 @@ export const TIMEFRAME_TO_RESOLUTION: Record<string, ResolutionString> = {
 export function getThemeOverrides(mode: 'dark' | 'light' = 'dark'): Record<string, string | number | boolean> {
   const isDark = mode === 'dark';
 
-  // Colors sourced from globals.css — :root (dark) and .light
-  const bg       = isDark ? '#000000' : '#ffffff';
-  const grid     = isDark ? '#1a1a1a' : '#f1f4f5';
+  // Colors sourced from globals.css — :root (dark, --bg-base #1e1e1e) and .light (--bg-base #f0eee9)
+  const bg       = isDark ? '#1e1e1e' : '#f0eee9';
+  const grid     = isDark ? '#2d2d2d' : '#ddd8ce';
   const text     = isDark ? '#9ca3af' : '#4a5568';
-  const scaleBg  = isDark ? '#000000' : '#ffffff';
+  const scaleBg  = isDark ? '#1e1e1e' : '#f0eee9';
   const up       = '#10b981';
   const down     = '#ef4444';
   const areaFill1 = isDark ? 'rgba(16, 185, 129, 0.28)' : 'rgba(16, 185, 129, 0.15)';

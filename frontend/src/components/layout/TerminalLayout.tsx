@@ -1,92 +1,26 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { flushSync } from 'react-dom';
-import {
-  Sun,
-  Moon,
-  Search,
-  HelpCircle,
-} from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Search } from 'lucide-react';
 import SymbolSearchModal from './SymbolSearchModal';
-import NotificationBell from './NotificationBell';
 import QuickStartGuide from './QuickStartGuide';
 import MarketTickerStrip from './MarketTickerStrip';
-import { useTradeStore } from '../../store/useTradeStore';
-import { useAuthStore } from '../../store/useAuthStore';
-import { useChartUIStore } from '../../store/useChartUIStore';
-import QuantRadar from '../quant/QuantRadar';
+import NavRail from './NavRail';
 import UserProfileModal from '../profile/UserProfileModal';
-import { PROFILES, getInitials } from '../../utils/layoutHelpers';
 import { SVGS } from '../chart/toolbarIcons';
 
 interface TerminalLayoutProps {
   children: React.ReactNode;
   leftPanel: React.ReactNode;
+  /**
+   * Rendered as a full-height sibling of the nav rail + ticker/main column,
+   * so the order book (right sidebar) panel spans the full screen height
+   * instead of being pushed down below the market ticker strip.
+   */
+  rightPanel?: React.ReactNode;
 }
 
-export default function TerminalLayout({ children, leftPanel }: TerminalLayoutProps) {
-  const { activeProfile, setActiveProfile } = useTradeStore();
-  const { user } = useAuthStore();
-  const theme = useChartUIStore((s) => s.theme);
-  const toggleTheme = useChartUIStore((s) => s.toggleTheme);
-
-  // ── Sliding indicator measurement ──────────────────────────────────
-  const profileBtnRefs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const indicatorRef = useRef<HTMLDivElement>(null);
-  const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0, opacity: 0 });
-
-  const measureIndicator = useCallback(() => {
-    const btn = profileBtnRefs.current[activeProfile];
-    const container = btn?.parentElement;
-    if (!btn || !container) return;
-    const cRect = container.getBoundingClientRect();
-    const bRect = btn.getBoundingClientRect();
-    setIndicatorStyle({
-      left: bRect.left - cRect.left,
-      width: bRect.width,
-      opacity: 1,
-    });
-  }, [activeProfile]);
-
-  useEffect(() => {
-    // Measure after paint so refs are populated
-    requestAnimationFrame(measureIndicator);
-    window.addEventListener('resize', measureIndicator);
-    return () => window.removeEventListener('resize', measureIndicator);
-  }, [measureIndicator]);
-
-  const handleThemeToggle = (event: React.MouseEvent<HTMLButtonElement>) => {
-    const doc = document as Document & { startViewTransition?: (cb: () => void) => { finished: Promise<void> } };
-
-    if (!doc.startViewTransition) {
-      toggleTheme();
-      return;
-    }
-
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = event.clientX || (rect.left + rect.width / 2);
-    const y = event.clientY || (rect.top + rect.height / 2);
-    const endRadius = Math.hypot(
-      Math.max(x, window.innerWidth - x),
-      Math.max(y, window.innerHeight - y)
-    );
-
-    document.documentElement.style.setProperty('--theme-x', `${x}px`);
-    document.documentElement.style.setProperty('--theme-y', `${y}px`);
-    document.documentElement.style.setProperty('--theme-r', `${endRadius}px`);
-    document.documentElement.setAttribute('data-theme-changing', 'true');
-
-    const transition = doc.startViewTransition(() => {
-      flushSync(() => {
-        toggleTheme();
-      });
-    });
-
-    transition.finished.finally(() => {
-      document.documentElement.removeAttribute('data-theme-changing');
-    });
-  };
+export default function TerminalLayout({ children, leftPanel, rightPanel }: TerminalLayoutProps) {
   const [profileOpen, setProfileOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
 
@@ -152,7 +86,7 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
     document.addEventListener('mouseup', onMouseUp);
   };
 
-  React.useEffect(() => {
+  useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (
@@ -188,186 +122,103 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
   }, []);
 
   return (
-    <div className="flex h-screen flex-col bg-background font-sans text-text-primary">
-      {/* Header */}
-      <header className="z-30 flex h-12 shrink-0 items-center gap-4 border-b border-border-default bg-surface px-4 py-1.5">
-        <div className="flex flex-1 items-center gap-2.5">
-          <img src="/strat.svg" alt="Strat Ai Logo" className="h-4.5 w-4.5 object-contain" />
-          <div className="flex items-baseline gap-1.5">
-            <h1 className="text-sm font-bold tracking-tight text-text-primary">Strat AI</h1>
-            <span className="text-[10px] text-text-muted border-l border-border-default pl-2">Terminal</span>
-          </div>
-        </div>
+    <div className="flex h-screen bg-background font-sans text-text-primary">
+      {/* ── Primary Navigation Rail ─────────────────────────── */}
+      <NavRail
+        onOpenSearch={() => { setInitialQuery(''); setIsSearchOpen(true); }}
+        onOpenGuide={() => setGuideOpen(true)}
+        onOpenProfile={() => setProfileOpen(true)}
+      />
 
-        {/* ── Segmented Profile Control ──────────────────────── */}
-        <div className="flex shrink-0 items-center justify-center">
-          <div className="relative flex items-center gap-0.5 rounded-full border border-border-default bg-card p-0.5 shadow-sm">
-            {/* Sliding active indicator */}
+      {/* ── Everything right of the rail ────────────────────── */}
+      <div className="flex h-full min-w-0 flex-1 flex-col">
+        {/* ── Live Market Ticker Strip ──────────────────────── */}
+        <MarketTickerStrip />
+
+        {/* Main Content */}
+        <div className="flex flex-1 min-h-0 min-w-0 overflow-visible bg-background p-0 gap-0">
+          {/* Watchlist / Left Panel */}
+          <aside
+            className={`
+              relative flex shrink-0 min-h-0 flex-col border-r border-border-default rounded-none bg-surface overflow-hidden
+              ${isResizing ? '' : 'transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]'}
+              ${leftPanelOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}
+            `}
+            style={{ width: leftPanelOpen ? `${leftPanelWidth}px` : '0px' }}
+          >
+            {/* Fixed-width inner container with sliding translate effect */}
             <div
-              ref={indicatorRef}
-              className="profile-indicator absolute top-0.5 bottom-0.5 rounded-full border border-emerald-500/30 bg-elevated pointer-events-none z-0"
-              style={{ left: indicatorStyle.left, width: indicatorStyle.width, opacity: indicatorStyle.opacity }}
-            />
-            {PROFILES.map(({ key, label, shortcut }) => {
-              const isActive = activeProfile === key;
-              return (
-                <button
-                  key={key}
-                  ref={(el) => { profileBtnRefs.current[key] = el; }}
-                  id={`profile-btn-${key.toLowerCase()}`}
-                  type="button"
-                  // The active mode was conveyed ONLY visually — by the sliding
-                  // `.profile-indicator` pill behind the buttons and the badge's
-                  // emerald treatment. Neither is perceivable to a screen reader,
-                  // so which workspace you were in was unannounced. `aria-pressed`
-                  // is the segmented-control equivalent of a selected state.
-                  aria-pressed={isActive}
-                  onClick={() => setActiveProfile(key)}
-                  className={`
-                    profile-tab-btn relative z-10 flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold
-                    select-none focus-visible:outline-none transition-all duration-150
-                    ${isActive
-                      ? 'text-text-primary'
-                      : 'text-text-secondary hover:bg-elevated/20 hover:text-text-primary border border-transparent'
-                    }
-                  `}
-                >
-                  <span>{label}</span>
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-[9px] font-extrabold leading-none tracking-wide transition-colors ${isActive
-                        ? 'profile-badge-active bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                        : 'bg-elevated/80 text-text-muted border border-border-default/60'
-                      }`}
+              className={`flex flex-col h-full shrink-0 ${isResizing ? '' : 'transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]'}`}
+              style={{
+                width: `${leftPanelWidth}px`,
+                transform: leftPanelOpen ? 'translateX(0)' : 'translateX(-100%)',
+              }}
+            >
+              {/* Section Header */}
+              <div className="flex h-8 shrink-0 items-center justify-between border-b border-border-default bg-elevated/10 px-3 select-none">
+                <span className="text-xs font-black uppercase tracking-wider text-text-primary/90">Market Watch</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setIsSearchOpen(true)}
+                    className="rounded p-0.5 text-text-muted hover:bg-elevated hover:text-text-primary transition-colors flex items-center justify-center"
+                    title="Search NSE symbol..."
                   >
-                    {shortcut}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-        <div className="flex flex-1 items-center justify-end gap-3.5 relative">
-          <button 
-            type="button"
-            onClick={handleThemeToggle}
-            className="text-text-secondary hover:text-text-primary transition-colors p-1 hover:bg-elevated/20 rounded"
-            title={theme === 'dark' ? 'Switch to Light Theme' : 'Switch to Dark Theme'}
-          >
-            {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
-          </button>
+                    <Search size={16} />
+                  </button>
+                  <button
+                    onClick={() => setLeftPanelOpen(false)}
+                    className="rounded p-0.5 text-text-muted hover:bg-elevated hover:text-text-primary transition-colors flex items-center justify-center"
+                    title="Collapse left panel"
+                  >
+                    <span dangerouslySetInnerHTML={{ __html: SVGS.sidebarClose }} className="flex items-center justify-center" />
+                  </button>
+                </div>
+              </div>
 
-          <button
-            type="button"
-            onClick={() => setGuideOpen(true)}
-            aria-label="Open quick start guide"
-            title="Quick Start Guide"
-            className="rounded p-1 text-text-secondary transition-colors hover:bg-elevated/20 hover:text-text-primary"
-          >
-            <HelpCircle size={15} />
-          </button>
-
-          <NotificationBell />
-
-          {/* Quant Radar Dropdown */}
-          <QuantRadar />
-
-          {/* User Profile Avatar Icon */}
-          <button
-            onClick={() => setProfileOpen(true)}
-            className="flex h-7 w-7 items-center justify-center rounded-full border border-border-default bg-surface/50 hover:bg-elevated/45 text-text-secondary hover:text-text-primary transition-all overflow-hidden"
-            title="Account Profile & Settings"
-          >
-            <div className="flex h-full w-full items-center justify-center bg-emerald-500/10 text-emerald-400 font-bold text-[10px] tracking-wider">
-              {getInitials(user?.name)}
-            </div>
-          </button>
-        </div>
-      </header>
-
-      {/* ── Live Market Ticker Strip ──────────────────────── */}
-      <MarketTickerStrip />
-
-      {/* Main Content */}
-      <div className="flex flex-1 min-h-0 min-w-0 overflow-visible bg-background p-0 gap-0">
-        {/* Watchlist / Left Panel */}
-        <aside 
-          className={`
-            relative flex shrink-0 min-h-0 flex-col border-r border-border-default rounded-none bg-surface overflow-hidden
-            ${isResizing ? '' : 'transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]'}
-            ${leftPanelOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}
-          `}
-          style={{ width: leftPanelOpen ? `${leftPanelWidth}px` : '0px' }}
-        >
-          {/* Fixed-width inner container with sliding translate effect */}
-          <div 
-            className={`flex flex-col h-full shrink-0 ${isResizing ? '' : 'transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]'}`}
-            style={{ 
-              width: `${leftPanelWidth}px`,
-              transform: leftPanelOpen ? 'translateX(0)' : 'translateX(-100%)',
-            }}
-          >
-            {/* Section Header */}
-            <div className="flex h-8 shrink-0 items-center justify-between border-b border-border-default bg-elevated/10 px-3 select-none">
-              <span className="text-xs font-black uppercase tracking-wider text-text-primary/90">Market Watch</span>
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={() => setIsSearchOpen(true)}
-                  className="rounded p-0.5 text-text-muted hover:bg-elevated hover:text-text-primary transition-colors flex items-center justify-center"
-                  title="Search NSE symbol..."
-                >
-                  <Search size={16} />
-                </button>
-                <button
-                  onClick={() => setLeftPanelOpen(false)}
-                  className="rounded p-0.5 text-text-muted hover:bg-elevated hover:text-text-primary transition-colors flex items-center justify-center"
-                  title="Collapse left panel"
-                >
-                  <span dangerouslySetInnerHTML={{ __html: SVGS.sidebarClose }} className="flex items-center justify-center" />
-                </button>
+              <div className="flex-1 min-h-0 w-full overflow-hidden">
+                {leftPanel}
               </div>
             </div>
 
-            <div className="flex-1 min-h-0 w-full overflow-hidden">
-              {leftPanel}
-            </div>
-          </div>
+            {/* Resize Handle */}
+            {leftPanelOpen && (
+              <div
+                onMouseDown={startResizing}
+                className={`
+                  absolute top-0 bottom-0 -right-1.5 w-3 cursor-col-resize z-20 hover:bg-emerald-500/10 transition-colors duration-150 rounded-none
+                  flex items-center justify-center group
+                  ${isResizing ? 'bg-emerald-500/20' : 'bg-transparent'}
+                `}
+                title="Drag to resize panel"
+              >
+                {/* Visual handle bar */}
+                <div className={`
+                  w-0.5 h-6 bg-border-default rounded-[1px] group-hover:bg-emerald-400 transition-colors
+                  ${isResizing ? 'bg-emerald-400' : ''}
+                `} />
+              </div>
+            )}
+          </aside>
 
-          {/* Resize Handle */}
-          {leftPanelOpen && (
-            <div
-              onMouseDown={startResizing}
-              className={`
-                absolute top-0 bottom-0 -right-1.5 w-3 cursor-col-resize z-20 hover:bg-emerald-500/10 transition-colors duration-150 rounded-none
-                flex items-center justify-center group
-                ${isResizing ? 'bg-emerald-500/20' : 'bg-transparent'}
-              `}
-              title="Drag to resize panel"
+          {/* Central Area */}
+          <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-visible">
+            <button
+              onMouseDown={handleLeftButtonMouseDown}
+              style={{ top: `${leftButtonTop}px` }}
+              className={`absolute left-0 z-100 flex h-7 w-6 items-center justify-center rounded-r border border-l-0 border-emerald-500/20 bg-surface/90 text-emerald-500 dark:text-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-300 hover:bg-emerald-500/10 shadow-lg backdrop-blur-sm transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${
+                leftPanelOpen ? 'opacity-0 scale-95 pointer-events-none' : 'opacity-100 scale-100'
+              } ${isDraggingLeft ? 'cursor-grabbing' : 'cursor-grab'}`}
+              title="Expand left panel (Drag to move)"
             >
-              {/* Visual handle bar */}
-              <div className={`
-                w-0.5 h-6 bg-border-default rounded-[1px] group-hover:bg-emerald-400 transition-colors
-                ${isResizing ? 'bg-emerald-400' : ''}
-              `} />
-            </div>
-          )}
-        </aside>
-
-        {/* Central Area */}
-        <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-visible">
-          <button
-            onMouseDown={handleLeftButtonMouseDown}
-            style={{ top: `${leftButtonTop}px` }}
-            className={`absolute left-0 z-100 flex h-7 w-6 items-center justify-center rounded-r border border-l-0 border-emerald-500/20 bg-surface/90 text-emerald-500 dark:text-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-300 hover:bg-emerald-500/10 shadow-lg backdrop-blur-sm transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${
-              leftPanelOpen ? 'opacity-0 scale-95 pointer-events-none' : 'opacity-100 scale-100'
-            } ${isDraggingLeft ? 'cursor-grabbing' : 'cursor-grab'}`}
-            title="Expand left panel (Drag to move)"
-          >
-            <span dangerouslySetInnerHTML={{ __html: SVGS.sidebarOpen }} className="flex items-center justify-center pointer-events-none" />
-          </button>
-          {children}
-        </main>
-
+              <span dangerouslySetInnerHTML={{ __html: SVGS.sidebarOpen }} className="flex items-center justify-center pointer-events-none" />
+            </button>
+            {children}
+          </main>
+        </div>
       </div>
+
+      {/* ── Right sidebar — full height, outside the ticker strip's column ── */}
+      {rightPanel}
 
       {/* User Profile Modal Overlay */}
       <UserProfileModal isOpen={profileOpen} onClose={() => setProfileOpen(false)} />
@@ -376,12 +227,12 @@ export default function TerminalLayout({ children, leftPanel }: TerminalLayoutPr
       <QuickStartGuide open={guideOpen} onClose={() => setGuideOpen(false)} />
 
       {/* Symbol Search Modal */}
-      <SymbolSearchModal 
-        isOpen={isSearchOpen} 
+      <SymbolSearchModal
+        isOpen={isSearchOpen}
         onClose={() => {
           setIsSearchOpen(false);
           setInitialQuery('');
-        }} 
+        }}
         initialQuery={initialQuery}
       />
       {isResizing && (

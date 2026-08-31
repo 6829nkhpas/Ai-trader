@@ -26,25 +26,25 @@ export function injectIframeDropdownStyles(doc: Document, theme: 'dark' | 'light
       padding: 0;
       border: none;
       background: transparent;
-      color: ${isLight ? '#475569' : '#94a3b8'};
+      color: ${isLight ? '#5b6675' : '#94a3b8'};
       border-radius: 6px;
       cursor: pointer;
       transition: background-color 0.15s ease, color 0.15s ease;
     }
     .tv-custom-toolbar-btn:hover {
-      background-color: ${isLight ? '#f1f5f9' : '#1e293b'};
-      color: ${isLight ? '#0f172a' : '#f8fafc'};
+      background-color: ${isLight ? '#e8e5de' : '#2d2d2d'};
+      color: ${isLight ? '#0f172a' : '#f5f5f5'};
     }
     .tv-custom-toolbar-btn.active {
-      background-color: ${isLight ? '#e2e8f0' : '#334155'};
+      background-color: ${isLight ? '#ddd8ce' : '#3a3a3a'};
       color: #10b981;
     }
     .tv-custom-dropdown {
       position: absolute;
       z-index: 1000;
       min-width: 220px;
-      background-color: ${isLight ? '#ffffff' : '#12141a'};
-      border: 1px solid ${isLight ? '#e2e8f0' : '#2a2e39'};
+      background-color: ${isLight ? '#fdfcfa' : '#252525'};
+      border: 1px solid ${isLight ? '#ddd8ce' : '#333333'};
       border-radius: 8px;
       box-shadow: ${isLight ? '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05)' : '0 10px 25px -5px rgba(0, 0, 0, 0.6)'};
       padding: 4px;
@@ -59,7 +59,7 @@ export function injectIframeDropdownStyles(doc: Document, theme: 'dark' | 'light
       padding: 8px 10px;
       border: none;
       background: transparent;
-      color: ${isLight ? '#0f172a' : '#f3f4f6'};
+      color: ${isLight ? '#0f172a' : '#f5f5f5'};
       text-align: left;
       border-radius: 6px;
       cursor: pointer;
@@ -67,10 +67,10 @@ export function injectIframeDropdownStyles(doc: Document, theme: 'dark' | 'light
       transition: background-color 0.15s ease;
     }
     .tv-custom-dropdown-item:hover {
-      background-color: ${isLight ? '#f1f5f9' : '#1e222d'};
+      background-color: ${isLight ? '#f0eee9' : '#2d2d2d'};
     }
     .tv-custom-dropdown-item.active {
-      background-color: ${isLight ? '#f8fafc' : '#1a202c'};
+      background-color: ${isLight ? '#e8e5de' : '#333333'};
       font-weight: 700;
     }
     .tv-custom-dropdown-item-container {
@@ -80,7 +80,7 @@ export function injectIframeDropdownStyles(doc: Document, theme: 'dark' | 'light
     }
     .tv-custom-dropdown-item-desc {
       font-size: 10.5px;
-      color: ${isLight ? '#64748b' : '#9ca3af'};
+      color: ${isLight ? '#5b6675' : '#9ca3af'};
       font-weight: 400;
     }
     .tv-custom-dropdown-item-checkmark {

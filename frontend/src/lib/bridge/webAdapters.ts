@@ -53,6 +53,26 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+/**
+ * Rewrite a `/api/kite/*` path onto `NEXT_PUBLIC_KITE_PROXY_ORIGIN` when set —
+ * the SAME knob `lib/kiteFetch.ts` uses — so local dev can send Kite REST calls
+ * to a deployment that actually reaches the aggregator (e.g.
+ * `https://app.stratai.live`). Empty var = same-origin (unchanged).
+ *
+ * ONLY the `/api/kite/*` route is redirected: it is the one proxy whose response
+ * carries `Access-Control-Allow-Origin` (forwarded from the aggregator), so a
+ * cross-origin browser fetch to it succeeds. The other `/api/*` proxies
+ * (questdb, sentiment, tools, deepquant, features) send no CORS header on the
+ * deployed site, so redirecting them cross-origin would be blocked by the
+ * browser — they stay same-origin.
+ */
+const KITE_PROXY_ORIGIN = (process.env.NEXT_PUBLIC_KITE_PROXY_ORIGIN ?? '').replace(/\/+$/, '');
+
+function kiteApiUrl(path: string): string {
+  const rel = path.startsWith('/') ? path : `/${path}`;
+  return `${KITE_PROXY_ORIGIN}${rel}`;
+}
+
 async function apiText(path: string, init?: RequestInit): Promise<string> {
   const res = await fetch(path, { cache: 'no-store', ...init });
   if (!res.ok) throw await failure(res, `${path} failed with HTTP ${res.status}`);
@@ -191,7 +211,7 @@ export function rowsToSearchResults(rows: InstrumentRow[]): SearchResult[] {
 async function searchExchange(query: string, exchange: string): Promise<InstrumentRow[]> {
   try {
     const data = await apiJson<{ results?: InstrumentRow[] }>(
-      `/api/kite/instruments?q=${encodeURIComponent(query)}&exchange=${exchange}`,
+      kiteApiUrl(`/api/kite/instruments?q=${encodeURIComponent(query)}&exchange=${exchange}`),
     );
     return data.results ?? [];
   } catch (err) {
@@ -864,7 +884,7 @@ export const WEB_ADAPTERS: Record<string, WebAdapter> = {
   kite_fetch: async (args) => {
     const path = reqStr(args, 'path', 'kite_fetch');
     const rel = path.startsWith('/') ? path : `/${path}`;
-    const res = await fetch(`/api/kite${rel}`, { cache: 'no-store' });
+    const res = await fetch(kiteApiUrl(`/api/kite${rel}`), { cache: 'no-store' });
     return { status: res.status, ok: res.ok, body: await res.text() };
   },
 

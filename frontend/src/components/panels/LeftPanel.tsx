@@ -1,20 +1,25 @@
 'use client';
 
-import React, { useEffect } from 'react';
-import { Activity } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
 import { useTradeStore } from '../../store/useTradeStore';
 import { useQuantStore } from '../../store/useQuantStore';
 
 // ── Subcomponents ──────────────────────────────────────────────────────
-import LiveAssetHUD from './left-panel/LiveAssetHUD';
-import SentimentBlock from './left-panel/SentimentBlock';
 import WatchlistBlock from './left-panel/WatchlistBlock';
 import SymbolSearchBlock from './left-panel/SymbolSearchBlock';
-import MultiTfPatternsView from '../quant/deep-quant/MultiTfPatternsView';
-import WaitIcon from './WaitIcon';
+import SummaryRail from './left-panel/summary/SummaryRail';
+import AnalysisSheet, { type AnalysisTab } from './left-panel/AnalysisSheet';
 
 export default function LeftPanel() {
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
+
+  /**
+   * Which analysis the detail sheet is showing, or `null` when it is closed.
+   *
+   * Held here rather than inside the rail because the sheet is a sibling of the
+   * whole panel: every strip opens the same one, on its own tab.
+   */
+  const [sheetTab, setSheetTab] = useState<AnalysisTab | null>(null);
   
   const consensusData = useQuantStore((s) => s.consensusData);
   const consensusComputedAt = useQuantStore((s) => s.consensusComputedAt);
@@ -65,54 +70,41 @@ export default function LeftPanel() {
       {/* Search Input block (remains hidden in LeftPanel as it is globally handled by layouts/modals) */}
       <SymbolSearchBlock />
 
-      {/* Dynamic Drag-and-Drop Watchlist Block */}
+      {/* Watchlist — takes the height the analytics used to occupy, and scrolls
+          within itself rather than pushing the rail off the bottom. */}
       <WatchlistBlock />
 
-      {/* ── Bottom Section HUD (Consensus + Sentiment) ── */}
-      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin">
-        {/* Sentiment Block */}
-        <SentimentBlock 
-          symbol={selectedSymbol}
-          sentiment={activeSentiment} 
-          isLoading={isFetchingSentiment} 
-          error={sentimentError} 
-        />
+      {/* ── Analysis summary rail, pinned below the watchlist ────────────
+          One line per analysis. Each opens the shared detail sheet on its own
+          tab, which is where the full readings now live. */}
+      <SummaryRail
+        symbol={selectedSymbol}
+        onOpen={setSheetTab}
+        sentiment={activeSentiment}
+        isSentimentLoading={isFetchingSentiment}
+        sentimentError={sentimentError}
+        consensus={consensusData}
+        consensusComputedAt={consensusComputedAt}
+        multiTfPatterns={multiTfPatterns}
+        isPatternsLoading={isFetchingPatterns}
+        patternsError={patternsError}
+      />
 
-        {/* Consensus HUD */}
-        {(() => {
-          const symbolMatch = consensusData && selectedSymbol
-            ? consensusData.symbol?.toUpperCase() === selectedSymbol.toUpperCase()
-            : !!consensusData;
-
-          if (!consensusData || !symbolMatch) {
-            return (
-              <div className="flex flex-col items-center justify-center gap-3 p-6 text-center animate-in fade-in duration-200">
-                <div className="w-44 h-24 flex items-center justify-center shrink-0">
-                  <WaitIcon className="w-full h-full object-contain" />
-                </div>
-                <div className="space-y-1">
-                  <p className="text-xs font-bold text-text-primary tracking-tight">
-                    No Technical Data for <span className="text-emerald-500 font-extrabold">{selectedSymbol || 'symbol'}</span>
-                  </p>
-                  <p className="text-[10px] text-text-secondary leading-relaxed max-w-[220px] mx-auto">
-                    Run Deep Quant Analysis to compute technical consensus
-                  </p>
-                </div>
-              </div>
-            );
-          }
-
-          return <LiveAssetHUD data={consensusData} computedAt={consensusComputedAt} />;
-        })()}
-
-        {/* Dynamic Pattern Scanner.
-            `patternsError` is part of the condition: a failed scan leaves
-            `multiTfPatterns` null, so without it the panel unmounted entirely and
-            the failure had nowhere to be reported. */}
-        {(isFetchingPatterns || multiTfPatterns || patternsError) && (
-          <MultiTfPatternsView />
-        )}
-      </div>
+      {/* Detail sheet — portaled out of this subtree, see AnalysisSheet's note */}
+      <AnalysisSheet
+        tab={sheetTab}
+        onTabChange={setSheetTab}
+        onClose={() => setSheetTab(null)}
+        symbol={selectedSymbol}
+        sentiment={activeSentiment}
+        isSentimentLoading={isFetchingSentiment}
+        sentimentError={sentimentError}
+        consensus={consensusData}
+        consensusComputedAt={consensusComputedAt}
+        multiTfPatterns={multiTfPatterns}
+        isPatternsLoading={isFetchingPatterns}
+        patternsError={patternsError}
+      />
     </div>
   );
 }

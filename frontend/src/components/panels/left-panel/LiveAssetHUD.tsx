@@ -16,6 +16,14 @@ import {
 import { motion } from 'framer-motion';
 import type { ConsensusReport } from '../../../store/useQuantStore';
 import { staggerContainer, fadeInUp } from '../../../lib/motionVariants';
+import {
+  CONSENSUS_STALE_AFTER_MS,
+  formatAge,
+  trendBg,
+  trendColor,
+  trendGaugePercent,
+  trendVerdict,
+} from './consensusView';
 
 interface LiveAssetHUDProps {
   data: ConsensusReport;
@@ -30,35 +38,13 @@ interface LiveAssetHUDProps {
    * retained measurement and an invented one.
    */
   computedAt?: number | null;
-}
-
-/** How old a reading may be before it is flagged as no longer current. */
-const CONSENSUS_STALE_AFTER_MS = 5 * 60 * 1000;
-
-function formatAge(ms: number): string {
-  const secs = Math.floor(ms / 1000);
-  if (secs < 60) return `${secs}s ago`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
-
-function trendColor(score: number) {
-  if (score > 50) return 'text-emerald-400';
-  if (score > 0) return 'text-emerald-400/70';
-  if (score < -50) return 'text-rose-400';
-  if (score < 0) return 'text-rose-400/70';
-  return 'text-amber-400';
-}
-
-function trendBg(score: number) {
-  if (score > 50) return 'bg-emerald-500';
-  if (score > 0) return 'bg-emerald-500/60';
-  if (score < -50) return 'bg-rose-500';
-  if (score < 0) return 'bg-rose-500/60';
-  return 'bg-amber-500/60';
+  /**
+   * Where the HUD is rendered. `panel` is the historical 224px sidebar layout and
+   * stays the default so existing call sites are untouched; `sheet` is the detail
+   * view, which has room for larger type and drops the section title the dialog
+   * header already carries.
+   */
+  variant?: 'panel' | 'sheet';
 }
 
 function stateColor(state: string) {
@@ -80,7 +66,8 @@ function stateColor(state: string) {
   }
 }
 
-export default function LiveAssetHUD({ data, computedAt }: LiveAssetHUDProps) {
+export default function LiveAssetHUD({ data, computedAt, variant = 'panel' }: LiveAssetHUDProps) {
+  const inSheet = variant === 'sheet';
   const {
     symbol,
     trend_score,
@@ -90,7 +77,7 @@ export default function LiveAssetHUD({ data, computedAt }: LiveAssetHUDProps) {
     active_patterns,
     active_strategies,
   } = data;
-  const gaugePercent = Math.round(((trend_score + 100) / 200) * 100);
+  const gaugePercent = trendGaugePercent(trend_score);
 
   // Re-tick so the age label stays truthful while the panel sits open, rather
   // than freezing at whatever it read on mount.
@@ -104,11 +91,43 @@ export default function LiveAssetHUD({ data, computedAt }: LiveAssetHUDProps) {
   const ageMs = computedAt ? Math.max(0, now - computedAt) : null;
   const isStale = ageMs !== null && ageMs > CONSENSUS_STALE_AFTER_MS;
 
+  const iconSize = inSheet ? 12 : 10;
+
   const stateEntries = [
-    { label: 'Momentum', value: momentum_state, icon: <Gauge size={10} /> },
-    { label: 'Volatility', value: volatility_state, icon: <Waves size={10} /> },
-    { label: 'Vol Flow', value: volume_flow_state, icon: <BarChart3 size={10} /> },
+    { label: 'Momentum', value: momentum_state, icon: <Gauge size={iconSize} /> },
+    { label: 'Volatility', value: volatility_state, icon: <Waves size={iconSize} /> },
+    { label: 'Vol Flow', value: volume_flow_state, icon: <BarChart3 size={iconSize} /> },
   ];
+
+  // Type and spacing scale per variant. The `panel` column is unchanged from what
+  // shipped; `sheet` uses the room a 420px dialog has and a 224px sidebar did not.
+  const t = inSheet
+    ? {
+        section: 'px-4 py-3.5',
+        heading: 'text-[10px]',
+        provenance: 'text-[9px]',
+        score: 'text-4xl',
+        verdict: 'text-[11px]',
+        pct: 'text-[10px]',
+        stateLabel: 'text-[11px]',
+        badge: 'text-[9px]',
+        chip: 'text-[10px]',
+        empty: 'text-[11px]',
+        strategy: 'text-[12px]',
+      }
+    : {
+        section: 'px-3 py-2.5',
+        heading: 'text-[9px]',
+        provenance: 'text-[8px]',
+        score: 'text-2xl',
+        verdict: 'text-[9px]',
+        pct: 'text-[8px]',
+        stateLabel: 'text-[10px]',
+        badge: 'text-[8px]',
+        chip: 'text-[8px]',
+        empty: 'text-[9px]',
+        strategy: 'text-[10px]',
+      };
 
   return (
     <motion.div
@@ -118,13 +137,18 @@ export default function LiveAssetHUD({ data, computedAt }: LiveAssetHUDProps) {
       className="flex flex-col text-sm"
     >
       {/* ── Section 1: Technical Consensus ──────────────────── */}
-      <motion.div variants={fadeInUp} className="border-b border-border-default px-3 py-2.5">
+      <motion.div variants={fadeInUp} className={`border-b border-border-default ${t.section}`}>
         <div className="flex items-center gap-1.5 mb-2">
-          <TrendingUp size={10} className="text-text-muted" />
-          <h3 className="text-[9px] font-bold text-text-secondary uppercase tracking-wider">
-            Technical Consensus
-          </h3>
-          {symbol && (
+          <TrendingUp size={iconSize} className="text-text-muted" />
+          {/* The dialog header already names this section in the sheet; a second
+              title on the same view is noise. */}
+          {!inSheet && (
+            <h3 className={`${t.heading} font-bold text-text-secondary uppercase tracking-wider`}>
+              Technical Consensus
+            </h3>
+          )}
+          {/* The sheet header already carries the symbol badge. */}
+          {symbol && !inSheet && (
             <span className="ml-auto rounded px-1.5 py-px text-[7px] font-bold uppercase tracking-wider bg-blue-500/10 text-blue-400 border border-blue-500/20">
               {symbol}
             </span>
@@ -136,7 +160,7 @@ export default function LiveAssetHUD({ data, computedAt }: LiveAssetHUDProps) {
             retained reading is indistinguishable from a live one. */}
         {ageMs !== null && (
           <div
-            className={`mb-2 flex items-center gap-1 text-[8px] font-semibold uppercase tracking-wider ${
+            className={`mb-2 flex items-center gap-1 ${t.provenance} font-semibold uppercase tracking-wider ${
               isStale ? 'text-amber-600 dark:text-amber-400' : 'text-text-muted/70'
             }`}
             title={
@@ -159,47 +183,43 @@ export default function LiveAssetHUD({ data, computedAt }: LiveAssetHUDProps) {
         )}
 
         {/* Trend Score */}
-        <div className="flex items-center gap-2.5 mb-2">
-          <div className={`text-2xl font-black tabular-nums tracking-tight ${trendColor(trend_score)}`}>
+        <div className={`flex items-center gap-2.5 ${inSheet ? 'mb-3' : 'mb-2'}`}>
+          <div className={`${t.score} font-black tabular-nums tracking-tight ${trendColor(trend_score)}`}>
             {trend_score > 0 ? '+' : ''}
             {trend_score}
           </div>
           <div className="flex-1 flex flex-col gap-0.5">
             <div className="flex items-center justify-between">
-              <span className={`text-[9px] font-bold uppercase tracking-wider ${trendColor(trend_score)}`}>
-                {trend_score > 50
-                  ? 'STRONG BULL'
-                  : trend_score > 0
-                  ? 'BULLISH'
-                  : trend_score < -50
-                  ? 'STRONG BEAR'
-                  : trend_score < 0
-                  ? 'BEARISH'
-                  : 'NEUTRAL'}
+              <span className={`${t.verdict} font-bold uppercase tracking-wider ${trendColor(trend_score)}`}>
+                {trendVerdict(trend_score)}
               </span>
-              <span className="text-[8px] text-text-muted tabular-nums">{gaugePercent}%</span>
+              <span className={`${t.pct} text-text-muted tabular-nums`}>{gaugePercent}%</span>
             </div>
-            <div className="relative h-1.5 w-full rounded-full bg-elevated overflow-hidden">
+            <div
+              className={`relative w-full rounded-full bg-elevated overflow-hidden ${inSheet ? 'h-2' : 'h-1.5'}`}
+            >
               <motion.div
-                className={`h-1.5 rounded-full ${trendBg(trend_score)}`}
+                className={`h-full rounded-full ${trendBg(trend_score)}`}
                 initial={{ width: 0 }}
                 animate={{ width: `${gaugePercent}%` }}
                 transition={{ type: 'spring', stiffness: 80, damping: 15, delay: 0.2 }}
               />
-              <div className="absolute top-0 left-1/2 -translate-x-px w-0.5 h-1.5 bg-text-muted/30" />
+              <div className="absolute top-0 left-1/2 -translate-x-px w-0.5 h-full bg-text-muted/30" />
             </div>
           </div>
         </div>
 
         {/* State Badges */}
-        <div className="flex flex-col gap-1">
+        <div className={`flex flex-col ${inSheet ? 'gap-2' : 'gap-1'}`}>
           {stateEntries.map(({ label, value, icon }) => (
             <div key={label} className="flex items-center justify-between">
-              <div className="flex items-center gap-1 text-[10px] text-text-secondary">
+              <div className={`flex items-center gap-1 ${t.stateLabel} text-text-secondary`}>
                 {icon}
                 <span className="font-medium">{label}</span>
               </div>
-              <span className={`inline-flex items-center rounded px-1.5 py-px text-[8px] font-bold border ${stateColor(value)}`}>
+              <span
+                className={`inline-flex items-center rounded px-1.5 py-px ${t.badge} font-bold border ${stateColor(value)}`}
+              >
                 {value}
               </span>
             </div>
@@ -208,12 +228,19 @@ export default function LiveAssetHUD({ data, computedAt }: LiveAssetHUDProps) {
       </motion.div>
 
       {/* ── Section 2: Active Patterns ──────────────────────── */}
-      <motion.div variants={fadeInUp} className="border-b border-border-default px-3 py-2">
+      <motion.div
+        variants={fadeInUp}
+        className={`border-b border-border-default ${inSheet ? 'px-4 py-3' : 'px-3 py-2'}`}
+      >
         <div className="flex items-center gap-1.5 mb-1.5">
-          <Hexagon size={10} className="text-text-muted" />
-          <h3 className="text-[9px] font-bold text-text-secondary uppercase tracking-wider">Patterns</h3>
+          <Hexagon size={iconSize} className="text-text-muted" />
+          <h3 className={`${t.heading} font-bold text-text-secondary uppercase tracking-wider`}>
+            Patterns
+          </h3>
           {active_patterns.length > 0 && (
-            <span className="ml-auto flex h-3.5 w-3.5 items-center justify-center rounded-full bg-slate-500/20 text-[8px] font-bold text-slate-400">
+            <span
+              className={`ml-auto flex h-3.5 w-3.5 items-center justify-center rounded-full bg-slate-500/20 ${t.badge} font-bold text-slate-400`}
+            >
               {active_patterns.length}
             </span>
           )}
@@ -223,31 +250,38 @@ export default function LiveAssetHUD({ data, computedAt }: LiveAssetHUDProps) {
             {active_patterns.map((p) => (
               <span
                 key={p}
-                className="inline-flex items-center gap-0.5 rounded px-1.5 py-px text-[8px] font-semibold bg-slate-500/8 text-slate-400 border border-slate-500/20"
+                className={`inline-flex items-center gap-0.5 rounded px-1.5 py-px ${t.chip} font-semibold bg-slate-500/8 text-slate-400 border border-slate-500/20`}
               >
                 {p.includes('Bullish') || p === 'Hammer' ? (
-                  <TrendingUp size={7} />
+                  <TrendingUp size={inSheet ? 9 : 7} />
                 ) : p.includes('Bearish') || p === 'Shooting Star' ? (
-                  <TrendingDown size={7} />
+                  <TrendingDown size={inSheet ? 9 : 7} />
                 ) : (
-                  <Minus size={7} />
+                  <Minus size={inSheet ? 9 : 7} />
                 )}
                 {p}
               </span>
             ))}
           </div>
         ) : (
-          <p className="text-[9px] text-text-muted/50 italic">No patterns detected</p>
+          <p className={`${t.empty} text-text-muted/50 italic`}>No patterns detected</p>
         )}
       </motion.div>
 
       {/* ── Section 3: Active Strategies ───────────────────── */}
-      <motion.div variants={fadeInUp} className="border-b border-border-default px-3 py-2">
+      <motion.div
+        variants={fadeInUp}
+        className={`border-b border-border-default ${inSheet ? 'px-4 py-3' : 'px-3 py-2'}`}
+      >
         <div className="flex items-center gap-1.5 mb-1.5">
-          <Target size={10} className="text-blue-400" />
-          <h3 className="text-[9px] font-bold text-blue-400 uppercase tracking-wider">Strategies</h3>
+          <Target size={iconSize} className="text-blue-400" />
+          <h3 className={`${t.heading} font-bold text-blue-400 uppercase tracking-wider`}>
+            Strategies
+          </h3>
           {active_strategies.length > 0 && (
-            <span className="ml-auto flex h-3.5 w-3.5 items-center justify-center rounded-full bg-blue-500/20 text-[8px] font-bold text-blue-400 animate-pulse">
+            <span
+              className={`ml-auto flex h-3.5 w-3.5 items-center justify-center rounded-full bg-blue-500/20 ${t.badge} font-bold text-blue-400 animate-pulse motion-reduce:animate-none`}
+            >
               {active_strategies.length}
             </span>
           )}
@@ -257,21 +291,27 @@ export default function LiveAssetHUD({ data, computedAt }: LiveAssetHUDProps) {
             {active_strategies.map((s) => (
               <div
                 key={s}
-                className="flex items-center gap-1.5 rounded-md px-2 py-1 border border-blue-500/30 bg-blue-500/5 transition-colors hover:bg-blue-500/10"
+                className={`flex items-center gap-1.5 rounded-md border border-blue-500/30 bg-blue-500/5 transition-colors hover:bg-blue-500/10 ${
+                  inSheet ? 'px-2.5 py-2' : 'px-2 py-1'
+                }`}
               >
-                <div className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-blue-500/15">
+                <div
+                  className={`flex shrink-0 items-center justify-center rounded bg-blue-500/15 ${
+                    inSheet ? 'h-5 w-5' : 'h-4 w-4'
+                  }`}
+                >
                   {s.includes('Bullish') || s.includes('Golden') ? (
-                    <TrendingUp size={8} className="text-blue-400" />
+                    <TrendingUp size={inSheet ? 10 : 8} className="text-blue-400" />
                   ) : (
-                    <TrendingDown size={8} className="text-blue-400" />
+                    <TrendingDown size={inSheet ? 10 : 8} className="text-blue-400" />
                   )}
                 </div>
-                <span className="text-[10px] font-semibold text-blue-300">{s}</span>
+                <span className={`${t.strategy} font-semibold text-blue-300`}>{s}</span>
               </div>
             ))}
           </div>
         ) : (
-          <p className="text-[9px] text-text-muted/50 italic">No strategies active</p>
+          <p className={`${t.empty} text-text-muted/50 italic`}>No strategies active</p>
         )}
       </motion.div>
     </motion.div>

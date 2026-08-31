@@ -5,14 +5,21 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --bg-base: #000000;
+  --bg-base: #1e1e1e;
   --bg-main: var(--bg-base);
-  --bg-surface: #000000;
-  --bg-card: #0a0a0a;
-  --bg-elevated: #161616;
-  --bg-muted: #000000;
-  --border-default: #1a1a1a;
-  --border-subtle: #111111;
+  /* Panels sit one elevation step above the #1e1e1e canvas so the chart pane
+     (kept at base #1e1e1e) reads as the focal surface and the side panels /
+     header / order panel frame it. Separation now comes from fill + border,
+     not border alone. */
+  --bg-surface: #262626;
+  --bg-card: #2c2c2c;
+  --bg-elevated: #323232;
+  --bg-muted: #1e1e1e;
+  /* Panel dividers. Raised from #333333 so adjacent same-fill (#1e1e1e) panels
+     read as distinct on the flatter palette. --chart-grid is decoupled below so
+     this does not also brighten chart gridlines. */
+  --border-default: #3d3d3d;
+  --border-subtle: #303030;
   --text-primary: #f5f5f5;
   --text-secondary: #d1d5db;
   --text-muted: #9ca3af;
@@ -23,7 +30,8 @@
   --color-bear: #ef4444;
   --color-neutral: #f59e0b;
   --chart-bg: var(--bg-card);
-  --chart-grid: var(--border-default);
+  /* Kept subtle and independent of --border-default (panel dividers). */
+  --chart-grid: #292929;
   --candle-green: #10b981;
   --candle-red: #ef4444;
   --status-live: #10b981;
@@ -41,8 +49,12 @@
     0 4px 12px 0 rgba(0, 0, 0, 0.07), 0 2px 4px 0 rgba(0, 0, 0, 0.04);
   --shadow-lg:
     0 8px 24px 0 rgba(0, 0, 0, 0.08), 0 3px 6px 0 rgba(0, 0, 0, 0.05);
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  /* Tie the shadcn background/foreground to the dark theme tokens, mirroring the
+     .light block. Previously these were the shadcn init defaults (white bg /
+     near-black fg), so `bg-background` shells (TerminalLayout, page.tsx) resolved
+     to white in dark mode and could flash white before panels painted over. */
+  --background: var(--bg-main);
+  --foreground: var(--text-primary);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
@@ -76,20 +88,24 @@
 }
 
 .light {
-  --bg-base: #f8fafc;
+  --bg-base: #f0eee9;
   --bg-main: var(--bg-base);
-  --bg-surface: #ffffff;
-  --bg-card: #f8fafc;
-  --bg-elevated: #f1f5f9;
-  --bg-muted: #f1f5f9;
-  --border-default: #e2e8f0;
-  --border-subtle: #f1f5f9;
+  --bg-surface: #fdfcfa;
+  --bg-card: #f7f5f1;
+  --bg-elevated: #ffffff;
+  --bg-muted: #e8e5de;
+  /* Panel dividers — darkened from #ddd8ce for clearer separation on #f0eee9. */
+  --border-default: #d0c8b8;
+  --border-subtle: #e2ddd2;
   --text-primary: #0f172a;
   --text-secondary: #334155;
-  --text-muted: #64748b;
+  /* Darkened from #64748b: the warmer #f0eee9 base dropped it to 4.1:1, under
+     WCAG AA. #5b6675 restores ~5.0:1 while staying in the same slate family. */
+  --text-muted: #5b6675;
   --text-muted-soft: #94a3b8;
   --chart-bg: var(--bg-card);
-  --chart-grid: var(--border-default);
+  /* Subtle warm gridlines, independent of the panel-divider colour. */
+  --chart-grid: #e4dfd5;
   --background: var(--bg-main);
   --foreground: var(--text-primary);
 
@@ -223,10 +239,10 @@ body {
 /* ── Auth color tokens ───────────────────────────────────────────────────── */
 :root {
   --auth-bg-base: var(--bg-main);
-  --auth-bg-tint: #111111;
-  --auth-card-bg: rgba(22, 22, 22, 0.92);
-  --auth-card-border: rgba(38, 38, 38, 0.5);
-  --auth-input-bg: #0a0a0a;
+  --auth-bg-tint: #252525;
+  --auth-card-bg: rgba(37, 37, 37, 0.92);
+  --auth-card-border: rgba(51, 51, 51, 0.5);
+  --auth-input-bg: #1a1a1a;
   --auth-input-border: var(--border-default);
   --auth-input-focus: rgba(16, 185, 129, 0.4);
   --auth-input-error: rgba(239, 68, 68, 0.35);
@@ -253,14 +269,14 @@ body {
     radial-gradient(
       120% 80% at 10% -10%,
       rgba(16, 185, 129, 0.05) 0%,
-      rgba(10, 10, 10, 0.95) 55%
+      rgba(30, 30, 30, 0.95) 55%
     ),
     radial-gradient(
       100% 70% at 90% 10%,
       rgba(245, 158, 11, 0.02) 0%,
-      rgba(10, 10, 10, 0.95) 60%
+      rgba(30, 30, 30, 0.95) 60%
     ),
-    linear-gradient(180deg, #0a0a0a 0%, #111111 70%, #000000 100%);
+    linear-gradient(180deg, #252525 0%, #1e1e1e 70%, #161616 100%);
   overflow: hidden;
   padding: 2rem 1rem;
   font-family: var(--font-manrope), var(--font-inter), sans-serif;

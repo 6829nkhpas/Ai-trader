@@ -22,26 +22,37 @@ import {
   sentimentTheme,
   volumeTag,
 } from './patternStyles';
+import {
+  PATTERN_TIMEFRAMES,
+  bestPatternTimeframe,
+  patternCountFor,
+  totalPatternCount,
+} from '../../panels/left-panel/patternsSummary';
 
-export default function MultiTfPatternsView() {
+interface MultiTfPatternsViewProps {
+  /**
+   * Where the scanner is rendered. `panel` is the historical 224px sidebar layout
+   * and stays the default so existing call sites are untouched; `sheet` is the
+   * detail view, which drops the section title the dialog header already carries
+   * and lets the pattern list use the full height available.
+   */
+  variant?: 'panel' | 'sheet';
+}
+
+export default function MultiTfPatternsView({ variant = 'panel' }: MultiTfPatternsViewProps = {}) {
+  const inSheet = variant === 'sheet';
   const { multiTfPatterns, isFetchingPatterns, patternsError } = useQuantStore();
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
   // `null` = no explicit user choice yet, so fall back to the auto-picked tab
   // (the timeframe carrying the most patterns). A manual tab click pins it.
   const [userSelectedTf, setUserSelectedTf] = useState<string | null>(null);
 
-  const timeframes = ['1m', '5m', '10m', '15m', '1h', '4h', '1d'];
+  const timeframes = PATTERN_TIMEFRAMES;
 
   // Timeframe with the most patterns — used as the default view so the panel
   // opens on a tab that actually has results instead of a hardcoded empty one.
-  const bestTf = useMemo(() => {
-    if (!multiTfPatterns) return '10m';
-    const best = multiTfPatterns.reduce<{ tf: string; count: number }>(
-      (acc, p) => (p.patterns.length > acc.count ? { tf: p.timeframe, count: p.patterns.length } : acc),
-      { tf: '10m', count: -1 }
-    );
-    return best.count > 0 ? best.tf : '10m';
-  }, [multiTfPatterns]);
+  // Shared with the summary strip so both agree on where to point the user.
+  const bestTf = useMemo(() => bestPatternTimeframe(multiTfPatterns), [multiTfPatterns]);
 
   const selectedTf = userSelectedTf ?? bestTf;
   const setSelectedTf = setUserSelectedTf;
@@ -51,16 +62,10 @@ export default function MultiTfPatternsView() {
   const patterns = currentTfData?.patterns || [];
 
   // Helper to count patterns for each timeframe
-  const getPatternCount = (tf: string) => {
-    const data = multiTfPatterns?.find(p => p.timeframe === tf);
-    return data?.patterns.length || 0;
-  };
+  const getPatternCount = (tf: string) => patternCountFor(multiTfPatterns, tf);
 
   /** Across every timeframe — drives the header's live badge. */
-  const totalPatterns = useMemo(
-    () => (multiTfPatterns ?? []).reduce((n, p) => n + p.patterns.length, 0),
-    [multiTfPatterns],
-  );
+  const totalPatterns = useMemo(() => totalPatternCount(multiTfPatterns), [multiTfPatterns]);
 
   const handlePatternClick = (p: ChartPattern) => {
     const symbol = useTradeStore.getState().selectedSymbol || 'RELIANCE';
@@ -98,13 +103,24 @@ export default function MultiTfPatternsView() {
     useRadarStore.getState().setVizTarget(target);
   };
 
+  // Type and spacing scale per variant. `panel` reproduces the 224px sidebar
+  // sizing exactly; `sheet` uses the width a 420px dialog affords.
+  const t = inSheet
+    ? { pad: 'px-4', tab: 'text-[10px] px-2.5 py-1', name: 'text-[12px]', desc: 'text-[10px]', meta: 'text-[9px]', card: 'px-4 py-2.5' }
+    : { pad: 'px-3', tab: 'text-[9px] px-2 py-0.5', name: 'text-[10px]', desc: 'text-[9px]', meta: 'text-[8px]', card: 'px-3 py-2' };
+
   return (
-    <div className="border-b border-border-default py-2.5 px-0 bg-transparent select-none">
-      <div className="flex items-center gap-1.5 mb-2 px-3">
-        <Sparkles size={10} className="text-neutral" />
-        <h3 className="text-[9px] font-bold text-text-secondary uppercase tracking-wider">
-          Dynamic Pattern Scanner
-        </h3>
+    <div
+      className={`border-b border-border-default px-0 bg-transparent select-none ${inSheet ? 'py-3' : 'py-2.5'}`}
+    >
+      <div className={`flex items-center gap-1.5 mb-2 ${t.pad}`}>
+        <Sparkles size={inSheet ? 12 : 10} className="text-neutral" />
+        {/* The dialog header already names this section in the sheet. */}
+        {!inSheet && (
+          <h3 className="text-[9px] font-bold text-text-secondary uppercase tracking-wider">
+            Dynamic Pattern Scanner
+          </h3>
+        )}
         {isFetchingPatterns ? (
           <span className="ml-auto flex items-center gap-1">
             <Loader2 size={9} className="animate-spin text-neutral" />
@@ -131,7 +147,7 @@ export default function MultiTfPatternsView() {
       </div>
 
       {/* Timeframe Selector Tabs */}
-      <div className="flex gap-1 overflow-x-auto pb-1.5 px-3 scrollbar-none">
+      <div className={`flex gap-1 overflow-x-auto pb-1.5 scrollbar-none ${t.pad}`}>
         {timeframes.map((tf) => {
           const count = getPatternCount(tf);
           const isActive = selectedTf === tf;
@@ -143,7 +159,7 @@ export default function MultiTfPatternsView() {
               aria-pressed={isActive}
               aria-label={`${tf} timeframe, ${count} pattern${count === 1 ? '' : 's'}`}
               className={`
-                flex items-center gap-1 px-2 py-0.5 rounded-none text-[9px] font-bold shrink-0 border
+                flex items-center gap-1 rounded-none ${t.tab} font-bold shrink-0 border
                 transition-colors duration-150
                 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-neutral
                 ${isActive
@@ -178,12 +194,20 @@ export default function MultiTfPatternsView() {
       </div>
 
       {/* Patterns list */}
-      <div className="mt-2 space-y-0 max-h-47.5 overflow-y-auto scrollbar-thin">
+      {/* The 190px cap exists to stop the list swallowing the sidebar. The sheet
+          has a scroll container of its own, so capping there would just create a
+          second, needless scrollbar. */}
+      <div
+        className={`mt-2 space-y-0 ${inSheet ? '' : 'max-h-47.5 overflow-y-auto scrollbar-thin'}`}
+      >
         {isFetchingPatterns ? (
           // Loading skeletons
           <div className="space-y-0 py-1">
             {[1, 2].map((i) => (
-              <div key={i} className="animate-pulse flex flex-col gap-1 px-3 py-2 border-y border-x-0 border-border-default/40 bg-elevated/10">
+              <div
+                key={i}
+                className={`animate-pulse motion-reduce:animate-none flex flex-col gap-1 border-y border-x-0 border-border-default/40 bg-elevated/10 ${t.card}`}
+              >
                 <div className="flex justify-between items-center">
                   <div className="h-3 w-16 bg-elevated/60 rounded-none" />
                   <div className="h-3 w-10 bg-elevated/60 rounded-none" />
@@ -198,15 +222,19 @@ export default function MultiTfPatternsView() {
              heartbeat / tool-server error look like a calm, healthy market. */
           <div
             role="status"
-            className="flex flex-col gap-1 px-3 py-2.5 border-y border-x-0 border-amber-500/30 bg-amber-500/5 rounded-none"
+            className={`flex flex-col gap-1 border-y border-x-0 border-amber-500/30 bg-amber-500/5 rounded-none ${t.card}`}
           >
             <div className="flex items-center gap-1.5">
               <AlertTriangle size={10} className="shrink-0 text-amber-500 dark:text-amber-400" />
-              <span className="text-[8px] font-black uppercase tracking-widest text-amber-600 dark:text-amber-400">
+              <span
+                className={`${t.meta} font-black uppercase tracking-widest text-amber-600 dark:text-amber-400`}
+              >
                 Scan unavailable
               </span>
             </div>
-            <p className="text-[9px] leading-relaxed text-amber-700/90 dark:text-amber-300/80 break-words">
+            <p
+              className={`${t.desc} leading-relaxed text-amber-700/90 dark:text-amber-300/80 break-words`}
+            >
               {patternsError}
             </p>
             <button
@@ -215,7 +243,7 @@ export default function MultiTfPatternsView() {
                 const sym = selectedSymbol || 'RELIANCE';
                 void useQuantStore.getState().fetchMultiTfPatterns(sym);
               }}
-              className="mt-0.5 inline-flex w-fit items-center gap-1 rounded-none border border-amber-500/30 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 transition-colors hover:bg-amber-500/10"
+              className={`mt-0.5 inline-flex w-fit items-center gap-1 rounded-none border border-amber-500/30 px-1.5 py-0.5 ${t.meta} font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 transition-colors hover:bg-amber-500/10`}
             >
               <RefreshCw size={8} />
               Retry scan
@@ -223,10 +251,14 @@ export default function MultiTfPatternsView() {
           </div>
         ) : patterns.length === 0 ? (
           // Empty State
-          <div className="flex flex-col items-center justify-center py-4 text-center border-y border-x-0 border-border-default/50 bg-elevated/10 rounded-none">
-            <Activity size={12} className="text-text-muted mb-0.5" />
-            <span className="text-[9px] font-medium text-text-muted">No patterns forming</span>
-            <span className="text-[8px] text-text-muted/40">Timeframe: {selectedTf}</span>
+          <div
+            className={`flex flex-col items-center justify-center text-center border-y border-x-0 border-border-default/50 bg-elevated/10 rounded-none ${
+              inSheet ? 'py-8' : 'py-4'
+            }`}
+          >
+            <Activity size={inSheet ? 16 : 12} className="text-text-muted mb-0.5" />
+            <span className={`${t.desc} font-medium text-text-muted`}>No patterns forming</span>
+            <span className={`${t.meta} text-text-muted/40`}>Timeframe: {selectedTf}</span>
           </div>
         ) : (
           patterns.map((p, idx) => {
@@ -261,7 +293,7 @@ export default function MultiTfPatternsView() {
                   }
                 }}
                 className={`
-                  group relative flex flex-col gap-1 px-3 py-2 pl-3.5 cursor-pointer
+                  group relative flex flex-col gap-1 cursor-pointer ${t.card} ${inSheet ? 'pl-4.5' : 'pl-3.5'}
                   border-y border-x-0 border-border-default/45 bg-elevated/5
                   transition-colors duration-200 ${tone.wash}
                   focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-neutral
@@ -278,11 +310,11 @@ export default function MultiTfPatternsView() {
 
                 {/* Pattern Header */}
                 <div className="flex justify-between items-start pl-1">
-                  <div className="flex items-center gap-1 truncate max-w-40">
+                  <div className={`flex items-center gap-1 truncate ${inSheet ? 'max-w-56' : 'max-w-40'}`}>
                     {isForming && (
-                      <Radio size={8} className={`shrink-0 ${tone.text}`} />
+                      <Radio size={inSheet ? 10 : 8} className={`shrink-0 ${tone.text}`} />
                     )}
-                    <span className="text-[10px] font-bold text-text-primary tracking-tight truncate">
+                    <span className={`${t.name} font-bold text-text-primary tracking-tight truncate`}>
                       {p.pattern_type}
                     </span>
                   </div>
@@ -313,14 +345,14 @@ export default function MultiTfPatternsView() {
                 </div>
 
                 {/* Pattern Description */}
-                <p className="text-[9px] text-text-muted leading-relaxed pl-1">
+                <p className={`${t.desc} text-text-muted leading-relaxed pl-1`}>
                   {p.description}
                 </p>
 
                 {/* Formation Progress Bar (for forming patterns) */}
                 {isForming && progress > 0 && (
                   <div className="flex items-center gap-1.5 pl-1 mt-0.5">
-                    <span className="text-[8px] text-text-secondary font-bold">Progress:</span>
+                    <span className={`${t.meta} text-text-secondary font-bold`}>Progress:</span>
                     <div
                       role="progressbar"
                       aria-valuenow={progressPct}
@@ -343,7 +375,7 @@ export default function MultiTfPatternsView() {
                         />
                       </div>
                     </div>
-                    <span className={`text-[8px] font-black tabular-nums ${tone.text}`}>
+                    <span className={`${t.meta} font-black tabular-nums ${tone.text}`}>
                       {progressPct}%
                     </span>
                   </div>
@@ -351,7 +383,7 @@ export default function MultiTfPatternsView() {
 
                 {/* Confidence Bar */}
                 <div className="flex items-center gap-1.5 pl-1 mt-0.5">
-                  <span className="text-[8px] text-text-muted/60 font-bold">Conf:</span>
+                  <span className={`${t.meta} text-text-muted/60 font-bold`}>Conf:</span>
                   <div
                     role="progressbar"
                     aria-valuenow={confPct}
@@ -369,7 +401,7 @@ export default function MultiTfPatternsView() {
                       style={{ width: `${confPct}%` }}
                     />
                   </div>
-                  <span className="text-[8px] font-black tabular-nums text-text-secondary">
+                  <span className={`${t.meta} font-black tabular-nums text-text-secondary`}>
                     {confPct}%
                   </span>
                 </div>

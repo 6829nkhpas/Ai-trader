@@ -67,7 +67,22 @@ function biasChip(bias: string) {
   return { color, bg: `${color}1a`, border: `${color}40` };
 }
 
-export default function QuantRadar() {
+interface QuantRadarProps {
+  /**
+   * Where the trigger lives. `header` (default) keeps the original pill button
+   * that drops its panel down-and-left. `rail` renders a full-width row trigger
+   * for the vertical NavRail and opens the panel to the right of the rail.
+   */
+  align?: 'header' | 'rail';
+  /**
+   * Rail-only: label shown to the right of the icon when the rail is expanded.
+   * The whole row (icon + label) toggles the panel.
+   */
+  label?: string;
+}
+
+export default function QuantRadar({ align = 'header', label }: QuantRadarProps) {
+  const isRail = align === 'rail';
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
   const [liveAlerts, setLiveAlerts] = useState<RadarAlert[]>([]);
@@ -108,6 +123,13 @@ export default function QuantRadar() {
   }, []);
 
   // ── Close on outside click ───────────────────────────────────────
+  // Registered in the CAPTURE phase on purpose. Selecting a suggestion fires on
+  // `mouseDown`, and `handleAdd` synchronously clears the list — React flushes
+  // that discrete event immediately, so the clicked <li> is already detached
+  // from the DOM by the time a bubble-phase listener runs. `contains()` on a
+  // detached node returns false, which used to close the whole panel. Capture
+  // runs before React re-renders, so containment is checked while the node is
+  // still in the tree.
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
@@ -117,8 +139,8 @@ export default function QuantRadar() {
         setRadarTfDropdownOpen(false);
       }
     };
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
+    document.addEventListener('mousedown', onClick, true);
+    return () => document.removeEventListener('mousedown', onClick, true);
   }, []);
 
   // ── Live radar-alert subscription (background worker) ────────────
@@ -281,37 +303,71 @@ export default function QuantRadar() {
     [scans]
   );
 
+  const radarIconClass = anyLoading
+    ? 'animate-spin text-emerald-600 dark:text-emerald-400'
+    : symbols.length > 0
+      ? 'text-emerald-600 dark:text-emerald-400 animate-pulse'
+      : 'text-text-secondary';
+
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className={isRail ? 'relative w-full' : 'relative'} ref={dropdownRef}>
       {/* ── Trigger Button ── */}
-      <button
-        type="button"
-        id="quant-radar-navbar-btn"
-        onClick={() => setIsOpen((p) => !p)}
-        className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold shadow-sm transition-all duration-200 select-none ${
-          isOpen
-            ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
-            : 'bg-card border-border-default text-text-secondary hover:bg-elevated hover:text-text-primary'
-        }`}
-        title="Open Quant Radar"
-      >
-        <div className="relative flex items-center">
-          <Radar
-            size={13}
-            className={`${anyLoading ? 'animate-spin text-emerald-600 dark:text-emerald-400' : symbols.length > 0 ? 'text-emerald-600 dark:text-emerald-400 animate-pulse' : 'text-text-secondary'}`}
-          />
-        </div>
-        <span>Radar</span>
-        {totalDetections > 0 && (
-          <span className="rounded-full bg-emerald-500/10 dark:bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
-            {totalDetections}
+      {isRail ? (
+        <button
+          type="button"
+          id="quant-radar-navbar-btn"
+          onClick={() => setIsOpen((p) => !p)}
+          aria-label="Open Quant Radar"
+          title="Open Quant Radar"
+          className={`flex h-11 w-full cursor-pointer items-center transition-colors duration-200 ${
+            isOpen
+              ? 'text-emerald-500 dark:text-emerald-400'
+              : 'text-text-secondary hover:text-emerald-500 dark:hover:text-emerald-400'
+          }`}
+        >
+          <span className="relative flex w-14 shrink-0 items-center justify-center">
+            <Radar size={20} className={radarIconClass} />
+            {totalDetections > 0 && (
+              <span className="absolute right-2 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500 px-1 text-[10px] font-bold leading-none text-white tabular-nums">
+                {totalDetections > 9 ? '9+' : totalDetections}
+              </span>
+            )}
           </span>
-        )}
-      </button>
+          {label && (
+            <span className="max-w-0 overflow-hidden whitespace-nowrap pr-4 text-sm font-semibold opacity-0 transition-all duration-200 ease-out group-hover:max-w-[150px] group-hover:opacity-100">
+              {label}
+            </span>
+          )}
+        </button>
+      ) : (
+        <button
+          type="button"
+          id="quant-radar-navbar-btn"
+          onClick={() => setIsOpen((p) => !p)}
+          className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold shadow-sm transition-all duration-200 select-none ${
+            isOpen
+              ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
+              : 'bg-card border-border-default text-text-secondary hover:bg-elevated hover:text-text-primary'
+          }`}
+          title="Open Quant Radar"
+        >
+          <div className="relative flex items-center">
+            <Radar size={13} className={radarIconClass} />
+          </div>
+          <span>Radar</span>
+          {totalDetections > 0 && (
+            <span className="rounded-full bg-emerald-500/10 dark:bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
+              {totalDetections}
+            </span>
+          )}
+        </button>
+      )}
 
       {/* ── Dropdown Panel ── */}
       {isOpen && (
-        <div className="absolute right-0 top-full mt-2 z-[999] flex flex-col w-[400px] max-h-[560px] rounded-none border border-border-default bg-surface/95 backdrop-blur-xl shadow-2xl">
+        <div className={`absolute z-[999] flex flex-col w-[400px] max-h-[560px] rounded-none border border-border-default bg-surface/95 backdrop-blur-xl shadow-2xl ${
+          isRail ? 'left-14 bottom-0 ml-1' : 'right-0 top-full mt-2'
+        }`}>
           {/* ── Header ── */}
           <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border-default bg-surface/80 rounded-none">
             <div className="flex items-center gap-2">

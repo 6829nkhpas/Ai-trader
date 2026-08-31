@@ -221,36 +221,34 @@ export default function Home() {
   return (
     <div className="flex h-full flex-col bg-background">
       <div className="min-h-0 flex-1">
-        <TerminalLayout leftPanel={<LeftPanel />}>
-          <div className="flex h-full min-h-0 min-w-0 w-full gap-0">
-            {/* ── Chart + Order Execution column ───────────── */}
-            <div className={isFullscreen ? "fixed inset-0 z-150 flex flex-col bg-background p-2" : `relative flex min-h-0 min-w-0 flex-col rounded-none bg-surface ${sidebarOpen ? 'flex-1' : 'w-full'}`}>
-              {!isFullscreen && !sidebarOpen && (
-                <button
-                  onMouseDown={handleRightButtonMouseDown}
-                  style={{ top: `${rightButtonTop}px` }}
-                  className={`absolute right-0 z-100 flex h-7 w-6 items-center justify-center rounded-l border border-r-0 border-emerald-500/20 bg-surface/90 text-emerald-500 dark:text-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-300 hover:bg-emerald-500/10 shadow-lg backdrop-blur-sm transition-all duration-200 ${isDraggingRight ? 'cursor-grabbing' : 'cursor-grab'}`}
-                  title="Expand right panel (Drag to move)"
-                >
-                  <span dangerouslySetInnerHTML={{ __html: SVGS.sidebarOpen }} className="flex items-center justify-center scale-x-[-1] pointer-events-none" />
-                </button>
-              )}
+        <TerminalLayout
+          leftPanel={<LeftPanel />}
+          rightPanel={<RightSidebar activeProfile={activeProfile} sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} sidebarWidth={sidebarWidth} isResizingSidebar={isResizingSidebar} startResizingSidebar={startResizingSidebar} />}
+        >
+          {/* ── Chart + Order Execution column ───────────── */}
+          <div className={isFullscreen ? "fixed inset-0 z-150 flex flex-col bg-background p-2" : "relative flex h-full min-h-0 min-w-0 flex-col rounded-none bg-surface"}>
+            {!isFullscreen && !sidebarOpen && (
+              <button
+                onMouseDown={handleRightButtonMouseDown}
+                style={{ top: `${rightButtonTop}px` }}
+                className={`absolute right-0 z-100 flex h-7 w-6 items-center justify-center rounded-l border border-r-0 border-emerald-500/20 bg-surface/90 text-emerald-500 dark:text-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-300 hover:bg-emerald-500/10 shadow-lg backdrop-blur-sm transition-all duration-200 ${isDraggingRight ? 'cursor-grabbing' : 'cursor-grab'}`}
+                title="Expand right panel (Drag to move)"
+              >
+                <span dangerouslySetInnerHTML={{ __html: SVGS.sidebarOpen }} className="flex items-center justify-center scale-x-[-1] pointer-events-none" />
+              </button>
+            )}
 
-              <div className="flex flex-1 min-h-0 w-full overflow-hidden">
-                <div className="min-h-0 flex-1 bg-surface relative flex flex-col p-0 overflow-hidden">
-                  {renderProfileContent()}
-                </div>
+            <div className="flex flex-1 min-h-0 w-full overflow-hidden">
+              <div className="min-h-0 flex-1 bg-surface relative flex flex-col p-0 overflow-hidden">
+                {renderProfileContent()}
               </div>
-
-              {!isFullscreen && (
-                <div className="shrink-0 border-t border-border-default bg-surface rounded-none">
-                  <OrderExecutionPanel />
-                </div>
-              )}
             </div>
 
-            {/* ── Right sidebar ────────────────────────────── */}
-            <RightSidebar activeProfile={activeProfile} sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} sidebarWidth={sidebarWidth} isResizingSidebar={isResizingSidebar} startResizingSidebar={startResizingSidebar} />
+            {!isFullscreen && (
+              <div className="shrink-0 border-t border-border-default bg-surface rounded-none">
+                <OrderExecutionPanel />
+              </div>
+            )}
           </div>
         </TerminalLayout>
       </div>

@@ -18,13 +18,25 @@
  * never enters the JS bundle. That indirection is the whole reason this is a
  * relative URL and not the gateway host.
  *
+ * By default this is a RELATIVE URL (`/kite/...`), so it hits this app's own
+ * same-origin proxy. Set `NEXT_PUBLIC_KITE_PROXY_ORIGIN` to send the request to
+ * a DIFFERENT deployment's proxy instead — e.g. in local dev, point it at the
+ * live site (`https://app.stratai.live`) so `npm run dev` reuses that frontend's
+ * server-side gateway credentials rather than needing the backend locally.
+ *
+ * ⚠ The target origin must return CORS headers that allow this origin, since a
+ * cross-origin browser fetch is otherwise blocked. Same-origin (empty var) needs
+ * no CORS. The `/kite` prefix and its `next.config.ts` rewrite are unchanged.
+ *
  * @param path the part after `/kite` — e.g. `/quote?i=NSE:TCS`.
  * @param init standard `fetch` options. Exists so callers can pass an
  *   `AbortSignal`: several of these are poll loops, and without a way to bound a
  *   request a hung fetch stalls the loop forever (the order book's "Awaiting
  *   Market Depth Data…" hang). Forwarded verbatim.
  */
+const KITE_PROXY_ORIGIN = (process.env.NEXT_PUBLIC_KITE_PROXY_ORIGIN ?? '').replace(/\/+$/, '');
+
 export async function kiteFetch(path: string, init?: RequestInit): Promise<Response> {
   const rel = path.startsWith('/') ? path : `/${path}`;
-  return fetch(`/kite${rel}`, init);
+  return fetch(`${KITE_PROXY_ORIGIN}/kite${rel}`, init);
 }

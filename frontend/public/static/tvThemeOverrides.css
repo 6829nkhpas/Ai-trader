@@ -14,17 +14,19 @@
 
 /* ── Dark theme ──────────────────────────────────────────────────────── */
 .theme-dark:root {
-  /* Platform chrome — matches --bg-surface (#000000) */
-  --tv-color-platform-background: #000000;
+  /* Platform chrome (top toolbar, left drawing toolbar, panels) — lifted to the
+     panel elevation --bg-surface (#262626) so the toolbars read as distinct from
+     the chart canvas instead of merging into it. */
+  --tv-color-platform-background: #262626;
 
-  /* Chart pane — matches --chart-bg / --bg-card (#0a0a0a) */
-  --tv-color-pane-background: #0a0a0a;
+  /* Chart pane — kept at the base canvas (#1e1e1e), one step below the chrome. */
+  --tv-color-pane-background: #1e1e1e;
 
-  /* Toolbar buttons — default state */
-  --tv-color-toolbar-button-background-hover: #161616;
-  --tv-color-toolbar-button-background-expanded: #161616;
-  --tv-color-toolbar-button-background-active: #0a0a0a;
-  --tv-color-toolbar-button-background-active-hover: #161616;
+  /* Toolbar buttons — default state (hover=--bg-elevated, active=--bg-card) */
+  --tv-color-toolbar-button-background-hover: #2d2d2d;
+  --tv-color-toolbar-button-background-expanded: #2d2d2d;
+  --tv-color-toolbar-button-background-active: #252525;
+  --tv-color-toolbar-button-background-active-hover: #2d2d2d;
 
   /* Toolbar text — matches --text-secondary / --text-muted */
   --tv-color-toolbar-button-text: #9ca3af;
@@ -39,18 +41,18 @@
   --tv-color-toolbar-toggle-button-background-active: rgba(16, 185, 129, 0.15);
   --tv-color-toolbar-toggle-button-background-active-hover: rgba(16, 185, 129, 0.25);
 
-  /* Toolbar divider — matches --border-default (#1a1a1a) */
-  --tv-color-toolbar-divider-background: #1a1a1a;
+  /* Toolbar divider — matches --border-default (#333333) */
+  --tv-color-toolbar-divider-background: #333333;
 
   /* Save layout loader */
   --tv-color-toolbar-save-layout-loader: #9ca3af;
 
-  /* Popup / dialog backgrounds */
-  --tv-color-popup-background: #111111;
+  /* Popup / dialog backgrounds — matches --bg-card / --bg-elevated */
+  --tv-color-popup-background: #252525;
   --tv-color-popup-element-text: #f5f5f5;
   --tv-color-popup-element-text-hover: #ffffff;
-  --tv-color-popup-element-background-hover: #1a1a1a;
-  --tv-color-popup-element-divider-background: #1a1a1a;
+  --tv-color-popup-element-background-hover: #2d2d2d;
+  --tv-color-popup-element-divider-background: #333333;
   --tv-color-popup-element-secondary-text: #9ca3af;
   --tv-color-popup-element-hint-text: #6b7280;
 
@@ -62,22 +64,24 @@
   --tv-color-popup-element-toolbox-text: #9ca3af;
   --tv-color-popup-element-toolbox-text-hover: #f5f5f5;
   --tv-color-popup-element-toolbox-text-active-hover: #10b981;
-  --tv-color-popup-element-toolbox-background-hover: #1a1a1a;
+  --tv-color-popup-element-toolbox-background-hover: #2d2d2d;
   --tv-color-popup-element-toolbox-background-active-hover: rgba(16, 185, 129, 0.15);
 }
 
 /* ── Light theme (fallback — matches .light class from globals.css) ─── */
 :root:not(.theme-dark) {
-  --tv-color-platform-background: #f9fafb;
-  --tv-color-pane-background: #f3f4f6;
+  /* Warm palette — matches .light in globals.css. Chrome lifted to --bg-surface
+     (#fdfcfa) above the pane canvas (--bg-base #f0eee9) for the same separation. */
+  --tv-color-platform-background: #fdfcfa;
+  --tv-color-pane-background: #f0eee9;
 
-  --tv-color-toolbar-button-background-hover: #e5e7eb;
-  --tv-color-toolbar-button-background-expanded: #e5e7eb;
-  --tv-color-toolbar-button-background-active: #f3f4f6;
-  --tv-color-toolbar-button-background-active-hover: #e5e7eb;
+  --tv-color-toolbar-button-background-hover: #e8e5de;
+  --tv-color-toolbar-button-background-expanded: #e8e5de;
+  --tv-color-toolbar-button-background-active: #f7f5f1;
+  --tv-color-toolbar-button-background-active-hover: #e8e5de;
 
-  --tv-color-toolbar-button-text: #6b7280;
-  --tv-color-toolbar-button-text-hover: #111827;
+  --tv-color-toolbar-button-text: #5b6675;
+  --tv-color-toolbar-button-text-hover: #0f172a;
   --tv-color-toolbar-button-text-active: #059669;
   --tv-color-toolbar-button-text-active-hover: #059669;
 
@@ -86,24 +90,24 @@
   --tv-color-toolbar-toggle-button-background-active: rgba(5, 150, 105, 0.1);
   --tv-color-toolbar-toggle-button-background-active-hover: rgba(5, 150, 105, 0.2);
 
-  --tv-color-toolbar-divider-background: #e5e7eb;
-  --tv-color-toolbar-save-layout-loader: #6b7280;
+  --tv-color-toolbar-divider-background: #ddd8ce;
+  --tv-color-toolbar-save-layout-loader: #5b6675;
 
-  --tv-color-popup-background: #ffffff;
-  --tv-color-popup-element-text: #111827;
+  --tv-color-popup-background: #fdfcfa;
+  --tv-color-popup-element-text: #0f172a;
   --tv-color-popup-element-text-hover: #000000;
-  --tv-color-popup-element-background-hover: #f3f4f6;
-  --tv-color-popup-element-divider-background: #e5e7eb;
-  --tv-color-popup-element-secondary-text: #6b7280;
-  --tv-color-popup-element-hint-text: #9ca3af;
+  --tv-color-popup-element-background-hover: #f0eee9;
+  --tv-color-popup-element-divider-background: #ddd8ce;
+  --tv-color-popup-element-secondary-text: #5b6675;
+  --tv-color-popup-element-hint-text: #94a3b8;
 
   --tv-color-popup-element-text-active: #059669;
   --tv-color-popup-element-background-active: rgba(5, 150, 105, 0.08);
 
-  --tv-color-popup-element-toolbox-text: #6b7280;
-  --tv-color-popup-element-toolbox-text-hover: #111827;
+  --tv-color-popup-element-toolbox-text: #5b6675;
+  --tv-color-popup-element-toolbox-text-hover: #0f172a;
   --tv-color-popup-element-toolbox-text-active-hover: #059669;
-  --tv-color-popup-element-toolbox-background-hover: #f3f4f6;
+  --tv-color-popup-element-toolbox-background-hover: #f0eee9;
   --tv-color-popup-element-toolbox-background-active-hover: rgba(5, 150, 105, 0.1);
 }
 
@@ -114,16 +118,16 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #0a0a0a;
+  background: #1e1e1e;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #333333;
+  background: #3a3a3a;
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #444444;
+  background: #4a4a4a;
 }
 
 /* ── Ensure chart type & other dropdowns are scrollable ──────────── */
@@ -162,7 +166,7 @@
 }
 
 .tv-custom-toolbar-btn:hover {
-  background-color: #1a1a1a !important;
+  background-color: #2d2d2d !important;
   color: #ffffff !important;
 }
 
@@ -176,8 +180,8 @@
   position: absolute !important;
   z-index: 100000 !important;
   width: 170px !important;
-  background-color: #111111 !important;
-  border: 1px solid #222222 !important;
+  background-color: #252525 !important;
+  border: 1px solid #333333 !important;
   padding: 4px !important;
   display: flex !important;
   flex-direction: column !important;
@@ -202,7 +206,7 @@
 }
 
 .tv-custom-dropdown-item:hover {
-  background-color: #222222 !important;
+  background-color: #333333 !important;
   color: #ffffff !important;
 }
 
