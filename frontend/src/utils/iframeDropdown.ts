@@ -1,4 +1,22 @@
-import { useChartUIStore } from '../store/useChartUIStore';
+// The custom toolbar buttons and dropdowns that live INSIDE the TradingView
+// iframe.
+//
+// They cannot be styled the way the rest of the app is. TradingView renders in its
+// own document, so Tailwind's classes and the `:root` / `.light` custom properties
+// on the parent `<html>` do not reach them — the CSS has to be built as a string
+// and injected into the iframe's own `<head>`.
+//
+// This used to mean a SECOND palette: two branches of hand-written hexes
+// (`#252525` / `#fdfcfa`, `#94a3b8` / `#5b6675`, …) copied out of `globals.css`
+// and picked by a `theme` argument. That is exactly the drift it looks like — a
+// dark dropdown opening over a light chart — because the copy and the real tokens
+// are two sources of truth for one palette, and because the argument could be
+// passed a value that disagreed with what was actually on screen.
+//
+// So nothing is hardcoded now. The palette is read from the LIVE custom properties
+// on the parent document at inject time, which makes the iframe UI the app's own
+// colours by construction: it cannot be a theme behind, and there is no second
+// palette to keep in sync when a token changes.
 
 export interface DropdownItem {
   value: any;
@@ -6,7 +24,46 @@ export interface DropdownItem {
   description?: string;
 }
 
-export function injectIframeDropdownStyles(doc: Document, theme: 'dark' | 'light' = 'dark') {
+/**
+ * One design token off the parent document, or `fallback` when it cannot be read.
+ *
+ * The fallbacks are the dark defaults from `globals.css`, used only when there is
+ * no document at all (SSR) or the variable is genuinely undefined. They are NOT a
+ * light/dark palette — the point is that only one palette exists.
+ */
+function token(name: string, fallback: string): string {
+  if (typeof document === 'undefined') return fallback;
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+/** The resolved palette for whatever theme the app is currently showing. */
+function palette() {
+  return {
+    surface: token('--bg-surface', '#262626'),
+    elevated: token('--bg-elevated', '#323232'),
+    border: token('--border-default', '#3d3d3d'),
+    textPrimary: token('--text-primary', '#f5f5f5'),
+    textMuted: token('--text-muted', '#9ca3af'),
+    accent: token('--color-primary', '#10b981'),
+    // Read off the DOM rather than the store, because the shadow has to match
+    // what is RENDERED. If the two ever disagree, the document is the one the user
+    // is looking at.
+    isLight:
+      typeof document !== 'undefined' &&
+      document.documentElement.classList.contains('light'),
+  };
+}
+
+/**
+ * Write (or rewrite) the injected stylesheet in `doc`.
+ *
+ * Safe to call repeatedly — it reuses its own `<style>` element and replaces the
+ * contents, so a theme change is applied by calling it again. Takes no theme
+ * argument on purpose: it reads the current one, so a caller cannot hand it a
+ * stale value.
+ */
+export function injectIframeDropdownStyles(doc: Document) {
   let styleEl = doc.getElementById('tv-custom-dropdown-styles') as HTMLStyleElement | null;
   if (!styleEl) {
     styleEl = doc.createElement('style');
@@ -14,7 +71,7 @@ export function injectIframeDropdownStyles(doc: Document, theme: 'dark' | 'light
     doc.head.appendChild(styleEl);
   }
 
-  const isLight = theme === 'light';
+  const c = palette();
 
   styleEl.textContent = `
     .tv-custom-toolbar-btn {
@@ -26,27 +83,31 @@ export function injectIframeDropdownStyles(doc: Document, theme: 'dark' | 'light
       padding: 0;
       border: none;
       background: transparent;
-      color: ${isLight ? '#5b6675' : '#94a3b8'};
+      color: ${c.textMuted};
       border-radius: 6px;
       cursor: pointer;
       transition: background-color 0.15s ease, color 0.15s ease;
     }
     .tv-custom-toolbar-btn:hover {
-      background-color: ${isLight ? '#e8e5de' : '#2d2d2d'};
-      color: ${isLight ? '#0f172a' : '#f5f5f5'};
+      background-color: ${c.elevated};
+      color: ${c.textPrimary};
     }
     .tv-custom-toolbar-btn.active {
-      background-color: ${isLight ? '#ddd8ce' : '#3a3a3a'};
-      color: #10b981;
+      background-color: ${c.elevated};
+      color: ${c.accent};
     }
     .tv-custom-dropdown {
       position: absolute;
       z-index: 1000;
       min-width: 220px;
-      background-color: ${isLight ? '#fdfcfa' : '#252525'};
-      border: 1px solid ${isLight ? '#ddd8ce' : '#333333'};
+      background-color: ${c.surface};
+      border: 1px solid ${c.border};
       border-radius: 8px;
-      box-shadow: ${isLight ? '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05)' : '0 10px 25px -5px rgba(0, 0, 0, 0.6)'};
+      box-shadow: ${
+        c.isLight
+          ? '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05)'
+          : '0 10px 25px -5px rgba(0, 0, 0, 0.6)'
+      };
       padding: 4px;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       box-sizing: border-box;
@@ -59,7 +120,7 @@ export function injectIframeDropdownStyles(doc: Document, theme: 'dark' | 'light
       padding: 8px 10px;
       border: none;
       background: transparent;
-      color: ${isLight ? '#0f172a' : '#f5f5f5'};
+      color: ${c.textPrimary};
       text-align: left;
       border-radius: 6px;
       cursor: pointer;
@@ -67,10 +128,10 @@ export function injectIframeDropdownStyles(doc: Document, theme: 'dark' | 'light
       transition: background-color 0.15s ease;
     }
     .tv-custom-dropdown-item:hover {
-      background-color: ${isLight ? '#f0eee9' : '#2d2d2d'};
+      background-color: ${c.elevated};
     }
     .tv-custom-dropdown-item.active {
-      background-color: ${isLight ? '#e8e5de' : '#333333'};
+      background-color: ${c.elevated};
       font-weight: 700;
     }
     .tv-custom-dropdown-item-container {
@@ -80,11 +141,11 @@ export function injectIframeDropdownStyles(doc: Document, theme: 'dark' | 'light
     }
     .tv-custom-dropdown-item-desc {
       font-size: 10.5px;
-      color: ${isLight ? '#5b6675' : '#9ca3af'};
+      color: ${c.textMuted};
       font-weight: 400;
     }
     .tv-custom-dropdown-item-checkmark {
-      color: #10b981;
+      color: ${c.accent};
       font-weight: bold;
       font-size: 14px;
       margin-left: 8px;
@@ -99,8 +160,9 @@ export function showIframeDropdown(
   onSelect: (v: any) => void,
   doc: Document
 ) {
-  const currentTheme = useChartUIStore.getState().theme;
-  injectIframeDropdownStyles(doc, currentTheme);
+  // Rewritten on every open, so the panel matches the theme even if it changed
+  // while the chart was mounted.
+  injectIframeDropdownStyles(doc);
 
   // Close any existing dropdown first
   const existing = doc.querySelector('.tv-custom-dropdown');
@@ -126,13 +188,29 @@ export function showIframeDropdown(
       el.classList.add('active');
     }
 
-    el.innerHTML = `
-      <div class="tv-custom-dropdown-item-container">
-        <span>${item.label}</span>
-        ${item.description ? `<span class="tv-custom-dropdown-item-desc">${item.description}</span>` : ''}
-      </div>
-      ${item.value === activeVal ? '<span class="tv-custom-dropdown-item-checkmark">✓</span>' : ''}
-    `;
+    // Built as nodes with `textContent` rather than assigned as an innerHTML
+    // string. Every label here is a static literal today, so this is not a live
+    // hole — but it is an HTML sink taking caller-supplied text, and nodes cost
+    // the same to write.
+    const container = doc.createElement('div');
+    container.className = 'tv-custom-dropdown-item-container';
+    const label = doc.createElement('span');
+    label.textContent = item.label;
+    container.appendChild(label);
+    if (item.description) {
+      const desc = doc.createElement('span');
+      desc.className = 'tv-custom-dropdown-item-desc';
+      desc.textContent = item.description;
+      container.appendChild(desc);
+    }
+    el.appendChild(container);
+
+    if (item.value === activeVal) {
+      const check = doc.createElement('span');
+      check.className = 'tv-custom-dropdown-item-checkmark';
+      check.textContent = '✓';
+      el.appendChild(check);
+    }
 
     el.addEventListener('click', () => {
       onSelect(item.value);

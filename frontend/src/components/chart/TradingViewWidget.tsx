@@ -60,8 +60,9 @@ export interface TradingViewWidgetProps {
 }
 
 function syncButtonStates(doc: Document) {
-  const theme = useChartUIStore.getState().theme;
-  injectIframeDropdownStyles(doc, theme);
+  // No theme argument: the injector reads the live tokens off the parent document,
+  // so it cannot be handed a value that disagrees with what is on screen.
+  injectIframeDropdownStyles(doc);
 
   const chartMode = useTradeStore.getState().chartMode;
   const ghostLineMode = useChartUIStore.getState().ghostLineMode;
@@ -424,7 +425,10 @@ export default function TradingViewWidget({
   useEffect(() => {
     const doc = containerRef.current?.querySelector('iframe')?.contentDocument;
     if (doc) {
-      injectIframeDropdownStyles(doc, theme);
+      // Re-read the tokens now that `.light` has been added or removed. The
+      // `theme` dep is what schedules this; the colours themselves come from the
+      // document, not from `theme`.
+      injectIframeDropdownStyles(doc);
     }
     const widget = widgetRef.current;
     if (!widget) return;
