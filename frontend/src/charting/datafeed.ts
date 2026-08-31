@@ -173,22 +173,31 @@ function earliestKnownBar(symbol: string, timeframe: string): number | undefined
 // ── Instrument Token Cache ────────────────────────────────────────────────
 const tokenCache = new Map<string, number>();
 
+/**
+ * The Kite instrument token for `symbol`, or null when it cannot be identified.
+ *
+ * Matches on the EXACT tradingsymbol only. Both lookups used to fall back to the
+ * first row of whatever came back (`quotes[0]`, `results[0]`), and that is how
+ * SENSEX got a chart of something else entirely: SENSEX is a BSE index, so a
+ * search against NSE returns the ETFs that track it — SENSEXADD, SENSEXETF,
+ * SENSEXBEES — and the first of those was charted under the SENSEX name at around
+ * ₹80 while the index itself sits near 77,000. A near-miss is not a match, and a
+ * chart labelled with one instrument showing another is worse than an empty one.
+ */
 async function resolveInstrumentToken(symbol: string, exchange: string = 'NSE'): Promise<number | null> {
   const cacheKey = `${exchange}:${symbol}`.toUpperCase();
   const cached = tokenCache.get(cacheKey);
   if (cached) return cached;
+  const wanted = symbol.trim().toUpperCase();
   try {
     const res = await kiteFetch(`/quote?i=${exchange}:${encodeURIComponent(symbol)}`);
     if (res.ok) {
       const data = await res.json();
       const quotes = data.quotes as { symbol: string; instrument_token: number }[] | undefined;
-      if (quotes && quotes.length > 0) {
-        const match = quotes.find((q) => q.symbol.toUpperCase() === symbol.toUpperCase());
-        const token = match?.instrument_token ?? quotes[0].instrument_token ?? null;
-        if (token) {
-          tokenCache.set(cacheKey, token);
-          return token;
-        }
+      const token = quotes?.find((q) => q.symbol?.toUpperCase() === wanted)?.instrument_token;
+      if (token) {
+        tokenCache.set(cacheKey, token);
+        return token;
       }
     }
 
@@ -196,13 +205,10 @@ async function resolveInstrumentToken(symbol: string, exchange: string = 'NSE'):
     if (resInst.ok) {
       const data = await resInst.json();
       const results = data.results as { tradingsymbol: string; instrument_token: number }[] | undefined;
-      if (results && results.length > 0) {
-        const match = results.find((r) => r.tradingsymbol.toUpperCase() === symbol.toUpperCase());
-        const token = match?.instrument_token ?? results[0].instrument_token ?? null;
-        if (token) {
-          tokenCache.set(cacheKey, token);
-          return token;
-        }
+      const token = results?.find((r) => r.tradingsymbol?.toUpperCase() === wanted)?.instrument_token;
+      if (token) {
+        tokenCache.set(cacheKey, token);
+        return token;
       }
     }
     return null;

@@ -252,13 +252,26 @@ export default function AgentTerminal() {
           </div>
         )}
 
-        {/* Q&A turns render INLINE here */}
-        <QaMessages />
-
-        {/* Actionable trade declaration */}
+        {/* Actionable trade declaration.
+            
+            Rendered BEFORE <QaMessages />, not after.
+            
+            The plan belongs at the point in the conversation where the analysis
+            finished — the run's closing statement, with any follow-up Q&A
+            appending below it like ordinary chat. It used to render after the
+            Q&A list, so every new question and answer was inserted ABOVE it and
+            the plan slid to the bottom of the log each time: it read as a
+            pinned footer stuck under whatever was said last, detached from the
+            run that produced it, and the stand-aside branch above already
+            rendered inline this way while this branch did not. Ordering is the
+            whole fix — both blocks are plain flow children, neither is
+            position: sticky. */}
         {sessionStatus === 'complete' && isActionableTrade(finalTrade) && (
           <ActionableTradePlan finalTrade={finalTrade} />
         )}
+
+        {/* Follow-up Q&A turns render INLINE, after the plan they ask about. */}
+        <QaMessages />
 
         <div ref={terminalEndRef} />
       </div>

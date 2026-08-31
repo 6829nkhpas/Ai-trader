@@ -1529,8 +1529,15 @@ def get_relative_strength(symbol: str, timeframe: str, benchmark: str = "",
                 symbol, timeframe, resolved_benchmark, f"symbol {sym_reason}"
             )
 
+        # Fetch the benchmark's candles under the tradingsymbol they are STORED
+        # under (the NSE spot name), not the benchmark's recognisable identity.
+        # `resolved_benchmark` stays "BANKNIFTY" for the reported result and the
+        # options path; only the candle lookup is translated to "NIFTY BANK",
+        # which is where the 227k rows actually live. Without this, every
+        # bank-benchmarked stock fetched a name with zero candles and relative
+        # strength was unavailable on every run.
         bench_candles, bench_reason = _fetch_candles_for_rs(
-            resolved_benchmark, timeframe, limit
+            rs.benchmark_candle_name(resolved_benchmark), timeframe, limit
         )
         if bench_candles is None:
             # Missing/unavailable benchmark candles -> Unavailable_Marker that

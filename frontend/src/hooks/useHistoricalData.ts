@@ -121,9 +121,11 @@ async function resolveInstrumentToken(symbol: string): Promise<number | null> {
     if (!res.ok) return null;
     const data = await res.json();
     const quotes = data.quotes as { symbol: string; instrument_token: number }[] | undefined;
-    if (!quotes || quotes.length === 0) return null;
-    const match = quotes.find((q) => q.symbol.toUpperCase() === symbol.toUpperCase());
-    return match?.instrument_token ?? quotes[0].instrument_token ?? null;
+    // Exact tradingsymbol only. This used to fall through to `quotes[0]`, which
+    // is how a request for the BSE index SENSEX came back holding an NSE ETF that
+    // tracks it and charted that instead — see `datafeed.ts::resolveInstrumentToken`.
+    const wanted = symbol.trim().toUpperCase();
+    return quotes?.find((q) => q.symbol?.toUpperCase() === wanted)?.instrument_token ?? null;
   } catch {
     return null;
   }

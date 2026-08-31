@@ -398,6 +398,19 @@ services:
       RUST_TOOL_SERVER_URL: "http://tool-server:8084"
       QUESTDB_HTTP_URL: "http://questdb:9000"
       METRICS_PORT: "9109"
+      # Event_Source for get_event_risk (earnings/results proximity).
+      #
+      # Points at THIS service's own /events/calendar adapter, over loopback
+      # inside the container — deliberately not a service name. Loopback needs no
+      # DNS, no compose network and no depends_on, so the value is byte-identical
+      # in local dev and here, which is the usual place a second address drifts.
+      # Safe against self-deadlock: the agent's tools are sync and LangChain runs
+      # them via run_in_executor, and the route is a sync def on FastAPI's
+      # threadpool, so neither side occupies the event loop that serves it.
+      #
+      # Unset this to disable event risk — get_event_risk then degrades to its
+      # honest "no event source configured" marker, exactly as before.
+      EVENT_CALENDAR_API_URL: "http://127.0.0.1:8086/events/calendar"
     networks: [stratai]
     depends_on:
       questdb:

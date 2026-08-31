@@ -365,8 +365,9 @@ impl KiteApiState {
     }
 
     /// Resolve a tradingsymbol to its instrument_token.
-    /// Detects F&O symbols (digits + CE/PE/FUT suffix) and queries NFO directly.
-    /// Uses a fast in-process cache before falling back to get_instruments.
+    /// Detects F&O symbols (digits + CE/PE/FUT suffix) and searches the derivative
+    /// masters; everything else searches the cash masters. Uses a fast in-process
+    /// cache before falling back to get_instruments.
     pub async fn resolve_token(&self, symbol: &str) -> Option<u64> {
         let sym = symbol.trim().to_uppercase();
 
@@ -378,17 +379,20 @@ impl KiteApiState {
             }
         }
 
-        // Detect exchange: F&O symbols contain digits + end with CE/PE/FUT
-        let is_nfo = sym.bytes().any(|b| b.is_ascii_digit())
-            && (sym.ends_with("CE") || sym.ends_with("PE") || sym.ends_with("FUT"));
-        let exchange = if is_nfo { "NFO" } else { "NSE" };
-
-        // Direct lookup — no wasteful fallback to the wrong exchange
-        let instruments = self.get_instruments(exchange).await.ok()?;
-        let inst = instruments.iter().find(|i| i.tradingsymbol.to_uppercase() == sym)?;
-        let token = inst.instrument_token;
-        token_cache().write().await.insert(sym, token);
-        Some(token)
+        for exchange in candidate_exchanges(&sym) {
+            let Ok(instruments) = self.get_instruments(exchange).await else {
+                continue;
+            };
+            if let Some(inst) = instruments
+                .iter()
+                .find(|i| i.tradingsymbol.to_uppercase() == sym)
+            {
+                let token = inst.instrument_token;
+                token_cache().write().await.insert(sym, token);
+                return Some(token);
+            }
+        }
+        None
     }
 
     /// Fetch instruments from Kite and cache them. Returns cached data if fresh.
@@ -898,6 +902,49 @@ fn search_instrument_list(instruments: &[Instrument], query: &str, exchange: &st
     }
 }
 
+/// The exchanges a tradingsymbol could belong to, in the order worth searching.
+///
+/// India has two exchanges and both matter here. This used to return exactly one
+/// — `NFO` for a derivative shape, `NSE` for everything else — and that is why
+/// SENSEX had no chart in any mode: SENSEX is a **BSE** index (segment `INDICES`,
+/// token 265) and NSE's master carries only the ETFs that track it, so the lookup
+/// missed and `/api/kite/historical?symbol=SENSEX` answered 404 while
+/// `instrument_token=265` returned candles at 76,957 quite happily. BANKEX and 71
+/// other BSE indices had the same problem, and SENSEX/BANKEX options live on `BFO`
+/// rather than `NFO` for the same reason.
+///
+/// NSE / NFO stay first so a dually-listed scrip keeps resolving to its NSE
+/// listing exactly as before — the second exchange is only ever reached on a miss,
+/// and a miss previously returned nothing at all.
+fn candidate_exchanges(symbol: &str) -> [&'static str; 2] {
+    let is_derivative = symbol.bytes().any(|b| b.is_ascii_digit())
+        && (symbol.ends_with("CE") || symbol.ends_with("PE") || symbol.ends_with("FUT"));
+    if is_derivative {
+        ["NFO", "BFO"]
+    } else {
+        ["NSE", "BSE"]
+    }
+}
+
+/// The same symbol keyed to the other exchange in its pair, or `None` when the
+/// key carries no exchange prefix / an unpaired one.
+///
+/// `quote_handler` uses this to retry a key Kite answered nothing for. The live
+/// price for SENSEX was blank everywhere — watchlist, live strip, order book,
+/// order panel — because every caller asks for `NSE:SENSEX`, which does not
+/// exist. Retrying `BSE:SENSEX` asks the exchange rather than inventing a number.
+fn alternate_exchange_key(key: &str) -> Option<String> {
+    let (exchange, symbol) = key.split_once(':')?;
+    let other = match exchange.trim().to_uppercase().as_str() {
+        "NSE" => "BSE",
+        "BSE" => "NSE",
+        "NFO" => "BFO",
+        "BFO" => "NFO",
+        _ => return None,
+    };
+    Some(format!("{other}:{symbol}"))
+}
+
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 /// GET /api/kite/instruments?q=RELI&exchange=NSE
@@ -929,35 +976,15 @@ async fn instruments_search(
     Ok(Json(serde_json::json!({ "results": results })))
 }
 
-/// GET /api/kite/quote?i=NSE:RELIANCE&i=NSE:TCS
+/// One Kite `/quote` round trip, returning its `data` object keyed by `i=` value.
 ///
-/// Note: axum doesn't natively support repeated query params with the same key,
-/// so we accept a comma-separated list: ?i=NSE:RELIANCE,NSE:TCS
-async fn quote_handler(
-    axum::extract::RawQuery(raw_query): axum::extract::RawQuery,
-    state: axum::extract::State<Arc<KiteApiState>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    // Parse repeated `i=` params from raw query string
-    let raw = raw_query.unwrap_or_default();
-    let instruments: Vec<String> = raw
-        .split('&')
-        .filter_map(|pair| {
-            let mut parts = pair.splitn(2, '=');
-            let key = parts.next()?;
-            let val = parts.next()?;
-            if key == "i" {
-                Some(urlencoding::decode(val).unwrap_or_default().to_string())
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    if instruments.is_empty() {
-        return Ok(Json(serde_json::json!({ "quotes": [] })));
-    }
-
-    // Build Kite query string
+/// Extracted from `quote_handler` so the handler can make a second, narrower call
+/// for the keys the first one did not recognise. Errors keep the handler's original
+/// status mapping and metric, so a caller sees exactly what it saw before.
+async fn fetch_quote_map(
+    state: &KiteApiState,
+    instruments: &[String],
+) -> Result<serde_json::Map<String, serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let query_string: String = instruments
         .iter()
         .map(|i| format!("i={}", urlencoding::encode(i)))
@@ -1002,8 +1029,69 @@ async fn quote_handler(
         )
     })?;
 
-    let data = json.get("data").cloned().unwrap_or(serde_json::json!({}));
-    let data_map = data.as_object().cloned().unwrap_or_default();
+    Ok(json
+        .get("data")
+        .and_then(|d| d.as_object())
+        .cloned()
+        .unwrap_or_default())
+}
+
+/// GET /api/kite/quote?i=NSE:RELIANCE&i=NSE:TCS
+///
+/// Note: axum doesn't natively support repeated query params with the same key,
+/// so we accept a comma-separated list: ?i=NSE:RELIANCE,NSE:TCS
+async fn quote_handler(
+    axum::extract::RawQuery(raw_query): axum::extract::RawQuery,
+    state: axum::extract::State<Arc<KiteApiState>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    // Parse repeated `i=` params from raw query string
+    let raw = raw_query.unwrap_or_default();
+    let instruments: Vec<String> = raw
+        .split('&')
+        .filter_map(|pair| {
+            let mut parts = pair.splitn(2, '=');
+            let key = parts.next()?;
+            let val = parts.next()?;
+            if key == "i" {
+                Some(urlencoding::decode(val).unwrap_or_default().to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if instruments.is_empty() {
+        return Ok(Json(serde_json::json!({ "quotes": [] })));
+    }
+
+    let mut data_map = fetch_quote_map(&state, &instruments).await?;
+
+    // Retry, on the paired exchange, every key Kite had nothing for.
+    //
+    // Kite echoes the requested `i=` value back as the response key, so a key
+    // absent from the map is one it did not recognise. Every caller in the app
+    // builds its key as `NSE:{symbol}` (or `NFO:` for a derivative shape), which
+    // is right for all but the BSE-only instruments: `NSE:SENSEX` does not exist,
+    // so the watchlist, live strip, order book and order panel all showed no price
+    // for it at all. This asks the other exchange rather than inventing a value.
+    //
+    // Only reached on a miss, so the common all-NSE request still costs one call.
+    // A failure here is swallowed: the keys that DID resolve are already in hand
+    // and must not be lost to a retry for a symbol that may simply not exist.
+    let retry_keys: Vec<String> = instruments
+        .iter()
+        .filter(|key| !data_map.contains_key(key.as_str()))
+        .filter_map(|key| alternate_exchange_key(key))
+        .collect();
+    if !retry_keys.is_empty() {
+        match fetch_quote_map(&state, &retry_keys).await {
+            Ok(extra) => data_map.extend(extra),
+            Err(_) => log::warn!(
+                "[Kite quote] alternate-exchange retry failed for {:?}",
+                retry_keys
+            ),
+        }
+    }
 
     let quotes: Vec<QuoteData> = data_map
         .iter()
@@ -1098,16 +1186,21 @@ async fn historical_handler(
                 // exchange when the real answer is usually that the contract has
                 // expired — Kite drops expired contracts from the NFO master, so
                 // no amount of retrying will ever produce a candle for it.
+                let searched = candidate_exchanges(&symbol);
                 let is_derivative = symbol.bytes().any(|b| b.is_ascii_digit())
                     && (symbol.ends_with("CE") || symbol.ends_with("PE") || symbol.ends_with("FUT"));
                 let error = if is_derivative {
                     format!(
-                        "Contract '{symbol}' is not in the NFO instrument master — it has most \
-                         likely expired, or was never listed. Expired contracts are removed by \
-                         the exchange and have no further history."
+                        "Contract '{symbol}' is not in the {} or {} instrument master — it has \
+                         most likely expired, or was never listed. Expired contracts are removed \
+                         by the exchange and have no further history.",
+                        searched[0], searched[1],
                     )
                 } else {
-                    format!("Symbol '{symbol}' not found in NSE instruments")
+                    format!(
+                        "Symbol '{symbol}' not found in the {} or {} instruments",
+                        searched[0], searched[1],
+                    )
                 };
                 return Err((
                     StatusCode::NOT_FOUND,
@@ -1528,6 +1621,35 @@ mod tests {
             .collect();
 
         assert_eq!(&syms[..3], &["NIFTY 50", "NIFTY BANK", "NIFTY FIN SERVICE"]);
+    }
+
+    #[test]
+    fn resolution_searches_both_exchanges_of_a_pair() {
+        // SENSEX is a BSE index, so an NSE-only lookup missed it and
+        // /api/kite/historical?symbol=SENSEX answered 404 while token 265 charted
+        // fine. SENSEX/BANKEX options live on BFO for the same reason.
+        assert_eq!(candidate_exchanges("SENSEX"), ["NSE", "BSE"]);
+        assert_eq!(candidate_exchanges("RELIANCE"), ["NSE", "BSE"]);
+        assert_eq!(candidate_exchanges("SENSEX2690980000CE"), ["NFO", "BFO"]);
+        assert_eq!(candidate_exchanges("NIFTY26SEP24000PE"), ["NFO", "BFO"]);
+        assert_eq!(candidate_exchanges("RELIANCE26SEPFUT"), ["NFO", "BFO"]);
+        // The primary exchange stays first: a dually-listed scrip must keep
+        // resolving to its NSE listing, so the second is only ever a fallback.
+        assert_eq!(candidate_exchanges("TCS")[0], "NSE");
+    }
+
+    #[test]
+    fn quote_retry_targets_the_paired_exchange() {
+        // Every caller asks for `NSE:{symbol}`, which is why the live price for
+        // SENSEX was blank in the watchlist, live strip, order book and order panel.
+        assert_eq!(alternate_exchange_key("NSE:SENSEX").unwrap(), "BSE:SENSEX");
+        assert_eq!(alternate_exchange_key("BSE:SENSEX").unwrap(), "NSE:SENSEX");
+        assert_eq!(alternate_exchange_key("NFO:X26SEP1CE").unwrap(), "BFO:X26SEP1CE");
+        // Spaces in index names survive — `NSE:NIFTY 50` is a real key.
+        assert_eq!(alternate_exchange_key("NSE:NIFTY 50").unwrap(), "BSE:NIFTY 50");
+        // Nothing to retry for an unprefixed or unknown-exchange key.
+        assert!(alternate_exchange_key("SENSEX").is_none());
+        assert!(alternate_exchange_key("MCX:GOLD").is_none());
     }
 
     #[test]

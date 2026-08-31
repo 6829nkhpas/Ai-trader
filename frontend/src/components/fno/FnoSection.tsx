@@ -14,6 +14,7 @@ import {
   type FnoViewState,
 } from './viewModel';
 import { deriveExpiryOptions, deriveUnderlyingOptions } from './selectors';
+import { getUnderlyingFromSymbol } from './symbolParser';
 import FnoUnavailableState from './FnoUnavailableState';
 import FnoServiceState from './FnoServiceState';
 import HistoricalDataBanner from './HistoricalDataBanner';
@@ -41,6 +42,7 @@ export default function FnoSection() {
   const fnoExpiry = useTradeStore((s) => s.fnoExpiry);
   const setFnoUnderlying = useTradeStore((s) => s.setFnoUnderlying);
   const setFnoExpiry = useTradeStore((s) => s.setFnoExpiry);
+  const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
 
   const [chains, setChains] = useState<FnoChains | null>(null);
   const [viewState, setViewState] = useState<FnoViewState | null>(null);
@@ -108,6 +110,23 @@ export default function FnoSection() {
     let cancelled = false;
 
     (async () => {
+      // Never call with a blank underlying.
+      //
+      // `get_fno_analytics` rejects an empty `underlying` in its own argument
+      // guard, BEFORE any request goes out. That rejection landed in the catch
+      // below and rendered the red "F&O Service Unreachable" card — telling the
+      // user to check DEEP_QUANT_URL when the service was perfectly healthy and
+      // the real state was simply "we have not picked an underlying yet". On a
+      // first-ever load `fnoUnderlying` is `''` (nothing persisted), which is why
+      // every cold load showed a service error and a refresh did not: by then
+      // preferences supplied a real underlying as the initial value.
+      //
+      // Staying in the loading state keeps the skeleton up until the seeding
+      // effect below resolves a real chain.
+      if (!fnoUnderlying) {
+        setLoading(true);
+        return;
+      }
       setLoading(true);
       try {
         const payload = await bridgeInvoke<FnoSnapshot>('get_fno_analytics', {
@@ -155,6 +174,37 @@ export default function FnoSection() {
     () => deriveUnderlyingOptions(chains, fnoUnderlying),
     [chains, fnoUnderlying],
   );
+
+  // Seed the underlying on a cold start, from a chain that actually exists.
+  //
+  // `fnoUnderlying` starts as `''` on a first-ever load, and nothing used to
+  // resolve it: the only seeder lived in `useFnoAutoContract`, which mounts inside
+  // `FnoChartPanel`, which `renderBody` only renders once a snapshot has already
+  // succeeded. No underlying meant no snapshot, and no snapshot meant the thing
+  // that would set the underlying never mounted — a deadlock that a refresh broke
+  // only because persisted preferences supplied a value up front.
+  //
+  // Seeded from `fno_list_chains`, which lists underlyings that have live,
+  // non-expired snapshot rows, so the first fetch is guaranteed a real chain
+  // rather than a guess. Preference order: the underlying of whatever is already
+  // charted (the user's evident interest), then NIFTY as the liquid default, then
+  // whatever is first. This lives in `FnoSection` rather than the sidebar because
+  // the sidebar is not always mounted — selecting the Deep Quant tab unmounts it,
+  // and the workspace would then wait for an underlying forever.
+  useEffect(() => {
+    if (fnoUnderlying) return;
+    const available = chains?.underlyings ?? [];
+    if (available.length === 0) return;
+
+    const fromChart = getUnderlyingFromSymbol(selectedSymbol).toUpperCase();
+    const seeded =
+      available.find((u) => u.toUpperCase() === fromChart) ??
+      available.find((u) => u.toUpperCase().startsWith('NIFTY')) ??
+      available[0];
+
+    console.info(`[FnoSection] seeding underlying -> ${seeded}`);
+    setFnoUnderlying(seeded);
+  }, [chains, fnoUnderlying, selectedSymbol, setFnoUnderlying]);
 
   const expiries = useMemo(
     () => deriveExpiryOptions(chains, fnoUnderlying),

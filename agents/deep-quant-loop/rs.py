@@ -107,6 +107,14 @@ class RSConfig:
 # Extended via ``RS_BENCHMARK_MAP`` without code changes (Requirement 2.3). Only
 # benchmarks whose candles are available in the data source are given defaults;
 # any unmapped symbol resolves to ``DEFAULT_BENCHMARK`` (Requirement 2.2).
+#
+# The value is the RECOGNISABLE Benchmark_Index identity ("BANKNIFTY"), which is
+# what the tool reports and what the options path maps to a chain. It is NOT the
+# tradingsymbol the benchmark's CANDLES are stored under — that is the NSE spot
+# name ("NIFTY BANK"), and `benchmark_candle_name` bridges the two at the one
+# place it matters (the relative-strength candle fetch). See that function for why
+# leaving the two conflated made relative strength unavailable for every bank
+# stock.
 DEFAULT_BENCHMARK = "NIFTY 50"
 DEFAULT_BENCHMARK_MAP = {
     "HDFCBANK": "BANKNIFTY",
@@ -120,6 +128,37 @@ DEFAULT_BENCHMARK_MAP = {
     "FEDERALBNK": "BANKNIFTY",
     "AUBANK": "BANKNIFTY",
 }
+
+# NFO derivative name -> NSE spot tradingsymbol the benchmark's candles are stored
+# under. The reverse of `tools.py::_OPTIONS_CHAIN_NAME` (spot -> NFO), needed for
+# the opposite reason: options READ the option chain by the NFO name, relative
+# strength READS the index candles by the spot name.
+_BENCHMARK_CANDLE_NAME = {
+    "NIFTY": "NIFTY 50",
+    "BANKNIFTY": "NIFTY BANK",
+    "FINNIFTY": "NIFTY FIN SERVICE",
+    "MIDCPNIFTY": "NIFTY MIDCAP SELECT",
+}
+
+
+def benchmark_candle_name(benchmark: str) -> str:
+    """Map a Benchmark_Index to the tradingsymbol its CANDLES are stored under.
+
+    A benchmark carries a recognisable identity ("BANKNIFTY") but its candles live
+    in QuestDB under the NSE spot tradingsymbol ("NIFTY BANK") — measured: 227k
+    rows for "NIFTY BANK", ZERO for "BANKNIFTY". The relative-strength tool fetches
+    the benchmark's candles, so it must translate here or every bank-benchmarked
+    stock (HDFCBANK, ICICIBANK, SBIN, …) fetches a name with no candles and
+    degrades to unavailable — the reported "benchmark BANKNIFTY candle retrieval
+    returned no usable data". "NIFTY 50" was already the spot name, which is why
+    NIFTY-benchmarked stocks worked and only the bank ones failed.
+
+    NFO names become their spot tradingsymbol; spot names, stocks and unknown names
+    pass through unchanged. Pure and total; never raises.
+    """
+    if not isinstance(benchmark, str) or not benchmark.strip():
+        return benchmark if isinstance(benchmark, str) else ""
+    return _BENCHMARK_CANDLE_NAME.get(benchmark.strip().upper(), benchmark.strip())
 
 
 def _resolve_float(env_name: str, default: float, low: float, high: float) -> float:

@@ -83,10 +83,20 @@ def test_get_relative_strength_fetches_both_candle_series_from_rust():
     fetches, and nothing else (no options-chain / non-candle source).
     """
     symbol = "HDFCBANK"
-    # The Benchmark_Map resolves this bank symbol to a DIFFERENT index.
+    # The Benchmark_Map resolves this bank symbol to a DIFFERENT index. The tool
+    # REPORTS this recognisable identity ("BANKNIFTY")...
     expected_benchmark = rs.resolve_benchmark(symbol)
     assert expected_benchmark == "BANKNIFTY"
     assert expected_benchmark != symbol
+
+    # ...but FETCHES the benchmark's candles under the NSE spot tradingsymbol they
+    # are stored under ("NIFTY BANK"). This is the fix's crux: fetching under
+    # "BANKNIFTY" returned zero candles (QuestDB stores none under that name) and
+    # relative strength was unavailable for every bank stock. Assert the fetch
+    # uses the candle name so a regression to "BANKNIFTY" fails here.
+    expected_benchmark_fetch = rs.benchmark_candle_name(expected_benchmark)
+    assert expected_benchmark_fetch == "NIFTY BANK"
+    assert expected_benchmark_fetch != expected_benchmark
 
     # Return enough valid, time-aligned candles for either series so the call
     # succeeds; the exact classification outcome is irrelevant to this test.
@@ -97,7 +107,7 @@ def test_get_relative_strength_fetches_both_candle_series_from_rust():
         requested_symbol = (json or {}).get("symbol")
         if requested_symbol == symbol:
             return _mock_response(sym_candles)
-        if requested_symbol == expected_benchmark:
+        if requested_symbol == expected_benchmark_fetch:
             return _mock_response(bench_candles)
         raise AssertionError(f"unexpected candle request for {requested_symbol!r}")
 
@@ -128,12 +138,13 @@ def test_get_relative_strength_fetches_both_candle_series_from_rust():
             f"unexpected non-candle source consumed: {url}"
         )
 
-    # One fetch requested the symbol, the other the resolved benchmark.
+    # One fetch requested the symbol, the other the benchmark's CANDLE name (the
+    # spot tradingsymbol), never the "BANKNIFTY" identity that has no candles.
     requested_symbols = [
         (c.kwargs.get("json") or {}).get("symbol") for c in mock_post.call_args_list
     ]
-    assert set(requested_symbols) == {symbol, expected_benchmark}, (
-        f"expected fetches for {symbol!r} and {expected_benchmark!r}, "
+    assert set(requested_symbols) == {symbol, expected_benchmark_fetch}, (
+        f"expected fetches for {symbol!r} and {expected_benchmark_fetch!r}, "
         f"got {requested_symbols!r}"
     )
 
