@@ -58,6 +58,11 @@ use crate::kite_api::KiteApiState;
 const DEFAULT_SPOT_SYMBOLS: &[&str] = &[
     "NIFTY 50",
     "NIFTY BANK",
+    // BSE index, so it resolves through `resolve_token`'s BSE leg. Needed for the
+    // same reason as the two NSE indices above: `option_chain_selector` reads it as
+    // spot to place ATM, and `options.py::read_spot` reads it from `live_ticks` to
+    // decide whether the F&O analytics can be computed at all.
+    "SENSEX",
     "INDIA VIX",
     "NIFTY IT",
     "NIFTY FIN SERVICE",

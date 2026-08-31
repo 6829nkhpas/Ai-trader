@@ -21,7 +21,7 @@
 // with an error; just silently blank, because an empty table is indistinguishable
 // from a market with no open interest.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -52,17 +52,26 @@ use crate::option_chain::{
 /// delisted the contract.
 ///
 /// Size: `underlyings × nearest_expiries × (2 × band + 1) × 2` bounds this at
-/// 9 × 7 × 21 × 2 = 2646 option tokens, against Kite's 3000-instrument WebSocket
+/// 10 × 7 × 21 × 2 = 2940 option tokens, against Kite's 3000-instrument WebSocket
 /// ceiling. Snapshot volume scales with it (~1 row per token per minute), which is
 /// the real cost of this list growing — keep that in mind before extending it, and
-/// see `DEFAULT_NEAREST_EXPIRIES` for the other half of the arithmetic.
+/// see `DEFAULT_NEAREST_EXPIRIES` for the other half of the arithmetic. That
+/// ceiling is now within 60 tokens of the limit, so ANOTHER underlying has to be
+/// paid for by lowering `FNO_NEAREST_EXPIRIES` or `FNO_STRIKE_BAND_HALF_WIDTH`.
+/// This is why BANKEX is absent despite being BFO-listed like SENSEX: 11 × 7 × 21
+/// × 2 = 3234 would breach it. `run` warns rather than letting it fail silently.
 ///
 /// Every name here must be F&O-listed. `INDIA VIX` and `NIFTY IT` are in the spot
 /// list but have no option chain, so they are deliberately absent: a non-derivative
 /// underlying costs one "no contracts selected" warning per minute.
-const DEFAULT_UNDERLYINGS: [&str; 9] = [
+///
+/// SENSEX is not an NSE name. Its options are listed on **BFO**, so it is resolved
+/// against a different instrument master than the other nine — see
+/// `derivative_exchange`.
+const DEFAULT_UNDERLYINGS: [&str; 10] = [
     "NIFTY",
     "BANKNIFTY",
+    "SENSEX",
     "RELIANCE",
     "TCS",
     "HDFCBANK",
@@ -194,13 +203,33 @@ pub fn nfo_name(configured: &str) -> String {
 /// The Kite quote key for an underlying's spot price.
 ///
 /// Mirrors the retired `fno_service::map_spot_quote_symbol`.
+///
+/// SENSEX and BANKEX quote under **BSE**, not NSE. `NSE:SENSEX` is not an
+/// instrument, so the default `NSE:{other}` arm would return no spot and the
+/// selector would skip the underlying every cycle with "no spot price yet".
 pub fn spot_quote_key(underlying: &str) -> String {
     match underlying.trim().to_uppercase().as_str() {
         "NIFTY" | "NIFTY 50" => "NSE:NIFTY 50".to_string(),
         "BANKNIFTY" | "NIFTY BANK" => "NSE:NIFTY BANK".to_string(),
         "FINNIFTY" | "NIFTY FIN SERVICE" => "NSE:NIFTY FIN SERVICE".to_string(),
         "MIDCPNIFTY" | "NIFTY MIDCAP SELECT" => "NSE:NIFTY MIDCAP SELECT".to_string(),
+        "SENSEX" => "BSE:SENSEX".to_string(),
+        "BANKEX" => "BSE:BANKEX".to_string(),
         other => format!("NSE:{other}"),
+    }
+}
+
+/// The derivative exchange an underlying's option chain is listed on.
+///
+/// India's two exchanges run separate derivative segments: NSE's is `NFO`, BSE's is
+/// `BFO`, and SENSEX / BANKEX contracts exist only in the latter
+/// (`SENSEX2690376900CE`, segment `BFO-OPT`, lot 20). A single NFO master therefore
+/// selects nothing at all for SENSEX — no error, just an empty chain forever, which
+/// is indistinguishable from an underlying with no open interest.
+pub fn derivative_exchange(nfo_name: &str) -> &'static str {
+    match nfo_name.trim().to_uppercase().as_str() {
+        "SENSEX" | "BANKEX" | "SENSEX50" => "BFO",
+        _ => "NFO",
     }
 }
 
@@ -368,15 +397,38 @@ pub async fn run(state: Arc<KiteApiState>) {
     loop {
         ticker.tick().await;
 
-        let instruments = match state.instruments_for("NFO").await {
-            Ok(rows) => to_option_contracts(&rows),
-            Err(e) => {
-                warn!("[chain-selector] NFO instruments unavailable, retrying next cycle: {e}");
-                continue;
+        // One instrument master per derivative exchange the configured underlyings
+        // actually need. This used to be a single NFO fetch, which silently
+        // guaranteed an empty chain for SENSEX: its contracts are listed on BFO, so
+        // no NFO row ever matched the underlying and the selection came back empty
+        // every cycle. Both masters are cached with a 24h TTL, so this is one extra
+        // fetch per day rather than per cycle.
+        let mut masters: HashMap<&'static str, Vec<crate::option_chain::OptionContract>> =
+            HashMap::new();
+        let needed: HashSet<&'static str> = cfg
+            .underlyings
+            .iter()
+            .map(|u| derivative_exchange(&nfo_name(u)))
+            .collect();
+        for exchange in needed {
+            match state.instruments_for(exchange).await {
+                Ok(rows) => {
+                    let contracts = to_option_contracts(&rows);
+                    if contracts.is_empty() {
+                        warn!(
+                            "[chain-selector] {exchange} instrument master parsed to zero option contracts"
+                        );
+                    }
+                    masters.insert(exchange, contracts);
+                }
+                // Per-exchange, so a BFO outage cannot stop the nine NFO
+                // underlyings from being selected.
+                Err(e) => warn!(
+                    "[chain-selector] {exchange} instruments unavailable, retrying next cycle: {e}"
+                ),
             }
-        };
-        if instruments.is_empty() {
-            warn!("[chain-selector] NFO instrument master parsed to zero option contracts");
+        }
+        if masters.values().all(|c| c.is_empty()) {
             continue;
         }
 
@@ -398,6 +450,12 @@ pub async fn run(state: Arc<KiteApiState>) {
 
         for configured in &cfg.underlyings {
             let name = nfo_name(configured);
+            let exchange = derivative_exchange(&name);
+            let instruments = match masters.get(exchange) {
+                Some(rows) if !rows.is_empty() => rows,
+                // That exchange's master failed this cycle; the others still run.
+                _ => continue,
+            };
 
             let spot = match spots.get(&spot_quote_key(configured)) {
                 Some(&p) => p,
@@ -408,7 +466,7 @@ pub async fn run(state: Arc<KiteApiState>) {
             };
 
             let selection =
-                build_chain_selection(&instruments, &name, spot, today, &cfg.chain);
+                build_chain_selection(instruments, &name, spot, today, &cfg.chain);
             if selection.entries.is_empty() {
                 warn!(
                     "[chain-selector] {configured} (nfo={name}): no contracts selected at spot {spot:.2}"
@@ -520,6 +578,24 @@ mod tests {
         );
         let iso: Vec<String> = expiries.iter().map(|d| d.to_string()).collect();
         assert_eq!(iso, &listed[..7]);
+    }
+
+    #[test]
+    fn sensex_is_resolved_against_bse_and_bfo_not_nse_and_nfo() {
+        // SENSEX quotes on BSE and its options are listed on BFO. Getting either
+        // wrong produces silence rather than an error: the wrong quote key means
+        // "no spot price yet" every cycle, and the wrong instrument master means a
+        // selection with no entries — both indistinguishable from a dead market.
+        assert_eq!(spot_quote_key("SENSEX"), "BSE:SENSEX");
+        assert_eq!(derivative_exchange("SENSEX"), "BFO");
+        assert_eq!(derivative_exchange("BANKEX"), "BFO");
+        // Everything NSE-listed keeps its existing routing.
+        assert_eq!(derivative_exchange("NIFTY"), "NFO");
+        assert_eq!(derivative_exchange("BANKNIFTY"), "NFO");
+        assert_eq!(derivative_exchange("RELIANCE"), "NFO");
+        assert_eq!(spot_quote_key("NIFTY"), "NSE:NIFTY 50");
+        // `nfo_name` is identity for SENSEX, so the two agree on the key.
+        assert_eq!(derivative_exchange(&nfo_name("SENSEX")), "BFO");
     }
 
     #[test]

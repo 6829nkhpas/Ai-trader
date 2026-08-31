@@ -538,12 +538,17 @@ export const WEB_ADAPTERS: Record<string, WebAdapter> = {
     // alone returns only the ETFs that track it (`SENSEXETF`, `SENSEXBEES`,
     // `HDFCSENSEX`…) and never the index itself. NSE stays first so its listings
     // outrank the BSE duplicate for dually-listed scrips.
-    const [nse, bse, fno] = await Promise.all([
+    //
+    // BFO is the derivative half of the same split: SENSEX and BANKEX contracts
+    // (`SENSEX2690376900CE`, segment `BFO-OPT`) exist only there, so an NFO-only
+    // search could find no SENSEX option at all.
+    const [nse, bse, fno, bfo] = await Promise.all([
       searchExchange(query, 'NSE'),
       searchExchange(query, 'BSE'),
       searchExchange(query, 'NFO'),
+      searchExchange(query, 'BFO'),
     ]);
-    return rowsToSearchResults([...nse, ...bse, ...fno]);
+    return rowsToSearchResults([...nse, ...bse, ...fno, ...bfo]);
   },
 
   fetch_questdb: async (args) => {
