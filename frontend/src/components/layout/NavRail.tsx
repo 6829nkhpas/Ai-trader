@@ -2,7 +2,19 @@
 
 import React from 'react';
 import { flushSync } from 'react-dom';
-import { Zap, TrendingUp, Landmark, Layers, Search, HelpCircle, Sun, Moon, type LucideIcon } from 'lucide-react';
+import {
+  Zap,
+  TrendingUp,
+  Landmark,
+  Layers,
+  Search,
+  HelpCircle,
+  Sun,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  type LucideIcon,
+} from 'lucide-react';
 import { useTradeStore, type TradeProfile } from '../../store/useTradeStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
@@ -35,6 +47,10 @@ interface NavRailProps {
   onOpenGuide: () => void;
   /** Opens the account profile & settings modal. */
   onOpenProfile: () => void;
+  /** Whether the Market Watch column is currently expanded. */
+  leftPanelOpen: boolean;
+  /** Shows / hides the Market Watch column. */
+  onToggleLeftPanel: () => void;
 }
 
 /**
@@ -63,7 +79,13 @@ function RailLabel({ children }: { children: React.ReactNode }) {
  * `aria-pressed` state so screen readers announce the active workspace and the
  * existing selector contract is preserved.
  */
-export default function NavRail({ onOpenSearch, onOpenGuide, onOpenProfile }: NavRailProps) {
+export default function NavRail({
+  onOpenSearch,
+  onOpenGuide,
+  onOpenProfile,
+  leftPanelOpen,
+  onToggleLeftPanel,
+}: NavRailProps) {
   const activeProfile = useTradeStore((s) => s.activeProfile);
   const setActiveProfile = useTradeStore((s) => s.setActiveProfile);
   const user = useAuthStore((s) => s.user);
@@ -123,6 +145,45 @@ export default function NavRail({ onOpenSearch, onOpenGuide, onOpenProfile }: Na
           </RailLabel>
         </div>
 
+        {/* ── Column controls ────────────────────────────────────
+            Search and the Market Watch toggle sit at the TOP, directly under the
+            brand: both used to live in a `h-8` "Market Watch" header strip above
+            the panel itself, which spent a whole row on a title naming the column
+            it already sat on top of. The header is gone and its two controls moved
+            here, where they are reachable whether or not the column is open. */}
+        <div className="mt-2 flex flex-col gap-1">
+          <button
+            type="button"
+            onClick={onOpenSearch}
+            title="Search symbol (Ctrl+K)"
+            className="flex h-11 cursor-pointer items-center text-text-secondary transition-colors hover:text-emerald-500 dark:hover:text-emerald-400"
+          >
+            <span className="flex w-14 shrink-0 items-center justify-center">
+              <Search size={22} strokeWidth={2} />
+            </span>
+            <RailLabel>Search</RailLabel>
+          </button>
+
+          <button
+            type="button"
+            onClick={onToggleLeftPanel}
+            aria-pressed={leftPanelOpen}
+            title={leftPanelOpen ? 'Hide Market Watch' : 'Show Market Watch'}
+            className="flex h-11 cursor-pointer items-center text-text-secondary transition-colors hover:text-emerald-500 dark:hover:text-emerald-400"
+          >
+            <span className="flex w-14 shrink-0 items-center justify-center">
+              {/* The glyph states which way the panel will go, so the control reads
+                  the same collapsed as expanded. */}
+              {leftPanelOpen ? (
+                <PanelLeftClose size={22} strokeWidth={2} />
+              ) : (
+                <PanelLeftOpen size={22} strokeWidth={2} />
+              )}
+            </span>
+            <RailLabel>{leftPanelOpen ? 'Hide Watchlist' : 'Show Watchlist'}</RailLabel>
+          </button>
+        </div>
+
         {/* ── Workspace Mode_Selector (primary navigation) ────── */}
         <div className="mt-2 flex flex-1 flex-col gap-1">
           {PROFILES.map(({ key, label }) => {
@@ -159,18 +220,6 @@ export default function NavRail({ onOpenSearch, onOpenGuide, onOpenProfile }: Na
 
         {/* ── Bottom utilities ───────────────────────────────── */}
         <div className="mt-auto flex flex-col gap-1">
-          <button
-            type="button"
-            onClick={onOpenSearch}
-            title="Search symbol (Ctrl+K)"
-            className="flex h-11 cursor-pointer items-center text-text-secondary transition-colors hover:text-emerald-500 dark:hover:text-emerald-400"
-          >
-            <span className="flex w-14 shrink-0 items-center justify-center">
-              <Search size={20} />
-            </span>
-            <RailLabel>Search</RailLabel>
-          </button>
-
           {/* Quant Radar — full row toggles the panel, which opens to the right */}
           <QuantRadar align="rail" label="Quant Radar" />
 

@@ -1,13 +1,11 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Search } from 'lucide-react';
 import SymbolSearchModal from './SymbolSearchModal';
 import QuickStartGuide from './QuickStartGuide';
 import MarketTickerStrip from './MarketTickerStrip';
 import NavRail from './NavRail';
 import UserProfileModal from '../profile/UserProfileModal';
-import { SVGS } from '../chart/toolbarIcons';
 
 interface TerminalLayoutProps {
   children: React.ReactNode;
@@ -54,38 +52,6 @@ export default function TerminalLayout({ children, leftPanel, rightPanel }: Term
   };
 
 
-  const [leftButtonTop, setLeftButtonTop] = useState(8);
-  const [isDraggingLeft, setIsDraggingLeft] = useState(false);
-
-  const handleLeftButtonMouseDown = (e: React.MouseEvent<HTMLButtonElement>) => {
-    e.preventDefault();
-    const startY = e.clientY;
-    const startTop = leftButtonTop;
-    let dragged = false;
-
-    const onMouseMove = (moveEvent: MouseEvent) => {
-      const deltaY = moveEvent.clientY - startY;
-      if (Math.abs(deltaY) > 4) {
-        dragged = true;
-        setIsDraggingLeft(true);
-      }
-      const newTop = Math.max(8, Math.min(window.innerHeight - 80, startTop + deltaY));
-      setLeftButtonTop(newTop);
-    };
-
-    const onMouseUp = () => {
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-      setIsDraggingLeft(false);
-      if (!dragged) {
-        setLeftPanelOpen(true);
-      }
-    };
-
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-  };
-
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
@@ -128,6 +94,8 @@ export default function TerminalLayout({ children, leftPanel, rightPanel }: Term
         onOpenSearch={() => { setInitialQuery(''); setIsSearchOpen(true); }}
         onOpenGuide={() => setGuideOpen(true)}
         onOpenProfile={() => setProfileOpen(true)}
+        leftPanelOpen={leftPanelOpen}
+        onToggleLeftPanel={() => setLeftPanelOpen((open) => !open)}
       />
 
       {/* ── Everything right of the rail ────────────────────── */}
@@ -149,27 +117,14 @@ export default function TerminalLayout({ children, leftPanel, rightPanel }: Term
               transform: leftPanelOpen ? 'translateX(0)' : 'translateX(-100%)',
             }}
           >
-            {/* Section Header */}
-            <div className="flex h-8 shrink-0 items-center justify-between border-b border-border-default bg-elevated/10 px-3 select-none">
-              <span className="text-xs font-black uppercase tracking-wider text-text-primary/90">Market Watch</span>
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={() => setIsSearchOpen(true)}
-                  className="rounded p-0.5 text-text-muted hover:bg-elevated hover:text-text-primary transition-colors flex items-center justify-center"
-                  title="Search NSE symbol..."
-                >
-                  <Search size={16} />
-                </button>
-                <button
-                  onClick={() => setLeftPanelOpen(false)}
-                  className="rounded p-0.5 text-text-muted hover:bg-elevated hover:text-text-primary transition-colors flex items-center justify-center"
-                  title="Collapse left panel"
-                >
-                  <span dangerouslySetInnerHTML={{ __html: SVGS.sidebarClose }} className="flex items-center justify-center" />
-                </button>
-              </div>
-            </div>
-
+            {/* No section header.
+                A `h-8` strip used to sit here reading "MARKET WATCH", with a
+                search button and a collapse button on its right. It spent a row
+                naming the column it was already on top of, and its two controls
+                are now in `NavRail` — where the collapse control is reachable
+                even once the column is hidden, which it was not before.
+                `WatchlistBlock` brings its own header, so the panel still starts
+                with a titled row. */}
             <div className="flex-1 min-h-0 w-full overflow-hidden">
               {leftPanel}
             </div>
@@ -202,18 +157,12 @@ export default function TerminalLayout({ children, leftPanel, rightPanel }: Term
           {/* ── Live Market Ticker Strip ──────────────────────── */}
           <MarketTickerStrip />
 
-          {/* Central Area */}
+          {/* Central Area.
+              A floating, drag-to-reposition chevron used to hover over the left
+              edge of the chart here, as the only way to bring the Market Watch
+              column back. It is gone: the rail's toggle is always in the same
+              place, is visible in both states, and does not overlap the chart. */}
           <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-visible">
-            <button
-              onMouseDown={handleLeftButtonMouseDown}
-              style={{ top: `${leftButtonTop}px` }}
-              className={`absolute left-0 z-100 flex h-7 w-6 items-center justify-center rounded-r border border-l-0 border-emerald-500/20 bg-surface/90 text-emerald-500 dark:text-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-300 hover:bg-emerald-500/10 shadow-lg backdrop-blur-sm transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${
-                leftPanelOpen ? 'opacity-0 scale-95 pointer-events-none' : 'opacity-100 scale-100'
-              } ${isDraggingLeft ? 'cursor-grabbing' : 'cursor-grab'}`}
-              title="Expand left panel (Drag to move)"
-            >
-              <span dangerouslySetInnerHTML={{ __html: SVGS.sidebarOpen }} className="flex items-center justify-center pointer-events-none" />
-            </button>
             {children}
           </main>
         </div>
@@ -239,9 +188,6 @@ export default function TerminalLayout({ children, leftPanel, rightPanel }: Term
       />
       {isResizing && (
         <div className="fixed inset-0 z-9999 cursor-col-resize select-none pointer-events-auto bg-white/0" />
-      )}
-      {isDraggingLeft && (
-        <div className="fixed inset-0 z-9999 cursor-row-resize select-none pointer-events-auto bg-white/0" />
       )}
     </div>
   );

@@ -42,7 +42,7 @@ const STEPS: Step[] = [
     icon: <Search size={13} />,
     title: 'Pick an instrument',
     body:
-      'Use the search icon in the Market Watch header (or the search box in the left panel) to look up any NSE equity, index, future or option. Selecting a result charts it and adds it to your watchlist.',
+      'Use the search icon at the top of the navigation rail (or press Ctrl+K) to look up any NSE, BSE or F&O instrument. Selecting a result charts it and adds it to your watchlist.',
   },
   {
     icon: <LayoutGrid size={13} />,
