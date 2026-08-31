@@ -52,9 +52,10 @@ use crate::option_chain::{
 /// delisted the contract.
 ///
 /// Size: `underlyings × nearest_expiries × (2 × band + 1) × 2` bounds this at
-/// 9 × 2 × 21 × 2 = 756 option tokens, against Kite's 3000-instrument WebSocket
+/// 9 × 7 × 21 × 2 = 2646 option tokens, against Kite's 3000-instrument WebSocket
 /// ceiling. Snapshot volume scales with it (~1 row per token per minute), which is
-/// the real cost of this list growing — keep that in mind before extending it.
+/// the real cost of this list growing — keep that in mind before extending it, and
+/// see `DEFAULT_NEAREST_EXPIRIES` for the other half of the arithmetic.
 ///
 /// Every name here must be F&O-listed. `INDIA VIX` and `NIFTY IT` are in the spot
 /// list but have no option chain, so they are deliberately absent: a non-derivative
@@ -70,7 +71,32 @@ const DEFAULT_UNDERLYINGS: [&str; 9] = [
     "SBIN",
     "ITC",
 ];
-const DEFAULT_NEAREST_EXPIRIES: usize = 2;
+/// How many of an underlying's non-expired expiries get ingested.
+///
+/// This was 2, and that number — not the UI — is why the F&O expiry dropdown
+/// offered two dates for every instrument. The dropdown reads
+/// `SELECT DISTINCT expiry FROM option_chain_snapshots`, so it can only ever show
+/// what the selector chose to follow. NIFTY lists 21 expiries (four weeklies,
+/// three monthlies, quarterlies, then LEAPS out to 2031); every broker's chain
+/// shows the near end of that ladder, and we showed the first two of it.
+///
+/// 7 covers what is actually tradable and matches what brokers display. Measured
+/// against the live NFO master: NIFTY's nearest 7 are exactly its four weeklies
+/// plus the Sep/Oct/Nov monthlies, stopping before the quarterlies; BANKNIFTY
+/// lists 6 in total (3 monthly + 3 quarterly) and single stocks list 3 monthlies,
+/// so those take their whole ladder and 7 costs nothing there.
+///
+/// Token cost, which is the reason this is not simply "all of them": the ceiling
+/// is `underlyings × nearest_expiries × (2 × band + 1) × 2` = 9 × 7 × 21 × 2 =
+/// 2646, against Kite's 3000-instrument WebSocket limit. The real figure is about
+/// 1430 because only NIFTY has 7 expiries to take. Following the whole NIFTY
+/// ladder instead would spend 882 tokens on LEAPS nobody charts. `run` warns at
+/// startup when the configured ceiling breaches the limit, because exceeding it
+/// costs live ticks silently rather than loudly.
+const DEFAULT_NEAREST_EXPIRIES: usize = 7;
+
+/// Kite's per-connection instrument subscription limit. Only used to warn.
+const KITE_WS_INSTRUMENT_LIMIT: usize = 3000;
 const DEFAULT_STRIKE_BAND_HALF_WIDTH: usize = 10;
 const DEFAULT_ATM_RECENTER_THRESHOLD: f64 = 1.0;
 const DEFAULT_SNAPSHOT_INTERVAL_SECS: u64 = 60;
@@ -311,6 +337,26 @@ pub async fn run(state: Arc<KiteApiState>) {
         cfg.chain.snapshot_interval_secs,
     );
 
+    // Overshooting Kite's subscription limit does not fail loudly — the WS accepts
+    // the connection and simply stops delivering, which reads as a market with no
+    // ticks. Say so at startup instead, where the arithmetic is still visible.
+    let ceiling = cfg.underlyings.len()
+        * cfg.chain.nearest_expiries
+        * (2 * cfg.chain.strike_band_half_width + 1)
+        * 2;
+    if ceiling > KITE_WS_INSTRUMENT_LIMIT {
+        warn!(
+            "[chain-selector] configured ceiling is {ceiling} option tokens \
+             ({} underlyings × {} expiries × {} strikes × 2), above Kite's \
+             {KITE_WS_INSTRUMENT_LIMIT}-instrument WebSocket limit — the excess \
+             will silently receive no ticks. Lower FNO_NEAREST_EXPIRIES, \
+             FNO_STRIKE_BAND_HALF_WIDTH, or FNO_UNDERLYINGS.",
+            cfg.underlyings.len(),
+            cfg.chain.nearest_expiries,
+            2 * cfg.chain.strike_band_half_width + 1,
+        );
+    }
+
     tokio::time::sleep(STARTUP_GRACE).await;
 
     // Last pushed ATM per underlying, so an unchanged chain is not re-pushed
@@ -428,6 +474,52 @@ mod tests {
             segment: "NFO-OPT".to_string(),
             exchange: "NFO".to_string(),
         }
+    }
+
+    #[test]
+    fn shipped_defaults_stay_inside_kites_subscription_limit() {
+        // The F&O expiry dropdown shows only the expiries this selector follows,
+        // so `DEFAULT_NEAREST_EXPIRIES` is the knob that widens it — and the only
+        // thing stopping it from being "all of them" is this ceiling. Exceeding
+        // Kite's limit does not error: the excess instruments just never tick, so
+        // the chain looks like a market with no open interest. Pin the arithmetic
+        // here rather than trusting the comment that states it.
+        let ceiling = DEFAULT_UNDERLYINGS.len()
+            * DEFAULT_NEAREST_EXPIRIES
+            * (2 * DEFAULT_STRIKE_BAND_HALF_WIDTH + 1)
+            * 2;
+        assert!(
+            ceiling <= KITE_WS_INSTRUMENT_LIMIT,
+            "shipped defaults would subscribe up to {ceiling} option tokens, over \
+             Kite's {KITE_WS_INSTRUMENT_LIMIT}-instrument limit",
+        );
+        // Enough to reach past the weeklies into the monthlies — two was not.
+        assert!(DEFAULT_NEAREST_EXPIRIES >= 5);
+    }
+
+    #[test]
+    fn follows_the_near_ladder_and_stops_before_the_leaps() {
+        // NIFTY's real listed ladder: four weeklies, three monthlies, then
+        // quarterlies and LEAPS out to 2031. Brokers show the near end; the
+        // default must select exactly that and not spend tokens on 2031.
+        let mut rows = Vec::new();
+        let listed = [
+            "2026-09-01", "2026-09-08", "2026-09-15", "2026-09-22", // weeklies
+            "2026-09-29", "2026-10-27", "2026-11-23", // monthlies
+            "2026-12-29", "2027-03-30", "2031-06-24", // quarterlies + LEAPS
+        ];
+        for (i, expiry) in listed.iter().enumerate() {
+            let token = 2000 + i as u64;
+            rows.push(inst(token, "NIFTYxxxCE", "NIFTY", "CE", 24000.0, expiry));
+        }
+        let expiries = crate::option_chain::select_nearest_expiries(
+            &to_option_contracts(&rows),
+            "NIFTY",
+            NaiveDate::from_ymd_opt(2026, 8, 31).unwrap(),
+            DEFAULT_NEAREST_EXPIRIES,
+        );
+        let iso: Vec<String> = expiries.iter().map(|d| d.to_string()).collect();
+        assert_eq!(iso, &listed[..7]);
     }
 
     #[test]
