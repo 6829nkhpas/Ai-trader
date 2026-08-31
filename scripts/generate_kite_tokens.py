@@ -26,6 +26,12 @@ Usage:
     python scripts/generate_kite_tokens.py                # everything
     python scripts/generate_kite_tokens.py --no-deploy    # local .env only
     python scripts/generate_kite_tokens.py --token XXXX   # skip the browser step
+    python scripts/generate_kite_tokens.py --deploy-only  # push the local token to the server
+
+`--deploy-only` is the recovery path for a run that exchanged a token and wrote it
+locally but failed before or during the deploy. Without it, recovery would mean a
+whole fresh login: a request_token is single-use and already spent by then, so
+there is no way to re-derive the access token that is sitting in the local .env.
 
 Server target (defaults match the production droplet, override if needed):
     --host / KITE_DEPLOY_HOST          root@app-api.stratai.live
@@ -304,10 +310,24 @@ def deploy(host: str, ssh_key: str, remote_path: str, access_token: str) -> bool
 
     print(f"[*] Deploying to {host}:{remote_path} …")
     try:
+        # Encoded here and sent as BYTES rather than handed to subprocess as text.
+        # A shell script is bytes, and text mode mangled it two independent ways on
+        # a Windows host, each of which broke the deploy after the local .env had
+        # already been rotated — so the token was live locally while the droplet
+        # kept serving the expired one:
+        #
+        #   · the pipe was encoded with `locale.getpreferredencoding()` (cp1252),
+        #     which cannot represent the `─`, `…` and `§` in the script's own
+        #     comments — UnicodeEncodeError in subprocess's writer thread.
+        #   · text mode then translates `\n` to `os.linesep`, so every line
+        #     arrived with a trailing `\r`. bash read `set -euo pipefail\r` as an
+        #     invalid option name and refused the script outright.
+        #
+        # A binary pipe does neither. Output is decoded below with `replace`, so a
+        # stray byte from the remote cannot fail a rotation that otherwise worked.
         result = subprocess.run(
             cmd,
-            input=build_remote_script(remote_path, access_token),
-            text=True,
+            input=build_remote_script(remote_path, access_token).encode("utf-8"),
             capture_output=True,
             timeout=420,
         )
@@ -318,10 +338,10 @@ def deploy(host: str, ssh_key: str, remote_path: str, access_token: str) -> bool
         print("[!] Deploy timed out.")
         return False
 
-    for line in (result.stdout or "").splitlines():
+    for line in result.stdout.decode("utf-8", "replace").splitlines():
         print(f"    {line}")
     if result.returncode != 0:
-        for line in (result.stderr or "").splitlines()[-15:]:
+        for line in result.stderr.decode("utf-8", "replace").splitlines()[-15:]:
             print(f"    ! {line}")
         print(f"[!] Deploy failed (exit {result.returncode}).")
         return False
@@ -364,21 +384,8 @@ def resolve_request_token(api_key: str, supplied: str) -> str:
     return token
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Refresh the Kite access token, locally and on the server.")
-    parser.add_argument("--no-deploy", action="store_true", help="update the local .env only")
-    parser.add_argument("--token", default="", help="a request_token or redirect URL, to skip the browser step")
-    parser.add_argument("--host", default=DEFAULT_HOST)
-    parser.add_argument("--ssh-key", default=DEFAULT_SSH_KEY)
-    parser.add_argument("--remote-path", default=DEFAULT_REMOTE_PATH)
-    args = parser.parse_args()
-
-    print("=" * 60)
-    print("  Zerodha Kite Connect — daily token refresh")
-    print("=" * 60)
-
-    env_path = os.path.join(PROJECT_ROOT, ".env")
-    env = read_env(env_path)
+def obtain_access_token(env: dict, env_path: str, supplied_token: str) -> str:
+    """Steps 1-4: log in, exchange the request token, store it in the local .env."""
     api_key = env.get("KITE_API_KEY", "")
     api_secret = env.get("KITE_API_SECRET", "")
 
@@ -394,7 +401,7 @@ def main() -> None:
         print("[!] Both KITE_API_KEY and KITE_API_SECRET are required.")
         sys.exit(1)
 
-    request_token = resolve_request_token(api_key, args.token)
+    request_token = resolve_request_token(api_key, supplied_token)
 
     print("\n── Step 3: exchange for an access token ─────────────────────")
     try:
@@ -414,11 +421,70 @@ def main() -> None:
     # downstream needs a human to read it now.
     print(f"[+] access_token    {mask(access_token)}  (valid until 06:00 IST tomorrow)")
 
+    # Stored BEFORE the deploy, deliberately: if the deploy then fails, the token
+    # is still on disk and `--deploy-only` can finish the job without a new login.
     print("\n── Step 4: update the local .env ────────────────────────────")
     if set_env_keys(env_path, {"KITE_ACCESS_TOKEN": access_token, "KITE_REQUEST_TOKEN": ""}):
         print(f"[+] {env_path}")
         print("    KITE_REQUEST_TOKEN blanked — single-use, dead within minutes,")
         print("    and SECRET_ROTATION_RUNBOOK.md §3.3 says not to persist it.")
+
+    return access_token
+
+
+def reuse_local_access_token(env: dict, env_path: str) -> str:
+    """The `--deploy-only` path: take the token the local .env already holds."""
+    access_token = env.get("KITE_ACCESS_TOKEN", "")
+    if not TOKEN_RE.match(access_token or ""):
+        print(f"[!] --deploy-only reuses KITE_ACCESS_TOKEN from {env_path},")
+        print("    but there is no valid one there. Run without the flag to log in.")
+        sys.exit(1)
+    print(f"[+] KITE_ACCESS_TOKEN {mask(access_token)}  (reused from the local .env)")
+    print("    Steps 1-4 skipped — already exchanged and stored by an earlier run.")
+    return access_token
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Refresh the Kite access token, locally and on the server.")
+    parser.add_argument("--no-deploy", action="store_true", help="update the local .env only")
+    parser.add_argument(
+        "--deploy-only",
+        action="store_true",
+        help="skip the login and push the local .env's KITE_ACCESS_TOKEN to the server",
+    )
+    parser.add_argument("--token", default="", help="a request_token or redirect URL, to skip the browser step")
+    parser.add_argument("--host", default=DEFAULT_HOST)
+    parser.add_argument("--ssh-key", default=DEFAULT_SSH_KEY)
+    parser.add_argument("--remote-path", default=DEFAULT_REMOTE_PATH)
+    args = parser.parse_args()
+
+    # This output carries box-drawing rules, em dashes and `✔`. A Windows console
+    # takes them directly, but a REDIRECTED stdout falls back to the locale codec
+    # (cp1252), where they are unencodable — so piping this to a log file, or
+    # running it from anything that captures output, killed it mid-rotation.
+    # Declaring the encoding here is the difference between a tool that works in a
+    # terminal and one that works when automated, which is the whole point of it.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass  # already UTF-8, or a stream that cannot be reconfigured
+
+    print("=" * 60)
+    print("  Zerodha Kite Connect — daily token refresh")
+    print("=" * 60)
+
+    if args.deploy_only and args.no_deploy:
+        print("[!] --deploy-only and --no-deploy contradict each other.")
+        sys.exit(1)
+
+    env_path = os.path.join(PROJECT_ROOT, ".env")
+    env = read_env(env_path)
+
+    if args.deploy_only:
+        access_token = reuse_local_access_token(env, env_path)
+    else:
+        access_token = obtain_access_token(env, env_path, args.token)
 
     if args.no_deploy:
         print("\n[*] --no-deploy: server untouched.")
