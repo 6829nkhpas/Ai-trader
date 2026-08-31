@@ -298,9 +298,25 @@ export default function OrderBook() {
         // margins give the same bottom alignment when there is spare room, but
         // resolve to 0 once the content overflows, so the scroll container
         // behaves normally.
+        // `flex-initial` (flex: 0 1 auto), NOT `flex-1`.
+        //
+        // `flex-1` is `flex: 1 1 0%` — it makes each ladder claim an equal share
+        // of the pane regardless of how many rows it holds. That was invisible
+        // while the ladder was padded out to 14 rows a side and nearly filled its
+        // half; once the padding was removed (it was fabricated — see
+        // `buildBookFromDepth`) five real rows were left rattling around in a box
+        // built for fourteen, with `mt-auto` pushing the asks to the bottom of
+        // theirs and the bids sitting at the top of theirs. Hence the empty band
+        // above the asks and below the bids: the reported "no order book depth",
+        // which was really the right depth in the wrong-sized container.
+        //
+        // `flex-initial` sizes each ladder to its content and still lets it SHRINK
+        // (with `min-h-0`) when the pane is too short, so the scrollability that
+        // 97ec4ae restored is untouched. Both sides carry it, deliberately: the
+        // original ask-ladder bug was a divergence between the two.
         <div
           ref={asksScrollRef}
-          className="flex flex-col flex-1 min-h-0 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] font-sans"
+          className="flex flex-col flex-initial min-h-0 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] font-sans"
         >
           {/* `mt-auto` keeps the best ask pinned just above the mid-price row
               when the ladder is shorter than the pane, without breaking scroll. */}
@@ -352,7 +368,9 @@ export default function OrderBook() {
 
       {/* ── Bid Levels (Green) — Scrollable without scrollbar ────────── */}
       {book.bids.length > 0 && (
-        <div className="flex flex-col flex-1 min-h-0 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] font-sans">
+        // `flex-initial` to match the ask ladder — see the note there for why
+        // `flex-1` left five real levels floating in a fourteen-row box.
+        <div className="flex flex-col flex-initial min-h-0 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] font-sans">
           {book.bids.map((level, i) => (
             <div
               key={`bid-${i}`}
@@ -379,7 +397,13 @@ export default function OrderBook() {
 
       {/* ── Ask/Bid Volume Ratio Bar ────────────────────────── */}
       {book.asks.length > 0 && book.bids.length > 0 && (
-        <div className="px-3.5 py-2 border-t border-border-default bg-elevated/20 font-sans">
+        // Sits directly under the bids, NOT pinned to the panel bottom with an
+        // auto margin. It summarises the ladder immediately above it, and pushing
+        // it to the bottom of a tall pane opens a void between the bar and the
+        // book it describes — which measured 283px in a 620px sidebar. The widget
+        // now shrink-wraps its content and any spare sidebar height simply stays
+        // empty below it, which is how a depth widget is normally laid out.
+        <div className="shrink-0 px-3.5 py-2 border-t border-border-default bg-elevated/20 font-sans">
           <div className="flex justify-between text-[10px] font-black mb-1.5 tracking-wider font-sans">
             <span className="text-emerald-400">{bidVolPct.toFixed(1)}% BIDS</span>
             <span className="text-red-400">{askVolPct.toFixed(1)}% ASKS</span>

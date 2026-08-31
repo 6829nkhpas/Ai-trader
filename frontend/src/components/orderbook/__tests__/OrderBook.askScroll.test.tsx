@@ -45,7 +45,13 @@ import OrderBook from '../../OrderBook';
 import { useTradeStore } from '../../../store/useTradeStore';
 import { buildBookFromKiteDepth, BOOK_CACHE_VERSION } from '../orderBookHelpers';
 
-/** A book deep enough on both sides to overflow a real pane. */
+/**
+ * A full book: five levels a side, which is all Kite Connect provides
+ * (`[64-124]` bids, `[124-184]` offers in the Full-mode packet, and the same five
+ * in REST `/quote`). It used to seed twelve a side to overflow a pane, which
+ * stopped being reachable once the fabricated padding was removed in 82e0cb0 —
+ * five is now the real maximum a pane ever has to lay out.
+ */
 function seedBook() {
   const buy = Array.from({ length: 5 }, (_, i) => ({ price: 1308.6 - i * 0.1, quantity: 100 + i }));
   const sell = Array.from({ length: 5 }, (_, i) => ({ price: 1308.7 + i * 0.1, quantity: 100 + i }));
@@ -99,11 +105,45 @@ describe('OrderBook — ask ladder scrollability', () => {
 
     // Whatever alignment trick the ask side uses, the two ladders must agree on
     // how they scroll — the original bug was exactly a divergence here.
-    for (const cls of ['overflow-y-auto', 'min-h-0', 'flex-1']) {
+    for (const cls of ['overflow-y-auto', 'min-h-0', 'flex-initial']) {
       expect(asks.className).toContain(cls);
       expect(bids.className).toContain(cls);
     }
     expect(bids.className).not.toContain('justify-end');
+  });
+
+  it('sizes both ladders to their content instead of stretching them', () => {
+    const { container } = render(<OrderBook />);
+    const [asks, bids] = ladders(container);
+
+    // `flex-1` is `flex: 1 1 0%`, which makes a ladder claim an equal share of the
+    // pane however few rows it holds. That is what left five real levels floating
+    // in a container built for the fourteen padded ones — a gap above the asks
+    // (pushed down by `mt-auto`) and another below the bids, which reads on screen
+    // as missing depth.
+    //
+    // jsdom does no layout, so the gap itself is not observable here; what IS
+    // observable is the flex mode that caused it.
+    for (const el of [asks, bids]) {
+      expect(el.className).toContain('flex-initial');
+      expect(el.className).not.toMatch(/\bflex-1\b/);
+      expect(el.className).not.toContain('flex-grow');
+    }
+  });
+
+  it('keeps the imbalance footer against the book rather than the pane bottom', () => {
+    const { container } = render(<OrderBook />);
+
+    const footer = container.querySelector<HTMLElement>('div.border-t.shrink-0');
+    expect(footer).not.toBeNull();
+    expect(footer!.textContent).toContain('BIDS');
+    expect(footer!.textContent).toContain('ASKS');
+
+    // No auto margin. The bar summarises the ladder directly above it; pushing it
+    // to the bottom of a tall sidebar opens a void between the summary and its
+    // data (283px in a 620px pane, measured in Chromium). The widget shrink-wraps
+    // instead and the spare sidebar height stays empty BELOW it.
+    expect(footer!.className).not.toContain('mt-auto');
   });
 
   it('bottom-aligns the asks via an auto margin rather than justify-content', () => {
