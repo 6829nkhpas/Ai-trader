@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendored / generated assets, not our source:
+    "public/static/charting_library/**",
+    "playwright-report/**",
   ]),
 ]);
 

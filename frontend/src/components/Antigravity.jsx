@@ -1,6 +1,47 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
+
+// Builds the particle field. Reads Math.random, so it must run outside of
+// render (see the useEffect below) rather than directly in a useMemo — React
+// requires render to be a pure function of props/state.
+function generateParticles(count, width, height) {
+  const temp = [];
+  for (let i = 0; i < count; i++) {
+    const t = Math.random() * 100;
+    const factor = 20 + Math.random() * 100;
+    const speed = 0.01 + Math.random() / 200;
+    const xFactor = -50 + Math.random() * 100;
+    const yFactor = -50 + Math.random() * 100;
+    const zFactor = -50 + Math.random() * 100;
+
+    const x = (Math.random() - 0.5) * width;
+    const y = (Math.random() - 0.5) * height;
+    const z = (Math.random() - 0.5) * 20;
+
+    const randomRadiusOffset = (Math.random() - 0.5) * 2;
+
+    temp.push({
+      t,
+      factor,
+      speed,
+      xFactor,
+      yFactor,
+      zFactor,
+      mx: x,
+      my: y,
+      mz: z,
+      cx: x,
+      cy: y,
+      cz: z,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      randomRadiusOffset
+    });
+  }
+  return temp;
+}
 
 const AntigravityInner = ({
   count = 300,
@@ -27,46 +68,22 @@ const AntigravityInner = ({
   const lastMouseMoveTime = useRef(0);
   const virtualMouse = useRef({ x: 0, y: 0 });
 
-  const particles = useMemo(() => {
-    const temp = [];
-    const width = viewport.width || 100;
-    const height = viewport.height || 100;
+  const width = viewport.width || 100;
+  const height = viewport.height || 100;
 
-    for (let i = 0; i < count; i++) {
-      const t = Math.random() * 100;
-      const factor = 20 + Math.random() * 100;
-      const speed = 0.01 + Math.random() / 200;
-      const xFactor = -50 + Math.random() * 100;
-      const yFactor = -50 + Math.random() * 100;
-      const zFactor = -50 + Math.random() * 100;
+  // `particles` seeds each instance's random walk (t, factor, speed, initial
+  // position, …). It only needs to be (re)computed when the particle count or
+  // viewport size changes, not on every render. Math.random can't run during
+  // render (it's impure), so re-seeding happens by adjusting state during
+  // render when the inputs change — the React-recommended pattern for
+  // "resetting state when a prop changes" — rather than in a useEffect.
+  const [particles, setParticles] = useState(() => generateParticles(count, width, height));
+  const [prevSeed, setPrevSeed] = useState({ count, width, height });
 
-      const x = (Math.random() - 0.5) * width;
-      const y = (Math.random() - 0.5) * height;
-      const z = (Math.random() - 0.5) * 20;
-
-      const randomRadiusOffset = (Math.random() - 0.5) * 2;
-
-      temp.push({
-        t,
-        factor,
-        speed,
-        xFactor,
-        yFactor,
-        zFactor,
-        mx: x,
-        my: y,
-        mz: z,
-        cx: x,
-        cy: y,
-        cz: z,
-        vx: 0,
-        vy: 0,
-        vz: 0,
-        randomRadiusOffset
-      });
-    }
-    return temp;
-  }, [count, viewport.width, viewport.height]);
+  if (prevSeed.count !== count || prevSeed.width !== width || prevSeed.height !== height) {
+    setPrevSeed({ count, width, height });
+    setParticles(generateParticles(count, width, height));
+  }
 
   useFrame(state => {
     const mesh = meshRef.current;

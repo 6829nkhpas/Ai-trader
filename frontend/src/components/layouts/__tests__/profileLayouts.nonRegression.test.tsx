@@ -51,7 +51,7 @@ vi.mock('../../MainTerminalChart', async () => {
   const ReactNs = await import('react');
   return {
     __esModule: true,
-    default: () => {
+    default: function MockMainTerminalChart() {
       ReactNs.useEffect(() => {
         charts.mounts += 1;
         return () => {

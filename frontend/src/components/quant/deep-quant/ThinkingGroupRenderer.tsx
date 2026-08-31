@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { ReasoningStep } from '../../../store/useQuantStore';
 import MarkdownRenderer from './MarkdownRenderer';
@@ -14,15 +14,15 @@ export default function ThinkingGroupRenderer({
 }: ThinkingGroupRendererProps) {
   const isRunning = sessionStatus === 'running';
   const [isExpanded, setIsExpanded] = useState(isRunning);
+  // Track the isRunning value the expansion state was last synced to, so we
+  // can re-sync exactly once when it flips — the "adjust state during
+  // render" pattern for deriving state from a prop, instead of a useEffect.
+  const [syncedRunning, setSyncedRunning] = useState(isRunning);
 
-  // Sync expansion state when streaming starts or finishes
-  useEffect(() => {
-    if (isRunning) {
-      setIsExpanded(true);
-    } else {
-      setIsExpanded(false);
-    }
-  }, [isRunning]);
+  if (isRunning !== syncedRunning) {
+    setSyncedRunning(isRunning);
+    setIsExpanded(isRunning);
+  }
 
   if (steps.length === 0) return null;
 

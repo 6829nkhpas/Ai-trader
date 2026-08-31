@@ -10,7 +10,7 @@
  * the file.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { MarketInsight, useTradeStore } from '../../store/useTradeStore';
 import { useMacroIndicators } from '../../hooks/useMacroIndicators';
@@ -59,17 +59,24 @@ export function MacroSentimentPanel() {
 
   const [activeInsight, setActiveInsight] = useState<MarketInsight | null>(null);
 
-  // Reset active insight when selectedSymbol changes
-  useEffect(() => {
+  // Active insight is derived from `selectedSymbol` and `latestInsight`: it
+  // resets when the symbol changes, and picks up the live WebSocket insight
+  // once it matches the newly active symbol. Adjusted during render (the
+  // React-recommended pattern for deriving state from props) rather than in
+  // two separate effects.
+  const [prevSymbol, setPrevSymbol] = useState(selectedSymbol);
+  if (selectedSymbol !== prevSymbol) {
+    setPrevSymbol(selectedSymbol);
     setActiveInsight(null);
-  }, [selectedSymbol]);
-
-  // Sync live WebSocket insights if they match the active selectedSymbol
-  useEffect(() => {
-    if (latestInsight && latestInsight.headline && latestInsight.symbol.toUpperCase() === selectedSymbol.toUpperCase()) {
-      setActiveInsight(latestInsight);
-    }
-  }, [latestInsight, selectedSymbol]);
+  }
+  if (
+    latestInsight &&
+    latestInsight.headline &&
+    latestInsight.symbol.toUpperCase() === selectedSymbol.toUpperCase() &&
+    activeInsight !== latestInsight
+  ) {
+    setActiveInsight(latestInsight);
+  }
 
   return (
     <div id="macro-sentiment-panel" className="flex h-full flex-col rounded-none border-0 bg-surface text-sm select-none overflow-hidden">

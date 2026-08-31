@@ -71,7 +71,7 @@ vi.mock('../FnoChartPanel', async () => {
   const ReactNs = await import('react');
   return {
     __esModule: true,
-    default: () => {
+    default: function MockFnoChartPanel() {
       ReactNs.useEffect(() => {
         counts.chartPanelMounts += 1;
       }, []);

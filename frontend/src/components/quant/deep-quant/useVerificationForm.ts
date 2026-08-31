@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 
 export function useVerificationForm(symbol: string, livePrice: number) {
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY');
@@ -11,17 +11,37 @@ export function useVerificationForm(symbol: string, livePrice: number) {
   const [hasManuallySetSL, setHasManuallySetSL] = useState(false);
   const [hasManuallySetTP, setHasManuallySetTP] = useState(false);
 
-  // Track live price and dynamically pre-fill fields
-  useEffect(() => {
-    if (livePrice > 0) {
-      if (!hasManuallySetEntry) {
-        setEntry(livePrice.toFixed(2));
-      }
-    }
-  }, [livePrice, hasManuallySetEntry]);
+  // Reset manual inputs when the active symbol changes. This derives state
+  // from a prop change, so it's adjusted directly during render (the
+  // React-recommended pattern) instead of in a useEffect — it needs to take
+  // effect before the stale entry/SL/TP for the old symbol would otherwise
+  // render.
+  const [prevSymbol, setPrevSymbol] = useState(symbol);
+  if (symbol !== prevSymbol) {
+    setPrevSymbol(symbol);
+    setHasManuallySetEntry(false);
+    setHasManuallySetSL(false);
+    setHasManuallySetTP(false);
+    setUserAnalysis('');
+  }
 
-  // Compute SL/TP based on entry price and side if not manually set
-  useEffect(() => {
+  // Track live price and dynamically pre-fill the entry field, unless the
+  // user has manually overridden it. Derived from the `livePrice` prop, so
+  // adjusted during render rather than via an effect.
+  const [prevLivePrice, setPrevLivePrice] = useState(livePrice);
+  if (livePrice !== prevLivePrice) {
+    setPrevLivePrice(livePrice);
+    if (livePrice > 0 && !hasManuallySetEntry) {
+      setEntry(livePrice.toFixed(2));
+    }
+  }
+
+  // Compute SL/TP based on entry price and side if not manually set. Derived
+  // from `entry`/`side`, adjusted during render for the same reason.
+  const [prevEntryKey, setPrevEntryKey] = useState(`${entry}|${side}`);
+  const entryKey = `${entry}|${side}`;
+  if (entryKey !== prevEntryKey) {
+    setPrevEntryKey(entryKey);
     const numericEntry = parseFloat(entry);
     if (!isNaN(numericEntry) && numericEntry > 0) {
       if (!hasManuallySetSL) {
@@ -33,15 +53,7 @@ export function useVerificationForm(symbol: string, livePrice: number) {
         setTakeProfit(computedTP.toFixed(2));
       }
     }
-  }, [entry, side, hasManuallySetSL, hasManuallySetTP]);
-
-  // Reset manual inputs when active symbol changes
-  useEffect(() => {
-    setHasManuallySetEntry(false);
-    setHasManuallySetSL(false);
-    setHasManuallySetTP(false);
-    setUserAnalysis('');
-  }, [symbol]);
+  }
 
   // R:R and % deviations
   const riskToReward = useMemo(() => {

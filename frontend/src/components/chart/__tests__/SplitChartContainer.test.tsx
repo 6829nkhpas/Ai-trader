@@ -44,7 +44,7 @@ vi.mock('../../MainTerminalChart', async () => {
   const ReactNs = await import('react');
   return {
     __esModule: true,
-    default: ({ symbolOverride, timeframeOverride }: any) => {
+    default: function MockMainTerminalChart({ symbolOverride, timeframeOverride }: any) {
       ReactNs.useEffect(() => {
         charts.mounts += 1;
       }, []);

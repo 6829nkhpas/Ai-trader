@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { SVGS } from '../components/chart/toolbarIcons';
 import TerminalLayout from '../components/layout/TerminalLayout';
 import LeftPanel from '../components/panels/LeftPanel';
 import OrderExecutionPanel from '../components/panels/OrderExecutionPanel';
@@ -73,7 +72,7 @@ export default function Home() {
   // ── Extracted hooks ───────────────────────────────────────────────
   const showConnectionLost = useConnectionMonitor(mounted);
   const { toasts } = useToast();
-  const { rightButtonTop, isDraggingRight, handleRightButtonMouseDown, sidebarWidth, isResizingSidebar, startResizingSidebar } = useSidebarDrag(() => setSidebarOpen(true));
+  const { sidebarWidth, isResizingSidebar, startResizingSidebar } = useSidebarDrag();
 
   // ── Derived symbol ────────────────────────────────────────────────
   const latestDecision = activeDecision ?? liveDecisions[liveDecisions.length - 1] ?? null;
@@ -227,17 +226,6 @@ export default function Home() {
         >
           {/* ── Chart + Order Execution column ───────────── */}
           <div className={isFullscreen ? "fixed inset-0 z-150 flex flex-col bg-background p-2" : "relative flex h-full min-h-0 min-w-0 flex-col rounded-none bg-surface"}>
-            {!isFullscreen && !sidebarOpen && (
-              <button
-                onMouseDown={handleRightButtonMouseDown}
-                style={{ top: `${rightButtonTop}px` }}
-                className={`absolute right-0 z-100 flex h-7 w-6 items-center justify-center rounded-l border border-r-0 border-emerald-500/20 bg-surface/90 text-emerald-500 dark:text-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-300 hover:bg-emerald-500/10 shadow-lg backdrop-blur-sm transition-all duration-200 ${isDraggingRight ? 'cursor-grabbing' : 'cursor-grab'}`}
-                title="Expand right panel (Drag to move)"
-              >
-                <span dangerouslySetInnerHTML={{ __html: SVGS.sidebarOpen }} className="flex items-center justify-center scale-x-[-1] pointer-events-none" />
-              </button>
-            )}
-
             <div className="flex flex-1 min-h-0 w-full overflow-hidden">
               <div className="min-h-0 flex-1 bg-surface relative flex flex-col p-0 overflow-hidden">
                 {renderProfileContent()}
@@ -255,7 +243,6 @@ export default function Home() {
 
       <ToastContainer toasts={toasts} />
       {isResizingSidebar && <div className="fixed inset-0 z-9999 cursor-col-resize select-none pointer-events-auto bg-white/0" />}
-      {isDraggingRight && <div className="fixed inset-0 z-9999 cursor-row-resize select-none pointer-events-auto bg-white/0" />}
     </div>
   );
 }

@@ -131,74 +131,76 @@ export default function TerminalLayout({ children, leftPanel, rightPanel }: Term
       />
 
       {/* ── Everything right of the rail ────────────────────── */}
-      <div className="flex h-full min-w-0 flex-1 flex-col">
-        {/* ── Live Market Ticker Strip ──────────────────────── */}
-        <MarketTickerStrip />
-
-        {/* Main Content */}
-        <div className="flex flex-1 min-h-0 min-w-0 overflow-visible bg-background p-0 gap-0">
-          {/* Watchlist / Left Panel */}
-          <aside
-            className={`
-              relative flex shrink-0 min-h-0 flex-col border-r border-border-default rounded-none bg-surface overflow-hidden
-              ${isResizing ? '' : 'transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]'}
-              ${leftPanelOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}
-            `}
-            style={{ width: leftPanelOpen ? `${leftPanelWidth}px` : '0px' }}
+      <div className="flex h-full min-w-0 flex-1 flex-row min-h-0 overflow-visible bg-background p-0 gap-0">
+        {/* Watchlist / Left Panel */}
+        <aside
+          className={`
+            relative flex shrink-0 min-h-0 flex-col border-r border-border-default rounded-none bg-surface overflow-hidden
+            ${isResizing ? '' : 'transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]'}
+            ${leftPanelOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}
+          `}
+          style={{ width: leftPanelOpen ? `${leftPanelWidth}px` : '0px' }}
+        >
+          {/* Fixed-width inner container with sliding translate effect */}
+          <div
+            className={`flex flex-col h-full shrink-0 ${isResizing ? '' : 'transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]'}`}
+            style={{
+              width: `${leftPanelWidth}px`,
+              transform: leftPanelOpen ? 'translateX(0)' : 'translateX(-100%)',
+            }}
           >
-            {/* Fixed-width inner container with sliding translate effect */}
-            <div
-              className={`flex flex-col h-full shrink-0 ${isResizing ? '' : 'transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]'}`}
-              style={{
-                width: `${leftPanelWidth}px`,
-                transform: leftPanelOpen ? 'translateX(0)' : 'translateX(-100%)',
-              }}
-            >
-              {/* Section Header */}
-              <div className="flex h-8 shrink-0 items-center justify-between border-b border-border-default bg-elevated/10 px-3 select-none">
-                <span className="text-xs font-black uppercase tracking-wider text-text-primary/90">Market Watch</span>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => setIsSearchOpen(true)}
-                    className="rounded p-0.5 text-text-muted hover:bg-elevated hover:text-text-primary transition-colors flex items-center justify-center"
-                    title="Search NSE symbol..."
-                  >
-                    <Search size={16} />
-                  </button>
-                  <button
-                    onClick={() => setLeftPanelOpen(false)}
-                    className="rounded p-0.5 text-text-muted hover:bg-elevated hover:text-text-primary transition-colors flex items-center justify-center"
-                    title="Collapse left panel"
-                  >
-                    <span dangerouslySetInnerHTML={{ __html: SVGS.sidebarClose }} className="flex items-center justify-center" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex-1 min-h-0 w-full overflow-hidden">
-                {leftPanel}
+            {/* Section Header */}
+            <div className="flex h-8 shrink-0 items-center justify-between border-b border-border-default bg-elevated/10 px-3 select-none">
+              <span className="text-xs font-black uppercase tracking-wider text-text-primary/90">Market Watch</span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setIsSearchOpen(true)}
+                  className="rounded p-0.5 text-text-muted hover:bg-elevated hover:text-text-primary transition-colors flex items-center justify-center"
+                  title="Search NSE symbol..."
+                >
+                  <Search size={16} />
+                </button>
+                <button
+                  onClick={() => setLeftPanelOpen(false)}
+                  className="rounded p-0.5 text-text-muted hover:bg-elevated hover:text-text-primary transition-colors flex items-center justify-center"
+                  title="Collapse left panel"
+                >
+                  <span dangerouslySetInnerHTML={{ __html: SVGS.sidebarClose }} className="flex items-center justify-center" />
+                </button>
               </div>
             </div>
 
-            {/* Resize Handle */}
-            {leftPanelOpen && (
-              <div
-                onMouseDown={startResizing}
-                className={`
-                  absolute top-0 bottom-0 -right-1.5 w-3 cursor-col-resize z-20 hover:bg-emerald-500/10 transition-colors duration-150 rounded-none
-                  flex items-center justify-center group
-                  ${isResizing ? 'bg-emerald-500/20' : 'bg-transparent'}
-                `}
-                title="Drag to resize panel"
-              >
-                {/* Visual handle bar */}
-                <div className={`
-                  w-0.5 h-6 bg-border-default rounded-[1px] group-hover:bg-emerald-400 transition-colors
-                  ${isResizing ? 'bg-emerald-400' : ''}
-                `} />
-              </div>
-            )}
-          </aside>
+            <div className="flex-1 min-h-0 w-full overflow-hidden">
+              {leftPanel}
+            </div>
+          </div>
+
+          {/* Resize Handle */}
+          {leftPanelOpen && (
+            <div
+              onMouseDown={startResizing}
+              className={`
+                absolute top-0 bottom-0 -right-1.5 w-3 cursor-col-resize z-20 hover:bg-emerald-500/10 transition-colors duration-150 rounded-none
+                flex items-center justify-center group
+                ${isResizing ? 'bg-emerald-500/20' : 'bg-transparent'}
+              `}
+              title="Drag to resize panel"
+            >
+              {/* Visual handle bar */}
+              <div className={`
+                w-0.5 h-6 bg-border-default rounded-[1px] group-hover:bg-emerald-400 transition-colors
+                ${isResizing ? 'bg-emerald-400' : ''}
+              `} />
+            </div>
+          )}
+        </aside>
+
+        {/* Right of the left panel: ticker strip above the central area, so
+            the marquee only spans the chart/content column, not the
+            Market Watch panel. */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-visible">
+          {/* ── Live Market Ticker Strip ──────────────────────── */}
+          <MarketTickerStrip />
 
           {/* Central Area */}
           <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-visible">

@@ -79,10 +79,6 @@ export default function DeepQuantPanel() {
     };
   }, []);
 
-  if (!user || !deepseekGlmEnabled) {
-    return <PremiumPaywall onUpgradeClick={handleUpgrade} />;
-  }
-
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
   const historicalCache = useTradeStore((s) => s.historicalCache);
   const activeTimeframe = useTradeStore((s) => s.activeTimeframe);
@@ -156,6 +152,10 @@ export default function DeepQuantPanel() {
   React.useEffect(() => {
     useQuantStore.getState().activateSymbolSession(activeSymbol, activeProfile);
   }, [activeSymbol, activeProfile]);
+
+  if (!user || !deepseekGlmEnabled) {
+    return <PremiumPaywall onUpgradeClick={handleUpgrade} />;
+  }
 
   const handleAIAnalysis = () => {
     useQuantStore.getState().resetTerminal();

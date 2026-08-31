@@ -75,15 +75,21 @@ export default function SwingConfluencePanel() {
     }
   }, [selectedSymbol, loadSentimentForSymbol]);
 
-  // Reset insight history when selectedSymbol changes
-  useEffect(() => {
+  // Reset insight history when selectedSymbol changes, and append newly
+  // arrived live ticks. Both are derived from props (`selectedSymbol` /
+  // `latestInsight`), so they're adjusted during render — the
+  // React-recommended pattern — rather than in effects; only the "highlight
+  // newest insight for 3s" timer below needs an actual effect (it manages a
+  // real external timer with its own cleanup).
+  const [prevSymbolForHistory, setPrevSymbolForHistory] = useState(selectedSymbol);
+  if (selectedSymbol !== prevSymbolForHistory) {
+    setPrevSymbolForHistory(selectedSymbol);
     setInsightHistory([]);
-  }, [selectedSymbol]);
+  }
 
-  // Handle live ticks from WebSocket
-  useEffect(() => {
-    if (!latestInsight || !latestInsight.headline) return;
-
+  const [prevLatestInsight, setPrevLatestInsight] = useState<MarketInsight | null>(null);
+  if (latestInsight && latestInsight.headline && latestInsight !== prevLatestInsight) {
+    setPrevLatestInsight(latestInsight);
     setInsightHistory((prev) => {
       // Skip duplicates (same timestamp + symbol)
       if (prev.length > 0) {
@@ -94,11 +100,15 @@ export default function SwingConfluencePanel() {
       }
       return [latestInsight, ...prev].slice(0, 20);
     });
-
     setNewestId(latestInsight.timestamp_ms);
+  }
+
+  // Clear the "newest" highlight after 3s.
+  useEffect(() => {
+    if (newestId === null) return;
     const timer = setTimeout(() => setNewestId(null), 3000);
     return () => clearTimeout(timer);
-  }, [latestInsight]);
+  }, [newestId]);
 
   // Determine active score & display payload.
   //

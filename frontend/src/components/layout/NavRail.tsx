@@ -12,7 +12,10 @@ import QuantRadar from '../quant/QuantRadar';
 
 // Icon per workspace mode. Kept here (not in layoutHelpers) so the shared
 // PROFILES list stays framework-agnostic and this rail owns its own visuals.
-const PROFILE_ICONS: Record<TradeProfile, LucideIcon> = {
+// Exported so other switchers (e.g. RightSidebar's tab switcher) render the same
+// glyph for a given workspace mode instead of inventing a second icon mapping
+// that could silently drift from this one.
+export const PROFILE_ICONS: Record<TradeProfile, LucideIcon> = {
   INTRADAY: Zap,
   SWING: TrendingUp,
   INVESTOR: Landmark,
