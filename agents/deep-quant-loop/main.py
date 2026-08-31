@@ -52,6 +52,11 @@ from entitlements import (
 # that can realistically fail to import.
 import interaction_log
 
+# Event_Source adapter for `/events/calendar` (see that route). Imported eagerly:
+# it has no import-time I/O and no optional dependency, so a failure here would be
+# a genuine packaging fault worth surfacing at boot rather than on first use.
+import event_calendar
+
 # F&O read layer + analytics (F1/F2) and the agent options-bias classifier (F3).
 # The /options/snapshot endpoint (F4 transport seam) strictly COMPOSES these
 # existing functions and adds no analytics of its own (see the F4 design, AD-2).
@@ -1165,6 +1170,74 @@ def _build_options_snapshot(underlying: str, expiry: str = ""):
         "analytics": analytics,
         "bias": bias,
     }
+
+
+# ── Event_Source adapter endpoint ────────────────────────────────────────────
+
+
+@app.get("/events/calendar")
+def events_calendar(symbol: str = ""):
+    """Serve one symbol's upcoming Scheduled_Event dates to `get_event_risk`.
+
+    This is the endpoint `EVENT_CALENDAR_API_URL` points at. The agent's reader
+    calls it as `GET /events/calendar?symbol=RELIANCE` and parses a list of
+    `{symbol, date}` records, which is exactly what this returns; all of NSE's
+    quirks (cookie priming, `DD-Mon-YYYY` dates, non-earnings board meetings) are
+    handled in `event_calendar.py` so the agent's reader stays vendor-agnostic.
+
+    Served from THIS service rather than a new one on purpose. The address is then
+    identical in every environment — `http://127.0.0.1:${DEEP_QUANT_PORT}` — with no
+    service discovery, compose topology or DNS to get wrong between local and
+    production, which is the usual way a second service diverges between the two.
+
+    A synchronous `def`, so FastAPI runs it on the threadpool: the upstream fetch is
+    blocking `httpx`, and running it here would otherwise stall the event loop and
+    every live run with it (same reasoning as `/options/snapshot`). This also makes
+    the self-call safe — the agent's tools are sync, and LangChain runs a sync tool
+    via `run_in_executor`, so the calling thread is a worker and the loop stays free
+    to serve this request.
+
+    Status codes are part of the contract, because the agent turns them into two
+    DIFFERENT and non-interchangeable readings:
+
+      * `200 []`  -> "no upcoming scheduled event known for symbol" — we looked, the
+                     calendar is clear.
+      * non-2xx   -> "event source retrieval failed" — we are blind.
+
+    So an upstream failure returns 503 and never an empty list. Answering `[]` when
+    the calendar could not be read would report a clear diary for a company that
+    might report tomorrow, and the gate would let a multi-session position sit
+    straight through the event.
+    """
+    started = time.monotonic()
+    requested = symbol.strip() if isinstance(symbol, str) else ""
+    if not requested:
+        # A missing symbol is a caller error, not an empty calendar — same
+        # distinction as above, so it must not answer 200 [].
+        raise HTTPException(status_code=422, detail="symbol query parameter is required")
+
+    try:
+        rows, stale = event_calendar.events_for_symbol(requested)
+    except event_calendar.EventCalendarUnavailable as exc:
+        took = time.monotonic() - started
+        print(
+            f"[EventCalendar] {requested}: unavailable after {took:.2f}s -> 503 ({exc})"
+        )
+        raise HTTPException(
+            status_code=503, detail=f"event calendar unavailable: {exc}"
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 - an unexpected fault is still "blind"
+        took = time.monotonic() - started
+        print(f"[EventCalendar] {requested}: unexpected fault after {took:.2f}s -> 503 ({exc})")
+        raise HTTPException(
+            status_code=503, detail=f"event calendar unavailable: {exc}"
+        ) from exc
+
+    print(
+        f"[EventCalendar] {requested}: {len(rows)} event(s)"
+        f"{' (from stale cache)' if stale else ''} in {time.monotonic() - started:.2f}s"
+    )
+    return rows
 
 
 # ── Entrypoint ───────────────────────────────────────────────────────────────
