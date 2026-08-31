@@ -52,6 +52,13 @@ export default function SummaryRail({
       aria-label="Analysis summary"
       className="shrink-0 border-t border-border-default bg-surface"
     >
+      <div className="flex items-center gap-1.5 px-2.5 pt-2 pb-1">
+        <span className="text-[9px] font-black uppercase tracking-wider text-text-muted/70">
+          AI Analysis
+        </span>
+        <span className="h-px flex-1 bg-border-default/50" aria-hidden="true" />
+      </div>
+
       <SentimentStrip
         symbol={symbol}
         sentiment={sentiment}

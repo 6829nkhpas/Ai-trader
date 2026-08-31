@@ -49,7 +49,7 @@ interface SymbolQuote {
 
 
 export default function OrderExecutionPanel() {
-  const { activeDecision, portfolioBalance, positions } = useTradeStore();
+  const { activeDecision, positions } = useTradeStore();
   const ohlcCandles = useTradeStore((s) => s.ohlcCandles);
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
   const liveDecisions = useTradeStore((s) => s.liveDecisions);
@@ -168,16 +168,17 @@ export default function OrderExecutionPanel() {
     : null;
 
   return (
-    <div className="flex flex-col gap-2 px-3 py-2">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="flex flex-col gap-2 px-4 py-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         {/* ── Left: Symbol + Live Quote ───────────────────────── */}
         <div className="min-w-45">
           <div className="flex items-center gap-2">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
+            <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-text-muted">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" aria-hidden="true" />
               {hasDecision ? 'Trade Strip' : 'Live Strip'}
-            </h2>
+            </span>
             {hasDecision && (
-              <span className={`rounded px-1.5 py-px text-[9px] font-bold uppercase ${
+              <span className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-wide ${
                 isBuy ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
                   : isSell ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30'
                   : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
@@ -187,20 +188,22 @@ export default function OrderExecutionPanel() {
             )}
           </div>
           <div className="mt-1 flex items-center gap-2">
-            <span className="text-sm font-semibold text-text-primary">{symbol}</span>
+            <span className="text-base font-bold tracking-tight text-text-primary">{symbol}</span>
             {liveQuote && liveQuote.change !== null && (
-              <div className={`flex items-center gap-0.5 text-[10px] font-medium tabular-nums ${liveQuote.change >= 0 ? 'text-bull' : 'text-bear'}`}>
+              <div className={`flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-bold tabular-nums ${
+                liveQuote.change >= 0 ? 'text-bull bg-bull/10' : 'text-bear bg-bear/10'
+              }`}>
                 {liveQuote.change >= 0 ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />}
                 {liveQuote.change >= 0 ? '+' : ''}{liveQuote.change.toFixed(2)}%
               </div>
             )}
           </div>
           {hasDecision && (
-            <div className="flex items-center gap-2 text-xs text-text-secondary">
-              <span>Conviction {matchedDecision!.final_conviction_score}%</span>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-text-secondary">
+              <span className="font-semibold">Conviction {matchedDecision!.final_conviction_score}%</span>
               {atrValue !== null ? (
                 <span className="text-[10px] text-text-muted tabular-nums">
-                  ATR: {atrValue.toFixed(2)}
+                  ATR {atrValue.toFixed(2)}
                 </span>
               ) : (
                 /* Say why there are no target/stop levels. Silence here would read
@@ -214,7 +217,7 @@ export default function OrderExecutionPanel() {
                 </span>
               )}
               {rrRatio && (
-                <span className="rounded bg-cyan-500/10 px-1 py-px text-[9px] font-bold text-cyan-400 tabular-nums">
+                <span className="rounded-full bg-cyan-500/10 px-1.5 py-px text-[9px] font-bold text-cyan-400 tabular-nums">
                   {rrRatio.toFixed(1)}:1 R:R
                 </span>
               )}
@@ -231,18 +234,15 @@ export default function OrderExecutionPanel() {
           stopPrice={stopPrice}
         />
 
-        {/* ── Right: Reasoning + Portfolio State ──────────────── */}
+        {/* ── Right: Reasoning / Open positions ───────────────── */}
         <ReasoningBlock
           hasDecision={hasDecision}
           matchedDecision={matchedDecision}
           symbol={symbol}
           liveQuote={liveQuote}
-          portfolioBalance={portfolioBalance}
           positions={positions}
         />
       </div>
-
-
     </div>
   );
 }

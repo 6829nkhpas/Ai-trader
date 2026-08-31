@@ -1,5 +1,4 @@
 import React, { useMemo } from 'react';
-import { Briefcase } from 'lucide-react';
 
 interface SymbolQuote {
   symbol: string;
@@ -18,7 +17,6 @@ interface ReasoningBlockProps {
   matchedDecision: any;
   symbol: string;
   liveQuote: SymbolQuote | null;
-  portfolioBalance: number;
   positions: Record<string, number>;
 }
 
@@ -27,7 +25,6 @@ export default function ReasoningBlock({
   matchedDecision,
   symbol,
   liveQuote,
-  portfolioBalance,
   positions,
 }: ReasoningBlockProps) {
   // ── Compute real-time quantitative reasoning fallback ──────────────
@@ -49,32 +46,26 @@ export default function ReasoningBlock({
 
   if (hasDecision) {
     return (
-      <div className="flex min-w-48 flex-1 items-start gap-2 text-xs text-text-secondary">
-        <span className="font-semibold text-text-secondary">Reasoning:</span>
-        <span>{reasoning}</span>
+      <div className="flex min-w-48 flex-1 items-start gap-2 rounded-md border border-border-default/50 bg-elevated/40 px-3 py-1.5 text-xs text-text-secondary">
+        <span className="shrink-0 font-bold uppercase tracking-wider text-[9px] text-text-muted pt-0.5">Reasoning</span>
+        <span className="text-text-secondary">{reasoning}</span>
       </div>
     );
   }
 
+  if (Object.keys(positions).length === 0) return null;
+
   return (
-    <div className="flex items-center gap-3 text-xs text-text-secondary">
-      <div className="flex items-center gap-2">
-        <Briefcase size={12} className="text-text-muted" />
-        <span>Balance:</span>
-        <span className="flex items-center font-bold text-text-primary">
-          <span className="mr-0.5 text-bull font-semibold">₹</span>
-          {portfolioBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+    <div className="flex flex-wrap items-center justify-end gap-1.5">
+      {Object.entries(positions).map(([sym, qty]) => (
+        <span
+          key={sym}
+          className="rounded-full border border-border-default/60 bg-elevated/50 px-2.5 py-1 text-[10px] font-medium text-text-secondary"
+        >
+          <span className="font-bold text-text-primary">{sym}</span>
+          <span className="text-text-muted"> · {qty}</span>
         </span>
-      </div>
-      {Object.keys(positions).length > 0 && (
-        <div className="flex flex-wrap items-center gap-1">
-          {Object.entries(positions).map(([sym, qty]) => (
-            <span key={sym} className="rounded-full border border-border-default bg-surface px-2 py-0.5 text-[10px] text-text-secondary">
-              <span className="font-bold text-text-primary">{sym}</span>: {qty}
-            </span>
-          ))}
-        </div>
-      )}
+      ))}
     </div>
   );
 }

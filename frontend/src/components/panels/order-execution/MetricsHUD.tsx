@@ -1,4 +1,5 @@
 import React from 'react';
+import { Target, ShieldAlert } from 'lucide-react';
 
 interface SymbolQuote {
   symbol: string;
@@ -47,14 +48,14 @@ export default function MetricsHUD({
   const stopDisplay = stopPrice ? formatINR(stopPrice) : '--';
 
   return (
-    <div className="flex items-center gap-4 text-xs">
+    <div className="flex items-center gap-5">
       <div>
-        <div className="text-[10px] uppercase tracking-wider text-text-secondary">
+        <div className="text-[9px] font-bold uppercase tracking-wider text-text-muted">
           {hasDecision ? 'Entry' : 'LTP'}
         </div>
-        <div className="text-sm font-semibold text-text-primary tabular-nums">{entryDisplay}</div>
+        <div className="text-sm font-bold text-text-primary tabular-nums">{entryDisplay}</div>
         {liveQuote && liveQuote.net_change !== null && (
-          <div className={`text-[9px] tabular-nums ${liveQuote.net_change >= 0 ? 'text-bull' : 'text-bear'}`}>
+          <div className={`text-[9px] font-semibold tabular-nums ${liveQuote.net_change >= 0 ? 'text-bull' : 'text-bear'}`}>
             {liveQuote.net_change >= 0 ? '+' : ''}{liveQuote.net_change.toFixed(2)}
           </div>
         )}
@@ -62,48 +63,54 @@ export default function MetricsHUD({
 
       {/* OHLC Data — always visible for the selected symbol */}
       {liveQuote && (
-        <>
+        <div className="flex items-center gap-4 border-l border-border-default/60 pl-5">
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-text-secondary">Open</div>
+            <div className="text-[9px] font-bold uppercase tracking-wider text-text-muted">Open</div>
             <div className="text-sm font-semibold text-text-primary tabular-nums">{formatINR(liveQuote.open)}</div>
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-text-secondary">High</div>
+            <div className="text-[9px] font-bold uppercase tracking-wider text-text-muted">High</div>
             <div className="text-sm font-semibold text-bull tabular-nums">{formatINR(liveQuote.high)}</div>
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-text-secondary">Low</div>
+            <div className="text-[9px] font-bold uppercase tracking-wider text-text-muted">Low</div>
             <div className="text-sm font-semibold text-bear tabular-nums">{formatINR(liveQuote.low)}</div>
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-text-secondary">Vol</div>
+            <div className="text-[9px] font-bold uppercase tracking-wider text-text-muted">Vol</div>
             <div className="text-sm font-semibold text-text-secondary tabular-nums">{formatVolume(liveQuote.volume)}</div>
           </div>
-        </>
+        </div>
       )}
 
       {/* ATR Target/Stop — only when AI decision is active */}
       {hasDecision && (
-        <>
-          <div className="border-l border-border-default pl-4">
-            <div className="text-[10px] uppercase tracking-wider text-text-secondary">Target</div>
+        <div className="flex items-center gap-3 border-l border-border-default/60 pl-5">
+          <div>
+            <div className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-text-muted">
+              <Target size={9} className="text-bull" />
+              Target
+            </div>
             <div className={`text-sm font-semibold tabular-nums ${targetPrice ? 'text-bull' : 'text-text-muted'}`}>{targetDisplay}</div>
             {targetPrice && entryPrice && (
-              <div className="text-[9px] text-bull tabular-nums">
+              <div className="text-[9px] font-medium text-bull tabular-nums">
                 +{(((targetPrice - entryPrice) / entryPrice) * 100).toFixed(1)}%
               </div>
             )}
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-text-secondary">Stop</div>
+            <div className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-text-muted">
+              <ShieldAlert size={9} className="text-bear" />
+              Stop
+            </div>
             <div className={`text-sm font-semibold tabular-nums ${stopPrice ? 'text-bear' : 'text-text-muted'}`}>{stopDisplay}</div>
             {stopPrice && entryPrice && (
-              <div className="text-[9px] text-bear tabular-nums">
+              <div className="text-[9px] font-medium text-bear tabular-nums">
                 {(((stopPrice - entryPrice) / entryPrice) * 100).toFixed(1)}%
               </div>
             )}
           </div>
-        </>
+        </div>
       )}
     </div>
   );
