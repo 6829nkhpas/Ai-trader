@@ -143,6 +143,8 @@ describe('LeftPanel summary rail', () => {
     useTradeStore.setState({
       historicalCache: {
         'RELIANCE::10m': Array.from({ length: 30 }, (_, i) => ({
+          symbol: 'RELIANCE',
+          start_timestamp_ms: (1_700_000_000 + i * 600) * 1000,
           time: 1_700_000_000 + i * 600,
           open: 1,
           high: 2,
