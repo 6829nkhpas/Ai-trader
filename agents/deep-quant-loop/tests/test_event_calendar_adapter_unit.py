@@ -249,8 +249,13 @@ class TestCachingAndFailure:
             raise RuntimeError("upstream down")
 
         monkeypatch.setattr(ec, "_fetch_upstream", boom)
-        monkeypatch.setenv(ec.ENV_TTL_SECONDS, "0.0001")  # force a refresh attempt
-        rows, stale = ec.get_calendar()
+        # `force_refresh=True`, NOT a 0.0001s TTL. A tiny TTL only forces a
+        # refresh if the wall clock advances past it between the two calls, and on
+        # a fast host they are microseconds apart so the cache still reads fresh
+        # and no refetch is attempted — which is exactly how this passed on a slow
+        # Windows dev box and failed on Linux CI. force_refresh removes the clock
+        # from the test entirely.
+        rows, stale = ec.get_calendar(force_refresh=True)
         assert rows == good
         assert stale is True, "a served-from-cache answer must announce itself"
 
@@ -270,6 +275,8 @@ class TestCachingAndFailure:
             ec.get_calendar()
 
     def test_stops_serving_stale_past_the_grace_window(self, monkeypatch):
+        import time
+
         monkeypatch.setattr(ec, "_fetch_upstream", lambda *a, **k: NSE_SAMPLE)
         ec.get_calendar()
 
@@ -277,12 +284,16 @@ class TestCachingAndFailure:
             raise RuntimeError("upstream down")
 
         monkeypatch.setattr(ec, "_fetch_upstream", boom)
-        monkeypatch.setenv(ec.ENV_TTL_SECONDS, "0.0001")
-        monkeypatch.setenv(ec.ENV_STALE_GRACE_SECONDS, "0.0001")
+        # Age the cache deterministically instead of racing a tiny grace window
+        # against the clock (see the note in the stale-serve test). The cache is
+        # now 10000s old against a 60s grace, so the age > grace branch is taken
+        # regardless of how fast the host is.
+        ec._cached_at = time.monotonic() - 10_000.0
+        monkeypatch.setenv(ec.ENV_STALE_GRACE_SECONDS, "60")
         # A revised event date is worse than an honest "blind", so past the grace
         # window the endpoint must fail loudly instead of answering from memory.
         with pytest.raises(ec.EventCalendarUnavailable):
-            ec.get_calendar()
+            ec.get_calendar(force_refresh=True)
 
     def test_a_malformed_env_value_falls_back_to_the_default(self, monkeypatch):
         # A typo in an env var must not take the endpoint down.
