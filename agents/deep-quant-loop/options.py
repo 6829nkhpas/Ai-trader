@@ -2130,8 +2130,14 @@ def build_live_chain_snapshot(
 
         # One request for the whole ladder. Kite takes up to 500 instruments per
         # quote call and the band is at most 42, so this never needs paging.
+        #
+        # REPEATED `i=` params, not one comma-joined value. The aggregator's handler
+        # collects each `i=` from the raw query string and forwards them unchanged;
+        # a comma list arrives as a SINGLE instrument named
+        # "NFO:A,NFO:B,…", which Kite does not recognise, and every leg comes back
+        # priceless. `httpx` expands a list into `i=…&i=…`.
         quotes = _kite_get(
-            "/quote", {"i": ",".join(f"{exchange}:{s}" for s in symbols)}, timeout=15.0
+            "/quote", {"i": [f"{exchange}:{s}" for s in symbols]}, timeout=15.0
         )
         by_symbol: dict = {}
         if isinstance(quotes, dict) and isinstance(quotes.get("quotes"), list):

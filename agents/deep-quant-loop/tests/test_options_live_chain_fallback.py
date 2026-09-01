@@ -112,9 +112,20 @@ class TestBuildLiveChainSnapshot:
     def test_prices_the_whole_ladder_in_one_call(self, kite):
         options.build_live_chain_snapshot("HINDUNILVR", "2026-09-29")
         quote_calls = [c for c in kite if c[0] == "/quote"]
-        assert len(quote_calls) == 1
+        assert len(quote_calls) == 1, "the band must be priced in one request, not per leg"
+
+        keys = quote_calls[0][1]["i"]
+        # A LIST, so httpx emits repeated `i=` params. A comma-joined string reaches
+        # Kite as one instrument named "NFO:A,NFO:B,…" and every leg prices as null —
+        # which is exactly how this first shipped.
+        assert isinstance(keys, list)
         # Exchange-prefixed, so BFO names (SENSEX/BANKEX) resolve too.
-        assert quote_calls[0][1]["i"].startswith("NFO:HINDUNILVR26SEP1950CE,")
+        assert keys == [
+            "NFO:HINDUNILVR26SEP1950CE",
+            "NFO:HINDUNILVR26SEP1950PE",
+            "NFO:HINDUNILVR26SEP2000CE",
+            "NFO:HINDUNILVR26SEP2000PE",
+        ]
 
     @pytest.mark.parametrize(
         "broken",

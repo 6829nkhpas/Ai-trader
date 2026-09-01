@@ -1216,7 +1216,15 @@ async fn quote_handler(
     axum::extract::RawQuery(raw_query): axum::extract::RawQuery,
     state: axum::extract::State<Arc<KiteApiState>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    // Parse repeated `i=` params from raw query string
+    // Parse repeated `i=` params from the raw query string, splitting each on
+    // commas as the doc comment above promises.
+    //
+    // The comma form was documented but never implemented: a value was decoded and
+    // forwarded whole, so `?i=NSE:A,NSE:B` reached Kite as ONE instrument literally
+    // named "NSE:A,NSE:B", which it does not recognise — the caller got an empty
+    // quote list and no indication why. That is a trap for anything reading the
+    // comment, and it cost exactly that: the F&O live-chain fallback priced its
+    // whole ladder in one comma-joined call and every leg came back null.
     let raw = raw_query.unwrap_or_default();
     let instruments: Vec<String> = raw
         .split('&')
@@ -1229,6 +1237,13 @@ async fn quote_handler(
             } else {
                 None
             }
+        })
+        .flat_map(|value| {
+            value
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
         })
         .collect();
 
