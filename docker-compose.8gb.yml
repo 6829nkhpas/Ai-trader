@@ -83,7 +83,14 @@ services:
     mem_limit: 200m
 
   deep-quant:
-    mem_limit: 512m
+    # 512m -> 576m for the durable-state work: an aiosqlite connection for the
+    # LangGraph checkpointer plus the session store's short-lived connections and
+    # stream-frame batch buffers. The +64m is PRECAUTIONARY, not measured — WAL
+    # SQLite with short connections adds little RSS. Measure with
+    # `docker stats stratai-deep-quant` under a concurrent FIND load and pull this
+    # back if the working set stays near the old ceiling; this box is already at
+    # ~6.75 GB committed and headroom here is not free.
+    mem_limit: 576m
 
   # The Next.js web app (app.stratai.live).
   #

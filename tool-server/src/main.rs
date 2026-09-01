@@ -12,6 +12,7 @@
 // reaches it at http://tool-server:8084. Not exposed publicly.
 
 mod candles;
+mod internal_identity;
 mod metrics;
 mod news;
 
@@ -1177,9 +1178,31 @@ async fn post_resume(
             .unwrap_or_else(|_| "http://localhost:8086".to_string())
             .trim_end_matches('/')
     );
-    match client.post(&resume_url).json(&payload).send().await {
+    // Internal SERVICE credential. The watcher has no user session, so it asserts
+    // itself rather than a user; deep-quant resolves the owning user from the run
+    // row. `None` when no secret is configured, which is correct for local dev and
+    // for every stage before DEEP_QUANT_REQUIRE_IDENTITY is switched on — the
+    // watcher must keep resuming runs throughout the rollout.
+    let mut request = client.post(&resume_url).json(&payload);
+    if let Some(credential) = crate::internal_identity::service_header() {
+        request = request.header(crate::internal_identity::SERVICE_HEADER, credential);
+    }
+
+    match request.send().await {
         Ok(res) => {
             let resumable = res.status().is_success();
+            // 401 is worth calling out separately: it means the credential is missing
+            // or does not match deep-quant's INTERNAL_SERVICE_SECRET, and it would
+            // otherwise read as "the run ended" via the 4xx branch — a watcher that
+            // silently stops waking runs.
+            if res.status() == reqwest::StatusCode::UNAUTHORIZED {
+                error!(
+                    "[watcher] resume POST thread_id={} was REFUSED (401): the service \
+                     credential is missing or does not match deep-quant's \
+                     INTERNAL_SERVICE_SECRET. Price watches will not resume.",
+                    thread_id
+                );
+            }
             info!(
                 "[watcher] resume POST thread_id={} trigger={} status={}",
                 thread_id, payload["trigger_kind"], res.status()

@@ -2,6 +2,7 @@ import asyncio
 import time
 import uvicorn
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -24,7 +25,18 @@ from service_metrics import metrics as svc_metrics
 _metrics_server = svc_metrics.serve()
 
 # Import the compiled LangGraph state machine + the per-run LLM credential hook.
-from graph import graph, set_run_llm_credentials  # noqa: E402 - see the note above
+#
+# `import graph as graph_module` rather than `from graph import graph`, and every use
+# below is `graph_module.graph`. That is load-bearing, not style: the durable
+# checkpointer must be built inside the running event loop
+# (`AsyncSqliteSaver.__init__` calls `asyncio.get_running_loop()`), so the lifespan
+# below REBINDS `graph_module.graph` at startup. A `from graph import graph` binding is
+# taken once at import and would keep pointing at the MemorySaver-backed graph — the
+# service would look like it had a durable checkpointer while still losing every
+# thread on restart, which is the exact failure this phase exists to remove and the
+# kind that tests using the module attribute would not catch.
+import graph as graph_module  # noqa: E402 - see the note above
+from graph import set_run_llm_credentials  # noqa: E402 - pure function, safe to bind
 
 # Per-user OpenRouter key resolution (backend internal endpoint, droplet
 # IP-whitelisted). Each run binds the requesting user's key instead of a shared
@@ -44,6 +56,28 @@ from entitlements import (
     ENTITLEMENT_ERROR_CODE,
     require_research_entitlement,
 )
+
+# Verified caller identity. ``user_id`` arriving in the request body is
+# self-asserted — the browser puts it there and nothing checks it — which is
+# survivable while this service only streams analysis but not once sessions and
+# transcripts are stored per user. These resolve the caller from a MAC'd assertion
+# minted by the Next tier after it has verified the httpOnly session cookie.
+#
+# Imported eagerly and not defensively, for the same reason as the entitlement
+# gate: an import failure must break the service loudly rather than silently
+# degrade to trusting the body.
+import internal_identity
+from internal_identity import require_service, resolve_user
+
+# Durable LangGraph checkpointer. Pure configuration + lifecycle; it imports nothing
+# heavy at module scope (the saver package is imported lazily so a deployment without it
+# degrades to MemorySaver rather than failing to import `main`).
+import checkpointer
+
+# Durable transcript writer. Threaded through `_run_events` like `tracker` is, because
+# every emit site already holds the (name, payload) pair. A no-op when there is no run row
+# or the flag is off, so no call site branches on whether persistence is enabled.
+import stream_persist
 
 # Tamper-evident interaction log (compliance blocker P5): what was published, to
 # whom, and when. Imported eagerly for the same reason as the entitlement gate —
@@ -107,7 +141,139 @@ except Exception as _telemetry_import_error:  # noqa: BLE001 - never block the a
 # the absence is at least visible on a dashboard.
 svc_metrics.set_telemetry_available(telemetry is not None)
 
-app = FastAPI(title="LangGraph Deep Quant Loop Service")
+def _reconcile_stale_runs() -> None:
+    """Mark runs that claim to be live but cannot be, now that a restart has happened.
+
+    The anti-fabrication pass. A process that dies mid-stream leaves a run row saying
+    ``running`` and an assistant message saying ``streaming``; after a restart there is
+    no producer for either, so presenting them unchanged would show a half-written
+    answer as if it were still arriving — and, once complete, as if it had succeeded.
+    The durable checkpointer is what makes the distinction decidable: a run whose thread
+    still reports a pending ``next`` is genuinely resumable and stays ``watching``,
+    while one that does not is ``truncated``.
+
+    A no-op until the session store lands (migration plan T3.1). Wired here in the same
+    commit as the durable checkpointer because it is the checkpointer that makes it
+    possible, and because a reconciliation pass that gets added later, separately, is one
+    that gets forgotten.
+    """
+    try:
+        import session_store
+    except ImportError:
+        # Only reachable if the module were removed. Kept as a guard rather than a bare
+        # import so a rollback that deletes session_store.py degrades to "no
+        # reconciliation" instead of preventing the service from starting.
+        return
+    try:
+        adjusted = session_store.reconcile_stale_runs(graph_module.graph)
+        print(f"[checkpointer] startup reconciliation: {adjusted} run(s) marked truncated.")
+    except Exception as exc:  # noqa: BLE001 - never block startup on this
+        print(f"[checkpointer] WARN: startup reconciliation failed ({exc}).")
+
+
+def _prune_run_events() -> None:
+    """Drop glass-box transcripts for finished runs past the retention window.
+
+    At startup rather than on a timer, deliberately. ``run_events`` is the only unbounded
+    table here (hundreds to thousands of rows per run), but it grows at the pace of user
+    analyses, not of market ticks — so a sweep per deploy is ample, and it avoids adding a
+    background task to a service whose event loop is the thing that must not be blocked.
+    If this service ever runs for months without a deploy, that is the point to add a timer.
+
+    Application data only. ``compliance.db`` has a five-year retention duty and its tables
+    ABORT on DELETE; the pruner opens ``SESSIONS_DB_PATH`` and nothing else, and there is a
+    test asserting the compliance file's hash is unchanged across a prune.
+
+    Sessions, runs and messages are never pruned — losing an old transcript costs
+    frame-by-frame replay, losing the conversation would defeat the point.
+    """
+    try:
+        import session_store
+
+        removed = session_store.prune_run_events()
+        if removed:
+            print(
+                f"[sessions] pruned {removed} transcript frame(s) older than "
+                f"{session_store.retention_days()} day(s)."
+            )
+    except Exception as exc:  # noqa: BLE001 - never block startup on housekeeping
+        print(f"[sessions] WARN: transcript pruning skipped ({exc}).")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Install the durable LangGraph checkpointer for the life of the server.
+
+    This is the only place a durable checkpointer CAN be installed. Measured:
+    ``AsyncSqliteSaver.__init__`` calls ``asyncio.get_running_loop()``, so it cannot be
+    built at import time, and the synchronous ``SqliteSaver`` raises
+    ``NotImplementedError`` from ``aget_tuple`` — which is fatal here because the graph
+    runs exclusively through ``astream``. See ``checkpointer.py`` for both traces.
+
+    ``graph_module.graph`` is REBOUND rather than passed around, so nothing downstream
+    has to learn about checkpointing; ``main.py`` reaches the graph by attribute for
+    precisely this reason.
+
+    Degrades rather than refuses. If the checkpoint DB is unconfigured or unopenable the
+    MemorySaver-backed graph stays in place, because refusing to start would turn a
+    bounded degradation the service has always had into a total outage. What it must not
+    do is degrade *quietly* — that was the actual defect — so the fallback says exactly
+    what is lost.
+    """
+    durable = checkpointer.DurableCheckpointer()
+    async with durable as saver:
+        if saver is not None:
+            graph_module.graph = graph_module.compile_with(saver)
+            print(
+                f"[checkpointer] ok durable LangGraph checkpoints at {durable.path} -> "
+                f"Q&A grounding and paused watch runs now survive a restart."
+            )
+            print(checkpointer.describe_hardening())
+            _reconcile_stale_runs()
+            _prune_run_events()
+        else:
+            # `durable.reason` is set by __aenter__, which is why the instance is held
+            # rather than re-created here: a fresh DurableCheckpointer() has reason=None
+            # and would report "unconfigured" for a database that failed to OPEN.
+            print(
+                f"[checkpointer] !! IN-MEMORY checkpoints ({durable.reason or 'unconfigured'}) "
+                f"-> thread state is LOST on restart, so /qa answers ungrounded and "
+                f"/resume returns 400 after a redeploy. Set LANGGRAPH_CHECKPOINT_DB to a "
+                f"path under the durable volume."
+            )
+        yield
+
+
+app = FastAPI(title="LangGraph Deep Quant Loop Service", lifespan=lifespan)
+
+
+def _mount_session_api() -> None:
+    """Mount the Find Quant session/run/message routes when the flag is on.
+
+    Conditional at import because a router cannot be mounted per request, so the flag is
+    a container restart — the same cost as every other switch here. With it off the routes
+    are genuinely absent (404), not merely refusing, so the surface cannot be probed at
+    all before it is meant to exist.
+
+    Guarded: a failure to import the router must not stop the service from serving
+    analysis, which is what it does today and what every existing client depends on.
+    """
+    try:
+        import session_api
+    except Exception as exc:  # noqa: BLE001
+        print(f"[sessions] WARN: session API unavailable ({exc}); routes not mounted.")
+        return
+    if not session_api.sessions_enabled():
+        print(
+            "[sessions] note session API not mounted "
+            "(DEEP_QUANT_SESSIONS_ENABLED is off). /sessions and /runs return 404."
+        )
+        return
+    app.include_router(session_api.router)
+    print("[sessions] ok session API mounted: /sessions, /runs")
+
+
+_mount_session_api()
 
 
 def _ensure_compliance_stores() -> None:
@@ -136,6 +302,218 @@ def _ensure_compliance_stores() -> None:
 
 
 _ensure_compliance_stores()
+
+# Refuse to start with identity enforcement ON and no usable secret. Deliberately at
+# import, before the app serves anything, and deliberately fatal: a session store
+# guarded by an absent secret would fail every request closed at the boundary, which
+# presents as a total outage with an unrelated-looking cause. Naming the real problem
+# once, here, is worth more than a WARN nobody correlates. A no-op when enforcement
+# is off, which is the default.
+internal_identity.assert_startup_config()
+
+
+def _ensure_session_store() -> None:
+    """Create the Find Quant Trade session schema at startup.
+
+    So the first request meets a ready database instead of paying for the DDL inside a
+    user-facing call, and — more usefully — so an unwritable path is discovered at boot
+    rather than mid-stream, where it would surface as a lost transcript.
+
+    Guarded like the compliance stores: this is user-visible conversation data, not a
+    regulatory control, so an unwritable store degrades the feature rather than
+    preventing the service from serving analysis. The WARN is the operator's signal.
+    """
+    try:
+        import session_store
+
+        session_store.ensure_store()
+        counts = session_store.stats()
+        if counts:
+            print(
+                f"[sessions] ok store ready at {session_store.db_path()} "
+                f"(sessions={counts.get('sessions', 0)}, runs={counts.get('runs', 0)}, "
+                f"messages={counts.get('messages', 0)}, events={counts.get('run_events', 0)})"
+            )
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[sessions] WARN: could not initialise the session store ({exc}); "
+            f"Find Quant Trade sessions will not persist."
+        )
+
+
+_ensure_session_store()
+
+
+def _report_state_paths() -> None:
+    """Log where every durable database actually is, and warn when it is not durable.
+
+    This exists because the failure it detects is invisible. ``docker-compose.prod.yml``
+    declared no volume for this service, so all four SQLite files were written into a
+    container layer and destroyed on every redeploy — including ``compliance.db``,
+    whose append-only hash chain silently restarted from genesis each time. A fresh
+    empty database is indistinguishable from a working one, so nothing ever said so.
+
+    Paths are taken from the OWNING modules rather than re-derived from the
+    environment here. ``hashchain.db_path()`` reads ``COMPLIANCE_DB_PATH`` per call,
+    ``journal.JOURNAL_DB_PATH`` captures its env at import, and telemetry resolves
+    through its own config; asking each module where it will actually write is the
+    only way this report cannot drift from reality. A report that confidently names
+    the wrong file is worse than no report.
+
+    ``local`` keys off whether the durable directory EXISTS, which is a real
+    discriminator rather than a guess: the Dockerfile ``mkdir -p /data`` means the
+    directory is always present inside the container whether or not the volume got
+    mounted, so a missing ``/data`` means a developer's checkout and a present
+    ``/data`` with a non-durable DB path means a genuinely misconfigured deployment.
+
+    Guarded end to end — this is observability, and it must never be the reason the
+    service fails to serve.
+    """
+    try:
+        import state_paths
+
+        entries = []
+
+        # Compliance (P2 recommendations + P5 interactions) — the critical one.
+        try:
+            import hashchain
+
+            entries.append(state_paths.StateEntry("compliance (P2/P5)", hashchain.db_path(), critical=True))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[state] WARN: could not resolve the compliance path ({exc}).")
+
+        # Find Quant Trade sessions/runs/messages. Asked of the owning module rather
+        # than re-derived from the environment, so the report cannot name a different
+        # file from the one that is actually written.
+        try:
+            import session_store
+
+            entries.append(
+                state_paths.StateEntry("sessions (find-quant)", session_store.db_path())
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[state] WARN: could not resolve the session store path ({exc}).")
+
+        # Durable LangGraph checkpoints. Unset => MemorySaver, reported honestly after
+        # the inventory rather than as a missing file (migration plan T2.1).
+        _ckpt = (os.getenv("LANGGRAPH_CHECKPOINT_DB") or "").strip()
+        if _ckpt:
+            entries.append(state_paths.StateEntry("langgraph checkpoints", _ckpt))
+
+        try:
+            import journal
+
+            entries.append(state_paths.StateEntry("trade journal", journal.JOURNAL_DB_PATH))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[state] WARN: could not resolve the journal path ({exc}).")
+
+        if telemetry is not None:
+            try:
+                entries.append(
+                    state_paths.StateEntry("telemetry", telemetry.resolve_telemetry_config().db_path)
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"[state] WARN: could not resolve the telemetry path ({exc}).")
+
+        dirs = state_paths.state_dirs()
+        local = not any(os.path.isdir(d) for d in dirs)
+        state_paths.report_state_paths(entries, dirs, local=local)
+
+        # Emitted after the inventory so the report reads as one block. Plain ASCII:
+        # these lines are read through `docker compose logs`, where an em-dash on a
+        # non-UTF-8 console arrives as mojibake.
+        if not _ckpt:
+            print(
+                "[state] !! langgraph checkpoints: IN-MEMORY (MemorySaver) -> thread state, "
+                "Q&A grounding and paused watch runs are LOST on restart, so /qa answers "
+                "ungrounded and /resume returns 400 after a redeploy. Set "
+                "LANGGRAPH_CHECKPOINT_DB to a path under the durable volume."
+            )
+    except Exception as exc:  # noqa: BLE001 - never block startup on a log line
+        print(f"[state] WARN: state path report unavailable ({exc}).")
+
+
+_report_state_paths()
+
+
+# ── Session ownership (multi-session migration) ──────────────────────────────
+#
+# Before this, `GET /stream/{thread_id}` returned a thread's entire research stream to
+# anyone who knew the id, and `POST /cancel` took no user id at all — any caller could
+# stop any run. Both were survivable only because thread ids were ephemeral and nothing
+# was stored per user. Once conversations persist, they are not.
+#
+# The pattern throughout: resolve the run from the store, compare `run["user_id"]` to the
+# VERIFIED caller, and answer 404 — never 403 — on a mismatch. `runs.user_id` is
+# denormalised for exactly this, so each check is one indexed read with no join, which
+# matters on `/stream`, a long-lived attach on the hot path.
+
+
+def _sessions_active() -> bool:
+    """Whether the session store is participating in the request path.
+
+    When off, the ownership checks below are skipped and every route behaves exactly as
+    it did pre-migration. That is what lets Phase 4 ship dark.
+    """
+    try:
+        import session_api
+
+        return session_api.sessions_enabled()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _require_session() -> bool:
+    """Whether `/run` and `/qa` refuse a request that names no session.
+
+    Flipped last (migration plan T11.1), together with identity enforcement. Until then a
+    legacy body still works, so a client mid-deploy is not broken by a server restart.
+    """
+    return (os.getenv("DEEP_QUANT_REQUIRE_SESSION") or "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _owned_session(session_id: str, user_id):
+    """The caller's session, or a 404 HTTPException.
+
+    404 rather than 403 for the same reason as the session API: a 403 confirms the id
+    exists, which makes the endpoint an enumeration oracle.
+    """
+    import session_store
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="authentication required")
+    session = session_store.get_session_for_user(session_id, user_id)
+    if session is None or session["status"] == session_store.SESSION_DELETED:
+        raise HTTPException(status_code=404, detail="session not found")
+    return session
+
+
+def _owned_run_for_thread(thread_id: str, user_id):
+    """The run behind ``thread_id``, if this caller owns it. ``None`` when unknown.
+
+    Three distinct outcomes, deliberately:
+
+      * a run exists and the caller owns it  -> the run
+      * a run exists and they do not         -> 404 (raised)
+      * NO run row at all                    -> ``None``
+
+    The third case is what keeps the legacy client working. Threads created before this
+    phase — or created by a `/run` that carried no `session_id` — have no run row, so
+    there is no owner to compare against and refusing them would break every in-flight
+    watch across the deploy. It is a real gap, it closes when `DEEP_QUANT_REQUIRE_SESSION`
+    is flipped and every thread has a row, and it is narrower than the status quo where
+    even KNOWN threads were unprotected.
+    """
+    import session_store
+
+    run = session_store.get_run_by_thread(thread_id)
+    if run is None:
+        return None
+    if not user_id or run["user_id"] != user_id:
+        raise HTTPException(status_code=404, detail="not found")
+    return run
 
 
 def _observe(thread_id: str, entry_kind: str, gen, **entry_kwargs):
@@ -257,7 +635,21 @@ def _final_answer_and_refusal(state):
 from typing import Optional
 
 class RunRequest(BaseModel):
-    thread_id: str
+    # OPTIONAL as of the multi-session migration, and that is a compatibility decision
+    # rather than laxness. The browser used to mint this as
+    # `thread_${symbol}_${Date.now()}` — guessable to the second, which mattered because
+    # GET /stream/{thread_id} had no ownership check. It is now minted SERVER-side by
+    # `session_store.create_run` whenever `session_id` is supplied.
+    #
+    # A body carrying thread_id and no session_id takes the pre-migration path verbatim,
+    # so the existing frontend, and any client mid-deploy, keeps working until
+    # DEEP_QUANT_REQUIRE_SESSION is flipped.
+    thread_id: Optional[str] = None
+    # The owning Find Quant session. Required once DEEP_QUANT_REQUIRE_SESSION=1.
+    session_id: Optional[str] = None
+    # Client idempotency key for the analysis_request message, so a retried press cannot
+    # duplicate the user's turn.
+    client_msg_id: Optional[str] = None
     message: str
     mode: Optional[str] = "FIND"
     symbol: Optional[str] = "N/A"
@@ -288,10 +680,19 @@ class ResumeRequest(BaseModel):
     user_id: Optional[str] = None
 
 class QARequest(BaseModel):
-    # Trade_QA_Mode follow-up question. Reuses the SAME thread_id so the run
-    # answers from the thread's persisted Session_Analysis_Context via the
-    # MemorySaver checkpointer (R18.1, R18.5) without re-running analysis.
-    thread_id: str
+    # Trade_QA_Mode follow-up question. Answered on the SAME thread as the analysis it is
+    # about, so the graph's QA node reads that thread's persisted
+    # Session_Analysis_Context from the checkpointer (R18.1, R18.5) without re-running.
+    #
+    # Grounding is now named EXPLICITLY rather than implied by whatever thread the client
+    # happened to be holding: supply `session_id`, and optionally `context_run_id` to ask
+    # about a specific earlier run. Omitting `context_run_id` grounds in the session's
+    # `active_run_id`. The resolved run is recorded on both message rows, so the
+    # transcript states its own grounding afterwards instead of leaving it to inference.
+    thread_id: Optional[str] = None
+    session_id: Optional[str] = None
+    context_run_id: Optional[str] = None
+    client_msg_id: Optional[str] = None
     question: str
     # Optional LLM model override for this Q&A turn ('' / None => default).
     model: Optional[str] = None
@@ -299,12 +700,16 @@ class QARequest(BaseModel):
     user_id: Optional[str] = None
 
 class CancelRequest(BaseModel):
-    # User-requested cancellation of an in-flight /run for this thread_id. The
-    # Rust proxy also aborts its own streaming task (dropping the HTTP
-    # connection); this flag is the belt-and-suspenders path that breaks the
-    # graph.astream loop at the next step boundary even before the disconnect is
-    # detected server-side.
-    thread_id: str
+    # User-requested cancellation of an in-flight /run. The proxy also aborts its own
+    # streaming task (dropping the HTTP connection); this flag is the belt-and-suspenders
+    # path that breaks the graph.astream loop at the next step boundary even before the
+    # disconnect is detected server-side.
+    #
+    # Either identifier works. `run_id` is preferred because it is the one this service
+    # minted and can check ownership on directly; `thread_id` is the legacy form and is
+    # resolved to a run when one exists.
+    thread_id: Optional[str] = None
+    run_id: Optional[str] = None
 
 # ── Cancellation registry ─────────────────────────────────────────────────────
 # thread_ids requested to stop. `event_generator` checks membership each step and
@@ -363,7 +768,15 @@ def _publish_frame(thread_id: str, frame: str) -> None:
 
 # ── SSE Generator ────────────────────────────────────────────────────────────
 
-async def event_generator(thread_id: str, graph_input=None, resume_command=None, user_id=None, kind: str = "run"):
+async def event_generator(
+    thread_id: str,
+    graph_input=None,
+    resume_command=None,
+    user_id=None,
+    kind: str = "run",
+    run_id=None,
+    session_id=None,
+):
     """Stream the run as ordered glass-box SSE, tracked for monitoring.
 
     A thin wrapper around :func:`_run_events` that owns the run's lifecycle in
@@ -387,6 +800,10 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None,
     mode = graph_input.get("mode") if isinstance(graph_input, dict) else None
     model = graph_input.get("model") if isinstance(graph_input, dict) else None
     outcome = _InteractionOutcome(kind, thread_id, user_id=user_id, mode=mode, model=model)
+    # The durable transcript. A no-op when `run_id` is absent (the legacy path, where no
+    # run row exists) or when DEEP_QUANT_PERSIST_STREAM is off, so callers never branch.
+    persist = stream_persist.StreamPersister(run_id, session_id, kind=kind)
+    persist.open()
     try:
         async for frame in _run_events(
             thread_id,
@@ -395,14 +812,22 @@ async def event_generator(thread_id: str, graph_input=None, resume_command=None,
             resume_command=resume_command,
             user_id=user_id,
             outcome=outcome,
+            persist=persist,
+            kind=kind,
         ):
             yield frame
     finally:
-        # Both idempotent — a run that reached a terminal event has already
+        # All three idempotent — a run that reached a terminal event has already
         # recorded its own outcome, so these only take effect when the client
         # dropped the stream before the run finished.
+        #
+        # `persist.record_disconnect()` is what makes a half-received answer read as
+        # `truncated` rather than sitting at `streaming` forever, and it deliberately does
+        # NOT stop the run: the graph keeps executing and the fan-out hub keeps
+        # publishing, so a reattaching client still gets the rest.
         tracker.finish("disconnected")
         outcome.record("disconnected")
+        persist.record_disconnect()
 
 
 async def _run_events(
@@ -412,6 +837,8 @@ async def _run_events(
     resume_command=None,
     user_id=None,
     outcome=None,
+    persist=None,
+    kind: str = "run",
 ):
     """Stream the run as ordered glass-box Server-Sent Events.
 
@@ -436,9 +863,53 @@ async def _run_events(
     best-effort and non-throwing by construction, so the stream's guarantees above
     are unaffected by instrumentation.
     """
+    # Recording is threaded through exactly like `tracker`: every emit site already holds
+    # the (name, payload) pair, so persisting there costs one line and cannot fall out of
+    # step with what was actually sent. Parsing the formatted SSE string back would be both
+    # wasteful and a second source of truth about what the frame said.
+    _persist = persist if persist is not None else stream_persist.StreamPersister()
+
+    def _stamp(payload):
+        """Add the two routing keys every frame must carry.
+
+        ``thread_id`` says WHICH conversation the frame belongs to; ``turn`` says WHAT KIND of
+        turn produced it.
+
+        `turn` exists because a Q&A answer streams on the analysis thread — that is how it
+        stays grounded in the analysis — and arrives as ordinary REASONING frames. On the wire
+        an answer to "why is the stop there?" is then indistinguishable from the agent
+        narrating its own scan, so a client has no choice but to append the reply to the
+        glass-box transcript. Rehydrating the same session from the stored `qa_answer` rows
+        shows that reply as a chat bubble, so one conversation would look different live than
+        it does after a reload.
+
+        Applied at the CONSTRUCTION site of every frame rather than at the yield, because each
+        site also hands the payload to `_persist.add` — stamping later would persist a frame
+        that differs from the one sent, and replay through the same reducer is exactly what
+        rehydration depends on.
+
+        Both keys are filled only when absent, so an assembler that already set a more
+        specific value keeps it. Additive: every existing consumer ignores unknown keys.
+        """
+        if not isinstance(payload, dict):
+            return payload
+        if "thread_id" not in payload:
+            payload = {**payload, "thread_id": thread_id}
+        if "turn" not in payload:
+            payload = {**payload, "turn": kind}
+        return payload
+
     # R17.1: RUN_STARTED is always the first event of the run.
     tracker.stream_event(RUN_STARTED)
-    yield format_sse(RUN_STARTED, build_run_started_event(thread_id))
+    # Additive: `session_id` and `run_id` let a multi-session client bind the run to its
+    # session on the very first frame, rather than waiting for a separate response. A
+    # consumer that ignores unknown keys is unaffected, which is every existing one.
+    started = build_run_started_event(thread_id)
+    if _persist.run_id:
+        started = {**started, "run_id": _persist.run_id, "session_id": _persist.session_id}
+    started = _stamp(started)
+    _persist.add(RUN_STARTED, started)
+    yield format_sse(RUN_STARTED, started)
 
     # ── Bind the per-user OpenRouter key for this run (REQUIRED) ─────────────
     # Every LLM call uses the REQUESTING user's OpenRouter key, resolved from the
@@ -466,10 +937,10 @@ async def _run_events(
             tracker.finish("auth_error")
             if outcome is not None:
                 outcome.record("auth_error", detail="no user_id supplied for LLM access")
-            yield format_sse(
-                ERROR,
-                build_error_event("authentication required: no user_id supplied for LLM access"),
-            )
+            _auth_err = _stamp(build_error_event("authentication required: no user_id supplied for LLM access"))
+            _persist.add(ERROR, _auth_err)
+            _persist.finalize("error", detail=_auth_err.get("error"))
+            yield format_sse(ERROR, _auth_err)
             return
         try:
             _run_key = resolve_openrouter_key(user_id)
@@ -482,7 +953,10 @@ async def _run_events(
             tracker.finish("key_error")
             if outcome is not None:
                 outcome.record("key_error", detail=str(_key_err))
-            yield format_sse(ERROR, build_error_event(f"LLM key unavailable: {_key_err}"))
+            _key_error_event = _stamp(build_error_event(f"LLM key unavailable: {_key_err}"))
+            _persist.add(ERROR, _key_error_event)
+            _persist.finalize("error", detail=_key_error_event.get("error"))
+            yield format_sse(ERROR, _key_error_event)
             return
 
     config = {"configurable": {"thread_id": thread_id}}
@@ -497,7 +971,7 @@ async def _run_events(
         if isinstance(graph_input, dict):
             run_profile = graph_input.get("profile")
         if not (isinstance(run_profile, str) and run_profile.strip()):
-            persisted = graph.get_state(config)
+            persisted = graph_module.graph.get_state(config)
             values = getattr(persisted, "values", None)
             if isinstance(values, dict):
                 run_profile = values.get("profile")
@@ -511,7 +985,7 @@ async def _run_events(
     cancelled = False
     try:
         # Iterate over the async updates generator, preserving step order (R17.4).
-        async for event in graph.astream(target_input, config, stream_mode="updates"):
+        async for event in graph_module.graph.astream(target_input, config, stream_mode="updates"):
             # THE BEAT SITE. One completed node advance is the unit of real work
             # for this service. Beating here rather than at run completion is what
             # separates a healthy ten-minute FIND run from one wedged on a hung
@@ -547,8 +1021,11 @@ async def _run_events(
                     # (only RUN_STARTED/RUN_FINISHED carried it before). Additive
                     # and backward-compatible: consumers that ignore thread_id are
                     # unaffected.
-                    if isinstance(payload, dict) and "thread_id" not in payload:
-                        payload = {**payload, "thread_id": thread_id}
+                    payload = _stamp(payload)
+                    # Persisted AFTER the stamp, so a replayed frame is byte-identical to the
+                    # one the live client received — which is what lets rehydration feed
+                    # stored frames through the same reducer.
+                    _persist.add(name, payload)
                     yield format_sse(name, payload)
 
         if cancelled:
@@ -558,11 +1035,14 @@ async def _run_events(
             tracker.finish("cancelled")
             if outcome is not None:
                 outcome.record("cancelled")
-            yield format_sse(RUN_FINISHED, build_run_finished_event(thread_id, "cancelled"))
+            _cancelled_event = _stamp(build_run_finished_event(thread_id, "cancelled"))
+            _persist.add(RUN_FINISHED, _cancelled_event)
+            _persist.finalize("cancelled")
+            yield format_sse(RUN_FINISHED, _cancelled_event)
         else:
             # R17.2/R17.6: a completed or paused run ends with a single terminal
             # RUN_FINISHED event stating which it was.
-            state = graph.get_state(config)
+            state = graph_module.graph.get_state(config)
             status = "paused" if state.next else "completed"
             tracker.stream_event(RUN_FINISHED)
             # `paused` is a normal outcome, not a failure: the graph is waiting at
@@ -579,7 +1059,17 @@ async def _run_events(
                     content=answer,
                     refusal_category=refusal_category,
                 )
-            yield format_sse(RUN_FINISHED, build_run_finished_event(thread_id, status))
+            _finished_event = _stamp(build_run_finished_event(thread_id, status))
+            _persist.add(RUN_FINISHED, _finished_event)
+            # `paused` is NOT terminal — the watcher will wake this run — so the run moves
+            # to `watching` and the assistant message deliberately stays `streaming`,
+            # because more of the answer is genuinely still coming. Finalizing here would
+            # present a mid-watch partial as a finished analysis.
+            if status == "paused":
+                _persist.mark_watching()
+            else:
+                _persist.finalize(status)
+            yield format_sse(RUN_FINISHED, _finished_event)
 
     except Exception as e:
         err_msg = str(e)
@@ -594,7 +1084,10 @@ async def _run_events(
         # failed is what someone reading the log months later needs.
         if outcome is not None:
             outcome.record("error", detail=err_msg)
-        yield format_sse(ERROR, build_error_event(err_msg))
+        _error_event = _stamp(build_error_event(err_msg))
+        _persist.add(ERROR, _error_event)
+        _persist.finalize("error", detail=err_msg)
+        yield format_sse(ERROR, _error_event)
     finally:
         # Always discard the cancel flag so the set never leaks across runs.
         _CANCELLED.discard(thread_id)
@@ -661,6 +1154,137 @@ def svc_metrics_entitlement_refused() -> None:
         pass
 
 
+def _open_run_for_request(payload: "RunRequest", user_id):
+    """Create the run row for a `/run`, or ``None`` to take the legacy path.
+
+    Returns the run when ``session_id`` is supplied and the session store is active. The
+    returned row carries the SERVER-minted ``thread_id``, which is what retires
+    ``thread_${symbol}_${Date.now()}``.
+
+    ``None`` means "use the client's ``thread_id``, persist nothing" — the pre-migration
+    behaviour, preserved so the shipped frontend and any client mid-deploy keep working.
+    ``DEEP_QUANT_REQUIRE_SESSION=1`` turns that into a 422 once every client has caught up.
+
+    The run snapshots symbol/timeframe/profile from the SESSION, not from the request
+    body. That is the fix for the whole class of bug where a run executed with whatever
+    the global chart happened to be showing: the session owns its trading context, so a
+    request cannot ask for one session's conversation to be analysed with another's
+    timeframe. The body's values are still what the graph receives — they have to be, or a
+    VERIFY of specific numbers would change under the user — but the *recorded* context is
+    the session's.
+    """
+    if not payload.session_id:
+        if _require_session():
+            raise HTTPException(
+                status_code=422,
+                detail="session_id is required: create a session with POST /sessions first",
+            )
+        return None
+
+    if not _sessions_active():
+        # A client asking for a session while the store is off is a deployment mismatch,
+        # not a client error. Say so rather than silently dropping the association and
+        # persisting nothing.
+        raise HTTPException(
+            status_code=503,
+            detail="session persistence is not enabled on this deployment",
+        )
+
+    import session_store
+
+    session = _owned_session(payload.session_id, user_id)
+    kind = session_store.RUN_VERIFY if (payload.mode or "").upper() == "VERIFY" else session_store.RUN_FIND
+    run = session_store.create_run(
+        session_id=session["session_id"],
+        user_id=user_id,
+        kind=kind,
+        symbol=session["symbol"],
+        timeframe=session["timeframe"],
+        profile=session["profile"],
+        model=payload.model,
+        manual_trade=payload.manual_trade,
+    )
+    if run is None:
+        # Owned a moment ago, gone now — archived or deleted between the two reads.
+        raise HTTPException(status_code=404, detail="session not found")
+
+    # The user's turn, recorded before any analysis. Idempotent on client_msg_id so a
+    # retried press cannot duplicate it.
+    session_store.create_message(
+        session_id=session["session_id"],
+        role=session_store.ROLE_USER,
+        kind=session_store.KIND_ANALYSIS_REQUEST,
+        status=session_store.MSG_COMPLETE,
+        content=payload.message,
+        run_id=run["run_id"],
+        client_msg_id=payload.client_msg_id,
+    )
+    return run
+
+
+def _resolve_qa_thread(payload: "QARequest", user_id):
+    """``(thread_id, run_id, session_id)`` for a Q&A turn. The latter two may be ``None``.
+
+    The thread decides what the answer is grounded in; the run and session decide where the
+    turn is recorded. Both are returned together because they are resolved from the same
+    lookup and separating them invited a second, divergent one.
+
+    Grounding is now stated by the request rather than inferred from whatever thread the
+    client was holding. Resolution order:
+
+      1. ``context_run_id`` — ask about a SPECIFIC earlier run in the session. This is what
+         makes multiple FIND runs per session usable: without it, "why that stop?" after a
+         second run could only ever mean the second one.
+      2. otherwise ``session.active_run_id`` — the newest run, i.e. the common case.
+      3. otherwise the legacy ``thread_id`` from the body.
+
+    The old client read its thread id from the flat top-level store field — meaning
+    "whatever session is currently on screen" — so switching tabs mid-question asked about
+    the wrong analysis. Naming the run removes the ambiguity entirely.
+    """
+    if payload.session_id:
+        if not _sessions_active():
+            raise HTTPException(
+                status_code=503,
+                detail="session persistence is not enabled on this deployment",
+            )
+        import session_store
+
+        session = _owned_session(payload.session_id, user_id)
+        run_id = payload.context_run_id or session["active_run_id"]
+        if not run_id:
+            raise HTTPException(
+                status_code=409,
+                detail="this session has no analysis to ask about yet; run FIND or VERIFY first",
+            )
+        run = session_store.get_run_for_user(run_id, user_id)
+        if run is None or run["session_id"] != session["session_id"]:
+            # Cross-session grounding would answer from the wrong analysis. Cross-user is
+            # already impossible — get_run_for_user is owner-scoped.
+            raise HTTPException(
+                status_code=422, detail="context_run_id is not a run of this session"
+            )
+        return run["thread_id"], run["run_id"], session["session_id"]
+
+    if _require_session():
+        raise HTTPException(
+            status_code=422, detail="session_id is required for Q&A"
+        )
+    if not payload.thread_id:
+        raise HTTPException(
+            status_code=422, detail="either session_id (preferred) or thread_id is required"
+        )
+    # Legacy path. Ownership is checked when a run row exists for the thread; a thread
+    # with no row predates this phase and cannot be attributed to anyone.
+    #
+    # When a row DOES exist the turn is still recorded against it, so a client that has not
+    # yet moved to `session_id` still gets a persisted conversation.
+    legacy_run = _owned_run_for_thread(payload.thread_id, user_id)
+    if legacy_run is not None:
+        return payload.thread_id, legacy_run["run_id"], legacy_run["session_id"]
+    return payload.thread_id, None, None
+
+
 async def _tee_publish(thread_id: str, gen):
     """Wrap an ``event_generator`` SSE iterator so every frame it yields is ALSO
     published to the per-thread fan-out hub (for re-attached GET /stream clients),
@@ -671,7 +1295,7 @@ async def _tee_publish(thread_id: str, gen):
         yield frame
 
 @app.post("/run")
-async def run_agent(payload: RunRequest):
+async def run_agent(payload: RunRequest, request: Request):
     """
     Start or continue the Deep Quant LLM ReAct loop, returning an SSE stream.
 
@@ -682,11 +1306,28 @@ async def run_agent(payload: RunRequest):
     The request is logged to the tamper-evident interaction log (compliance
     blocker P5) BEFORE the gate, so a refused request leaves a trace too — a log
     that recorded only permitted traffic could not show the gate working.
+
+    The user id comes from ``internal_identity.resolve_user``, not from the body.
+    With ``DEEP_QUANT_REQUIRE_IDENTITY`` off it still falls back to
+    ``payload.user_id`` — i.e. today's behaviour, unchanged — but a verified
+    ``X-StratAI-Identity`` assertion wins when one is present, so the boundary is
+    exercised for real before it is enforced. Everything downstream (the interaction
+    log, the entitlement gate, the LLM key resolution) reads the RESOLVED id, so
+    flipping the flag changes who those see and nothing else.
     """
+    user_id = resolve_user(request, payload.user_id, surface="/run")
+    run_row = _open_run_for_request(payload, user_id)
+    thread_id = run_row["thread_id"] if run_row else payload.thread_id
+    if not thread_id:
+        raise HTTPException(
+            status_code=422,
+            detail="either session_id (preferred) or thread_id is required",
+        )
+
     _log_request(
         interaction_log.KIND_RUN,
-        thread_id=payload.thread_id,
-        user_id=payload.user_id,
+        thread_id=thread_id,
+        user_id=user_id,
         content=payload.message,
         mode=payload.mode,
         symbol=payload.symbol,
@@ -695,10 +1336,10 @@ async def run_agent(payload: RunRequest):
         model=payload.model,
     )
     refusal = _guard_research(
-        payload.user_id,
+        user_id,
         payload.mode,
         kind=interaction_log.KIND_RUN,
-        thread_id=payload.thread_id,
+        thread_id=thread_id,
     )
     if refusal is not None:
         return refusal
@@ -713,10 +1354,17 @@ async def run_agent(payload: RunRequest):
         "fno_expiry": payload.fno_expiry,
         "model": payload.model,
     }
-    gen = event_generator(payload.thread_id, graph_input=initial_state, user_id=payload.user_id, kind="run")
+    gen = event_generator(
+        thread_id,
+        graph_input=initial_state,
+        user_id=user_id,
+        kind="run",
+        run_id=run_row["run_id"] if run_row else None,
+        session_id=run_row["session_id"] if run_row else None,
+    )
     # Best-effort telemetry tee (passthrough; falls back to bare gen on any failure).
     gen = _observe(
-        payload.thread_id,
+        thread_id,
         "run",
         gen,
         symbol=payload.symbol,
@@ -726,11 +1374,11 @@ async def run_agent(payload: RunRequest):
     # Fan-out tee: also publish frames to any re-attached GET /stream client so a
     # later server-initiated resume (heartbeat/target) can reach the desktop even
     # after this /run stream ends at the watch pause.
-    gen = _tee_publish(payload.thread_id, gen)
+    gen = _tee_publish(thread_id, gen)
     return StreamingResponse(gen, media_type="text/event-stream")
 
 @app.post("/resume")
-async def resume_agent(payload: ResumeRequest):
+async def resume_agent(payload: ResumeRequest, request: Request):
     """
     Resumes a paused state graph run and returns the subsequent execution as an SSE stream.
 
@@ -744,15 +1392,57 @@ async def resume_agent(payload: ResumeRequest):
     watcher-triggered resume is a communication to the client that the client did
     not ask for, which makes it exactly the kind of event the distribution record
     needs to contain: ``trigger_kind`` says what woke it.
+
+    AUTHENTICATED AS A SERVICE, NOT AS A USER. The caller here is the headless price
+    watcher in the Rust tool-server (``tool-server/src/main.rs::post_resume``), which
+    has no user session and cannot present a user identity — pretending otherwise
+    would be exactly the fake authentication this boundary exists to avoid. It
+    presents ``X-StratAI-Service`` instead. ``payload.user_id`` continues to carry the
+    id the ORIGINATING run registered (via ``run_context.set_run_user_id``) so the
+    LLM key still resolves for the right user; once runs are persisted (migration plan
+    T4.2) that id is read from the run row rather than the body.
+
+    Enforcement is off by default, and ``require_service`` returns ``None`` in that
+    mode rather than refusing — the watcher must keep working through every phase of
+    the rollout. That is a hard requirement, not a convenience.
     """
+    require_service(request, surface="/resume")
+
+    # The owning user is READ FROM THE RUN ROW, not taken from the body.
+    #
+    # The watcher forwards the id the originating run registered via
+    # `run_context.set_run_user_id`, which works — but that value has travelled through a
+    # background process and back, and it is what this user's LLM key is resolved against.
+    # The run row is the authoritative record of whose analysis this is, so it wins when
+    # present. The body stays as the fallback for threads that predate the session store,
+    # which is what keeps existing price watches resuming across the deploy.
+    user_id = payload.user_id
+    resume_run_id = None
+    resume_session_id = None
+    if _sessions_active():
+        try:
+            import session_store
+
+            run = session_store.get_run_by_thread(payload.thread_id)
+            if run is not None:
+                user_id = run["user_id"]
+                # A resume CONTINUES the original run, so its frames append to that run's
+                # transcript rather than starting a new one. That is what makes a
+                # watcher-triggered wake show up in the same glass box the user was
+                # watching, instead of appearing as an unrelated event.
+                resume_run_id = run["run_id"]
+                resume_session_id = run["session_id"]
+        except Exception as exc:  # noqa: BLE001 - a store fault must not break a resume
+            print(f"[resume] WARN: could not resolve the run owner ({exc}); using the body id.")
+
     _log_request(
         interaction_log.KIND_RESUME,
         thread_id=payload.thread_id,
-        user_id=payload.user_id,
+        user_id=user_id,
         content=f"trigger_kind={payload.trigger_kind}",
     )
     refusal = _guard_research(
-        payload.user_id,
+        user_id,
         "FIND",
         kind=interaction_log.KIND_RESUME,
         thread_id=payload.thread_id,
@@ -761,7 +1451,7 @@ async def resume_agent(payload: ResumeRequest):
         return refusal
 
     config = {"configurable": {"thread_id": payload.thread_id}}
-    state = graph.get_state(config)
+    state = graph_module.graph.get_state(config)
     if not state.next:
         raise HTTPException(
             status_code=400,
@@ -774,8 +1464,10 @@ async def resume_agent(payload: ResumeRequest):
             "candle": payload.triggered_candle,
             "trigger_kind": payload.trigger_kind,
         }),
-        user_id=payload.user_id,
+        user_id=user_id,
         kind="resume",
+        run_id=resume_run_id,
+        session_id=resume_session_id,
     )
     # Best-effort telemetry tee. ResumeRequest carries no symbol/timeframe/mode
     # (those belong to the originating /run and are folded into the same Session
@@ -792,9 +1484,48 @@ async def resume_agent(payload: ResumeRequest):
     gen = _tee_publish(payload.thread_id, gen)
     return StreamingResponse(gen, media_type="text/event-stream")
 
+def _replay_frames(run, after_seq: int) -> list:
+    """Formatted SSE frames for a run after ``after_seq``. Empty when not applicable.
+
+    Returns a list rather than a generator so the read happens BEFORE the relay starts —
+    a lazy read inside the relay would run after the subscription and could interleave
+    with live frames in an order that depends on scheduling.
+
+    ``after_seq=0`` (the default) replays nothing, so a client that does not ask for
+    recovery gets byte-identical behaviour to before this existed. That is what keeps the
+    shipped frontend and the Rust watcher unaffected.
+
+    Frames are re-framed through ``format_sse`` from the stored payload, so a replayed
+    frame is identical to the one the live client received — the whole point of storing
+    the payload rather than a rendering of it.
+    """
+    if run is None or after_seq <= 0 or not stream_persist.enabled():
+        return []
+    try:
+        import session_store
+
+        events, _last = session_store.list_run_events(run["run_id"], after_seq=after_seq)
+        return [format_sse(e["event"], e["data"]) for e in events]
+    except Exception as exc:  # noqa: BLE001 - a failed replay must still allow a live attach
+        print(f"[stream] WARN: replay from seq={after_seq} failed for {run['run_id']} ({exc}).")
+        return []
+
+
 @app.get("/stream/{thread_id}")
-async def stream_thread(thread_id: str, request: Request):
+async def stream_thread(thread_id: str, request: Request, after_seq: int = 0):
     """Long-lived re-attach channel for a thread's server-initiated resumes.
+
+    OWNERSHIP IS NOW ENFORCED. This route used to return a thread's ENTIRE research
+    stream — reasoning, tool results, the committed trade decision — to anyone who
+    presented the id, with no identity check whatsoever. Combined with client-minted
+    ``thread_${symbol}_${Date.now()}`` ids, knowing a symbol and roughly when someone ran
+    it was enough. Server-minted opaque ids removed the guessing; this removes the
+    unauthorised read.
+
+    Answers 404, not 403, so the id is not confirmed. A thread with no run row is still
+    served (see ``_owned_run_for_thread``): those predate the session store and cannot be
+    attributed to anyone, and refusing them would break every in-flight price watch across
+    a deploy. That gap closes when ``DEEP_QUANT_REQUIRE_SESSION`` is flipped.
 
     The desktop opens this AFTER its /run stream ends in a paused (watching)
     state and keeps it open for the whole watching lifecycle. Every frame the
@@ -806,12 +1537,31 @@ async def stream_thread(thread_id: str, request: Request):
     connection out during a long wait. The subscriber is always removed on
     disconnect (client close or server shutdown), and an empty thread bucket is
     pruned so the hub never leaks."""
+    run = _owned_run_for_thread(thread_id, resolve_user(request, None, surface="/stream"))
+
+    # Subscribe BEFORE replaying, not after.
+    #
+    # The other order looks natural and loses frames: anything emitted between the end of
+    # the replay read and the subscription would fall in the gap this parameter exists to
+    # close. Subscribing first means such a frame is queued, and the `seq` filter below
+    # discards it if the replay already covered it — duplication is cheap to detect,
+    # loss is not detectable at all.
     queue: asyncio.Queue = asyncio.Queue(maxsize=256)
     _SUBSCRIBERS.setdefault(thread_id, set()).add(queue)
     _refresh_subscriber_gauge()
 
+    replay = _replay_frames(run, after_seq)
+
     async def relay():
         try:
+            # Everything the client missed while nobody was attached. Without this,
+            # `_publish_frame` returns early on an empty subscriber set, so every frame
+            # emitted between the /run stream ending and this GET landing was lost with no
+            # way to recover it — a real hole, not a theoretical one, because that gap is
+            # exactly when a paused run's client is reconnecting.
+            for frame in replay:
+                yield frame
+
             while True:
                 if await request.is_disconnected():
                     break
@@ -833,7 +1583,7 @@ async def stream_thread(thread_id: str, request: Request):
     return StreamingResponse(relay(), media_type="text/event-stream")
 
 @app.post("/qa")
-async def qa_agent(payload: QARequest):
+async def qa_agent(payload: QARequest, request: Request):
     """
     Ask a free-form Trade_QA_Mode question about a prior analysis, returning an
     SSE stream.
@@ -864,19 +1614,41 @@ async def qa_agent(payload: QARequest):
     calling the model. A Q&A record with only the question would be the half that
     matters least.
     """
+    user_id = resolve_user(request, payload.user_id, surface="/qa")
+    thread_id, qa_run_id, qa_session_id = _resolve_qa_thread(payload, user_id)
+
+    # The user's question, recorded before the answer streams. Idempotent on
+    # client_msg_id, so a retried send cannot show the question twice — which is both
+    # visible and unfixable after the fact.
+    if qa_session_id and stream_persist.enabled():
+        try:
+            import session_store
+
+            session_store.create_message(
+                session_id=qa_session_id,
+                role=session_store.ROLE_USER,
+                kind=session_store.KIND_QA_QUESTION,
+                status=session_store.MSG_COMPLETE,
+                content=payload.question,
+                run_id=qa_run_id,
+                client_msg_id=payload.client_msg_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - a lost record must not lose the answer
+            print(f"[sessions] WARN: Q&A question not recorded ({exc}).")
+
     _log_request(
         interaction_log.KIND_QA,
-        thread_id=payload.thread_id,
-        user_id=payload.user_id,
+        thread_id=thread_id,
+        user_id=user_id,
         content=payload.question,
         mode="QA",
         model=payload.model,
     )
     refusal = _guard_research(
-        payload.user_id,
+        user_id,
         "QA",
         kind=interaction_log.KIND_QA,
-        thread_id=payload.thread_id,
+        thread_id=thread_id,
     )
     if refusal is not None:
         return refusal
@@ -886,15 +1658,36 @@ async def qa_agent(payload: QARequest):
         "mode": "QA",
         "model": payload.model,
     }
-    return StreamingResponse(
-        event_generator(payload.thread_id, graph_input=qa_input, user_id=payload.user_id, kind="qa"),
-        media_type="text/event-stream"
+    gen = event_generator(
+        thread_id,
+        graph_input=qa_input,
+        user_id=user_id,
+        kind="qa",
+        run_id=qa_run_id,
+        session_id=qa_session_id,
     )
+    # Fan-out tee — NEW here, and a bug fix rather than symmetry for its own sake.
+    # `/run` and `/resume` were teed; `/qa` was not, so a client attached to
+    # GET /stream/{thread_id} (which is every client whose run parked at a price watch)
+    # received no Q&A frames at all. On the multi-session frontend the hub is the routing
+    # path, so an un-teed Q&A answer would simply never arrive.
+    gen = _tee_publish(thread_id, gen)
+    return StreamingResponse(gen, media_type="text/event-stream")
 
 @app.post("/cancel")
-async def cancel_agent(payload: CancelRequest):
+async def cancel_agent(payload: CancelRequest, request: Request):
     """
-    Request cancellation of an in-flight /run for ``thread_id``.
+    Request cancellation of an in-flight /run.
+
+    OWNERSHIP IS NOW ENFORCED. This endpoint previously took no user id at all, so any
+    caller who knew (or guessed — ids were ``thread_${symbol}_${Date.now()}``) a thread id
+    could stop somebody else's analysis mid-run. It is checked against the run row now, and
+    answers 404 rather than 403 so the id is not confirmed.
+
+    "Stopping is always allowed" still holds for the ENTITLEMENT gate — there is
+    deliberately no research check here, because refusing to let an unentitled user stop a
+    run they somehow started would leave it burning credits. That is a different question
+    from whether the run is theirs to stop.
 
     Marks the thread cancelled so the live ``event_generator`` breaks out of the
     ``graph.astream`` loop at its next step boundary and emits a terminal
@@ -909,14 +1702,37 @@ async def cancel_agent(payload: CancelRequest):
     so a cancelled interaction reads as: request → cancel request → outcome
     ``cancelled``. There is no entitlement gate here: stopping is always allowed.
     """
+    user_id = resolve_user(request, None, surface="/cancel")
+
+    thread_id = payload.thread_id
+    if payload.run_id:
+        if not _sessions_active():
+            raise HTTPException(
+                status_code=503,
+                detail="session persistence is not enabled on this deployment",
+            )
+        import session_store
+
+        run = session_store.get_run_for_user(payload.run_id, user_id) if user_id else None
+        if run is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        thread_id = run["thread_id"]
+    elif thread_id:
+        # Legacy form. Ownership is enforced when a run row exists for this thread; a
+        # thread with no row predates the session store and has no recorded owner.
+        _owned_run_for_thread(thread_id, user_id)
+    else:
+        raise HTTPException(status_code=422, detail="either run_id or thread_id is required")
+
     _log_request(
         interaction_log.KIND_CANCEL,
-        thread_id=payload.thread_id,
+        thread_id=thread_id,
+        user_id=user_id,
     )
-    _CANCELLED.add(payload.thread_id)
+    _CANCELLED.add(thread_id)
     svc_metrics.cancellation_requested()
-    print(f"[cancel] Cancellation requested for thread={payload.thread_id}")
-    return {"status": "cancelling", "thread_id": payload.thread_id}
+    print(f"[cancel] Cancellation requested for thread={thread_id}")
+    return {"status": "cancelling", "thread_id": thread_id}
 
 # ── F&O snapshot endpoint (F4 transport seam — composition only) ──────────────
 # The frontend F&O section consumes F1/F2/F3 through this single thin, read-only

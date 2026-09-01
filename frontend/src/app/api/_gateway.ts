@@ -169,6 +169,15 @@ const STRIPPED_REQUEST_HEADERS = new Set([
   'cookie',
   'authorization',
   'content-length',
+  // Identity assertions are MINTED BY THIS TIER, never relayed from the browser.
+  // `_identity.ts` signs one only after verifying the session cookie against the
+  // auth API, and deep-quant trusts the MAC — so a client-supplied copy reaching
+  // upstream would be an attempt to assert an identity nobody verified. Dropped
+  // here on the way in; `ProxyOptions.extraHeaders` is applied after
+  // `forwardHeaders` so ours also wins on the way out. Either check alone would
+  // close this, and both are kept so a later edit to one cannot reopen it.
+  'x-stratai-identity',
+  'x-stratai-service',
 ]);
 
 /** Build the upstream request headers from an incoming browser request. */

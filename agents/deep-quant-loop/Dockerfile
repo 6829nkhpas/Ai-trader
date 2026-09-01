@@ -16,6 +16,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# ── Durable state directory ──────────────────────────────────────────────────
+# The four SQLite databases this service owns (compliance, sessions, LangGraph
+# checkpoints, journal/telemetry) live HERE, not beside the module. Writing them
+# into /app put them in a container layer, so every redeploy destroyed them —
+# including the append-only compliance hash chain, which silently restarted from
+# genesis each time.
+#
+# Deliberately NOT a `VOLUME /data` instruction: an anonymous volume declared in
+# the image would be created fresh per container and would mask the named volume
+# if compose ever failed to mount it — turning a mount misconfiguration into
+# silent data loss instead of a visible one. docker-compose owns the mount
+# (`deep_quant_data:/data`), and main.py's startup state report warns when a
+# resolved DB path is not under DEEP_QUANT_STATE_DIRS.
+RUN mkdir -p /data
+
 # ── Dependency layer (cached unless requirements.txt changes) ────────────────
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt

@@ -179,6 +179,92 @@ curl -sI https://app-api.stratai.live/kite/quote?i=NSE:TCS | head -1   # expect 
 - Stop: `docker compose -f docker-compose.prod.yml down` (add `-v` to wipe QuestDB/PG/Redis volumes)
 - Memory: total `mem_limit` budget ≈ 9.5 GB of 24 GB. QuestDB (4 GB) is the largest; watch it under history backfills.
 
+### 7.1 deep-quant durable state — `/data` (the `deep_quant_data` volume)
+
+`deep-quant` owns **four SQLite databases**. They used to be written beside the module inside the
+image, i.e. into a container layer, so **every redeploy destroyed them** — including
+`compliance.db`, whose append-only hash chain silently restarted from genesis each time. They are
+now on a named volume at `/data`.
+
+| File | Contents | Retention |
+|---|---|---|
+| `/data/compliance.db` | `interaction_log` (P5) + `recommendations` (P2) — hash-chained, append-only, UPDATE/DELETE blocked by triggers | **5 years (SEBI). Never prune. Never repair in place.** |
+| `/data/sessions.db` | Find Quant Trade sessions / runs / messages / run_events | app data; `run_events` pruned per `RUN_EVENTS_RETENTION_DAYS` |
+| `/data/checkpoints.db` | durable LangGraph checkpoints (Q&A grounding, paused watch runs) | transient-but-durable; safe to lose at the cost of ungrounded Q&A on old threads |
+
+**Confirm the checkpointer is durable, not in-memory.** The service starts either way, so
+the log is the only signal:
+
+```bash
+docker compose -f docker-compose.prod.yml logs deep-quant | grep '\[checkpointer\]'
+# want: "ok durable LangGraph checkpoints at /data/checkpoints.db"
+# bad:  "!! IN-MEMORY checkpoints (...)"  -> /qa answers ungrounded and /resume 400s
+#                                            after every redeploy
+```
+
+**Checkpoint deserialisation hardening.** The checkpoint used to be process memory; it is
+a file now, so `langgraph-checkpoint` will deserialise whatever types it finds in it.
+`LANGGRAPH_STRICT_MSGPACK=true` restricts that to an allowlist. It is deliberately **not
+on yet**, because strict mode *blocks* unlisted types and enabling it blind could break
+Q&A grounding on real graph state. Do it observation-first:
+
+```bash
+# 1. Run normally for a few real FIND + Q&A cycles, then look for advisories:
+docker compose -f docker-compose.prod.yml logs deep-quant \
+  | grep -E 'Blocked deserialization|LANGGRAPH_STRICT_MSGPACK'
+# 2. If clean, set LANGGRAPH_STRICT_MSGPACK=true in the deep-quant environment.
+# 3. If a legitimate type is named, add it to an explicit allowlist instead.
+```
+| `/data/trade_journal.db`, `/data/telemetry.db` | outcome scoring, measurement | app data |
+
+**Verify the mount after any deploy.** A missing mount is silent data loss, so check the startup
+report rather than assuming:
+
+```bash
+docker compose -f docker-compose.prod.yml logs deep-quant | grep -i 'state\|WARN'
+# Expect four paths under /data and NO "not on a mounted volume" warning.
+docker exec stratai-deep-quant ls -la /data
+docker volume inspect stratai_deep_quant_data
+```
+
+**Backup.** These run in WAL mode, so **`cp` / `tar` of a live file is NOT a valid backup** — it can
+capture a torn page set with an unapplied WAL. Use SQLite's own online backup:
+
+```bash
+docker exec stratai-deep-quant sh -c '
+  mkdir -p /data/backup
+  for db in compliance sessions trade_journal telemetry; do
+    sqlite3 /data/$db.db ".backup /data/backup/$db-$(date +%F).db"
+  done'
+docker cp stratai-deep-quant:/data/backup ./dq-backup-$(date +%F)
+```
+
+`checkpoints.db` is deliberately excluded — it is execution state, not a record.
+
+**Restore.** Stop the service first (a restore into a live WAL database corrupts it):
+
+```bash
+docker compose -f docker-compose.prod.yml stop deep-quant
+docker cp ./dq-backup-<date>/compliance.db stratai-deep-quant:/data/compliance.db
+docker compose -f docker-compose.prod.yml start deep-quant
+# Then verify the chain is intact — a restored compliance.db that fails this is
+# evidence of tampering or a torn backup, and must not be quietly accepted:
+docker exec stratai-deep-quant python -c "import hashchain,interaction_log,reco_store; \
+  print('interactions', hashchain.verify_chain(hashchain.connect(), interaction_log.TABLE)); \
+  print('recommendations', hashchain.verify_chain(hashchain.connect(), reco_store.TABLE))"
+```
+
+**`docker compose down -v` now destroys the compliance record too.** Take a backup first.
+
+### 7.2 deep-quant is single-replica by design
+
+`_CANCELLED`, `_SUBSCRIBERS` (the watcher re-attach hub), the SQLite writer, and the SQLite
+checkpointer are all process-local. Two replicas would mean `/cancel` on replica B never stops a run
+on replica A, and a watcher `/resume` on A never reaches a browser attached to B. Do **not** add
+`deploy.replicas` or a second container. The service refuses to start with
+`DEEP_QUANT_ALLOW_MULTI_REPLICA` unset unless it is genuinely single-replica; scaling out requires
+moving the store to Postgres and the hub to Redis first.
+
 ## 8. Expected load for 10 users
 
 - **Market data is shared**, not per-user: one Kite session → one tick stream. User count does not multiply ingestion load.

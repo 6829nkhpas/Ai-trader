@@ -9,8 +9,13 @@ import { canRunAgentMode } from './useFeatureStore';
 import { RESEARCH_LOCKED_MESSAGE } from '../lib/sku';
 import { bridgeInvoke, bridgeListen } from '../lib/bridge';
 import { debugLog } from '../lib/debugLog';
+import { FQ_MULTI_SESSION } from '../lib/env';
 import { isFnoSymbol } from '../charting/symbolUtils';
 import { getUnderlyingFromSymbol } from '../components/fno/symbolParser';
+// Routing moves here once FQ_MULTI_SESSION is on. Imported statically rather than lazily
+// because the two stores are peers in the same feature — a dynamic import inside
+// `handleStreamEvent` would put an await on the hot path of every streamed frame.
+import { useSessionStore } from './useSessionStore';
 
 // ── TypeScript interfaces matching Rust backend structs ─────────────────
 
@@ -702,7 +707,7 @@ export interface QuantSession {
   updatedAt: number;
 }
 
-function blankSession(): QuantSession {
+export function blankSession(): QuantSession {
   return {
     sessionStatus: 'idle',
     reasoningSteps: [],
@@ -757,7 +762,14 @@ function _sessionKey(symbol: string | null | undefined, profile: string | null |
 // session. This is the per-symbol equivalent of the old inline switch — it reads
 // and writes ONLY the passed session, so an event can be routed to the correct
 // symbol's session regardless of which symbol is currently on screen.
-function applyStreamEvent(session: QuantSession, payload: StreamEventPayload): QuantSession {
+//
+// EXPORTED for `useSessionStore`, which is taking over routing. Deliberately reused
+// rather than reimplemented: four property-test suites pin behaviour that was expensive
+// to get right — DECISION is first-write-wins, conviction is never defaulted to 75,
+// `RUN_FINISHED` enriches but never downgrades a committed decision, and the
+// `watching → RUN_STARTED` resume branch drops the previous leg's stale plan. A second
+// reducer would drift from all four, and the migration would have re-earned those bugs.
+export function applyStreamEvent(session: QuantSession, payload: StreamEventPayload): QuantSession {
   const event = payload.event;
   const data = payload.data;
 
@@ -1363,20 +1375,42 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
           } : null,
           // Authenticated user id → the droplet resolves this user's OpenRouter
           // key from the backend internal endpoint for the run.
-          userId: useAuthStore.getState().user?.id ?? null
+          userId: useAuthStore.getState().user?.id ?? null,
+          // THE run entry point's session binding.
+          //
+          // Without this the multi-session path was only half-wired: the adapter dispatches on the
+          // presence of `session_id` (see `startSessionRun` in `webAdapters.ts`), and nothing passed
+          // it — so every run took the LEGACY branch, minting a client-side thread id with no session
+          // row and no `runs` row. Its frames then arrived on a thread `useSessionStore` had never
+          // bound, so they were dropped into `unroutableFrames` and the transcript stayed empty.
+          // Found by the e2e journey, which is exactly what that job is for.
+          //
+          // `undefined` when the flag is off or nothing is active, which keeps the legacy path
+          // byte-identical.
+          session_id: FQ_MULTI_SESSION
+            ? useSessionStore.getState().activeSessionId ?? undefined
+            : undefined,
         }
       );
 
-      // Write the thread_id onto the session immediately so cancelAnalysis works
-      // even before the first RUN_STARTED SSE event arrives.
-      set((s) => {
-        const sess = s.sessionsByKey[runKey] ?? blankSession();
-        const updated = { ...sess, currentThreadId: threadId };
-        return {
-          sessionsByKey: { ...s.sessionsByKey, [runKey]: updated },
-          ...(s.activeViewKey === runKey ? { currentThreadId: threadId } : {}),
-        };
-      });
+      // On the SESSION path this return value is the `session_id`, not a thread id — the server mints
+      // the thread inside `POST /run` and reports it on `RUN_STARTED`, which `applyFrame` uses to bind
+      // routing. Writing it into `currentThreadId` would put a session id in a thread field, the exact
+      // conflation the migration exists to remove (and `cancel` would then address the wrong thing).
+      const sessionPath = FQ_MULTI_SESSION && !!useSessionStore.getState().activeSessionId;
+
+      if (!sessionPath) {
+        // Write the thread_id onto the session immediately so cancelAnalysis works
+        // even before the first RUN_STARTED SSE event arrives.
+        set((s) => {
+          const sess = s.sessionsByKey[runKey] ?? blankSession();
+          const updated = { ...sess, currentThreadId: threadId };
+          return {
+            sessionsByKey: { ...s.sessionsByKey, [runKey]: updated },
+            ...(s.activeViewKey === runKey ? { currentThreadId: threadId } : {}),
+          };
+        });
+      }
 
       const tDone = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       debugLog(
@@ -1529,22 +1563,38 @@ export const useQuantStore = create<QuantStore>((set, get) => ({
 
     debugLog(`[QuantStore] Stream event: ${event}`, data);
 
-    // ── Route this event to the SESSION KEY its run belongs to ─────────────
-    // Every event now carries the run's thread_id (backend stamps them all), so
-    // we resolve the session key from the thread→key map first. That makes
-    // concurrent runs across different symbols/profiles fully independent — each
-    // run's events land in its own (symbol::profile) session regardless of what
-    // is on screen. Fallbacks: the current streaming key, then the viewed key.
-    // Events are only mirrored to the flat top-level fields when the run is the
-    // one currently displayed, so a background run keeps filling its session
-    // while the user looks at (or analyzes) something else.
+    // ── MULTI-SESSION PATH: route by thread_id, with NO fallback ────────────
+    //
+    // `useSessionStore` owns routing once the workspace is on the multi-session
+    // architecture. It resolves `thread_id → session_id` and NOTHING else: a frame whose
+    // thread is unbound mutates nothing and is counted.
+    //
+    // That is the whole point. The legacy path below resolves
+    // `_streamingKey || activeViewKey` when the thread is unknown, so a frame from a
+    // background run lands in whatever the user happens to be looking at — and because the
+    // result looks like ordinary transcript data, the corruption is undetectable. It was
+    // survivable only while one session could stream at a time.
+    //
+    // Gated rather than replaced outright because nothing binds a server session id until
+    // the run path is migrated (T6.3) and a session exists to bind to. Deleting the
+    // fallback here unconditionally would make every frame unroutable and blank the panel,
+    // which is not a safe intermediate state to ship. Rollback is the flag.
+    if (FQ_MULTI_SESSION) {
+      useSessionStore.getState().applyFrame(payload);
+      return;
+    }
+
+    // ── LEGACY PATH (pre-multi-session) ────────────────────────────────────
+    // Retained verbatim so FIND / VERIFY / QA keep working until the flag flips.
+    // Every event carries the run's thread_id (the backend stamps them all), so the
+    // session key resolves from the thread→key map first; the fallbacks below are the
+    // defect described above and are removed with this branch in T11.
     const st = get();
     const threadId = data?.thread_id;
     let runKey: string | null = null;
     if (threadId && st._threadToKey[threadId]) {
       runKey = st._threadToKey[threadId];
     } else if (event === 'RUN_STARTED') {
-      // First event of a run: bind its thread to the current streaming/viewed key.
       runKey = st._streamingKey || st.activeViewKey;
     } else {
       runKey = st._streamingKey || st.activeViewKey;

@@ -22,6 +22,14 @@ chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 env_logger = "0.11"
 urlencoding = "2.1"
+# Internal service credential for the watcher's POST /resume (X-StratAI-Service).
+# All three are ALREADY in Cargo.lock as transitive dependencies of the rustls/sqlx
+# stack, so promoting them to direct dependencies adds no compilation and no new
+# supply-chain surface. Hand-rolling SHA-256 instead would be more code AND a
+# hand-rolled security primitive.
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
 
 [dev-dependencies]
 # `ServiceExt::oneshot` — drives the real router in-process so the metrics

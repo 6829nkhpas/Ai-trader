@@ -294,8 +294,120 @@ async function emitPreRunConsensus(symbol: string, timeframe: string): Promise<v
   }
 }
 
+/**
+ * Start a SESSION-scoped agent run.
+ *
+ * Returns the `session_id` rather than a thread id, because the thread no longer exists at
+ * call time: the server mints it inside `POST /run` and reports it on the `RUN_STARTED`
+ * frame, which `useSessionStore.applyFrame` uses to bind the thread to this session.
+ *
+ * That inversion is the point. The client used to mint
+ * `thread_${symbol}_${Date.now()}` — guessable to the second — and `GET /stream/{thread_id}`
+ * had no ownership check, so knowing a symbol and roughly when someone ran it was enough to
+ * read their research stream.
+ *
+ * The reattach loop now passes `?after_seq=`, which closes the window where frames published
+ * while nobody was subscribed were lost with no way to recover them. That window is exactly
+ * when a paused run's client is reconnecting, so it was not theoretical.
+ */
+async function startSessionRun(args: Args): Promise<string> {
+  const sessionId = reqStr(args, 'session_id', 'run_deep_quant_agent');
+  const mode = optStr(args, 'mode') ?? 'FIND';
+  const manualTrade = (args.manual_trade ?? args.manualTrade) as Record<string, unknown> | undefined;
+  const symbol = optStr(args, 'symbol') ?? '';
+
+  const message = buildRunMessage(symbol, mode, manualTrade);
+
+  const payload = {
+    session_id: sessionId,
+    message,
+    mode,
+    // Still sent because the GRAPH needs them — a VERIFY of specific numbers must not
+    // change under the user. The server records the SESSION's context on the run row, so
+    // these cannot rewrite what an earlier run claims to have analysed.
+    symbol: symbol || null,
+    timeframe: optStr(args, 'timeframe') ?? null,
+    profile: optStr(args, 'profile') ?? null,
+    fno_expiry: optStr(args, 'fno_expiry') ?? optStr(args, 'fnoExpiry') ?? null,
+    model: optStr(args, 'model') ?? null,
+    manual_trade: manualTrade ?? null,
+    client_msg_id: optStr(args, 'client_msg_id') ?? optStr(args, 'clientMsgId') ?? null,
+  };
+
+  const controller = new AbortController();
+  activeRuns.set(sessionId, controller);
+
+  void emitPreRunConsensus(symbol, optStr(args, 'timeframe') ?? '10m');
+
+  // Deliberately not awaited: the caller transitions into its streaming state immediately,
+  // as it did before.
+  void (async () => {
+    try {
+      const res = await fetch('/api/deepquant/run', {
+        ...postJson(payload),
+        signal: controller.signal,
+      });
+      if (!res.ok) throw await failure(res, `deep-quant /run failed with HTTP ${res.status}`);
+
+      let outcome = await relayAgentStream(res, controller.signal);
+
+      while (outcome === 'paused' && !controller.signal.aborted) {
+        // The thread and the last seq are only known once RUN_STARTED has been routed, so
+        // they are read at reattach time rather than captured up front.
+        const { useSessionStore } = await import('../../store/useSessionStore');
+        const stream = useSessionStore.getState().streams[sessionId];
+        const threadId = stream?.threadId;
+        if (!threadId) break;
+
+        const qs = stream.lastSeq > 0 ? `?after_seq=${stream.lastSeq}` : '';
+        const hub = await fetch(
+          `/api/deepquant/stream/${encodeURIComponent(threadId)}${qs}`,
+          { signal: controller.signal, cache: 'no-store' },
+        );
+        if (!hub.ok) break;
+        outcome = await relayAgentStream(hub, controller.signal);
+        // A clean disconnect while still paused means the hub connection dropped, not that
+        // the graph finished — reattach.
+        if (outcome === 'disconnected') outcome = 'paused';
+      }
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      emitBridgeEvent('deep-quant-stream', {
+        event: 'ERROR',
+        data: { error: err instanceof Error ? err.message : String(err) },
+      });
+    } finally {
+      activeRuns.delete(sessionId);
+    }
+  })();
+
+  return sessionId;
+}
+
+/** The prompt text for a run. Extracted so both run paths build it identically. */
+function buildRunMessage(
+  symbol: string,
+  mode: string,
+  manualTrade: Record<string, unknown> | undefined,
+): string {
+  return mode === 'VERIFY' && manualTrade
+    ? `Verify the following proposed trade setup for the trading ticker symbol '${symbol}':\n` +
+        `- Side: ${manualTrade.side}\n` +
+        `- Entry Price: ${manualTrade.entry}\n` +
+        `- Stop Loss: ${manualTrade.stop_loss ?? manualTrade.stopLoss}\n` +
+        `- Target/Take Profit: ${manualTrade.take_profit ?? manualTrade.takeProfit}\n` +
+        `- My Trade Logic/Analysis: '${manualTrade.user_analysis ?? manualTrade.userAnalysis}'\n` +
+        `Please evaluate this setup against recent candlestick data and technical consensus, ` +
+        `validate the risk-reward profile, and recommend whether to execute, adjust, or reject the trade.`
+    : `Analyze the trading ticker symbol '${symbol}' and recommend a setup.`;
+}
+
 /** Start an agent run and stream it. Returns the thread id immediately. */
 async function startAgentRun(args: Args): Promise<string> {
+  // Session-scoped runs take the path above. Dispatched on the ARGUMENT rather than on the
+  // build flag, so the two paths cannot disagree with the caller about which one ran.
+  if (optStr(args, 'session_id')) return startSessionRun(args);
+
   const symbol = reqStr(args, 'symbol', 'run_deep_quant_agent');
   const mode = optStr(args, 'mode') ?? 'FIND';
   const profile = optStr(args, 'profile') ?? 'INTRADAY';
@@ -609,13 +721,35 @@ export const WEB_ADAPTERS: Record<string, WebAdapter> = {
   },
 
   cancel_deep_quant_agent: async (args) => {
-    const threadId = reqThreadId(args, 'cancel_deep_quant_agent');
-    activeRuns.get(threadId)?.abort();
-    activeRuns.delete(threadId);
-    // Ask Python to break out of astream at the next step boundary. NOT
-    // swallowed: if this fails the run is still burning LLM credits server-side
-    // while the UI shows it stopped, which the caller needs to know about.
-    const res = await fetch('/api/deepquant/cancel', postJson({ thread_id: threadId }));
+    // `run_id` is preferred: it is the identifier this service minted, so the server can
+    // check ownership on it directly. `/cancel` previously took no user id at all, which
+    // meant any caller who knew a thread id could stop somebody else's analysis.
+    const runId = optStr(args, 'run_id') ?? optStr(args, 'runId');
+    const sessionId = optStr(args, 'session_id') ?? optStr(args, 'sessionId');
+    const threadId = optStr(args, 'thread_id') ?? optStr(args, 'threadId');
+
+    // Abort the local relay first, under whichever key started it, so the UI stops
+    // immediately even if the server call fails.
+    for (const key of [sessionId, threadId, runId]) {
+      if (!key) continue;
+      activeRuns.get(key)?.abort();
+      activeRuns.delete(key);
+    }
+
+    if (!runId && !threadId) {
+      // A cancel pressed before RUN_STARTED has been routed has nothing to name yet. The
+      // local abort above is the whole stop in that case, and it is honest to say so
+      // rather than POST an identifier we do not have.
+      return undefined;
+    }
+
+    // Ask Python to break out of astream at the next step boundary. NOT swallowed: if this
+    // fails the run is still burning LLM credits server-side while the UI shows it stopped,
+    // which the caller needs to know about.
+    const res = await fetch(
+      '/api/deepquant/cancel',
+      postJson(runId ? { run_id: runId } : { thread_id: threadId }),
+    );
     if (!res.ok) {
       throw await failure(res, `deep-quant /cancel failed with HTTP ${res.status}`);
     }
@@ -623,14 +757,52 @@ export const WEB_ADAPTERS: Record<string, WebAdapter> = {
   },
 
   ask_trade_question: async (args) => {
-    const threadId = reqThreadId(args, 'ask_trade_question');
     const question = reqStr(args, 'question', 'ask_trade_question');
-    const payload = {
-      thread_id: threadId,
-      question,
-      model: optStr(args, 'model') ?? null,
-      user_id: optStr(args, 'user_id') ?? optStr(args, 'userId') ?? null,
-    };
+    const sessionId = optStr(args, 'session_id') ?? optStr(args, 'sessionId');
+    // Grounding is NAMED, not inferred. The old client read its thread id from a flat
+    // "current" store field — i.e. whatever session was on screen — so switching tabs
+    // mid-question asked about the wrong analysis. `context_run_id` also makes multiple
+    // FIND runs per session usable: without it, "why that stop?" after a second run could
+    // only ever mean the second one.
+    const payload = sessionId
+      ? {
+          session_id: sessionId,
+          context_run_id: optStr(args, 'context_run_id') ?? optStr(args, 'contextRunId') ?? null,
+          question,
+          model: optStr(args, 'model') ?? null,
+          client_msg_id: optStr(args, 'client_msg_id') ?? optStr(args, 'clientMsgId') ?? null,
+        }
+      : {
+          thread_id: reqThreadId(args, 'ask_trade_question'),
+          question,
+          model: optStr(args, 'model') ?? null,
+          user_id: optStr(args, 'user_id') ?? optStr(args, 'userId') ?? null,
+        };
+    // A session id is NOT a thread id.
+    //
+    // This used to be `sessionId ?? payload.thread_id`, which stamped the session id into the
+    // `thread_id` field of the synthetic terminal below. The store routes strictly
+    // `thread_id → session_id`, so that frame could never be routed and the composer stayed
+    // locked forever — with no further frame able to unlock it. On the session path the thread
+    // is not known at call time at all: the server mints it and reports it on `RUN_STARTED`,
+    // so it is LEARNED from the stream.
+    const legacyThreadId = sessionId ? null : (payload as { thread_id: string }).thread_id;
+    let observedThreadId: string | null = legacyThreadId;
+
+    /**
+     * Routing keys for a frame this client synthesizes rather than receives.
+     *
+     * The server stamps `thread_id` and `turn` on everything it sends (see `_stamp` in
+     * `main.py`); a locally built frame has to carry the same keys or it is either unroutable
+     * or misrouted into the glass box as if it were analysis reasoning.
+     */
+    const localKeys = () => ({
+      ...(observedThreadId ? { thread_id: observedThreadId } : {}),
+      // Names the session directly, so a synthetic frame is routable even when no thread was
+      // ever observed — which is exactly the case when the request failed outright.
+      ...(sessionId ? { session_id: sessionId } : {}),
+      turn: 'qa',
+    });
 
     void (async () => {
       let sawRunFinished = false;
@@ -641,12 +813,16 @@ export const WEB_ADAPTERS: Record<string, WebAdapter> = {
         }
         await relaySse(res.body, (frame) => {
           if (frame.event === 'RUN_FINISHED') sawRunFinished = true;
+          // Learn the real thread id from the stream so a synthetic terminal can be routed the
+          // same way the server's own frames were.
+          const carried = (frame.data as { thread_id?: unknown } | undefined)?.thread_id;
+          if (typeof carried === 'string' && carried) observedThreadId = carried;
           emitBridgeEvent('deep-quant-qa-stream', { event: frame.event, data: frame.data });
         });
       } catch (err) {
         emitBridgeEvent('deep-quant-qa-stream', {
           event: 'ERROR',
-          data: { error: err instanceof Error ? err.message : String(err) },
+          data: { ...localKeys(), error: err instanceof Error ? err.message : String(err) },
         });
         return;
       }
@@ -655,7 +831,7 @@ export const WEB_ADAPTERS: Record<string, WebAdapter> = {
       if (!sawRunFinished) {
         emitBridgeEvent('deep-quant-qa-stream', {
           event: 'RUN_FINISHED',
-          data: { thread_id: threadId, status: 'completed' },
+          data: { ...localKeys(), status: 'completed' },
         });
       }
     })();

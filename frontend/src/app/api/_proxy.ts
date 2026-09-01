@@ -35,6 +35,17 @@ export interface ProxyOptions {
    * transcript mid-reasoning.
    */
   stream?: boolean;
+  /**
+   * Headers this tier ASSERTS about the request, applied after `forwardHeaders`.
+   *
+   * The ordering is the security property, not a detail. `forwardHeaders` copies
+   * the browser's headers; applying these afterwards means a client that sends
+   * its own `X-StratAI-Identity` cannot win, because ours overwrites it. Belt and
+   * braces with `_gateway.ts`'s `STRIPPED_REQUEST_HEADERS`, which also drops the
+   * client's copy on the way in — either alone would be sufficient, and having
+   * both means a future edit to one cannot silently open the hole.
+   */
+  extraHeaders?: Record<string, string>;
 }
 
 /**
@@ -50,7 +61,7 @@ export interface ProxyOptions {
 export async function proxyRequest(
   req: Request,
   target: Upstream,
-  { path, stream = false }: ProxyOptions,
+  { path, stream = false, extraHeaders }: ProxyOptions,
 ): Promise<Response> {
   if (!path.startsWith('/')) {
     return proxyError(500, `internal: proxy path must start with "/" (got ${path})`);
@@ -68,7 +79,10 @@ export async function proxyRequest(
   try {
     upstream = await fetch(url, {
       method,
-      headers: forwardHeaders(req, stream ? { Accept: 'text/event-stream' } : undefined),
+      headers: forwardHeaders(req, {
+        ...(stream ? { Accept: 'text/event-stream' } : {}),
+        ...(extraHeaders ?? {}),
+      }),
       // `duplex: 'half'` is required by the Fetch spec when sending a stream
       // body; Node's undici enforces it. Reading the body to an ArrayBuffer
       // first would be simpler but would break large historical POSTs.

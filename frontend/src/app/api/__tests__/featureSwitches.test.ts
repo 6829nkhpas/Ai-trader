@@ -35,6 +35,14 @@ describe('deep-quant enforcement scope', () => {
     ['cancel'],
     ['stream', 'thread-abc'],
     ['RUN'], // case-insensitive: the segment comes from a URL
+    // The Find Quant Trade session surface. Gated for the same reason as the rest of
+    // the agent lifecycle — and, unlike the rest, it returns STORED USER DATA, which
+    // is why `isAgentPath` is also what triggers the identity block in the handler.
+    // Adding a session path without adding it here would leave it unauthenticated.
+    ['sessions'],
+    ['sessions', 'sess_abc'],
+    ['sessions', 'sess_abc', 'messages'],
+    ['runs', 'run_abc', 'events'],
   ];
 
   const UNGATED_PATHS = [
@@ -72,6 +80,16 @@ describe('deep-quant enforcement scope', () => {
     // part of the agent lifecycle.
     for (const segments of [['run'], ['qa'], ['resume'], ['stream', 'x']]) {
       expect(isStreamingPath(segments) && isAgentPath(segments)).toBe(true);
+    }
+  });
+
+  it('does not stream the session surface', () => {
+    // These are ordinary JSON reads/writes. Marking one as streaming would skip the
+    // proxy timeout and hand back an unbuffered body for a response that has no
+    // reason to hold a connection open.
+    for (const segments of [['sessions'], ['sessions', 'x', 'messages'], ['runs', 'x', 'events']]) {
+      expect(isStreamingPath(segments)).toBe(false);
+      expect(isAgentPath(segments)).toBe(true);
     }
   });
 });

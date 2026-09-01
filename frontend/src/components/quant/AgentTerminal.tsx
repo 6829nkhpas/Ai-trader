@@ -2,7 +2,15 @@
 
 import React, { useEffect, useRef } from 'react';
 import { Shield, Loader2, AlertTriangle, Lock } from 'lucide-react';
-import { useQuantStore, isActionableTrade } from '../../store/useQuantStore';
+import { isActionableTrade } from '../../store/useQuantStore';
+import {
+  useFqAnalysisError,
+  useFqFinalTrade,
+  useFqQaMessages,
+  useFqQaStatus,
+  useFqReasoningSteps,
+  useFqSessionStatus,
+} from './useFqSession';
 
 import WatchingIndicator from './deep-quant/WatchingIndicator';
 import QaMessages from './deep-quant/QaMessages';
@@ -14,14 +22,17 @@ import { classifyAgentError } from './deep-quant/agentErrorClassifier';
 import { highlightNumbers } from './deep-quant/textHighlighter';
 
 export default function AgentTerminal() {
-  const reasoningSteps = useQuantStore((s) => s.reasoningSteps);
-  const sessionStatus = useQuantStore((s) => s.sessionStatus);
-  const finalTrade = useQuantStore((s) => s.finalTrade);
-  const analysisError = useQuantStore((s) => s.analysisError);
+  // Read through the `useFq*` layer, not the store directly: it resolves per-session state or
+  // the legacy flat fields depending on the rollout flag, so this component holds no knowledge
+  // of which one is live. One field per hook, matching the previous selectors exactly — a
+  // single hook returning an object would re-render this on every frame of every session.
+  const reasoningSteps = useFqReasoningSteps();
+  const sessionStatus = useFqSessionStatus();
+  const finalTrade = useFqFinalTrade();
+  const analysisError = useFqAnalysisError();
 
-
-  const qaMessages = useQuantStore((s) => s.qaMessages);
-  const qaStatus = useQuantStore((s) => s.qaStatus);
+  const qaMessages = useFqQaMessages();
+  const qaStatus = useFqQaStatus();
 
   const terminalEndRef = useRef<HTMLDivElement>(null);
 

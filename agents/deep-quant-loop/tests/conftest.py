@@ -38,6 +38,7 @@ be collected in an environment that has none — see the comment on
 
 import os
 import sys
+import tempfile
 
 import pytest
 
@@ -79,6 +80,33 @@ if _SVC_DIR not in sys.path:
 _PLACEHOLDER_LLM_KEY = "pytest-placeholder-not-a-real-key"
 os.environ.setdefault("LLM_API_KEY", _PLACEHOLDER_LLM_KEY)
 
+# ── Collection-time state redirection ────────────────────────────────────────
+# MODULE scope, for the same reason as the credential above and NOT because a fixture
+# would be untidy: ``main.py`` calls ``session_store.ensure_store()`` at IMPORT time, and
+# pytest imports test modules during collection — before any autouse fixture runs. So the
+# ``_isolate_session_store`` fixture below, on its own, was too late: importing ``main``
+# still created ``sessions.db`` beside the module, INSIDE THE REPOSITORY. Observed
+# directly (a stray ``agents/deep-quant-loop/sessions.db`` in ``git status`` after a
+# suite run), and neither that file nor ``checkpoints.db`` was matched by ``.gitignore``
+# — the ignore list names specific files and has no blanket ``*.db`` rule — so a test run
+# left a user-data file ready to be committed by accident.
+#
+# The fixture is kept as well: this default protects import-time writes, the fixture
+# gives each test its own file so nothing leaks between them.
+_STATE_TMP = tempfile.mkdtemp(prefix="dq-test-state-")
+os.environ.setdefault("SESSIONS_DB_PATH", os.path.join(_STATE_TMP, "sessions.db"))
+os.environ.setdefault("LANGGRAPH_CHECKPOINT_DB", os.path.join(_STATE_TMP, "checkpoints.db"))
+# The compliance and telemetry stores have the same import-time gap: their fixtures
+# (below, and telemetry's own env resolution) only take effect once a test is running,
+# while ``_ensure_compliance_stores()`` runs at ``main`` import. The effect is milder —
+# both filenames ARE gitignored and only an empty schema is created, no rows — but the
+# files still appear in a checkout after a suite run for no reason. Redirected here for
+# the same one-line price. The autouse fixture below still overrides this per test, so
+# per-test isolation is unchanged.
+os.environ.setdefault("COMPLIANCE_DB_PATH", os.path.join(_STATE_TMP, "compliance.db"))
+os.environ.setdefault("TELEMETRY_DB_PATH", os.path.join(_STATE_TMP, "telemetry.db"))
+os.environ.setdefault("JOURNAL_DB_PATH", os.path.join(_STATE_TMP, "trade_journal.db"))
+
 import journal  # noqa: E402
 
 # Captured at conftest import time — BEFORE pytest collects (imports) any test
@@ -114,4 +142,32 @@ def _isolate_compliance_store(tmp_path_factory, monkeypatch):
     """
     store = tmp_path_factory.mktemp("compliance") / "compliance.db"
     monkeypatch.setenv("COMPLIANCE_DB_PATH", str(store))
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _isolate_session_store(tmp_path_factory, monkeypatch):
+    """Point the Find Quant session store and the LangGraph checkpoints at throwaway files.
+
+    Same reasoning as ``_isolate_compliance_store``, and the same defect it prevents:
+    ``main.py`` calls ``session_store.ensure_store()`` at import, so any test that
+    imports ``main`` without an override creates ``sessions.db`` **beside the module,
+    inside the repository**. Observed exactly that — a stray `agents/deep-quant-loop/
+    sessions.db` appeared in `git status` after a test run — and neither `sessions.db`
+    nor `checkpoints.db` was covered by `.gitignore`, so a suite run left user-data
+    files staged for accidental commit.
+
+    Both are set via the environment because both are resolved per call
+    (``session_store.db_path()``, ``checkpointer.checkpoint_db_path()``), so this holds
+    for modules imported before the fixture runs. A test that wants its own path sets
+    the variable again; last writer wins and ``monkeypatch`` restores it.
+
+    ``LANGGRAPH_CHECKPOINT_DB`` is set to a path that does not exist yet rather than
+    left unset, so the durable-checkpointer branch is what the suite exercises by
+    default — the in-memory fallback is then tested deliberately, by the tests that
+    delete the variable, instead of being what every other test silently gets.
+    """
+    state = tmp_path_factory.mktemp("fq-state")
+    monkeypatch.setenv("SESSIONS_DB_PATH", str(state / "sessions.db"))
+    monkeypatch.setenv("LANGGRAPH_CHECKPOINT_DB", str(state / "checkpoints.db"))
     yield

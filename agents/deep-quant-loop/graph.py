@@ -6107,8 +6107,38 @@ workflow.add_conditional_edges(
 )
 workflow.add_edge("qa_tools", "qa_agent")
 
-# Initialize in-memory checkpointer to persist thread states
+# ── Checkpointer ─────────────────────────────────────────────────────────────
+#
+# The module-scope default stays MemorySaver, deliberately. Every existing import
+# path (`from graph import graph`, ~1300 tests, the tool layer) gets a working graph
+# with no configuration, so nothing has to know about checkpointing to use this
+# module.
+#
+# The DURABLE checkpointer cannot live here. `AsyncSqliteSaver.__init__` calls
+# `asyncio.get_running_loop()` (measured: `RuntimeError: no running event loop` at
+# import), because it binds itself to the loop it will serve. It therefore has to be
+# constructed inside the running server, which is what `main.py`'s FastAPI lifespan
+# does — it calls `compile_with(saver)` and rebinds `graph` on this module.
+#
+# The obvious-looking alternative does not work: the SYNCHRONOUS `SqliteSaver` can be
+# built at import time, but its `aget_tuple` raises
+# `NotImplementedError("The SqliteSaver does not support async methods")`, and this
+# graph is driven exclusively through `astream`. Measured, not assumed.
 memory = MemorySaver()
 
-# Compile the final ReAct graph
-graph = workflow.compile(checkpointer=memory)
+
+def compile_with(checkpointer):
+    """Compile this workflow against ``checkpointer``.
+
+    Exists so the server can swap a durable checkpointer in from its lifespan without
+    this module having to know how one is built or when the event loop exists. The
+    workflow itself is identical either way — only the persistence backend differs, so
+    there is no second graph definition to drift.
+    """
+    return workflow.compile(checkpointer=checkpointer)
+
+
+# The default graph. `main.py` REBINDS this attribute at startup when
+# LANGGRAPH_CHECKPOINT_DB is configured, which is why main.py must reach it as
+# `graph_module.graph` rather than binding the name once via `from graph import graph`.
+graph = compile_with(memory)

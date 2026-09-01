@@ -1,9 +1,16 @@
 'use client';
 
-import React, { useState } from 'react';
+import React from 'react';
 import { ArrowRight, Loader2, Eye, Plus, Mic } from 'lucide-react';
 import { useQuantStore } from '../../store/useQuantStore';
 import ModelSelector from './deep-quant/ModelSelector';
+import {
+  useFqAskQuestion,
+  useFqDraft,
+  useFqQaStatus,
+  useFqSessionStatus,
+  useFqThreadId,
+} from './useFqSession';
 
 // Unified Q&A composer, rendered as a continuous footer of the agent working
 // section (no separate "panel" chrome). The conversation turns themselves
@@ -15,14 +22,18 @@ import ModelSelector from './deep-quant/ModelSelector';
 // watching for the price trigger. Includes a model-provider selector so the
 // user can pick which LLM answers.
 export default function TradeQaPanel() {
-  const qaStatus = useQuantStore((s) => s.qaStatus);
-  const currentThreadId = useQuantStore((s) => s.currentThreadId);
-  const sessionStatus = useQuantStore((s) => s.sessionStatus);
-  const askQuestion = useQuantStore((s) => s.askQuestion);
+  const qaStatus = useFqQaStatus();
+  const currentThreadId = useFqThreadId();
+  const sessionStatus = useFqSessionStatus();
+  const askQuestion = useFqAskQuestion();
+  // The model choice is a USER preference, not session state: it stays global deliberately, so
+  // picking a model once applies to the next question in every session.
   const selectedModel = useQuantStore((s) => s.selectedModel);
   const setSelectedModel = useQuantStore((s) => s.setSelectedModel);
 
-  const [draft, setDraft] = useState('');
+  // Was a component-local `useState`, so switching sessions discarded a half-typed question
+  // with no way to get it back. Now keyed by session.
+  const [draft, setDraft] = useFqDraft();
 
   const isStreaming = qaStatus === 'streaming';
   // The input unlocks ONLY at the AI-watcher state or once the run is complete —

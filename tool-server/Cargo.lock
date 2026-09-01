@@ -2202,15 +2202,18 @@ name = "tool-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64",
  "chrono",
  "env_logger",
  "futures-util",
+ "hmac",
  "log",
  "quant-core",
  "reqwest",
  "serde",
  "serde_json",
  "service-metrics",
+ "sha2",
  "sqlx",
  "tokio",
  "tower",

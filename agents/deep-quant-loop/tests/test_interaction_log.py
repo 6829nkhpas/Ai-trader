@@ -233,8 +233,18 @@ def client(monkeypatch):
         if False:  # pragma: no cover - an empty async generator
             yield {}
 
-    monkeypatch.setattr(main.graph, "astream", stub_astream)
-    monkeypatch.setattr(main.graph, "get_state", lambda config: StubState())
+    # Patched on `main.graph_module.graph`, not on `main.graph`.
+    #
+    # `main` used to bind the compiled graph directly (`from graph import graph`). It now
+    # does `import graph as graph_module` and reads `graph_module.graph` at every call
+    # site, because the durable checkpointer can only be built inside the running event
+    # loop and so the FastAPI lifespan REBINDS that attribute at startup — a
+    # once-bound name would keep pointing at the MemorySaver-backed graph.
+    #
+    # Patching the same object main actually calls is what keeps this a test of the real
+    # endpoint bodies. The assertions below are untouched.
+    monkeypatch.setattr(main.graph_module.graph, "astream", stub_astream)
+    monkeypatch.setattr(main.graph_module.graph, "get_state", lambda config: StubState())
     return TestClient(main.app)
 
 
@@ -299,7 +309,7 @@ def test_qa_endpoint_logs_the_answer_that_was_sent(client, monkeypatch):
         next = ()
         values = {"messages": [StubMessage()]}
 
-    monkeypatch.setattr(main.graph, "get_state", lambda config: StubState())
+    monkeypatch.setattr(main.graph_module.graph, "get_state", lambda config: StubState())
     _drain(client.post("/qa", json={"thread_id": "t-ans", "question": "why?", "user_id": "u"}))
 
     outcome = next(
@@ -326,7 +336,7 @@ def test_qa_refusal_records_the_personalisation_category(client, monkeypatch):
         next = ()
         values = {"messages": [StubMessage()]}
 
-    monkeypatch.setattr(main.graph, "get_state", lambda config: StubState())
+    monkeypatch.setattr(main.graph_module.graph, "get_state", lambda config: StubState())
     _drain(client.post(
         "/qa",
         json={"thread_id": "t-ref", "question": "how much of my 5 lakh?", "user_id": "u"},
@@ -359,7 +369,7 @@ def test_resume_endpoint_logs_the_trigger(client, monkeypatch):
         next = ("watch_price_condition",)
         values = {"messages": []}
 
-    monkeypatch.setattr(main.graph, "get_state", lambda config: PausedState())
+    monkeypatch.setattr(main.graph_module.graph, "get_state", lambda config: PausedState())
     response = client.post(
         "/resume",
         json={
@@ -407,7 +417,7 @@ def test_an_errored_run_still_gets_a_terminal_row(client, monkeypatch):
         raise RuntimeError("provider timeout")
         yield {}  # pragma: no cover
 
-    monkeypatch.setattr(main.graph, "astream", exploding_astream)
+    monkeypatch.setattr(main.graph_module.graph, "astream", exploding_astream)
     _drain(client.post(
         "/run",
         json={"thread_id": "t-err", "message": "analyse NIFTY", "mode": "FIND", "user_id": "u"},
