@@ -138,7 +138,11 @@ def patched_layer(monkeypatch):
 
     def fake_read(underlying, expiry):
         calls["read"].append((underlying, expiry))
-        return snapshot, None
+        # `(latest, prior, live_spot)`. The endpoint now reads through
+        # `read_chain_for_analytics`, which falls back to the exchange for a chain
+        # QuestDB does not hold; `live_spot` is set only on that fallback path, so a
+        # QuestDB hit reports None here.
+        return snapshot, None, None
 
     def fake_compute(underlying, expiry):
         calls["compute"].append((underlying, expiry))
@@ -154,7 +158,7 @@ def patched_layer(monkeypatch):
         calls["config"] += 1
         return {"__sentinel__": "config"}
 
-    monkeypatch.setattr(main, "read_latest_and_prior_snapshot", fake_read)
+    monkeypatch.setattr(main, "read_chain_for_analytics", fake_read)
     monkeypatch.setattr(main, "compute_options_analytics", fake_compute)
     monkeypatch.setattr(main, "classify_options_bias", fake_classify)
     monkeypatch.setattr(main, "resolve_options_bias_config", fake_config)
@@ -297,7 +301,10 @@ def test_unavailable_when_no_snapshot(monkeypatch):
     Validates: Requirements 8.1
     """
     monkeypatch.setattr(
-        main, "read_latest_and_prior_snapshot", lambda u, e: (None, None)
+        # Neither QuestDB nor the exchange has a chain. The fallback coming back
+        # empty too is what makes this genuinely unavailable rather than merely
+        # un-ingested — the distinction this endpoint now draws.
+        main, "read_chain_for_analytics", lambda u, e: (None, None, None)
     )
 
     resp = client.get(
@@ -321,7 +328,7 @@ def test_f2_marker_passthrough_with_last_snapshot_ts(monkeypatch):
     """
     snap = _snapshot(snapshot_ts=1734507600000)
     monkeypatch.setattr(
-        main, "read_latest_and_prior_snapshot", lambda u, e: (snap, None)
+        main, "read_chain_for_analytics", lambda u, e: (snap, None, None)
     )
     f2_marker = {
         "underlying": "NIFTY 50",

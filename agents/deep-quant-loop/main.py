@@ -63,6 +63,8 @@ import event_calendar
 from datetime import datetime, timezone, timedelta
 from options import (
     read_latest_and_prior_snapshot,
+    read_chain_for_analytics,
+    read_listed_expiries,
     compute_options_analytics,
     _escape_sql_literal,
     _questdb_select,
@@ -967,17 +969,24 @@ def _resolve_nearest_expiry(underlying: str) -> str:
         "SELECT DISTINCT expiry FROM option_chain_snapshots "
         f"WHERE underlying='{u}' ORDER BY expiry ASC"
     )
-    if not rows:
-        return ""
     expiries = [
         row[0]
-        for row in rows
+        for row in (rows or [])
         if isinstance(row, (list, tuple)) and row
         and isinstance(row[0], str) and row[0].strip()
     ]
-    if not expiries:
-        return ""
     today = _now_ist().strftime("%Y-%m-%d")
+
+    if not expiries:
+        # Nothing ingested for this underlying. Ask the EXCHANGE what it lists
+        # instead of reporting no chain: the ingested set is a bounded ten names, so
+        # for every other F&O-listed stock this branch is the only one that can
+        # resolve an expiry — and returning "" here is what produced
+        # "no chain snapshot available for HINDUNILVR" permanently.
+        listed = read_listed_expiries(underlying)
+        upcoming = [e for e in listed if e >= today]
+        return upcoming[0] if upcoming else (listed[0] if listed else "")
+
     upcoming = [e for e in expiries if e >= today]
     return upcoming[0] if upcoming else expiries[-1]
 
@@ -1125,8 +1134,10 @@ def _build_options_snapshot(underlying: str, expiry: str = ""):
             marker["last_snapshot_ts"] = last_ts
         return marker
 
-    # 2. Read the chain strikes via the existing F2 read layer.
-    latest, _prior = read_latest_and_prior_snapshot(underlying, resolved_expiry)
+    # 2. Read the chain strikes — from QuestDB when the underlying is ingested, and
+    #    from the exchange when it is not (`read_chain_for_analytics`). Without the
+    #    fallback this gate was where every unconfigured underlying dead-ended.
+    latest, _prior, _live_spot = read_chain_for_analytics(underlying, resolved_expiry)
     if latest is None:
         marker = {
             "underlying": underlying,

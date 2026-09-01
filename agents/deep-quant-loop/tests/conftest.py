@@ -115,3 +115,24 @@ def _isolate_compliance_store(tmp_path_factory, monkeypatch):
     store = tmp_path_factory.mktemp("compliance") / "compliance.db"
     monkeypatch.setenv("COMPLIANCE_DB_PATH", str(store))
     yield
+
+
+@pytest.fixture(autouse=True)
+def _disable_live_chain_fallback(monkeypatch):
+    """Keep the options suite off the network.
+
+    `options.read_chain_for_analytics` falls back to reading a chain from the
+    exchange (through the aggregator's Kite proxy) when QuestDB holds none — which
+    is what makes an underlying outside the ingested ten usable at all. Every
+    pre-existing options test asserts on the QuestDB path and expects
+    "no snapshot" to mean "unavailable", so leaving the fallback armed would both
+    change those contracts and put an HTTP attempt in each one.
+
+    An empty `KITE_API_URL` is the documented off switch (see `options._kite_get`),
+    so this uses the real mechanism rather than stubbing internals. The tests that
+    exercise the fallback set it themselves.
+    """
+    import options  # noqa: PLC0415 — imported here so conftest stays import-light
+
+    monkeypatch.setattr(options, "KITE_API_URL", "", raising=False)
+    yield

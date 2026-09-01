@@ -85,7 +85,7 @@ def test_expiry_resolved_but_no_rows_carries_no_snapshot_reason_code(underlying)
     # A nearest expiry resolves (one distinct expiry row), but the chain read
     # for that expiry returns None (no snapshot rows persisted).
     with mock.patch.object(main, "_questdb_select", return_value=[["2099-12-26"]]), \
-         mock.patch.object(main, "read_latest_and_prior_snapshot", return_value=(None, None)):
+         mock.patch.object(main, "read_chain_for_analytics", return_value=(None, None, None)):
         result = main.options_snapshot(underlying)
 
     assert result.get("unavailable") is True, result
@@ -117,7 +117,7 @@ def test_analytics_degraded_marker_carries_reason_code_and_last_snapshot_ts(
 
     with mock.patch.object(main, "_questdb_select", return_value=[["2099-12-26"]]), \
          mock.patch.object(
-             main, "read_latest_and_prior_snapshot", return_value=(fake_latest, None)
+             main, "read_chain_for_analytics", return_value=(fake_latest, None, None)
          ), \
          mock.patch.object(main, "compute_options_analytics", return_value=degraded_analytics):
         result = main.options_snapshot(underlying)
