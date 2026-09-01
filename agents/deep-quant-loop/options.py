@@ -1975,10 +1975,19 @@ def compute_options_analytics(
             if resolved_expiry:
                 expiry = resolved_expiry
 
-        # 2. Read the latest + prior chain snapshots (impure, isolated).
-        latest, prior = read_latest_and_prior_snapshot(underlying, expiry)
+        # 1c. Resolve the expiry from the EXCHANGE when QuestDB knew none. A chain we
+        #     do not ingest has no rows to resolve from, which is what made every
+        #     unconfigured underlying a permanent dead end.
+        if not (isinstance(expiry, str) and expiry.strip()):
+            listed = read_listed_expiries(underlying)
+            if listed:
+                expiry = listed[0]
 
-        # 3. Degradation gate — no chain snapshot available (Requirement 7.1).
+        # 2. Read the chain — QuestDB when it is ingested, the exchange when it is
+        #    not. `live_spot` is set only on the fallback path.
+        latest, prior, live_spot = read_chain_for_analytics(underlying, expiry)
+
+        # 3. Degradation gate — no chain available from either source (Requirement 7.1).
         if latest is None:
             return _options_unavailable(
                 underlying,
@@ -1987,7 +1996,12 @@ def compute_options_analytics(
             )
 
         # 4. Read spot + degradation gate — spot unavailable (Requirement 7.2).
+        #    `live_ticks` only carries the subscribed spot symbols, so an underlying
+        #    nothing ingests has no tick either; the fallback ladder came priced
+        #    against a spot, so use that rather than degrading a chain we just read.
         spot = read_spot(underlying)
+        if spot is None:
+            spot = live_spot
         if spot is None:
             return _options_unavailable(
                 underlying,
@@ -2007,3 +2021,203 @@ def compute_options_analytics(
             expiry,
             f"options analytics unavailable for {underlying} / {expiry}",
         )
+
+
+# ── Live chain fallback for underlyings that are not ingested ─────────────────
+#
+# Everything above reads QuestDB, which only ever holds the chains
+# `option_chain_selector` subscribes to — a bounded set, and permanently so: Kite
+# allows 3000 instruments on one WebSocket and the selector already spends ~1300 of
+# it, nowhere near enough for every F&O-listed stock. Selecting HINDUNILVR
+# therefore found zero rows and the panel reported "F&O DATA UNAVAILABLE" forever,
+# with no path to recovery, even though the exchange lists it with three live
+# expiries.
+#
+# So a chain we do not ingest is read straight from the exchange instead: the
+# aggregator's `/api/kite/option_chain` resolves the listed expiries and the bounded
+# ATM±band ladder out of its instrument cache, and `/api/kite/quote` prices that
+# ladder in one call. Same shape, same bounds, real data — it costs no WebSocket
+# budget, so it works for ANY underlying.
+#
+# What it cannot give is history. `oi_buildup` compares against a prior snapshot and
+# there is none, so it degrades to "neutral" exactly as it does for a chain whose
+# second snapshot has not landed yet (Requirement 3.3). That is a real limitation,
+# reported honestly rather than filled in.
+
+KITE_API_URL = os.getenv("KITE_API_URL", "http://127.0.0.1:8087/api/kite")
+
+
+def _kite_get(path: str, params: dict, timeout: float = 10.0) -> Optional[Any]:
+    """GET one aggregator Kite-proxy endpoint; ``None`` on ANY failure.
+
+    Mirrors :func:`_questdb_select`'s degrade-to-sentinel contract so a Kite outage
+    surfaces as an unavailable marker rather than an exception, and NEVER raises.
+
+    An EMPTY ``KITE_API_URL`` turns the live fallback off altogether, and does so
+    here rather than at each call site so there is one switch. Two uses: an operator
+    who does not want the extra Kite calls gets the old ingested-only behaviour, and
+    the test suite runs hermetically — every existing options test asserts on the
+    QuestDB path, and reaching for a network in those would be both slow and a
+    different contract.
+    """
+    if not KITE_API_URL.strip():
+        return None
+    try:
+        r = httpx.get(f"{KITE_API_URL}{path}", params=params, timeout=timeout)
+        r.raise_for_status()
+        body = r.json()
+    except Exception as exc:  # noqa: BLE001 — any failure degrades to the sentinel
+        print(f"[Options Warning] _kite_get {path} failed: {exc}")
+        return None
+    if isinstance(body, dict) and body.get("error"):
+        print(f"[Options Warning] _kite_get {path}: {body['error']}")
+        return None
+    return body
+
+
+def read_listed_expiries(underlying: str) -> list:
+    """Every live expiry the exchange lists for ``underlying``, ascending.
+
+    Independent of whether the chain is ingested, which is the point: it is what
+    lets an expiry resolve for a name that has no snapshot rows. Returns ``[]`` on
+    any failure or when the underlying has no listed chain; never raises.
+    """
+    body = _kite_get("/option_chain", {"underlying": underlying})
+    if not isinstance(body, dict):
+        return []
+    expiries = body.get("expiries")
+    if not isinstance(expiries, list):
+        return []
+    return [e for e in expiries if isinstance(e, str) and e.strip()]
+
+
+def build_live_chain_snapshot(
+    underlying: str, expiry: str
+) -> Optional[tuple]:
+    """Build a :class:`ChainSnapshot` for ``(underlying, expiry)`` from the exchange.
+
+    Two calls: the aggregator resolves the bounded ladder (`/option_chain`), then
+    prices it in one batch (`/quote`). Returns ``(snapshot, spot)`` — spot comes back
+    with the ladder, so a non-ingested underlying whose ticks are not in
+    ``live_ticks`` either can still satisfy the analytics' spot gate.
+
+    Every numeric field goes through :func:`_coerce_optional_float`, so a missing or
+    non-finite price / OI / volume is ``None`` rather than fabricated, exactly as in
+    the QuestDB path. Returns ``None`` when the ladder or its prices cannot be read,
+    or when no strike survives projection. NEVER raises.
+    """
+    try:
+        body = _kite_get("/option_chain", {"underlying": underlying, "expiry": expiry})
+        if not isinstance(body, dict):
+            return None
+        contracts = body.get("contracts")
+        exchange = body.get("exchange")
+        spot = _coerce_optional_float(body.get("spot"))
+        if not isinstance(contracts, list) or not contracts or not isinstance(exchange, str):
+            return None
+        if spot is None or spot <= 0:
+            # No defensible ATM-relative reading without spot; the caller reports
+            # unavailable rather than computing spot-relative analytics from a guess.
+            return None
+
+        symbols = [
+            c.get("tradingsymbol")
+            for c in contracts
+            if isinstance(c, dict) and isinstance(c.get("tradingsymbol"), str)
+        ]
+        if not symbols:
+            return None
+
+        # One request for the whole ladder. Kite takes up to 500 instruments per
+        # quote call and the band is at most 42, so this never needs paging.
+        #
+        # REPEATED `i=` params, not one comma-joined value. The aggregator's handler
+        # collects each `i=` from the raw query string and forwards them unchanged;
+        # a comma list arrives as a SINGLE instrument named
+        # "NFO:A,NFO:B,…", which Kite does not recognise, and every leg comes back
+        # priceless. `httpx` expands a list into `i=…&i=…`.
+        quotes = _kite_get(
+            "/quote", {"i": [f"{exchange}:{s}" for s in symbols]}, timeout=15.0
+        )
+        by_symbol: dict = {}
+        if isinstance(quotes, dict) and isinstance(quotes.get("quotes"), list):
+            for q in quotes["quotes"]:
+                if isinstance(q, dict) and isinstance(q.get("symbol"), str):
+                    by_symbol[q["symbol"].upper()] = q
+
+        by_strike: dict = {}
+        for c in contracts:
+            if not isinstance(c, dict):
+                continue
+            strike = _coerce_optional_float(c.get("strike"))
+            kind = _normalize_option_type(c.get("option_type"))
+            symbol = c.get("tradingsymbol")
+            if strike is None or kind is None or not isinstance(symbol, str):
+                continue
+            q = by_symbol.get(symbol.upper(), {})
+            price = _coerce_optional_float(q.get("last_price"))
+            oi = _coerce_optional_float(q.get("oi"))
+            volume = _coerce_optional_float(q.get("volume"))
+
+            entry = by_strike.setdefault(
+                strike,
+                {
+                    "ce_price": None, "pe_price": None,
+                    "ce_oi": None, "pe_oi": None,
+                    "ce_volume": None, "pe_volume": None,
+                },
+            )
+            if kind == "call":
+                entry["ce_price"], entry["ce_oi"], entry["ce_volume"] = price, oi, volume
+            else:
+                entry["pe_price"], entry["pe_oi"], entry["pe_volume"] = price, oi, volume
+
+        if not by_strike:
+            return None
+
+        strikes = tuple(
+            StrikeQuote(
+                strike=strike,
+                ce_price=e["ce_price"], pe_price=e["pe_price"],
+                ce_oi=e["ce_oi"], pe_oi=e["pe_oi"],
+                ce_volume=e["ce_volume"], pe_volume=e["pe_volume"],
+            )
+            for strike, e in sorted(by_strike.items(), key=lambda kv: kv[0])
+        )
+
+        snapshot = ChainSnapshot(
+            underlying=str(underlying),
+            expiry=str(expiry),
+            # Read just now, so the capture time is now. Epoch ms, matching the
+            # QuestDB path's projection.
+            snapshot_ts=int(datetime.now(timezone.utc).timestamp() * 1000),
+            strikes=strikes,
+        )
+        return (snapshot, spot)
+    except Exception as exc:  # noqa: BLE001 — totality guarantee
+        print(f"[Options Warning] build_live_chain_snapshot failed: {exc}")
+        return None
+
+
+def read_chain_for_analytics(underlying: str, expiry: str) -> tuple:
+    """The chain to analyse, from QuestDB if it is ingested and the exchange if not.
+
+    Returns ``(latest, prior, live_spot)``. ``live_spot`` is non-``None`` only on the
+    fallback path, where it carries the spot the ladder was priced against so the
+    caller does not have to find a tick for an underlying nothing subscribes.
+
+    Ingested chains are unaffected: the QuestDB read is tried first and returned
+    untouched when it succeeds, prior snapshot included, so nothing about the ten
+    configured underlyings changes.
+    """
+    latest, prior = read_latest_and_prior_snapshot(underlying, expiry)
+    if latest is not None:
+        return (latest, prior, None)
+
+    live = build_live_chain_snapshot(underlying, expiry)
+    if live is None:
+        return (None, None, None)
+    snapshot, spot = live
+    # No prior: this is the first read of a chain nothing stores, so per-strike
+    # `oi_buildup` is "neutral" rather than invented.
+    return (snapshot, None, spot)

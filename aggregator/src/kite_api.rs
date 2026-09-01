@@ -947,6 +947,178 @@ fn alternate_exchange_key(key: &str) -> Option<String> {
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
+#[derive(serde::Deserialize)]
+pub struct OptionChainParams {
+    underlying: Option<String>,
+    expiry: Option<String>,
+}
+
+/// GET /api/kite/option_chain?underlying=HINDUNILVR[&expiry=2026-09-29]
+///
+/// The listed option chain for ANY F&O underlying, read from the cached instrument
+/// master — whether or not it is one of the names the selector ingests.
+///
+/// This exists because the ingested set is bounded and always will be. Kite allows
+/// 3000 instruments on one WebSocket, `option_chain_selector` spends ~1300 of that
+/// on its configured names, and NSE lists F&O on far more stocks than the remainder
+/// can cover. So a user picking HINDUNILVR found no snapshot rows, and the F&O
+/// panel had no way to tell "this chain is not collected" from "this instrument has
+/// no chain" — it reported UNAVAILABLE permanently.
+///
+/// Two shapes, so a caller can resolve an expiry before asking for a ladder:
+///
+///   no `expiry`  ->  { underlying, exchange, expiries: [ISO, …] }
+///   with expiry  ->  { underlying, exchange, expiry, atm_strike,
+///                      contracts: [{ tradingsymbol, strike, option_type }, …] }
+///
+/// Contracts are bounded exactly as the ingested chains are: the same
+/// `build_chain_selection` pipeline (nearest expiries -> ATM from the listed
+/// strikes -> ATM±band -> the real listed tokens), so this route can never return
+/// an unbounded ladder and its output is directly comparable with a snapshot.
+///
+/// Prices are deliberately NOT included. `/api/kite/quote` already serves those and
+/// takes up to 500 instruments in one call, so the caller fetches them in one
+/// request rather than having this route fan out per contract.
+async fn option_chain_handler(
+    Query(params): Query<OptionChainParams>,
+    state: axum::extract::State<Arc<KiteApiState>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let requested = params.underlying.unwrap_or_default().trim().to_uppercase();
+    if requested.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "underlying is required", "expiries": [] })),
+        ));
+    }
+
+    // Same name and exchange reconciliation the selector uses, so this route and
+    // the ingested chains can never disagree about what an underlying is called or
+    // which master it lives in (SENSEX/BANKEX are BFO, everything else NFO).
+    let name = crate::option_chain_selector::nfo_name(&requested);
+    let exchange = crate::option_chain_selector::derivative_exchange(&name);
+
+    let rows = state.instruments_for(exchange).await.map_err(|e| {
+        state.metrics.kite_api_failed("option_chain");
+        log::error!("[Kite option_chain] {exchange} instruments unavailable: {e}");
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": e, "expiries": [] })),
+        )
+    })?;
+    let instruments = crate::option_chain_selector::to_option_contracts(&rows);
+
+    let today = chrono::Utc::now().date_naive();
+    // Every listed non-expired expiry, not a truncated window: the caller is
+    // choosing from a dropdown, and the ingestion cap has no bearing on what the
+    // exchange lists.
+    let expiries = crate::option_chain::select_nearest_expiries(
+        &instruments,
+        &name,
+        today,
+        usize::MAX,
+    );
+
+    if expiries.is_empty() {
+        // An honest 404: this underlying genuinely has no live chain. Distinct from
+        // "not ingested", which is what this route exists to stop conflating.
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": format!("{name} has no listed option chain on {exchange}"),
+                "underlying": name,
+                "exchange": exchange,
+                "expiries": [],
+            })),
+        ));
+    }
+
+    let expiries_iso: Vec<String> = expiries.iter().map(|d| d.to_string()).collect();
+
+    let Some(requested_expiry) = params.expiry.as_ref().map(|e| e.trim()).filter(|e| !e.is_empty())
+    else {
+        return Ok(Json(serde_json::json!({
+            "underlying": name,
+            "exchange": exchange,
+            "expiries": expiries_iso,
+        })));
+    };
+
+    if !expiries_iso.iter().any(|e| e == requested_expiry) {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": format!("{name} has no live expiry {requested_expiry}"),
+                "underlying": name,
+                "exchange": exchange,
+                "expiries": expiries_iso,
+            })),
+        ));
+    }
+
+    // Spot places ATM. Without it there is no defensible centre for the band, so
+    // this is an error rather than a guess — a fabricated centre would silently
+    // return the wrong 21 strikes.
+    let quote_key = crate::option_chain_selector::spot_quote_key(&name);
+    let spot = state
+        .last_prices_for(std::slice::from_ref(&quote_key))
+        .await
+        .ok()
+        .and_then(|m| m.get(&quote_key).copied());
+    let Some(spot) = spot else {
+        state.metrics.kite_api_failed("option_chain");
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": format!("no spot price for {name} ({quote_key}), cannot place ATM"),
+                "underlying": name,
+                "exchange": exchange,
+                "expiries": expiries_iso,
+            })),
+        ));
+    };
+
+    // One expiry only, so `build_chain_selection` bounds the ladder to that date.
+    let only = crate::option_chain_selector::resolve_config().chain;
+    let cfg = crate::option_chain::ChainConfig { nearest_expiries: 1, ..only };
+    let requested_date = expiries
+        .iter()
+        .find(|d| d.to_string() == requested_expiry)
+        .copied()
+        .expect("checked present above");
+    let scoped: Vec<_> = instruments
+        .iter()
+        .filter(|c| c.expiry == requested_date)
+        .cloned()
+        .collect();
+    let selection = crate::option_chain::build_chain_selection(&scoped, &name, spot, today, &cfg);
+
+    let contracts: Vec<serde_json::Value> = selection
+        .entries
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "tradingsymbol": e.tradingsymbol,
+                "strike": e.strike,
+                "option_type": match e.option_type {
+                    crate::option_chain::OptionType::Ce => "CE",
+                    crate::option_chain::OptionType::Pe => "PE",
+                    crate::option_chain::OptionType::Fut => "FUT",
+                },
+            })
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "underlying": name,
+        "exchange": exchange,
+        "expiry": requested_expiry,
+        "atm_strike": selection.atm_strike,
+        "spot": spot,
+        "expiries": expiries_iso,
+        "contracts": contracts,
+    })))
+}
+
 /// GET /api/kite/instruments?q=RELI&exchange=NSE
 ///
 /// `q` accepts multi-token derivative queries ("NIFTY 24000 CE"); see
@@ -1044,7 +1216,15 @@ async fn quote_handler(
     axum::extract::RawQuery(raw_query): axum::extract::RawQuery,
     state: axum::extract::State<Arc<KiteApiState>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    // Parse repeated `i=` params from raw query string
+    // Parse repeated `i=` params from the raw query string, splitting each on
+    // commas as the doc comment above promises.
+    //
+    // The comma form was documented but never implemented: a value was decoded and
+    // forwarded whole, so `?i=NSE:A,NSE:B` reached Kite as ONE instrument literally
+    // named "NSE:A,NSE:B", which it does not recognise — the caller got an empty
+    // quote list and no indication why. That is a trap for anything reading the
+    // comment, and it cost exactly that: the F&O live-chain fallback priced its
+    // whole ladder in one comma-joined call and every leg came back null.
     let raw = raw_query.unwrap_or_default();
     let instruments: Vec<String> = raw
         .split('&')
@@ -1057,6 +1237,13 @@ async fn quote_handler(
             } else {
                 None
             }
+        })
+        .flat_map(|value| {
+            value
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
         })
         .collect();
 
@@ -1361,6 +1548,7 @@ pub async fn run_kite_api_server(port: &str, metrics: crate::metrics::Aggregator
 
     let app = Router::new()
         .route("/api/kite/instruments", get(instruments_search))
+        .route("/api/kite/option_chain", get(option_chain_handler))
         .route("/api/kite/quote", get(quote_handler))
         .route("/api/kite/historical", get(historical_handler))
         .layer(cors)

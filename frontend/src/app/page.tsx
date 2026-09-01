@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import TerminalLayout from '../components/layout/TerminalLayout';
 import LeftPanel from '../components/panels/LeftPanel';
-import OrderExecutionPanel from '../components/panels/OrderExecutionPanel';
+
 import TerminalChartPane from '../components/layouts/TerminalChartPane';
 import SplitChartContainer from '../components/chart/SplitChartContainer';
 import FnoSection from '../components/fno/FnoSection';
@@ -232,11 +232,11 @@ export default function Home() {
               </div>
             </div>
 
-            {!isFullscreen && (
-              <div className="shrink-0 border-t border-border-default bg-surface rounded-none">
-                <OrderExecutionPanel />
-              </div>
-            )}
+            {/* The Trade / Live Strip that sat here is no longer rendered.
+                FRONTEND ONLY — nothing behind it was touched. The decision feed,
+                conviction scoring, ATR and the target/stop derivation all still run
+                and are still stored; `OrderExecutionPanel` is kept intact in
+                `components/panels/` so putting it back is this one element again. */}
           </div>
         </TerminalLayout>
       </div>

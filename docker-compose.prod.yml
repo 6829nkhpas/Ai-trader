@@ -423,6 +423,13 @@ services:
       # Internal service wiring (stratai network hostnames).
       RUST_TOOL_SERVER_URL: "http://tool-server:8084"
       QUESTDB_HTTP_URL: "http://questdb:9000"
+      # Kite proxy, for the F&O chains QuestDB does not hold. The ingested set is a
+      # bounded ten underlyings (Kite's 3000-instrument WebSocket cap), so
+      # `options.py` reads any other listed chain straight from the exchange through
+      # the aggregator. Without this it would default to 127.0.0.1, which inside this
+      # container is the deep-quant service itself, and every unconfigured underlying
+      # would stay unavailable.
+      KITE_API_URL: "http://aggregator:8087/api/kite"
       METRICS_PORT: "9109"
       # Event_Source for get_event_risk (earnings/results proximity).
       #
