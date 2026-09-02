@@ -59,6 +59,23 @@ export default function RootLayout({
             }}
           />
         )}
+        {/*
+          `FqQueryProvider` is deliberately NOT here.
+
+          Hoisting it to the layout was tried, to give the terminal at `/` and the standalone workspace
+          at `/find-trade/session/{id}` one shared cache. It cost 12 kB of shared JS on EVERY page —
+          including `/dashboard`, which has no session UI at all — and bought nothing:
+
+            * the two pages never mount together, so they cannot disagree about anything;
+            * what actually has to survive navigation is the session STATE, and that lives in
+              `useSessionStore`, a module-scoped zustand store that outlives any React tree. Its
+              `hydratedAt` marker persists, so `useActivateSession` short-circuits after a navigation
+              instead of replaying a transcript;
+            * the query cache only carries the session list and summaries, which are one cheap request.
+
+          So each entry point mounts its own provider. If a third consumer appears, prefer a route-group
+          layout over the root one, so pages with no session UI keep paying nothing.
+        */}
         {children}
       </body>
     </html>

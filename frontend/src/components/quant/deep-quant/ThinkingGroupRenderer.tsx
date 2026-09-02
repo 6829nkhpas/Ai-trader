@@ -31,10 +31,20 @@ export default function ThinkingGroupRenderer({
       <button
         type="button"
         onClick={() => setIsExpanded(!isExpanded)}
+        // A disclosure button has to announce its own state. Without `aria-expanded` a screen-reader
+        // user hears "Thinking, button" and has no way to know whether the reasoning below is showing
+        // or hidden — the chevron that conveys it visually is decorative. The e2e also depends on it:
+        // expanding every collapsed group needs a way to tell open from closed, and without this the
+        // only "signal" was the icon.
+        aria-expanded={isExpanded}
         className="flex items-center gap-1 text-[10px] text-text-muted hover:text-text-primary transition-colors duration-200 select-none focus:outline-none mb-1.5"
       >
         <span>Thinking</span>
-        {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+        {isExpanded ? (
+          <ChevronDown size={11} aria-hidden="true" />
+        ) : (
+          <ChevronRight size={11} aria-hidden="true" />
+        )}
       </button>
 
       {isExpanded && (

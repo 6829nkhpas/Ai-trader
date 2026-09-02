@@ -48,3 +48,22 @@ export const API_V1_PREFIX = '/api/v1';
 // PROD controls whether premium features are gated by the user's plan.
 // In dev (false) every feature is unlocked so developers can test freely.
 export const IS_PROD = process.env.NEXT_PUBLIC_PROD === 'true';
+
+/**
+ * Whether the Find Quant Trade workspace uses the multi-session architecture.
+ *
+ * OFF: `useQuantStore` keeps its `${SYMBOL}::${PROFILE}` keying and its flat mirror, and
+ * the panel behaves exactly as it does today.
+ * ON: routing moves to `useSessionStore`, keyed by opaque server session id, and the
+ * "route an unknown frame to whatever is on screen" fallback is gone.
+ *
+ * This is a ROLLOUT switch, not a security or entitlement gate — the binding checks are
+ * server-side (`DEEP_QUANT_SESSIONS_ENABLED`, `DEEP_QUANT_REQUIRE_IDENTITY`), and nothing
+ * here decides what a user is allowed to do. That is why `NEXT_PUBLIC_` is acceptable
+ * despite being inlined at build time and therefore editable in devtools: the worst a user
+ * can do by flipping it is give themselves a UI whose backend refuses them.
+ *
+ * A rebuild to change, unlike the server switches. Accepted: the two sides flip once, in a
+ * planned order (see the rollout note in `.env.example`).
+ */
+export const FQ_MULTI_SESSION = process.env.NEXT_PUBLIC_FQ_MULTI_SESSION === 'true';

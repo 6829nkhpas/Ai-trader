@@ -4,6 +4,19 @@ import React, { useMemo } from 'react';
 import { Coins, Zap, Loader2, Shield, ChevronDown, Cpu, Square } from 'lucide-react';
 import { useQuantStore } from '../../store/useQuantStore';
 import type { StreamEventPayload } from '../../store/useQuantStore';
+import { useSessionStore } from '../../store/useSessionStore';
+import { FQ_MULTI_SESSION } from '../../lib/env';
+import { FqQueryProvider } from '../../lib/fq/FqQueryProvider';
+import SessionTabBarConnected from './session/SessionTabBarConnected';
+import { useFqStreamListeners } from './useFqStreamListeners';
+import {
+  useFqAiPlan,
+  useFqAnalysisError,
+  useFqIsAnalyzing,
+  useFqReasoningSteps,
+  useFqSessionStatus,
+  useFqThreadId,
+} from './useFqSession';
 import { useTradeStore } from '../../store/useTradeStore';
 import { useChartUIStore } from '../../store/useChartUIStore';
 import AgentTerminal from './AgentTerminal';
@@ -35,49 +48,30 @@ export default function DeepQuantPanel() {
     await openExternalUrl(dashboardUrl());
   };
 
+  // Actions and global preferences stay on the legacy store; per-session STATE is read through
+  // the `useFq*` layer so this component does not know which path is live.
   const {
-    aiPlan,
-    isAnalyzing,
-    analysisError,
     fetchDeepAnalysis,
     clearAiPlan,
-    reasoningSteps,
-    sessionStatus,
-    currentThreadId,
     selectedModel,
     setSelectedModel,
     cancelAnalysis,
   } = useQuantStore();
+  const aiPlan = useFqAiPlan();
+  const isAnalyzing = useFqIsAnalyzing();
+  const analysisError = useFqAnalysisError();
+  const reasoningSteps = useFqReasoningSteps();
+  const sessionStatus = useFqSessionStatus();
+  const currentThreadId = useFqThreadId();
 
-  // Register the deep-quant-stream listener at the PANEL level so it is mounted
-  // before any analysis run starts. (AgentTerminal only mounts once a run is in
-  // flight, which raced the backend SSE stream and intermittently dropped the
-  // opening REASONING/TOOL events — leaving the glass-box blank.) Placed before
-  // the paywall early-return so hook order stays stable.
-  React.useEffect(() => {
-    let cancelled = false;
-    let unlistenFn: (() => void) | undefined;
-    (async () => {
-      try {
-        const dispose = await bridgeListen<StreamEventPayload>('deep-quant-stream', (event) => {
-          if (!cancelled) {
-            useQuantStore.getState().handleStreamEvent(event.payload);
-          }
-        });
-        if (cancelled) {
-          dispose();
-        } else {
-          unlistenFn = dispose;
-        }
-      } catch (err) {
-        console.error('Failed to register deep-quant-stream listener:', err);
-      }
-    })();
-    return () => {
-      cancelled = true;
-      unlistenFn?.();
-    };
-  }, []);
+  // Both bridge listeners, mounted at the CONTAINER level so they exist before any run starts.
+  // (`AgentTerminal` only mounts once a run is in flight, which raced the backend SSE stream and
+  // intermittently dropped the opening REASONING/TOOL frames, leaving the glass box blank.)
+  //
+  // Extracted to a hook because the standalone session route is a different tree and needs the same
+  // subscriptions — see `useFqStreamListeners`. Called before the paywall early-return so hook order
+  // stays stable.
+  useFqStreamListeners();
 
   const selectedSymbol = useTradeStore((s) => s.selectedSymbol);
   const historicalCache = useTradeStore((s) => s.historicalCache);
@@ -200,6 +194,22 @@ export default function DeepQuantPanel() {
 
   return (
     <div className="flex h-full flex-col text-sm select-none overflow-hidden">
+      {/* ── Session tabs ──────────────────────────────────────
+          Flag-gated, and rendered as NOTHING when off — the single-session panel is pixel-unchanged.
+
+          The query provider is mounted per entry point, here and in `SessionWorkspace`, rather than in
+          the root layout. An earlier note here claimed two providers would let a tab archived in one
+          tree still be listed in the other — that was wrong: this panel and the standalone session
+          route are separate PAGES and never mount together. Hoisting was then tried for cache
+          continuity across navigation and reverted: it cost 12 kB of shared JS on every page, and what
+          has to survive a navigation is the session state in the module-scoped `useSessionStore`, not
+          the query cache. See the note in `app/layout.tsx`. */}
+      {FQ_MULTI_SESSION && (
+        <FqQueryProvider>
+          <SessionTabBarConnected />
+        </FqQueryProvider>
+      )}
+
       {/* ── Trigger Button ────────────────────────────────── */}
       <div className="shrink-0 p-3 border-b border-border-default relative">
         <div className="flex items-center gap-0">

@@ -1,6 +1,18 @@
 fastapi>=0.100.0
 uvicorn>=0.22.0
-langgraph>=0.2.0
+# Floor raised from >=0.2.0 to >=1.0. Not a gratuitous bump: a fresh install already
+# resolves langgraph 1.2.11 / langgraph-checkpoint 4.2.0 (measured), and the
+# checkpointer below is pinned to the 3.x line, which pairs with langgraph 1.x. Leaving
+# the floor at 0.2 next to an exact 3.x pin meant a future resolver could pick a
+# combination that has never been run — and the failure would surface as a broken
+# checkpointer, i.e. as silently lost thread state.
+langgraph>=1.0,<2
+# Durable checkpointer (replaces MemorySaver). Pinned EXACTLY, unlike everything else
+# here, because a checkpointer major carries an on-disk schema: an unplanned upgrade is
+# a data-migration event on /data/checkpoints.db, not a dependency refresh.
+# Brings `aiosqlite` transitively, which is why it is not listed separately — nothing in
+# this service imports aiosqlite directly.
+langgraph-checkpoint-sqlite==3.1.1
 langchain-core>=0.3.0
 langchain-openai>=0.1.0
 httpx>=0.24.0

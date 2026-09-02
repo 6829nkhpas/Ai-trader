@@ -13,6 +13,7 @@
 
 import { assertFeatureEnabled } from '../../_featureSwitches';
 import { proxyError } from '../../_gateway';
+import { identityHeaders, unauthenticated } from '../../_identity';
 import { proxyRequest, resolveCatchAll } from '../../_proxy';
 
 export const runtime = 'nodejs';
@@ -51,7 +52,12 @@ export function isAgentPath(segments: string[]): boolean {
     first === 'qa' ||
     first === 'resume' ||
     first === 'stream' ||
-    first === 'cancel'
+    first === 'cancel' ||
+    // The Find Quant Trade session surface. Part of the same paid capability, and —
+    // unlike everything above it — it returns STORED USER DATA, which is why the
+    // identity block below matters more here than anywhere else in this tier.
+    first === 'sessions' ||
+    first === 'runs'
   );
 }
 
@@ -61,14 +67,36 @@ async function handle(req: Request, ctx: Ctx): Promise<Response> {
   const resolved = resolveCatchAll(segments, req);
   if (!resolved) return proxyError(400, 'deepquant: a path segment is required');
 
+  let extraHeaders: Record<string, string> | undefined;
+
   if (isAgentPath(segments)) {
     const denied = assertFeatureEnabled('deepseekGlm', 'Deep Quant AI analysis');
     if (denied) return denied;
+
+    // THE AUTHENTICATION BOUNDARY for the agent surface.
+    //
+    // This tier is the only place on the request path that can see the httpOnly
+    // `access_token` cookie, so it is the only place that can turn "a request
+    // arrived" into "this user sent it". `identityHeaders` verifies the cookie
+    // against the auth API and mints a short-lived MAC'd assertion; deep-quant
+    // trusts the MAC and ignores the body's `user_id` once enforcement is on.
+    //
+    // `null` means refuse, and only `FQ_REQUIRE_IDENTITY=1` can produce it — during
+    // the staged rollout an unresolved identity forwards unminted instead, so a
+    // transient auth-API outage cannot take the agent down. Crucially the refusal
+    // happens HERE: an unauthenticated caller never reaches the upstream at all.
+    //
+    // `/options/snapshot` is deliberately outside `isAgentPath` (it is the ungated
+    // F&O workspace, not user data), so it is unaffected.
+    const asserted = await identityHeaders(req);
+    if (asserted === null) return unauthenticated();
+    extraHeaders = asserted;
   }
 
   return proxyRequest(req, 'deepquant', {
     path: resolved,
     stream: isStreamingPath(segments),
+    extraHeaders,
   });
 }
 

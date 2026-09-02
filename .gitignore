@@ -54,6 +54,24 @@ trade_journal.db
 telemetry.db
 *.sqlite
 *.sqlite3
+# NOTE: there is deliberately no blanket `*.db` rule here — only named files. So a
+# NEW SQLite store added to a service is NOT ignored by default and will show up in
+# `git status` ready to be committed by accident. Add it below when you add one.
+# (CLAUDE.md section 11 claims a `*.db` rule exists. It does not.)
+
+# ----- Find Quant Trade session store + LangGraph checkpoints -----
+# Both hold USER DATA and neither belongs in git: sessions.db is the conversation
+# record (user ids, questions, transcripts, trade plans) and checkpoints.db is the
+# agent's model context and tool state for those conversations. In production they
+# live on the deep_quant_data volume at /data; these entries catch the local-default
+# paths beside the module, which is where a test run or a `python main.py` puts them.
+# The -wal / -shm sidecars exist because both are opened in WAL mode.
+sessions.db
+sessions.db-wal
+sessions.db-shm
+checkpoints.db
+checkpoints.db-wal
+checkpoints.db-shm
 
 # ----- Compliance record (P2 recommendation record + P5 interaction log) -----
 # NEVER commit this. It is the append-only regulatory record: it holds user ids
@@ -136,3 +154,7 @@ tools/cmake-3.30.0/
 keys
 
 .kiro/
+# Throwaway state written by the e2e stub server (agents/deep-quant-loop/e2e_stub_server.py).
+.e2e-state/
+frontend/playwright-report/
+frontend/test-results/

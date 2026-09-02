@@ -35,6 +35,21 @@ volumes:
   caddy_config:    # Caddy autosave config
   prometheus_data: # TSDB — capped at 7d / 2GB by the prometheus command flags
   grafana_data:    # Grafana's sqlite backend (users, prefs; dashboards are in git)
+  # deep-quant's state directory (/data). Holds FOUR SQLite databases, all of
+  # which were previously written beside the module inside the container image and
+  # were therefore DESTROYED ON EVERY REDEPLOY:
+  #
+  #   compliance.db     — the hash-chained, append-only SEBI record (interaction_log
+  #                       P5 + reco_store P2). Losing this is the serious one: the
+  #                       chain restarted from genesis on each deploy, so the
+  #                       five-year retention obligation was not being met.
+  #   sessions.db       — the Find Quant Trade session/run/message store.
+  #   checkpoints.db    — the durable LangGraph checkpointer (replaces MemorySaver).
+  #   trade_journal.db  — outcome scoring; telemetry.db — measurement.
+  #
+  # WAL mode is on for all of them, so a plain file copy is NOT a valid backup.
+  # Back up with `sqlite3 <db> ".backup <dest>"` per file. See docs/DEPLOYMENT.md.
+  deep_quant_data:
 
 services:
 
@@ -369,6 +384,17 @@ services:
       SENTIMENT_SERVICE_URL: "http://sentiment:8090/sentiment"
       METRICS_PORT: "9107"
       RUST_LOG: info
+      # The price watcher's credential for POST /resume. It has no user session, so
+      # it asserts ITSELF and deep-quant resolves the owning user from the run row.
+      # A DIFFERENT secret from INTERNAL_IDENTITY_SECRET on purpose: a compromised
+      # watcher must not be able to mint a user identity.
+      #
+      # Optional until DEEP_QUANT_REQUIRE_IDENTITY is switched on — unset means the
+      # header is simply not sent, and the watcher keeps resuming runs. Once
+      # enforcement is on, an unset value here means price watches silently stop
+      # waking runs, so the watcher logs a distinct ERROR on a 401 rather than
+      # letting it read as "the run ended".
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET:-}
     networks: [stratai]
     depends_on:
       questdb:
@@ -418,13 +444,95 @@ services:
       # Unset this to disable event risk — get_event_risk then degrades to its
       # honest "no event source configured" marker, exactly as before.
       EVENT_CALENDAR_API_URL: "http://127.0.0.1:8086/events/calendar"
+
+      # ── Durable state (/data, the deep_quant_data volume) ────────────────────
+      # Every one of these defaulted to a path beside the module inside the image,
+      # i.e. inside a container layer, i.e. gone on every redeploy. Pointing them
+      # at the mounted volume is what makes any persistence claim in this service
+      # true — including the compliance hash chain, which is not new but was
+      # silently restarting from genesis. See the volume comment at the top.
+      COMPLIANCE_DB_PATH: "/data/compliance.db"
+      JOURNAL_DB_PATH: "/data/trade_journal.db"
+      TELEMETRY_DB_PATH: "/data/telemetry.db"
+      SESSIONS_DB_PATH: "/data/sessions.db"
+      # Durable LangGraph checkpointer, replacing MemorySaver. Unset means in-memory,
+      # which is what the service shipped with and what made every redeploy lose thread
+      # state: /qa then answers with no Session_Analysis_Context and /resume returns 400,
+      # so a watcher-triggered wake can never land and the terminal sits in WATCHING
+      # forever. Neither failure announces itself, which is why this is set explicitly
+      # rather than left to a default.
+      LANGGRAPH_CHECKPOINT_DB: "/data/checkpoints.db"
+      # Restricts checkpoint deserialisation to an allowlist of types. NOT enabled yet,
+      # on purpose: strict mode BLOCKS anything unlisted, so switching it on blind risks
+      # breaking Q&A grounding on real graph state — an availability failure, against a
+      # threat that needs an attacker who can already write inside this container.
+      # Non-strict mode logs exactly what it WOULD block, so the safe order is: run,
+      # grep the logs for "Blocked deserialization" / "Set LANGGRAPH_STRICT_MSGPACK",
+      # then enable. See docs/DEPLOYMENT.md section 7.1.
+      # LANGGRAPH_STRICT_MSGPACK: "true"
+      # Directories treated as durable by the startup state report. A resolved DB
+      # path outside these is logged as a data-loss warning rather than assumed OK.
+      DEEP_QUANT_STATE_DIRS: "/data"
+
+      # ── Verified caller identity ─────────────────────────────────────────────
+      # `user_id` in a request body is self-asserted: the browser puts it there and
+      # nothing checks it. Harmless while this service only streams analysis, fatal
+      # once sessions and transcripts are stored per user. The frontend verifies the
+      # httpOnly session cookie against api-web and mints a MAC'd assertion; these
+      # two secrets are the keys for that (user) and for the watcher's /resume
+      # (service). Kept separate so neither can impersonate the other.
+      #
+      # DEEP_QUANT_REQUIRE_IDENTITY stays "0" until the whole rollout is in place —
+      # it is flipped together with the frontend's FQ_REQUIRE_IDENTITY (see
+      # docs/architecture/find-quant-multi-session-migration-plan.md T11.1). Flipping
+      # one alone is a misconfiguration: FQ=1/DQ=0 leaves the backend trusting the
+      # body, and FQ=0/DQ=1 refuses every call whose identity did not resolve.
+      #
+      # With enforcement ON and no secret set, this service REFUSES TO START rather
+      # than serving a session store behind an absent guard.
+      INTERNAL_IDENTITY_SECRET: ${INTERNAL_IDENTITY_SECRET:-}
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET:-}
+      DEEP_QUANT_REQUIRE_IDENTITY: ${DEEP_QUANT_REQUIRE_IDENTITY:-0}
+
+      # ── Find Quant multi-session rollout ────────────────────────────────────
+      # SESSIONS_ENABLED mounts /sessions and /runs and turns on the ownership checks
+      # on /stream, /cancel and /qa. With it off those routes are genuinely ABSENT
+      # (404), not merely refusing, so the surface cannot be probed before it exists.
+      #
+      # REQUIRE_SESSION then closes the legacy path: /run and /qa stop accepting a
+      # client-supplied thread_id. It is flipped LAST, once every client sends
+      # session_id, because until then a thread with no run row has no recorded owner
+      # and is deliberately still served — refusing those would break every in-flight
+      # price watch across a deploy.
+      #
+      # Rollout order (migration plan): SESSIONS_ENABLED=1 -> PERSIST_STREAM=1 ->
+      # frontend ships -> REQUIRE_SESSION=1 + the two IDENTITY flags together.
+      DEEP_QUANT_SESSIONS_ENABLED: ${DEEP_QUANT_SESSIONS_ENABLED:-0}
+      DEEP_QUANT_REQUIRE_SESSION: ${DEEP_QUANT_REQUIRE_SESSION:-0}
+      # Write-through of the glass-box transcript and the chat messages, from inside the
+      # SSE generator. Separate from SESSIONS_ENABLED so the API can be exercised before
+      # anything starts writing on the hot path.
+      #
+      # Frames are batched (25 frames / 250 ms) and flushed unconditionally before any
+      # terminal frame, so a run can never be marked complete with a transcript that stops
+      # earlier. A store failure degrades — the frame is lost from the record, the live SSE
+      # bytes are unchanged — because an unwritable transcript costs history whereas a raised
+      # exception would abort an analysis the user is watching.
+      DEEP_QUANT_PERSIST_STREAM: ${DEEP_QUANT_PERSIST_STREAM:-0}
+      # Prune window for run_events (the glass-box transcript). Application data only:
+      # the pruner opens SESSIONS_DB_PATH and nothing else, never compliance.db.
+      RUN_EVENTS_RETENTION_DAYS: ${RUN_EVENTS_RETENTION_DAYS:-90}
+    volumes:
+      - deep_quant_data:/data
     networks: [stratai]
     depends_on:
       questdb:
         condition: service_healthy
       tool-server:
         condition: service_started
-    mem_limit: 512m
+    # 512m -> 576m: see the docker-compose.8gb.yml override for why, and for how to
+    # measure whether the +64m is actually needed.
+    mem_limit: 576m
     restart: unless-stopped
 
   # ── Web frontend (Next.js standalone, :3000) ─────────────────────────────────
@@ -505,13 +613,29 @@ services:
       #     `assertFeatureEnabled` consults them in the request path.
       #
       # SCOPE, so this is not mistaken for full entitlement enforcement: the proxy
-      # routes do not resolve the caller's identity (the JWT is minted by the
-      # separate api-web deployment and `/api/v1/internal/entitlement/{user_id}`
-      # does not exist yet), so the SERVER enforces the deployment-wide switch
-      # only. A subscriber-level bypass of the per-user gate remains possible on
-      # the web path; the UI gate is an affordance there, not a boundary. The one
-      # authoritative per-user gate today is agents/deep-quant-loop/entitlements.py.
+      # routes enforce the deployment-wide switch only. A subscriber-level bypass of
+      # the per-user PLAN gate remains possible on the web path; the UI gate is an
+      # affordance there, not a boundary. The one authoritative per-user plan gate is
+      # agents/deep-quant-loop/entitlements.py, still waiting on
+      # `/api/v1/internal/entitlement/{user_id}` to exist.
+      #
+      # NOTE — that scope caveat used to also say the proxy routes cannot resolve the
+      # caller's identity. For the agent surface that is no longer true: `_identity.ts`
+      # verifies the httpOnly session cookie against api-web `/users/me` and mints a
+      # MAC'd assertion (see INTERNAL_IDENTITY_SECRET below). What is still missing is
+      # the PLAN lookup, not the identity. The two are separate gates and only one of
+      # them is unbuilt.
       FEATURE_ENFORCEMENT: ${FEATURE_ENFORCEMENT:-true}
+      # Shared HMAC key for the identity assertion this tier mints for deep-quant.
+      # Unprefixed and therefore never inlined into a client bundle. MUST be the same
+      # value as on the deep-quant service. Generate: openssl rand -hex 32
+      #
+      # FQ_REQUIRE_IDENTITY decides whether an UNRESOLVED identity is a 401 here or is
+      # forwarded unminted. It stays "0" through the rollout so a transient /users/me
+      # outage cannot take the agent surface down, and is flipped together with
+      # deep-quant's DEEP_QUANT_REQUIRE_IDENTITY (migration plan T11.1).
+      INTERNAL_IDENTITY_SECRET: ${INTERNAL_IDENTITY_SECRET:-}
+      FQ_REQUIRE_IDENTITY: ${FQ_REQUIRE_IDENTITY:-0}
       # Each of these is the deployment-wide kill switch for one capability, ANDed
       # with the user's plan flag. `true` means "this deployment offers it at all",
       # NOT "everyone gets it" — flip one to false to disable a feature fleet-wide

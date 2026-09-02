@@ -2,7 +2,8 @@
 
 import React, { useState } from 'react';
 import { Loader2, User, Cpu, Wrench, Copy, Check, ThumbsUp, ThumbsDown, Share2 } from 'lucide-react';
-import { useQuantStore, QaChatMessage } from '../../../store/useQuantStore';
+import { QaChatMessage } from '../../../store/useQuantStore';
+import { useFqQaMessages } from '../useFqSession';
 import MarkdownRenderer from './MarkdownRenderer';
 
 // Small copy-to-clipboard button with transient "copied" feedback. Used to copy
@@ -95,9 +96,8 @@ const AnswerText = ({ content }: { content: string }) => {
 function AssistantMessageRow({ msg }: { msg: QaChatMessage }) {
   const [liked, setLiked] = useState(false);
   const [disliked, setDisliked] = useState(false);
-  const askQuestion = useQuantStore((s) => s.askQuestion);
-  const qaMessages = useQuantStore((s) => s.qaMessages);
-
+  // `askQuestion` and `qaMessages` were subscribed here and never read. Every assistant row
+  // therefore re-rendered on every frame of a streaming answer, for nothing.
 
   return (
     <div className="flex justify-start items-start gap-2.5 animate-fade-in font-sans w-full my-2">
@@ -204,7 +204,7 @@ function AssistantMessageRow({ msg }: { msg: QaChatMessage }) {
 // Renders the Q&A conversation turns (user prompts + assistant answers) INLINE
 // within the agent console's scroll flow.
 export default function QaMessages() {
-  const qaMessages = useQuantStore((s) => s.qaMessages);
+  const qaMessages = useFqQaMessages();
 
   if (!qaMessages || qaMessages.length === 0) return null;
 
