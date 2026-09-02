@@ -515,3 +515,40 @@ describe('overflow', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 });
+
+describe('malformed list responses', () => {
+  // `useInfiniteQuery` hands the component a `pages` array, and the bar flattens it with
+  // `flatMap(page => page.items)`. A page that arrives WITHOUT an `items` array makes that flatMap
+  // yield a single `undefined` entry, which reaches `session.session_id` in the render and throws —
+  // taking out the whole tab bar rather than one tab, because the throw happens during the parent's
+  // render. The full suite surfaced this as three "Vitest caught unhandled errors" and a non-zero
+  // exit code even though every test still reported green, which is precisely the false-positive
+  // vitest warns about.
+  //
+  // This is a network boundary: a truncated response, a proxy that rewrote the body, or a server
+  // version that renames the field all produce it. Assert the bar degrades to "no sessions" instead.
+  it('renders the empty state when a page arrives without an items array', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(json({ next_cursor: null })));
+    renderBar();
+
+    // The empty affordance, not a crash. `findBy` so the query has resolved before asserting.
+    await screen.findByRole('button', { name: /new session|new analysis/i });
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
+  });
+
+  it('skips a null page without dropping the sessions around it', async () => {
+    let call = 0;
+    fetchMock.mockImplementation((url: string) => {
+      if (!String(url).includes('/sessions')) return Promise.resolve(json({}));
+      call += 1;
+      // `items: null` rather than a missing key: a JSON serialiser that emits null for an empty
+      // collection is common, and `?? []` has to cover it too.
+      return Promise.resolve(
+        call === 1 ? json({ items: null, next_cursor: null }) : json({ items: [summary()], next_cursor: null }),
+      );
+    });
+
+    renderBar();
+    await waitFor(() => expect(screen.queryAllByRole('tab')).toHaveLength(0));
+  });
+});

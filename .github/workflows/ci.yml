@@ -371,6 +371,14 @@ jobs:
         env:
           DEEP_QUANT_URL: http://127.0.0.1:8099
           FQ_REQUIRE_IDENTITY: "1"
+          # Makes `layout.tsx` inject `window.__ALPHA_TEST_MODE__`, which is what lets
+          # `installTestAffordance` attach `window.__stratai_test__.seedCandles`.
+          #
+          # Required, not optional: `DeepQuantPanel` disables the FIND button until candles exist in
+          # `historicalCache`, and those come from QuestDB or the TradingView datafeed — neither of which
+          # this fixture runs. Without the flag the button never enables and every analysis assertion fails
+          # on a permanently disabled control. See `lib/testAffordance.ts`.
+          ALPHA_TEST_MODE: "1"
         run: |
           npx next start --port "${E2E_PORT}" > /tmp/next.log 2>&1 &
           for i in $(seq 1 60); do

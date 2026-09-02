@@ -23,6 +23,7 @@ import { useSymbolQuote } from '../hooks/useSymbolQuote';
 import { useSidebarDrag } from '../hooks/useSidebarDrag';
 import { useToast } from '../hooks/useToast';
 import { bridgeListen } from '../lib/bridge';
+import { installTestAffordance } from '../lib/testAffordance';
 import { redirectToSignIn } from '../lib/authRedirect';
 import type { ConsensusReport } from '../store/useQuantStore';
 
@@ -50,6 +51,11 @@ export default function Home() {
   // ── Mounted guard ─────────────────────────────────────────────────
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+
+  // Test-mode-only affordance. Inert unless the server was started with `ALPHA_TEST_MODE=1`, which is what
+  // makes `layout.tsx` inject `window.__ALPHA_TEST_MODE__`. See `lib/testAffordance.ts` for why the e2e needs
+  // it: the FIND button is gated on candles the fixture has no way to fetch.
+  useEffect(() => { installTestAffordance(); }, []);
 
   // ── Session check ─────────────────────────────────────────────────
   // The session is an httpOnly `.stratai.live` cookie, so whether we have one is

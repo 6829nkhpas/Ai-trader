@@ -60,6 +60,46 @@ function tokenForTest(suffix = ''): string {
     .slice(0, 40);
   return `e2e-${RUN_NONCE}-${slug}${suffix}`;
 }
+ Serve synthetic OHLC candles, so the FIND button is deterministically enabled.
+ *
+ * THE fix for this suite's flakiness. `#btn-run-deep-quant` is disabled until `dataReady`, which counts
+ * candles in `useTradeStore.historicalCache`; those come from `/questdb/exec`, and the fixture runs no
+ * QuestDB. Without this, the button's enablement depended on whether some unrelated request happened to
+ * populate the cache first, so `runFind` intermittently timed out and surfaced 30s later as missing
+ * transcript text.
+ *
+ * ⚠️ SELECTIVE, and that is load-bearing. `/questdb/exec` is a GENERIC SQL endpoint — the watchlist, quotes
+ * and other panels post their own queries to it. A blanket handler answering all of them with candle-shaped
+ * rows gave those consumers the wrong columns, they threw, and the `pageerror` hook below turned that into an
+ * instant failure of EVERY test, including the two that always passed. So only the candle query is answered
+ * (`useHistoricalData.getQueries` puts `FROM historical_candles` in the URL's `query` param) and everything
+ * else falls through untouched.
+ */
+declare global {
+  interface Window {
+    __stratai_test__?: {
+      seedCandles: (input: { symbol: string; timeframe: string; count?: number }) => number;
+    };
+  }
+}
+
+async function stubCandles(page: Page) {
+  const seeded = await page.evaluate(() => {
+    const hook = window.__stratai_test__;
+    if (!hook) return -1;
+    // RELIANCE / 10m is what `DeepQuantPanel` defaults to (`selectedSymbol || 'RELIANCE'`), and the cache key
+    // must be `SYMBOL::TIMEFRAME` for `symbolCandleCount` to find it.
+    return hook.seedCandles({ symbol: 'RELIANCE', timeframe: '10m' });
+  });
+
+  // A missing hook means the server was not started with `ALPHA_TEST_MODE=1`. Said plainly here, because the
+  // downstream symptom is a permanently disabled FIND button, which looks like a product bug.
+  expect(
+    seeded,
+    'window.__stratai_test__ is absent — start the frontend with ALPHA_TEST_MODE=1 so `layout.tsx` injects ' +
+      'the test-mode flag and `installTestAffordance` attaches.',
+  ).toBeGreaterThan(0);
+}
 
 async function signIn(page: Page, token = ALICE) {
   await page.context().addCookies([
@@ -113,9 +153,22 @@ function newSessionButton(page: Page) {
   return page.getByRole('button', { name: 'New analysis session' });
 }
 
-/** Start an analysis in the session that is currently on screen. */
+/**
+ * Start an analysis in the session that is currently on screen.
+ *
+ * The enabled check is the diagnosis, not ceremony: `#btn-run-deep-quant` is
+ * `disabled={!isAnalyzing && !dataReady}`, so if `stubCandles` ever stops matching the candle query this
+ * fails immediately and says why, instead of `click()` waiting for enabled and timing out 30s later as
+ * "Momentum is intact not found".
+ */
 async function runFind(page: Page) {
-  await page.locator('#btn-run-deep-quant').click();
+  const button = page.locator('#btn-run-deep-quant');
+  await expect(
+    button,
+    'the FIND button never enabled: no candles in historicalCache, so `dataReady` is false. Check that ' +
+      '`stubCandles` still matches the query in useHistoricalData.getQueries().',
+  ).toBeEnabled({ timeout: 20_000 });
+  await button.click();
 }
 
 /**
@@ -222,6 +275,9 @@ test.describe('Find Quant multi-session workspace', () => {
 
   test('the whole journey, on one page', async ({ page }) => {
     await page.goto('/');
+    // Seeded AFTER navigation: the affordance lives on the loaded page, and it is what makes the
+    // FIND button enabled - see stubCandles.
+    await stubCandles(page);
     await openAgentPanel(page);
 
     // ── create ────────────────────────────────────────────────────────────────
@@ -315,6 +371,9 @@ test.describe('Find Quant multi-session workspace', () => {
   test('a session belonging to someone else is not found', async ({ page, context }) => {
     // Ownership, proven rather than assumed. Alice creates a session; Bob asks for it by id.
     await page.goto('/');
+    // Seeded AFTER navigation: the affordance lives on the loaded page, and it is what makes the
+    // FIND button enabled - see stubCandles.
+    await stubCandles(page);
     await openAgentPanel(page);
     const startCount = await page.getByRole('tab').count();
     await newSessionButton(page).click();
@@ -339,6 +398,9 @@ test.describe('Find Quant multi-session workspace', () => {
 
   test('a deep link restores a session with nothing in memory', async ({ page }) => {
     await page.goto('/');
+    // Seeded AFTER navigation: the affordance lives on the loaded page, and it is what makes the
+    // FIND button enabled - see stubCandles.
+    await stubCandles(page);
     await openAgentPanel(page);
     await newSessionButton(page).click();
     await runFind(page);
