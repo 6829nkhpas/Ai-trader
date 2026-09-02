@@ -117,9 +117,10 @@ resource "google_compute_resource_policy" "daily_snapshot" {
     schedule {
       daily_schedule {
         days_in_cycle = 1
-        # 20:30 UTC = 02:00 IST — after the NSE close and well clear of the
-        # pre-market token refresh.
-        start_time = "20:30"
+        # 20:00 UTC = 01:30 IST — after the NSE close and well clear of the
+        # pre-market token refresh. GCP only accepts whole hours here (HH:00),
+        # so this cannot be nudged to 20:30.
+        start_time = "20:00"
       }
     }
 

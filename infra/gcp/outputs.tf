@@ -14,13 +14,23 @@ output "ssh_command" {
 }
 
 output "dns_records_required" {
-  description = "A records that must point at the instance before TLS can be issued. Caddy uses ACME HTTP-01, so each name has to resolve here first or certificate issuance fails."
+  description = <<-EOT
+    A records that must point at THIS instance before TLS can be issued. Caddy uses
+    ACME HTTP-01, so each name has to resolve here first or issuance fails and
+    Let's Encrypt starts rate-limiting.
+
+    ONLY these two. `infra/caddy/Caddyfile` defines exactly two vhosts —
+    `app.stratai.live` and `app-api.stratai.live` — and they are the only names this
+    box can serve.
+
+    `dashboard`, `auth` and `api-web` are SEPARATE deployments (currently on
+    216.198.79.65 and 75.2.43.161, and live). An earlier version of this output
+    listed them too; repointing them here would take three working services down and
+    hand them to a Caddy that has no vhost for them.
+  EOT
   value = {
-    "app.stratai.live"       = google_compute_address.static.address
-    "app-api.stratai.live"   = google_compute_address.static.address
-    "dashboard.stratai.live" = google_compute_address.static.address
-    "auth.stratai.live"      = google_compute_address.static.address
-    "api-web.stratai.live"   = google_compute_address.static.address
+    "app.stratai.live"     = google_compute_address.static.address
+    "app-api.stratai.live" = google_compute_address.static.address
   }
 }
 

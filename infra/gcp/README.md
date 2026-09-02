@@ -84,8 +84,17 @@ syntax check.
 
 `terraform output next_steps` prints this list with your IP substituted in.
 
-1. **DNS.** Point every A record at `terraform output instance_ip`:
-   `app`, `app-api`, `dashboard`, `auth`, `api-web` — all under `stratai.live`.
+1. **DNS.** Point **only these two** A records at `terraform output instance_ip`:
+
+   | Name | Why |
+   |---|---|
+   | `app.stratai.live` | the web terminal vhost in `infra/caddy/Caddyfile` |
+   | `app-api.stratai.live` | the gateway vhost — WSS feeds, `/questdb`, `/deepquant`, `/kite`, `/tools` |
+
+   **Do NOT point `dashboard`, `auth` or `api-web` here.** They are separate
+   deployments that are already live elsewhere, and the Caddyfile has no vhost for
+   them — repointing would take three working services down.
+
    Wait for propagation *before* the first deploy: Caddy uses ACME HTTP-01, so a
    name that does not resolve to this box yet fails issuance and gets rate-limited.
 
