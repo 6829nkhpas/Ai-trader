@@ -117,7 +117,7 @@ export default function PremiumPaywall({ onUpgradeClick }: PremiumPaywallProps) 
           <ArrowRight size={11} />
         </motion.button>
         <span className="mt-1 text-center text-[9px] text-text-muted">
-          Secure checkout powered by PhonePe
+          Secure checkout powered by StratAi Payment
         </span>
       </motion.div>
     </motion.div>

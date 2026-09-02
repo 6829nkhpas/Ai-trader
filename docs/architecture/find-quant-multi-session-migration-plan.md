@@ -1472,8 +1472,243 @@ which is the right place, yet the database still showed 31 sessions from prior r
 `.e2e-state/` by hand was what produced a clean run. Do not trust it — either fix it or have the CI step
 `rm -rf` the directory explicitly before starting the agent.
 
-**Verdict: T10.2 is NOT done.** The infrastructure is real and verified, 3–4 of 5 specs pass, and the job
-must stay out of `ci-ok` until it is deterministic.
+**Two stabilisation fixes were then applied and RE-MEASURED — they did not resolve it.**
+
+1. `_wipe_state()` no longer swallows errors (`ignore_errors=True` removed) and reports what it cleared, so
+   a failed wipe is visible; the CI step also does `rm -rf .e2e-state` before starting the agent.
+2. Test users are now unique per test **and per run** (`E2E_RUN_ID`, defaulting to a timestamp), so a rerun
+   against a live agent cannot inherit the previous run's sessions.
+
+Verified by running the suite twice in a row against ONE long-lived agent — the exact scenario that
+previously degraded to 2/5. Result: **3 passed / 2 failed on the second pass**, so identity reuse was *not*
+the whole cause. The two that fail are the desktop journey (a `toHaveCount`) and one 360 px mobile
+assertion, and they are not the same two every time.
+
+**Verdict: T10.2 is NOT done — ONE known fixture gap remains.** See the root-cause section at the top of
+this block: the FIND button needs candles the fixture does not supply. `runFind` now asserts the button is
+enabled with a message naming that cause, so the failure is instant and self-explanatory instead of a 30s
+timeout misreported as missing transcript text. The next change is fixture-only: stub the historical-candle
+request so `dataReady` is deterministic. Everything else in this suite is downstream of it.
+
+Earlier hypotheses, now superseded by the root cause but kept so they are not re-investigated:
+
+### ✅ ROOT CAUSE FOUND: the FIND button needs market data the fixture never provides
+
+The final run made it plain. The failing test's recorded calls were:
+
+```
+200 GET  /sessions?status=active&limit=25
+201 POST /sessions
+200 GET  /sessions/sess_01M1GKXM…            <- session created fine
+200 GET  /sessions/sess_01M1GKXM…/runs
+200 GET  /sessions/sess_01M1GKXM…/messages
+                                             <- NO POST /run. The analysis never started.
+```
+
+`#btn-run-deep-quant` is `disabled={!isAnalyzing && !dataReady}`, and in `DeepQuantPanel`
+`dataReady = symbolCandleCount > 0`, computed from `useTradeStore.historicalCache` — i.e. **candles from
+QuestDB**, which this fixture deliberately does not run ("no LLM, no Kite, no QuestDB").
+
+So the button's enablement depends on whether some *unrelated* data path happened to populate the cache
+before the click. `locator.click()` waits for enabled and then times out. That single fact explains every
+symptom chased above:
+
+- intermittent missing `POST /run` (hence an empty transcript, hence "Momentum is intact" not found);
+- why the same spec passed at 4/5 and later 2/5 with no code change — it was a race with cache population;
+- why the deep-link and mobile specs flaked too: both call `runFind` as setup;
+- why unit tests never showed it: they drive the store directly and never touch the button's gate.
+
+**The machine-degradation theory below is therefore secondary.** Slow runs made the race lose more often,
+but the race is real and would flake on a clean CI runner as well.
+
+**The fix, with the pitfall already discovered.** Make market data deterministic for the fixture by
+intercepting the candle request. The endpoint is `/questdb/exec` (rewritten to `/api/questdb/exec` by
+`next.config.ts`), and `parseQuestDBRows` in `src/hooks/useHistoricalData.ts` expects:
+
+```json
+{ "columns": [...], "count": N,
+  "dataset": [["2026-03-12T03:45:00.000000Z", open, high, low, close, volume], ...] }
+```
+
+240 rows is a good size — `DeepQuantPanel` treats fewer than 50 as insufficient data and renders a different
+state.
+
+### ✅ FIX IMPLEMENTED (option 1) — written, type-checks, NOT yet run
+
+The chosen fix is in place. Three pieces:
+
+1. **`frontend/src/lib/testAffordance.ts`** — a test-mode-only hook exposing exactly ONE function,
+   `window.__stratai_test__.seedCandles({ symbol, timeframe, count })`, which writes synthetic candles via
+   `useTradeStore.setHistoricalCache` under the key `SYMBOL::TIMEFRAME` (the shape `DeepQuantPanel`'s
+   `symbolCandleCount` scans for). Deliberately **not** "expose the store": a test cannot reach in and mutate
+   arbitrary state, which would let the e2e fake its way past the behaviour it exists to prove. Inert unless
+   `window.__ALPHA_TEST_MODE__` is set, so a normal build attaches nothing.
+2. **`app/page.tsx`** calls `installTestAffordance()` in an effect, so it runs in the browser after
+   `layout.tsx` has injected the flag.
+3. **The spec** seeds *after* navigation (`page.evaluate`, the affordance lives on the loaded page) and
+   asserts the hook exists, with a message naming `ALPHA_TEST_MODE=1` — because the downstream symptom of a
+   missing flag is a permanently disabled FIND button, which reads as a product bug.
+   `ALPHA_TEST_MODE: "1"` added to the `e2e` job's frontend step.
+
+#### The "26 unit-test failures" were a leaked environment variable, not a regression
+
+Recorded because the false diagnosis cost real time and the trap is easy to fall into again.
+
+Eight suites failed with `expected null not to be null` — the four `useQuantStore.*.property` suites, three
+`AgentTerminal.*` suites, and `useFqSession.legacy`. They failed **in isolation too**, which looked like
+conclusive proof of a code regression. It was not. `NEXT_PUBLIC_FQ_MULTI_SESSION=true` had leaked into the
+shell from an earlier `next build`, and the shell persists between commands. Running a single file in that
+shell does not clear it, so "reproduces in isolation" was measuring the same leak.
+
+With the flag set, `handleStreamEvent` routes every frame to `useSessionStore` and returns before touching
+the flat mirror fields. Those eight suites pin the **legacy, flag-off** path and read `finalTrade` et al.
+directly, so they are *supposed* to fail with the flag on. Clearing it restores **157 files / 1406 tests, 0
+failures**.
+
+Consequence for T11: those suites have no flag guard, so flipping `NEXT_PUBLIC_FQ_MULTI_SESSION` on for real
+will red them. They are testing the branch T11.1 deletes, so they go with it — but that must be a deliberate
+deletion, not a surprise.
+
+Check `$env:NEXT_PUBLIC_FQ_MULTI_SESSION` before believing any frontend test result.
+
+#### Two real defects the clean run did surface
+
+Both were in code from this migration, and both made `vitest` exit non-zero while every test still reported
+green — the "unhandled errors" case, which would fail CI with no failing test to point at.
+
+1. **`SessionTabBar` crashed the whole tab bar on a malformed page.** `flatMap((page) => page.items)` yields
+   a single `undefined` when a page arrives without `items`, and that reached `session.session_id` during
+   render. Because the throw happened in the parent's render, one bad page blanked every tab. Fixed with
+   `page?.items ?? []` — this is a network boundary, so the page shape is not ours to assume. Two tests added
+   (missing key, and `items: null`); verified they fail with the guard removed and pass with it in.
+2. **`SessionWorkspace.test.tsx` leaked `NEXT_NOT_FOUND`.** `notFound()` throws by design, and here it throws
+   from an async re-render after the session query resolves. In the app that unwinds to
+   `app/find-trade/session/[sessionId]/not-found.tsx`; the unit environment had no boundary, so it escaped
+   React. Added a `NotFoundBoundary` to the test's render helper — supplying the framework piece the unit
+   environment lacks, not suppressing the throw. Assertions on `notFoundMock` are unchanged.
+
+After both: **157 files / 1408 tests, 0 failures, 0 unhandled errors**, `tsc` clean.
+
+One unrelated pre-existing flake remains, deliberately untouched:
+`volumeProfileEngine.poc.property.test.ts` asserts `toBe` on an accumulated float volume and fails on some
+fast-check seeds (`2.6810577291427513e-180` vs `…646e-180`). It is a charting test with no connection to
+sessions; fixing it needs its own change.
+
+**Status of the e2e affordance: type-checks clean, NOT verified end to end.** The verification build failed for an environmental
+reason unrelated to any of this:
+
+```
+Module not found: .../next/font/google/inter_fe8b9d92.module.css
+https://nextjs.org/docs/messages/module-not-found
+```
+
+`next/font/google` fetches font files at build time, and the network was unavailable. `build:web` cleans
+`.next` before compiling, so the failure left no server to test against. **Retry the build when the network
+is up** — nothing about the fix depends on it, and CI has connectivity.
+
+Expected next result: `runFind`'s enabled-assertion should pass, which unblocks every analysis assertion in
+the suite. If the FIND button still refuses to enable, check that `seedCandles` returned > 0 and that the
+cache key matches the symbol/timeframe actually selected (`selectedSymbol || 'RELIANCE'`, and the store's
+`activeTimeframe`).
+
+### ⛔ Why the earlier ROUTE STUB could not work — nothing requests candles in this environment
+
+The selective stub was implemented (match `historical_candles` / `live_ticks` in the `/questdb/exec` URL,
+`route.fallback()` for every other query) and measured. The button **still never enables**, and the failure
+now says so precisely:
+
+```
+the FIND button never enabled: no candles in historicalCache, so `dataReady` is false
+locator resolved to <button disabled type="button" id="btn-run-deep-quant" …>
+```
+
+The reason the response stub is inert: **no request is made.** The only writers to
+`useTradeStore.historicalCache` are `useHistoricalData.ts` and `charting/datafeed.ts`, and in this fixture
+neither fires — the TradingView datafeed does not run (its `charting_library` assets are the ones excluded
+from the tsc filter), and nothing else on the page fetches candles for the selected symbol. Intercepting a
+request that never happens changes nothing.
+
+**So the fixture cannot make `dataReady` true from the network side.** The remaining options are a design
+decision, not a mechanical fix, which is why this stops here:
+
+1. **Seed the store from the test.** Needs `useTradeStore` reachable from the page — e.g. expose it on
+   `window` under the existing `window.__ALPHA_TEST_MODE__` flag, then `page.addInitScript` /
+   `page.evaluate` to call `setHistoricalCache('RELIANCE::10m', candles)`. Small, but it is a **product-side
+   test affordance** and someone should agree to it deliberately.
+2. **Drive the real chart path** so the datafeed loads and mirrors into the cache — heaviest, and drags
+   TradingView into the e2e.
+3. **Relax the gate for the e2e** (e.g. treat `dataReady` as true when a canned-graph flag is set) — cheap
+   but it stops the test exercising the real enablement rule, which is the kind of shortcut this plan has
+   avoided elsewhere.
+
+Recommendation: option 1, gated on the test-mode flag that already exists.
+
+**What was kept from these attempts** (both strictly better than the committed state, both green on tsc):
+the selective `stubCandles` (harmless — it fires only if something ever does request candles) and the
+`runFind` enabled-assertion, which converts a 30-second mystery timeout into an instant, correctly named
+failure. Desktop result with them in place: 1 passed / 2 failed, and **both failures now name the same real
+cause** instead of appearing as missing transcript text.
+
+⚠️ **A blanket `page.route('**/questdb/exec*')` WAS TRIED AND MADE EVERY TEST FAIL, including the two that
+had always passed.** `/questdb/exec` is a generic SQL endpoint: the watchlist, quotes and other panels post
+their own queries to it. Answering all of them with candle-shaped rows gives those consumers the wrong
+columns, they throw, and the suite's `page.on('pageerror', … throw)` handler turns any uncaught page error
+into an immediate test failure — so the run died at `openAgentPanel` with a single recorded call, which looks
+nothing like the actual cause.
+
+**So the interception must be SELECTIVE:** read `route.request().postData()`, fulfil only when the SQL is the
+candle query (see `getQueries(symbol)` in `useHistoricalData.ts` for its exact shape), and
+`route.fallback()` for everything else so other panels behave exactly as they do today. Verify by asserting
+`#btn-run-deep-quant` is enabled *before* touching any transcript assertion.
+
+This is a FIXTURE-only change; no product code is involved. Everything else in the suite is downstream of it.
+
+### Secondary: the local measurements also degraded — the machine was loaded
+
+The same 5-spec suite, unchanged, took **~1 minute early in the session and 4.8 minutes at the end**, on the
+same hardware. Pass rates drifted in step (4/5 → 3/5 → 2/5) without corresponding code changes. By the end,
+dozens of `next start` / `python` / `vitest` / `playwright` processes had been started across the session and
+many were never reaped.
+
+**Conclusion: much of the "flakiness" chased below is likely an artifact of an exhausted development
+machine, not of the test code.** A three-minute-per-run environment cannot distinguish a racy assertion from
+a starved one.
+
+**Therefore: get the verdict from CI on a clean runner before changing any more test code.** The job is
+defined, its infrastructure is verified (see the table above), and it will not gate `ci-ok` while it is
+failing — so running it is safe and is the cheapest way to obtain a trustworthy measurement. Only if it
+fails on a clean runner is the test code the suspect.
+
+The code is currently left in the **best-known-measured state**: the single journey test (which scored 4/5
+early, when the machine was healthy), plus the polling `expandAllThinking` that made the deep-link restore
+pass, plus per-test/per-run identity, plus the mobile layout-timing fix.
+
+### The split was TRIED and made it WORSE — read this before repeating it
+
+The journey was split into six focused tests behind a shared `createSessionWithRun` helper, and the mobile
+composer assertion was changed to wait for the run to finish (composer enabled) instead of for mid-stream
+text. Measured on a clean database: **2 passed / 8 failed in 12.6 minutes** — clearly worse than the single
+journey's 3/5 in ~1 minute.
+
+The runtime is the tell. Ten tests each doing create → FIND → stream → complete took 12.6 min, i.e. most
+were sitting in timeouts rather than failing fast. Two readings of that, both untested:
+
+1. **Per-test setup is the problem, not the assertions.** Every test now creates a session and streams a
+   full run; if the agent or the SSE relay degrades under repeated back-to-back runs (this instance had been
+   up through a dozen suite runs), later tests inherit a slower/stuck stream. A fresh agent per test — or
+   `fullyParallel: false` with a service restart between files — would isolate that.
+2. **The shared `agentCalls` recorder may be racing.** It is one array on the describe block, cleared in
+   `afterEach`; the helper polls it for `POST /sessions`. If a previous test's in-flight response lands after
+   the clear, the poll can match the wrong call and the helper proceeds against a session that is not the one
+   just created.
+
+**Recommendation for whoever picks this up:** either revert to the single journey test (`git log -p` on
+`tests/fq-multi-session.spec.ts` — it scored 3–4/5 consistently and is the better starting point), or keep
+the split but give each test its own agent process and replace the shared recorder with a per-test one.
+Do NOT assume the split is closer to green; it measured further away.
+
+The two consistently-passing specs across every configuration tried are **ownership/not-found** and
+(with the robust `expandAllThinking`) **the deep-link restore**. Those are the two worth protecting.
 
 ---
 

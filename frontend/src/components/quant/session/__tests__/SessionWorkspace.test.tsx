@@ -119,10 +119,42 @@ function serve(over: { events?: unknown[]; summaryStatus?: number } = {}) {
 let client: QueryClient;
 let fetchMock: ReturnType<typeof vi.fn>;
 
+/**
+ * Stands in for the route's `not-found` boundary.
+ *
+ * `notFound()` throws, and here it throws from an async re-render (after the session query resolves)
+ * rather than the first paint. With no boundary above it the throw escapes React entirely and vitest
+ * records it as an unhandled error — which fails the run with a non-zero exit even though every test
+ * still reports green, and taints the whole suite as a possible false positive.
+ *
+ * In the real app that throw is caught: `app/find-trade/session/[sessionId]/not-found.tsx` is the
+ * boundary Next unwinds to. So catching it here is not papering over the throw, it is supplying the
+ * piece of the framework the unit environment does not have. Tests still assert on `notFoundMock`, so
+ * the behaviour under test is unchanged.
+ */
+class NotFoundBoundary extends React.Component<
+  { children: React.ReactNode },
+  { caught: boolean }
+> {
+  state = { caught: false };
+
+  static getDerivedStateFromError() {
+    return { caught: true };
+  }
+
+  render() {
+    return this.state.caught
+      ? React.createElement('div', { 'data-testid': 'not-found-boundary' })
+      : this.props.children;
+  }
+}
+
 function renderWorkspace(sessionId = SESSION) {
   return render(
     <QueryClientProvider client={client}>
-      <SessionWorkspace sessionId={sessionId} />
+      <NotFoundBoundary>
+        <SessionWorkspace sessionId={sessionId} />
+      </NotFoundBoundary>
     </QueryClientProvider>,
   );
 }

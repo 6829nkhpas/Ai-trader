@@ -55,8 +55,12 @@ export default function SessionTabBar({ onActivate }: SessionTabBarProps) {
 
   // Flattened once. `useInfiniteQuery` returns pages, and a `.flatMap` inline would build a new
   // array every render — re-rendering every tab on every parent render.
+  // `page.items ?? []` rather than `page.items`: a page that arrives without an `items` array makes
+  // `flatMap` yield a single `undefined` entry, which then reaches `session.session_id` in the render
+  // below and throws — taking out the entire tab bar, not just the one tab. This is a network
+  // boundary, so the page shape is not ours to assume.
   const sessions = React.useMemo(
-    () => (data?.pages ?? []).flatMap((page) => page.items),
+    () => (data?.pages ?? []).flatMap((page) => page?.items ?? []),
     [data],
   );
 
