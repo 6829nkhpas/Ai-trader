@@ -33,10 +33,12 @@ locally but failed before or during the deploy. Without it, recovery would mean 
 whole fresh login: a request_token is single-use and already spent by then, so
 there is no way to re-derive the access token that is sitting in the local .env.
 
-Server target (defaults match the production droplet, override if needed):
-    --host / KITE_DEPLOY_HOST          root@app-api.stratai.live
-    --ssh-key / KITE_DEPLOY_SSH_KEY    keys/stratai_deploy
-    --remote-path / KITE_DEPLOY_PATH   /root/Ai-trader
+Server target (defaults match the GCP Compute Engine VM, override if needed):
+    --host / KITE_DEPLOY_HOST          stratai@8.234.73.219
+    --ssh-key / KITE_DEPLOY_SSH_KEY    keys/stratai_gcp
+    --remote-path / KITE_DEPLOY_PATH   /opt/stratai/Ai-trader
+    --compose-files / KITE_DEPLOY_COMPOSE_FILES
+                                       -f docker-compose.prod.yml -f docker-compose.8gb.yml
 """
 
 import argparse
@@ -53,9 +55,31 @@ from urllib.error import HTTPError, URLError
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-DEFAULT_HOST = os.environ.get("KITE_DEPLOY_HOST", "root@app-api.stratai.live")
-DEFAULT_SSH_KEY = os.environ.get("KITE_DEPLOY_SSH_KEY", os.path.join("keys", "stratai_deploy"))
-DEFAULT_REMOTE_PATH = os.environ.get("KITE_DEPLOY_PATH", "/root/Ai-trader")
+# The GCP Compute Engine VM that replaced the DigitalOcean droplet.
+#
+# The IP is the RESERVED static address from infra/gcp (google_compute_address),
+# not an ephemeral one, so it survives a stop/start and a resize. It is used in
+# preference to `app-api.stratai.live` deliberately: this script has to work at
+# 06:00 every morning, and pinning the address keeps DNS out of the path for the
+# SSH hop. (The verification step further down still goes through the hostname,
+# because that is the path real clients take.)
+#
+# `stratai`, not `root`: GCP's Ubuntu images ship PermitRootLogin without-password,
+# so the stack runs as a non-root user in /opt/stratai. That user is in the docker
+# group, so no sudo is needed for the compose calls below.
+DEFAULT_HOST = os.environ.get("KITE_DEPLOY_HOST", "stratai@8.234.73.219")
+DEFAULT_SSH_KEY = os.environ.get("KITE_DEPLOY_SSH_KEY", os.path.join("keys", "stratai_gcp"))
+DEFAULT_REMOTE_PATH = os.environ.get("KITE_DEPLOY_PATH", "/opt/stratai/Ai-trader")
+
+# BOTH compose files, matching redeploy.sh's default.
+#
+# This is not cosmetic. docker-compose.8gb.yml carries the memory limits and
+# tuning for a 4 vCPU / 8 GB host; recreating `ingestion` and `aggregator` with
+# only the prod file would bring them back up UNCAPPED on a box with 8 GB total,
+# which is how a token rotation turns into an OOM kill of the whole stack.
+DEFAULT_COMPOSE_FILES = os.environ.get(
+    "KITE_DEPLOY_COMPOSE_FILES", "-f docker-compose.prod.yml -f docker-compose.8gb.yml"
+)
 
 # The services that actually read KITE_ACCESS_TOKEN.
 #
@@ -179,9 +203,9 @@ def exchange_token(api_key: str, api_secret: str, request_token: str) -> dict:
 # ── Server deploy ────────────────────────────────────────────────────────────
 
 
-def build_remote_script(remote_path: str, access_token: str) -> str:
+def build_remote_script(remote_path: str, access_token: str, compose_files: str) -> str:
     """
-    The bash run on the droplet: update .env, recreate the consumers, verify.
+    The bash run on the VM: update .env, recreate the consumers, verify.
 
     Delivered over SSH's stdin (`bash -s`) rather than as an argument, so the
     token never appears in the remote argv and therefore never in a process
@@ -229,6 +253,11 @@ for key, val in updates.items():
 tmp = path + ".tmp"
 with open(tmp, "w", encoding="utf-8") as fh:
     fh.writelines(out)
+# Carry the original permissions across. .env is 0600 on the server and holds the
+# broker secrets; a fresh temp file is created at the umask default (0644), so
+# without this a token rotation would quietly widen it to world-readable on a box
+# that has other user accounts on it.
+os.chmod(tmp, os.stat(path).st_mode & 0o777)
 os.replace(tmp, path)
 print("[server] .env updated")
 PY
@@ -242,7 +271,7 @@ grep -q "^KITE_ACCESS_TOKEN=$TOKEN$" .env || {{ echo "[server] .env write did no
 # database and the broker to rotate a token, and briefly taking every other
 # service's upstream with them.
 echo "[server] recreating: {services}"
-docker compose -f docker-compose.prod.yml up -d --force-recreate --no-deps {services}
+docker compose {compose_files} up -d --force-recreate --no-deps {services}
 
 # ── 3. Verify ─────────────────────────────────────────────────────────────
 # Two independent signals, because they fail differently:
@@ -289,8 +318,8 @@ fi
 """
 
 
-def deploy(host: str, ssh_key: str, remote_path: str, access_token: str) -> bool:
-    """Push the token to the droplet, restart the consumers, verify. True on success."""
+def deploy(host: str, ssh_key: str, remote_path: str, access_token: str, compose_files: str) -> bool:
+    """Push the token to the VM, restart the consumers, verify. True on success."""
     key_path = ssh_key if os.path.isabs(ssh_key) else os.path.join(PROJECT_ROOT, ssh_key)
     if not os.path.exists(key_path):
         print(f"[!] SSH key not found at {key_path}")
@@ -327,7 +356,7 @@ def deploy(host: str, ssh_key: str, remote_path: str, access_token: str) -> bool
         # stray byte from the remote cannot fail a rotation that otherwise worked.
         result = subprocess.run(
             cmd,
-            input=build_remote_script(remote_path, access_token).encode("utf-8"),
+            input=build_remote_script(remote_path, access_token, compose_files).encode("utf-8"),
             capture_output=True,
             timeout=420,
         )
@@ -456,6 +485,11 @@ def main() -> None:
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--ssh-key", default=DEFAULT_SSH_KEY)
     parser.add_argument("--remote-path", default=DEFAULT_REMOTE_PATH)
+    parser.add_argument(
+        "--compose-files",
+        default=DEFAULT_COMPOSE_FILES,
+        help="compose -f flags used for the restart; must include the 8gb override on the GCP VM",
+    )
     args = parser.parse_args()
 
     # This output carries box-drawing rules, em dashes and `✔`. A Windows console
@@ -488,15 +522,15 @@ def main() -> None:
 
     if args.no_deploy:
         print("\n[*] --no-deploy: server untouched.")
-        print("    Run without the flag to update the droplet and restart the feed.")
+        print("    Run without the flag to update the server and restart the feed.")
         return
 
     print("\n── Steps 5-7: server .env, restart, verify ──────────────────")
-    if deploy(args.host, args.ssh_key, args.remote_path, access_token):
+    if deploy(args.host, args.ssh_key, args.remote_path, access_token, args.compose_files):
         print("\n[✔] Done — token rotated, services recreated, feed verified live.")
     else:
         print("\n[✘] Server update did not complete. The local .env is updated;")
-        print("    the droplet may still be running the previous token.")
+        print("    the server may still be running the previous token.")
         sys.exit(1)
 
 
