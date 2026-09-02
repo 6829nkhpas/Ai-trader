@@ -24,19 +24,17 @@
 
 import { test, expect, type Page } from '@playwright/test';
 
+import { seedCandles, tokenForTest } from './support/e2e';
+
 const ALICE = 'e2e-alice-token';
 
 /**
- * Unique per RUN, so a second run of the same test does not inherit the first run's sessions.
+ * Serve synthetic OHLC candles, so the FIND button is deterministically enabled.
  *
- * `tokenForTest` derives a user from the test TITLE, which isolates tests from each other but is stable
- * across runs — so re-running the suite against a still-running agent had each test find its own leftovers
- * and count them as tabs. That made local reruns non-reproducible, and it is the residual cause of the
- * flakiness this suite showed (4/1, then 2/3, then 3/2, with no code changing).
- *
- * Read from the environment when provided, so CI can pin it in the log for a reproducible rerun.
+ * Shared with the mobile spec, which is gated on the same `dataReady` rule — see
+ * `tests/support/e2e.ts` for why the fixture cannot supply candles any other way.
  */
-const RUN_NONCE = process.env.E2E_RUN_ID ?? Date.now().toString(36);
+const stubCandles = seedCandles;
 
 /**
  * Authenticate by planting the cookie the identity chain reads.
@@ -44,65 +42,6 @@ const RUN_NONCE = process.env.E2E_RUN_ID ?? Date.now().toString(36);
  * Not a bypass: `app/api/_identity.ts` still exchanges this for a user at `/users/me` and mints a
  * real HMAC assertion, which deep-quant still verifies. Only the cookie's ISSUER is faked.
  */
-/**
- * A token unique to the running test, so each test gets its OWN user.
- *
- * Sessions are per-user and the agent's database lives for the whole Playwright run, so tests sharing an
- * identity share a session list: the tab bar counts leftovers from earlier tests and assertions fail with
- * "locator resolved to 7 elements". Isolating by identity is cheaper than restarting the service per test
- * and removes the coupling outright.
- */
-function tokenForTest(suffix = ''): string {
-  const slug = test
-    .info()
-    .title.toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .slice(0, 40);
-  return `e2e-${RUN_NONCE}-${slug}${suffix}`;
-}
-
-/**
- * Serve synthetic OHLC candles, so the FIND button is deterministically enabled.
- *
- * THE fix for this suite's flakiness. `#btn-run-deep-quant` is disabled until `dataReady`, which counts
- * candles in `useTradeStore.historicalCache`; those come from `/questdb/exec`, and the fixture runs no
- * QuestDB. Without this, the button's enablement depended on whether some unrelated request happened to
- * populate the cache first, so `runFind` intermittently timed out and surfaced 30s later as missing
- * transcript text.
- *
- * ⚠️ SELECTIVE, and that is load-bearing. `/questdb/exec` is a GENERIC SQL endpoint — the watchlist, quotes
- * and other panels post their own queries to it. A blanket handler answering all of them with candle-shaped
- * rows gave those consumers the wrong columns, they threw, and the `pageerror` hook below turned that into an
- * instant failure of EVERY test, including the two that always passed. So only the candle query is answered
- * (`useHistoricalData.getQueries` puts `FROM historical_candles` in the URL's `query` param) and everything
- * else falls through untouched.
- */
-declare global {
-  interface Window {
-    __stratai_test__?: {
-      seedCandles: (input: { symbol: string; timeframe: string; count?: number }) => number;
-    };
-  }
-}
-
-async function stubCandles(page: Page) {
-  const seeded = await page.evaluate(() => {
-    const hook = window.__stratai_test__;
-    if (!hook) return -1;
-    // RELIANCE / 10m is what `DeepQuantPanel` defaults to (`selectedSymbol || 'RELIANCE'`), and the cache key
-    // must be `SYMBOL::TIMEFRAME` for `symbolCandleCount` to find it.
-    return hook.seedCandles({ symbol: 'RELIANCE', timeframe: '10m' });
-  });
-
-  // A missing hook means the server was not started with `ALPHA_TEST_MODE=1`. Said plainly here, because the
-  // downstream symptom is a permanently disabled FIND button, which looks like a product bug.
-  expect(
-    seeded,
-    'window.__stratai_test__ is absent — start the frontend with ALPHA_TEST_MODE=1 so `layout.tsx` injects ' +
-      'the test-mode flag and `installTestAffordance` attaches.',
-  ).toBeGreaterThan(0);
-}
-
 async function signIn(page: Page, token = ALICE) {
   await page.context().addCookies([
     {
@@ -352,6 +291,14 @@ test.describe('Find Quant multi-session workspace', () => {
 
     // ── reload -> restore ─────────────────────────────────────────────────────
     await page.reload();
+    // Reopened deliberately, and it is not a workaround. `RightSidebar` holds `sidebarTab` in
+    // `useState('profile')` — only `sidebarOpen` is persisted (see `useChartUIStore`'s
+    // `savePreferences`) — so after a reload the column comes back on the PROFILE panel and
+    // `DeepQuantPanel` is not mounted at all. Asserting the tab count first therefore measured
+    // whether the sidebar remembers its tab, which is not what this test is about: what has to
+    // survive is the stored TRANSCRIPT, asserted below. Without this the count was 0 and it read
+    // as sessions having been lost.
+    await openAgentPanel(page);
     await expect(page.getByRole('tab')).toHaveCount(before + 2);
     await tabFor(page, firstId).click();
     // Nothing is in memory after a reload: every word here came back from the stored frames.

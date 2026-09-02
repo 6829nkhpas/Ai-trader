@@ -303,9 +303,25 @@ jobs:
       # `NEXT_PUBLIC_*` values are inlined at BUILD time, so the stub URLs and the rollout flag have
       # to be set here rather than at `next start`. This is also why the job builds its own output
       # instead of reusing the `frontend` job's.
+      #
+      # `ALPHA_TEST_MODE` belongs here for the SAME reason, which is not obvious because it is not a
+      # `NEXT_PUBLIC_*` var: `/` is prerendered as static content, so the `process.env` read in
+      # `app/layout.tsx` happens during `next build`, not per request. Setting it only on `next start`
+      # (which this job did at first) leaves the baked HTML with no `window.__ALPHA_TEST_MODE__`
+      # script, and every test in the suite then fails for one of two unrelated-looking reasons:
+      #
+      #   * `installTestAffordance` returns early, so `window.__stratai_test__` is absent and the
+      #     desktop spec's `stubCandles` fails with "-1";
+      #   * `useConnectionMonitor` is not suppressed, and with no aggregator WebSocket in the fixture
+      #     it flips `showConnectionLost` after its 5s grace period. `page.tsx` then early-returns
+      #     `<ConnectionLost />`, which unmounts the whole terminal — so the mobile spec times out
+      #     waiting for "Show AI Agent panel", a button that was never going to appear.
+      #
+      # Verified by building both ways and grepping `.next/server/app/index.html` for the flag.
       - name: Build the frontend (production output)
         working-directory: frontend
         env:
+          ALPHA_TEST_MODE: "1"
           NEXT_PUBLIC_FQ_MULTI_SESSION: "true"
           NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:8098
           NEXT_PUBLIC_DASHBOARD_URL: https://dashboard.stratai.live

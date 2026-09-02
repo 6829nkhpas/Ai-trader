@@ -10,6 +10,8 @@
 
 import { test, expect, type Page } from '@playwright/test';
 
+import { seedCandles, tokenForTest } from './support/e2e';
+
 async function signIn(page: Page, token: string) {
   await page.context().addCookies([
     {
@@ -33,12 +35,11 @@ async function isWithinViewport(page: Page, selector: ReturnType<Page['getByRole
 
 test.describe('the workspace at 360 px', () => {
   test.beforeEach(async ({ page }) => {
-    // Own user per test, for the same reason as the desktop spec: sessions are per-user and the agent's
-    // database outlives a single test, so a shared identity makes absolute tab counts depend on test order.
-    await signIn(
-      page,
-      `e2e-${test.info().title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40)}`,
-    );
+    // Own user per test AND per run, via the same helper the desktop spec uses. The token used to be
+    // derived from the test title alone, which isolates tests from each other but is stable ACROSS runs:
+    // re-running against a still-live agent had this spec find its own previous leftovers and count them
+    // as tabs, failing with "Expected: 1, Received: 5".
+    await signIn(page, tokenForTest());
     page.on('pageerror', (err) => {
       throw new Error(`uncaught page error: ${err.message}`);
     });
@@ -46,9 +47,17 @@ test.describe('the workspace at 360 px', () => {
 
   test('the composer stays reachable and nothing overflows the width', async ({ page }) => {
     await page.goto('/');
+    // Same gate as the desktop spec: no candles means a permanently disabled FIND button. Missing here,
+    // this test spent its 90s budget waiting on a button that was never going to enable.
+    await seedCandles(page);
     await page.getByRole('button', { name: 'Show AI Agent panel' }).click();
     await page.getByRole('button', { name: 'New analysis session' }).click();
-    await page.locator('#btn-run-deep-quant').click();
+    const find = page.locator('#btn-run-deep-quant');
+    await expect(
+      find,
+      'the FIND button never enabled: no candles in historicalCache, so `dataReady` is false',
+    ).toBeEnabled({ timeout: 20_000 });
+    await find.click();
     await expect(page.getByText(/Momentum is intact/)).toBeVisible({ timeout: 30_000 });
 
     // The composer is the control the whole surface exists to reach. Pinned above the keyboard
@@ -69,6 +78,9 @@ test.describe('the workspace at 360 px', () => {
     await page.goto('/');
     await page.getByRole('button', { name: 'Show AI Agent panel' }).click();
     const add = page.getByRole('button', { name: 'New analysis session' });
+    // Waited for before counting: `count()` resolves immediately, so reading it while the panel was
+    // still mounting returned 0 and every later count was off by however many tabs arrived after.
+    await expect(add).toBeVisible();
     const before = await page.getByRole('tab').count();
     for (let i = 0; i < 4; i += 1) {
       await add.click();
