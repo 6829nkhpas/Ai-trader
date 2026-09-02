@@ -1,3 +1,1 @@
-[submodule "frontend/public/static/charting_library"]
-	path = frontend/public/static/charting_library
-	url = https://github.com/tradingview/charting_library.git
+# No submodules — frontend moved to Vercel (yash-rana0101/strat-app-frontend)

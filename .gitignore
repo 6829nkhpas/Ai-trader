@@ -9,12 +9,8 @@ target/
 # the exact tested dependency versions (prevents fresh-resolution breakage).
 *.pdb
 .kiro
-# Ignore stale static build outputs but ALLOW the TradingView charting_library
-# submodule at frontend/public/static/charting_library (needed for CI builds).
-# The negation (!) must come AFTER the broad ignore for git to honour it.
-frontend/public/static/*
-!frontend/public/static/charting_library
-!frontend/public/static/tvThemeOverrides.css
+# Frontend moved to Vercel (yash-rana0101/strat-app-frontend) — ignore entirely.
+frontend/
 # ----- Node.js / Next.js -----
 node_modules/
 .next/
@@ -156,5 +152,4 @@ keys
 .kiro/
 # Throwaway state written by the e2e stub server (agents/deep-quant-loop/e2e_stub_server.py).
 .e2e-state/
-frontend/playwright-report/
-frontend/test-results/
+

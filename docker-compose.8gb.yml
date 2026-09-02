@@ -104,8 +104,9 @@ services:
   # 192m leaves roughly 4.5x the observed peak for the Node heap to grow into
   # under sustained traffic. If it ever OOMs, that is a real signal worth reading
   # as a leak rather than a limit to raise.
-  frontend:
-    mem_limit: 192m
+  # frontend: removed — migrated to Vercel
+
+
 
   # ── Monitoring stack ────────────────────────────────────────────────────────
   # 736m in the base file → 528m here. Every one of these is trimmed rather than

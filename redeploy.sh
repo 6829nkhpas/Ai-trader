@@ -1,16 +1,16 @@
-#!/usr/bin/env bash
-# redeploy.sh — one-shot full redeploy on the droplet.
+﻿#!/usr/bin/env bash
+# redeploy.sh â€” one-shot full redeploy on the droplet.
 #
 # Syncs the repo to origin/$DEPLOY_BRANCH (default: main), rebuilds every
 # service, and (re)starts the whole stack so any pushed change takes effect.
 # Safe to run repeatedly.
 #
-#   • Untracked files (notably the gitignored .env) are PRESERVED by the hard
+#   â€¢ Untracked files (notably the gitignored .env) are PRESERVED by the hard
 #     reset, so server secrets/config survive.
-#   • Rust/Python builds reuse Docker layer cache, so unchanged services rebuild
+#   â€¢ Rust/Python builds reuse Docker layer cache, so unchanged services rebuild
 #     near-instantly; only what actually changed is recompiled.
-#   • Old containers keep serving until each new image is built, then `up -d`
-#     swaps them — minimal downtime.
+#   â€¢ Old containers keep serving until each new image is built, then `up -d`
+#     swaps them â€” minimal downtime.
 #
 # Usage (on the droplet):
 #   GITHUB_TOKEN=$(gh auth token) bash /root/Ai-trader/redeploy.sh
@@ -48,7 +48,7 @@ log() { echo "=== [$(date +'%Y-%m-%d %H:%M:%S')] $* ==="; }
 log "Redeploy start"
 log "Compose files: $COMPOSE_FILES"
 
-# ── 1. Sync to origin/main (preserves untracked .env) ────────────────────────
+# â”€â”€ 1. Sync to origin/main (preserves untracked .env) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 #
 # This is a PRIVATE repo, so the fetch needs credentials. The droplet stores
 # none: CI passes a short-lived token in GITHUB_TOKEN and it is used for this
@@ -57,14 +57,14 @@ log "Compose files: $COMPOSE_FILES"
 # and out of the process list in a form that survives the run.
 #
 # Org policy has deploy keys disabled, so a server-side SSH key is not an
-# option here; a per-run token is also the better posture — nothing to rotate
+# option here; a per-run token is also the better posture â€” nothing to rotate
 # or leak on the box, and it expires when the job ends.
 #
 # Running by hand on the droplet: export GITHUB_TOKEN=<a PAT with repo:read>
 # first, or the fetch will fail asking for a username.
 # Which branch to deploy. CI passes the branch that triggered the run
 # (`github.ref_name`), so a push to develop deploys develop and a push to main
-# deploys main — the droplet is no longer pinned to whatever branch it happened
+# deploys main â€” the droplet is no longer pinned to whatever branch it happened
 # to be checked out on. Defaults to main for a bare manual invocation.
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
 
@@ -90,101 +90,19 @@ fi
 git reset --hard "origin/$DEPLOY_BRANCH"
 git log --oneline -1
 
-# ── 1b. Seed the TradingView Advanced Charts library ──────────────────────────
-#
-# `frontend/public/static/charting_library` is a git SUBMODULE pointing at
-# https://github.com/tradingview/charting_library.git — a PRIVATE repo that
-# requires access granted by TradingView. The droplet cannot clone it: its
-# credential is a deploy token scoped to this repository only, so
-# `git submodule update --init` fails with
-#
-#   fatal: could not read Username for 'https://github.com'
-#
-# and `git reset --hard` above leaves the submodule path as an empty directory.
-# The library is therefore absent at Docker build time, `public/` ships without
-# it, and the app loads but every chart dies with
-#
-#   ⚠ Chart failed to load — Failed to load charting library script.
-#
-# with a 404 on /static/charting_library/charting_library/charting_library.standalone.js.
-# That is exactly what happened on the first app.stratai.live deploy.
-#
-# The fix keeps a copy at /srv/vendor/charting_library, OUTSIDE the repo, so
-# `git reset --hard` cannot touch it and no GitHub credential is needed. Seed it
-# once per droplet (from a machine that has the submodule checked out) — note the
-# `--exclude`, without which tar packs the submodule's `.git` gitlink and breaks the
-# NEXT deploy (see strip_gitlink below):
-#
-#   cd frontend/public/static && tar --exclude=.git -czf /tmp/cl.tgz charting_library
-#   scp /tmp/cl.tgz root@<droplet>:/root/
-#   ssh root@<droplet> 'mkdir -p /srv/vendor && tar xzf /root/cl.tgz -C /srv/vendor'
-#
-# Update it the same way when TradingView ships a new version.
-#
-# Deliberately a hard failure rather than a warning: a frontend built without the
-# library looks healthy to every check — the container starts, /api/features
-# answers 200, the healthcheck passes — and only the charts are dead. Failing here
-# is far better than shipping that silently.
-VENDOR_CHARTING="/srv/vendor/charting_library"
-CHARTING_DEST="frontend/public/static/charting_library"
+# â”€â”€ 1b. Charting library seeding â€” REMOVED â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Frontend migrated to Vercel (yash-rana0101/strat-app-frontend).
+# The charting library is committed directly in that repo.
 
-# The submodule's own `.git` gitlink must NEVER survive into the seeded copy. It is
-# a file reading `gitdir: ../../../../.git/modules/...`, which does not exist on a
-# droplet that never cloned the submodule — and its presence makes git treat the
-# path as a live submodule, so the `git reset --hard` above dies with
-#
-#   fatal: not a git repository: .../charting_library/../../../../.git/modules/...
-#
-# and the whole deploy fails at step 1. A `tar czf` of a working checkout picks that
-# file up silently, which is exactly how it happened. Stripped from both the vendor
-# copy and the destination, every run, so a stale seed self-heals.
-strip_gitlink() {
-  rm -f "$1/.git" 2>/dev/null || true
-}
-
-if [ -f "$CHARTING_DEST/charting_library/charting_library.standalone.js" ]; then
-  strip_gitlink "$CHARTING_DEST"
-  log "Charting library already present in the checkout"
-elif [ -d "$VENDOR_CHARTING" ]; then
-  strip_gitlink "$VENDOR_CHARTING"
-  log "Seeding charting library from $VENDOR_CHARTING"
-  mkdir -p "$CHARTING_DEST"
-  cp -a "$VENDOR_CHARTING/." "$CHARTING_DEST/"
-  strip_gitlink "$CHARTING_DEST"
-  log "Seeded $(find "$CHARTING_DEST" -type f | wc -l) files"
-else
-  log "ERROR: the TradingView charting library is missing."
-  log "       Not at $VENDOR_CHARTING, and the submodule cannot be cloned here"
-  log "       (private TradingView repo; this droplet has no access)."
-  log "       Every chart would 404. Seed it with the tar/scp recipe in this"
-  log "       script's comments, then re-run."
-  exit 1
-fi
-
-# ── 2. Build every service (sequential — keeps concurrent Rust compiles from
+# â”€â”€ 2. Build every service (sequential â€” keeps concurrent Rust compiles from
 #       exhausting memory on a small box; cached layers make unchanged services
-#       fast, so the serial cost is low even on a 16 GB host) ─────────────────
-#
-# `frontend` is built LAST and deliberately so. It is the heaviest build in the
-# stack by a wide margin: `next build --turbopack` over this tree needs
-# significantly more memory than any Rust service, and on the 8 GB droplet the
-# running stack already commits ~6.8 GB (see docker-compose.8gb.yml). Building it
-# while everything else is up is the most likely thing here to OOM — and the
-# process the kernel picks is not necessarily this one, so a frontend build can
-# take QuestDB down with it.
-#
-# If that happens, the options in order of preference are:
-#   1. Build the image in CI and pull it here (removes the droplet build entirely);
-#   2. `docker compose stop deep-quant quant-rag` for the duration of the build;
-#   3. add swap;
-#   4. move to a 16 GB instance.
-# Do NOT "fix" it by parallelising this loop.
-for svc in ingestion alpha-terminal technical aggregator predictive quant-rag sentiment tool-server deep-quant frontend; do
+#       fast, so the serial cost is low even on a 16 GB host) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+for svc in ingestion alpha-terminal technical aggregator predictive quant-rag sentiment tool-server deep-quant; do
   log "Building $svc"
   $COMPOSE build "$svc"
 done
 
-# ── 3. (Re)start the stack ───────────────────────────────────────────────────
+# â”€â”€ 3. (Re)start the stack â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 if [ "$FORCE_RECREATE" = "1" ]; then
   log "Starting stack (force-recreate ALL)"
   $COMPOSE up -d --force-recreate
@@ -193,17 +111,17 @@ else
   $COMPOSE up -d
 fi
 
-# ── 4. Pick up gateway config changes ─────────────────────────────────────────
+# â”€â”€ 4. Pick up gateway config changes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 #
 # `up -d` recreates a container only when its SERVICE DEFINITION changed. The
 # Caddyfile is a read-only bind mount, so editing it changes no compose field and
-# the gateway keeps serving its previously-loaded config indefinitely — a routing
+# the gateway keeps serving its previously-loaded config indefinitely â€” a routing
 # change (e.g. adding the app.stratai.live vhost) would appear to deploy
 # successfully and simply not take effect.
 #
 # `caddy reload` is NOT usable here: it drives the admin API, and the Caddyfile
 # sets `admin off`, so it would fail on every run. A restart is the remaining
-# option — but a restart on a MALFORMED config leaves nothing listening on 443,
+# option â€” but a restart on a MALFORMED config leaves nothing listening on 443,
 # which takes down the WSS feeds and the app together. So validate first and only
 # restart when the config actually parses. `caddy validate` is offline (no admin
 # API) and runs inside the container so it sees the real QUESTDB_* values.
@@ -214,10 +132,10 @@ if $COMPOSE ps --status running --services 2>/dev/null | grep -qx questdb-gatewa
   log "Validating Caddy config"
   if $COMPOSE exec -T questdb-gateway \
        caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
-    log "Caddy config valid — restarting gateway to apply it"
+    log "Caddy config valid â€” restarting gateway to apply it"
     $COMPOSE restart questdb-gateway
   else
-    log "WARNING: Caddyfile is INVALID — gateway NOT restarted, so it keeps serving"
+    log "WARNING: Caddyfile is INVALID â€” gateway NOT restarted, so it keeps serving"
     log "         its previous config. Routing changes are NOT live. Diagnose with:"
     log "         $COMPOSE exec questdb-gateway caddy validate --config /etc/caddy/Caddyfile"
   fi

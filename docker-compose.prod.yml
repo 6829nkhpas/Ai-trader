@@ -535,131 +535,15 @@ services:
     mem_limit: 576m
     restart: unless-stopped
 
-  # ── Web frontend (Next.js standalone, :3000) ─────────────────────────────────
-  # The same codebase as the desktop shell, served as a website at
-  # app.stratai.live. Reached through the Caddy gateway vhost — port 3000 is NOT
-  # published to the host.
-  #
-  # Why this service holds NO gateway credential
-  # --------------------------------------------
-  # The `/api/*` route handlers exist because a browser cannot call the gateway
-  # directly: infra/caddy/Caddyfile emits no CORS headers on /questdb, /deepquant
-  # or /kite, and they sit behind basic auth. But those handlers only need that
-  # credential when they go OUT through the public gateway. On this network they
-  # talk to the services by hostname, and internal HTTP is unauthenticated by
-  # design — QuestDB's auth is PG-wire only (QDB_PG_USER/QDB_PG_PASSWORD; :9000 is
-  # not published and not protected), which is why deep-quant already reaches it
-  # as plain `http://questdb:9000`.
-  #
-  # So the per-service overrides below are set INSTEAD OF STRATAI_HTTP_BASE_URL,
-  # and QUESTDB_PASSWORD is deliberately absent. A compromised web container
-  # therefore leaks no shared secret — it only has what it can already reach.
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        # Inlined into the JS bundle at build time (Next.js substitutes
-        # NEXT_PUBLIC_* textually), so these CANNOT be moved to `environment:`.
-        # Changing one requires a rebuild, not a restart.
-        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://api-web.stratai.live}
-        NEXT_PUBLIC_DASHBOARD_URL: ${NEXT_PUBLIC_DASHBOARD_URL:-https://dashboard.stratai.live}
-        # The only sign-in surface. The terminal has no login form; it redirects
-        # here and reads the .stratai.live session cookie the auth app sets.
-        NEXT_PUBLIC_AUTH_URL: ${NEXT_PUBLIC_AUTH_URL:-https://auth.stratai.live}
-        NEXT_PUBLIC_AUTH_SERVICE_URL: ${NEXT_PUBLIC_AUTH_SERVICE_URL:-https://api-web.stratai.live}
-        # wss://, not ws:// — an https:// page cannot open an insecure socket.
-        NEXT_PUBLIC_AGGREGATOR_WS_URL: ${NEXT_PUBLIC_AGGREGATOR_WS_URL:-wss://app-api.stratai.live/ws/aggregator}
-        NEXT_PUBLIC_ALPHA_WS_URL: ${NEXT_PUBLIC_ALPHA_WS_URL:-wss://app-api.stratai.live/ws/alpha}
-        NEXT_PUBLIC_PREDICTIVE_WS_URL: ${NEXT_PUBLIC_PREDICTIVE_WS_URL:-wss://app-api.stratai.live/ws/predictive}
-        NEXT_PUBLIC_INSIGHT_WS_URL: ${NEXT_PUBLIC_INSIGHT_WS_URL:-wss://app-api.stratai.live/ws/insight}
-        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-wss://app-api.stratai.live/ws/aggregator}
-        NEXT_PUBLIC_PROD: ${NEXT_PUBLIC_PROD:-true}
-        # Closed-beta only: unlocks the RESEARCH recommendation surface
-        # (FIND/DEBATE/QA, conviction score, journal). Regulated output — see
-        # lib/sku.ts. Requires a REBUILD, not a restart, because NEXT_PUBLIC_* is
-        # inlined into the bundle. Remove before public launch.
-        NEXT_PUBLIC_RESEARCH_BETA_OPEN: ${NEXT_PUBLIC_RESEARCH_BETA_OPEN:-}
-        NEXT_PUBLIC_LLM_GATEWAY: ${NEXT_PUBLIC_LLM_GATEWAY:-omniroute}
-    container_name: stratai-frontend
-    environment:
-      PORT: "3000"
-      HOSTNAME: "0.0.0.0"
-      # ── Upstreams, by service name on this network ──────────────────────────
-      # `app/api/_gateway.ts` prefers these explicit overrides over
-      # STRATAI_HTTP_BASE_URL, so no request leaves the network and no basic-auth
-      # credential is needed. Deliberately no QUESTDB_PASSWORD here.
-      KITE_API_URL: "http://aggregator:8087/api/kite"
-      QUESTDB_HTTP_URL: "http://questdb:9000"
-      DEEP_QUANT_URL: "http://deep-quant:8086"
-      QUANT_TOOL_SERVER_URL: "http://tool-server:8084"
-      SENTIMENT_HTTP_URL: "http://sentiment:8090"
-      # ── Feature kill switches, resolved per request ─────────────────────────
-      # Unprefixed on purpose: Next only inlines NEXT_PUBLIC_* into the bundle, so
-      # these stay server-side and a change here takes effect on restart with no
-      # rebuild. See frontend/src/app/api/_featureSwitches.ts.
-      #
-      # FEATURE_ENFORCEMENT defaults to TRUE here, unlike everywhere else. Absent
-      # or false means "this is local development", and `computeFeatureAccess`
-      # then returns true for every feature regardless of plan — which on a public
-      # site hands every premium capability to anyone who signs up. The default has
-      # to be the safe one in the file that describes production, because the
-      # failure mode of forgetting it is silent revenue loss, not an error.
-      #
-      # Two distinct things switch on together:
-      #   * the UI begins honouring each user's `accessFlags` from /credit, so a
-      #     free plan sees the locked placeholder + Upgrade CTA;
-      #   * the server-side kill switches below become load-bearing —
-      #     `assertFeatureEnabled` consults them in the request path.
-      #
-      # SCOPE, so this is not mistaken for full entitlement enforcement: the proxy
-      # routes enforce the deployment-wide switch only. A subscriber-level bypass of
-      # the per-user PLAN gate remains possible on the web path; the UI gate is an
-      # affordance there, not a boundary. The one authoritative per-user plan gate is
-      # agents/deep-quant-loop/entitlements.py, still waiting on
-      # `/api/v1/internal/entitlement/{user_id}` to exist.
-      #
-      # NOTE — that scope caveat used to also say the proxy routes cannot resolve the
-      # caller's identity. For the agent surface that is no longer true: `_identity.ts`
-      # verifies the httpOnly session cookie against api-web `/users/me` and mints a
-      # MAC'd assertion (see INTERNAL_IDENTITY_SECRET below). What is still missing is
-      # the PLAN lookup, not the identity. The two are separate gates and only one of
-      # them is unbuilt.
-      FEATURE_ENFORCEMENT: ${FEATURE_ENFORCEMENT:-true}
-      # Shared HMAC key for the identity assertion this tier mints for deep-quant.
-      # Unprefixed and therefore never inlined into a client bundle. MUST be the same
-      # value as on the deep-quant service. Generate: openssl rand -hex 32
-      #
-      # FQ_REQUIRE_IDENTITY decides whether an UNRESOLVED identity is a 401 here or is
-      # forwarded unminted. It stays "0" through the rollout so a transient /users/me
-      # outage cannot take the agent surface down, and is flipped together with
-      # deep-quant's DEEP_QUANT_REQUIRE_IDENTITY (migration plan T11.1).
-      INTERNAL_IDENTITY_SECRET: ${INTERNAL_IDENTITY_SECRET:-}
-      FQ_REQUIRE_IDENTITY: ${FQ_REQUIRE_IDENTITY:-0}
-      # Each of these is the deployment-wide kill switch for one capability, ANDed
-      # with the user's plan flag. `true` means "this deployment offers it at all",
-      # NOT "everyone gets it" — flip one to false to disable a feature fleet-wide
-      # (e.g. an LLM provider outage) with a container restart and no rebuild.
-      ENABLE_DEEPSEEK_GLM: ${ENABLE_DEEPSEEK_GLM:-true}
-      ENABLE_MULTI_MODEL: ${ENABLE_MULTI_MODEL:-true}
-      ENABLE_GHOSTLINE: ${ENABLE_GHOSTLINE:-true}
-      ENABLE_FOOTPRINT: ${ENABLE_FOOTPRINT:-true}
-      ENABLE_TOPUP: ${ENABLE_TOPUP:-true}
-      ENABLE_INSTANT_NEWS: ${ENABLE_INSTANT_NEWS:-true}
-      ENABLE_ADVANCE_CHART: ${ENABLE_ADVANCE_CHART:-true}
-    networks: [stratai]
-    # Started, not healthy: the site must still load and show honest degraded
-    # panels when a data service is down. Gating startup on them would turn a
-    # single wedged upstream into a total outage of the app shell.
-    depends_on:
-      aggregator:
-        condition: service_started
-      deep-quant:
-        condition: service_started
-      tool-server:
-        condition: service_started
-    mem_limit: 512m
-    restart: unless-stopped
+  # ── Web frontend — REMOVED ─────────────────────────────────────────────────
+  # Migrated to Vercel (yash-rana0101/strat-app-frontend). The Caddy gateway at
+  # app.stratai.live now reverse-proxies to strat-app-frontend.vercel.app.
+  # Server-side env vars (STRATAI_HTTP_BASE_URL, QUESTDB_USER/PASSWORD) are set
+  # in the Vercel project so the frontend's /api/* routes proxy back through
+  # app-api.stratai.live.
+
+
+
 
   # ══════════════════════════════════════════════════════════════════════════════
   # Monitoring stack

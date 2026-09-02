@@ -40,7 +40,7 @@ on:
       - "tool-server/**"
       - "quant-core/**"
       - "shared_protos/**"
-      - "frontend/**"
+
       - "docker-compose.prod.yml"
       - "docker-compose.8gb.yml"
       - "deploy.sh"
