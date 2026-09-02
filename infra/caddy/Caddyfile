@@ -99,6 +99,45 @@ app-api.stratai.live {
 		reverse_proxy aggregator:8087
 	}
 
+	# ── Quant tool server (/tools/* -> tool-server:8084/tools/*) ──────────────
+	# `handle`, NOT `handle_path` — the prefix is deliberately KEPT.
+	#
+	# tool-server mounts every route under /tools (see tool-server/src/main.rs
+	# `build_router`), and `app/api/_gateway.ts::upstreamBase('tools')` resolves to
+	# `{base}/tools` and then appends the `[...path]`. So a request arrives here as
+	# /tools/get_candles and the upstream must receive /tools/get_candles. Stripping
+	# it (as the questdb/deepquant/kite routes correctly do, because those upstreams
+	# serve from /) would hand tool-server a path it does not route and every
+	# analytics call would 404 while both sides looked healthy. That exact 404-vs-405
+	# distinction is recorded in the comment on `upstreamBase`.
+	#
+	# Added for the Vercel frontend. While the frontend ran on this box its
+	# QUANT_TOOL_SERVER_URL pointed at http://tool-server:8084 over the docker
+	# network, so it never traversed this gateway and no route was needed.
+	handle /tools/* {
+		basic_auth {
+			{$QUESTDB_USER} {$QUESTDB_PASSWORD_HASH}
+		}
+		reverse_proxy tool-server:8084
+	}
+
+	# ── News sentiment (/sentiment/* -> sentiment:8090) ────────────────────────
+	# `handle_path`, so exactly ONE /sentiment is stripped.
+	#
+	# `app/api/sentiment/route.ts` builds `${upstreamBase('sentiment')}/sentiment`,
+	# and in gateway mode that base is already `{base}/sentiment` — so the request
+	# lands here as /sentiment/sentiment?symbol=X. Stripping the outer prefix leaves
+	# /sentiment?symbol=X, which is what the Node service serves and exactly what it
+	# received over the docker network. The doubling looks like a mistake and is not.
+	#
+	# Added for the Vercel frontend, same reason as /tools above.
+	handle_path /sentiment/* {
+		basic_auth {
+			{$QUESTDB_USER} {$QUESTDB_PASSWORD_HASH}
+		}
+		reverse_proxy sentiment:8090
+	}
+
 	# ── Status API (/status/* -> status-api:9110) ──────────────────────────────
 	# The admin panel at dashboard.stratai.live calls /status/api/status to poll
 	# fleet health. handle_path strips /status, so the upstream receives
@@ -203,7 +242,13 @@ app-api.stratai.live {
 # QUESTDB_HTTP_URL, DEEP_QUANT_URL, QUANT_TOOL_SERVER_URL, SENTIMENT_HTTP_URL),
 # so its same-origin /api/* route handlers reach aggregator/QuestDB/deep-quant/
 # tool-server/sentiment directly over the stratai network and never traverse this
-# gateway. That is why no /tools or /sentiment route was added above.
+# gateway.
+#
+# That used to be the reason no /tools or /sentiment route existed above. Both are
+# now present, because the frontend is additionally deployed on Vercel, where
+# there is no docker network and every upstream has to come through this gateway
+# with STRATAI_HTTP_BASE_URL=https://app-api.stratai.live. This vhost stays as the
+# on-box fallback; whichever of the two serves app.stratai.live is a DNS decision.
 #
 # Requires: a DNS A record for app.stratai.live -> this droplet, and
 # https://app.stratai.live on the CORS allowlist of the api-web deployment (out of
