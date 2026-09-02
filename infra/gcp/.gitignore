@@ -1,0 +1,16 @@
+# Terraform state — may contain resource attributes and should not be committed.
+# The retired DO module tracked state in git and ended up with .RETIRED and
+# .old-account.bak siblings; use a GCS backend instead (see versions.tf).
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+crash.*.log
+
+# Real variable values — project IDs and CIDRs.
+terraform.tfvars
+*.auto.tfvars
+
+# Saved plans.
+*.tfplan
