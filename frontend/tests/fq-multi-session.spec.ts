@@ -60,7 +60,9 @@ function tokenForTest(suffix = ''): string {
     .slice(0, 40);
   return `e2e-${RUN_NONCE}-${slug}${suffix}`;
 }
- Serve synthetic OHLC candles, so the FIND button is deterministically enabled.
+
+/**
+ * Serve synthetic OHLC candles, so the FIND button is deterministically enabled.
  *
  * THE fix for this suite's flakiness. `#btn-run-deep-quant` is disabled until `dataReady`, which counts
  * candles in `useTradeStore.historicalCache`; those come from `/questdb/exec`, and the fixture runs no
