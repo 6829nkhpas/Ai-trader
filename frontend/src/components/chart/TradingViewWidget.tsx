@@ -64,20 +64,11 @@ function syncButtonStates(doc: Document) {
   // so it cannot be handed a value that disagrees with what is on screen.
   injectIframeDropdownStyles(doc);
 
-  const chartMode = useTradeStore.getState().chartMode;
   const ghostLineMode = useChartUIStore.getState().ghostLineMode;
   const splitView = useChartUIStore.getState().splitView;
 
-  const chartModeBtn = doc.getElementById('tv-btn-chart-mode');
-  if (chartModeBtn) {
-    if (chartMode === 'STANDARD') {
-      chartModeBtn.innerHTML = SVGS.standard;
-    } else if (chartMode === 'VOLUME_PROFILE') {
-      chartModeBtn.innerHTML = SVGS.volProfile;
-    } else {
-      chartModeBtn.innerHTML = SVGS.footprint;
-    }
-  }
+  // The custom Standard / Vol Profile / Footprint button used to be synced here.
+  // Removed with the button itself — see the note at its creation site below.
 
   const ghostLineBtn = doc.getElementById('tv-btn-ghost-line');
   if (ghostLineBtn) {
@@ -115,7 +106,6 @@ export default function TradingViewWidget({
   const activeDecision = useTradeStore((s) => s.activeDecision);
   const liveDecisions = useTradeStore((s) => s.liveDecisions);
   const activeTimeframe = useTradeStore((s) => s.activeTimeframe);
-  const chartMode = useTradeStore((s) => s.chartMode);
 
   const theme = useChartUIStore((s) => s.theme);
   const isFullscreen = useChartUIStore((s) => s.isFullscreen);
@@ -267,21 +257,20 @@ export default function TradingViewWidget({
         if (!doc) return;
 
         try {
-          const chartModeBtn = (tvWidget as any).createButton();
-          chartModeBtn.id = 'tv-btn-chart-mode';
-          chartModeBtn.className = 'tv-custom-toolbar-btn';
-          chartModeBtn.title = 'Chart Mode';
-          chartModeBtn.addEventListener('click', () => {
-            const currentMode = useTradeStore.getState().chartMode;
-            showIframeDropdown(chartModeBtn, [
-              { value: 'STANDARD' as const, label: 'Standard' },
-              { value: 'VOLUME_PROFILE' as const, label: 'Vol Profile' },
-              { value: 'FOOTPRINT' as const, label: 'Footprint' }
-            ], currentMode, (v) => {
-              useTradeStore.getState().setChartMode(v);
-              syncButtonStates(doc);
-            }, doc);
-          });
+          // ── Chart-mode selector: REMOVED for now ────────────────────────────
+          // The custom toolbar button offering Standard / Vol Profile / Footprint
+          // used to be created here. It was already vestigial: ChartSurface stopped
+          // branching on `chartMode` once TradingView Advanced Charts v31 began
+          // handling Volume Footprint, TPO, SVP and Volume Candle natively through
+          // its OWN chart-type selector, and `FootprintChart.tsx` is no longer
+          // mounted by anything. So the button wrote a store value that changed
+          // nothing on screen except its own icon — two selectors, only one of
+          // which worked.
+          //
+          // `chartMode`, `setChartMode` and the ChartMode type are deliberately
+          // LEFT IN PLACE (store, persistence and their tests are untouched), so
+          // restoring this is re-adding the button, not unpicking a data model.
+          // Use TradingView's built-in chart-type control in the meantime.
 
           const ghostLineBtn = (tvWidget as any).createButton();
           ghostLineBtn.id = 'tv-btn-ghost-line';
@@ -448,7 +437,9 @@ export default function TradingViewWidget({
     if (doc && buttonsCreated) {
       syncButtonStates(doc);
     }
-  }, [chartMode, ghostLineMode, splitView, sidebarOpen, buttonsCreated]);
+    // `chartMode` was a dependency here purely to re-render the removed button's
+    // icon. Dropped with it — nothing in syncButtonStates reads it any more.
+  }, [ghostLineMode, splitView, sidebarOpen, buttonsCreated]);
 
   useGhostLine(widgetState, activeSymbol, effectiveTimeframe);
 
