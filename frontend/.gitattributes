@@ -1,0 +1,12 @@
+# The vendored TradingView charting library is a third-party artifact that gets
+# re-copied from the monorepo on every mirror refresh.
+#
+# `text=auto eol=lf` pins it to LF in the repository and on checkout, so the diff
+# does not depend on the refreshing machine's `core.autocrlf`. Without this, a
+# refresh from a Windows checkout with autocrlf=true and one from a Linux box
+# produce a spurious 1465-file diff against each other.
+#
+# `text=auto` (not a bare `text`) is deliberate: it lets git keep detecting the
+# binary assets — the fonts and images — and leave their bytes untouched. Forcing
+# `text` here would corrupt them.
+public/static/charting_library/** text=auto eol=lf
