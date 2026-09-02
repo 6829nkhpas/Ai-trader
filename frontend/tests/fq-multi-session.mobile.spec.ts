@@ -10,7 +10,7 @@
 
 import { test, expect, type Page } from '@playwright/test';
 
-import { seedCandles, tokenForTest } from './support/e2e';
+import { expandAllThinking, seedCandles, tokenForTest } from './support/e2e';
 
 async function signIn(page: Page, token: string) {
   await page.context().addCookies([
@@ -58,6 +58,11 @@ test.describe('the workspace at 360 px', () => {
       'the FIND button never enabled: no candles in historicalCache, so `dataReady` is false',
     ).toBeEnabled({ timeout: 20_000 });
     await find.click();
+    // Expanded first, and it is not ceremony: a FINISHED run renders its reasoning collapsed, so
+    // asserting the text directly only passed while the stub happened to still be streaming. Once
+    // the canned script finished before the assertion, both groups were closed and the text was not
+    // in the DOM — the same gate the desktop spec goes through.
+    await expandAllThinking(page);
     await expect(page.getByText(/Momentum is intact/)).toBeVisible({ timeout: 30_000 });
 
     // The composer is the control the whole surface exists to reach. Pinned above the keyboard

@@ -24,7 +24,7 @@
 
 import { test, expect, type Page } from '@playwright/test';
 
-import { seedCandles, tokenForTest } from './support/e2e';
+import { expandAllThinking, seedCandles, tokenForTest } from './support/e2e';
 
 const ALICE = 'e2e-alice-token';
 
@@ -110,48 +110,6 @@ async function runFind(page: Page) {
       '`stubCandles` still matches the query in useHistoricalData.getQueries().',
   ).toBeEnabled({ timeout: 20_000 });
   await button.click();
-}
-
-/**
- * Expand EVERY collapsed "Thinking" group.
- *
- * `ThinkingGroupRenderer` opens only while a run is live, so a finished run — restored, or simply
- * switched back to — hides its reasoning behind a closed toggle. That is correct product behaviour.
- *
- * All of them, not `.first()`: the transcript groups CONSECUTIVE message steps, and a tool call breaks
- * the group. The canned script reasons, calls `get_ohlc`, then reasons again, so "Scanning RELIANCE" and
- * "Momentum is intact" land in DIFFERENT groups — expanding only the first left the second hidden and
- * the failure read as "the frames never arrived".
- */
-async function expandAllThinking(page: Page) {
-  // POLLED, not counted once. `locator.count()` resolves immediately, so on a freshly opened session it
-  // returned 0 before the replayed transcript had rendered — which read like a render bug rather than a
-  // race.
-  //
-  // Waits for AT LEAST one group and expands whatever is present, rather than demanding a specific count.
-  // A stricter "exactly two" check was tried as a diagnostic and is wrong here: how many groups a
-  // transcript renders depends on where tool calls fall in it, so a shared helper asserting a count makes
-  // every caller depend on the fixture's shape. The thing under test is whether the post-tool reasoning is
-  // READABLE, which each caller asserts for itself.
-  await expect
-    .poll(() => page.getByRole('button', { name: /Thinking/ }).count(), {
-      message: 'the transcript never rendered a Thinking group',
-      timeout: 30_000,
-    })
-    .toBeGreaterThan(0);
-
-  const total = await page.getByRole('button', { name: /Thinking/ }).count();
-
-  for (let i = 0; i < total; i += 1) {
-    // Re-queried each iteration: clicking re-renders the transcript, so a locator captured up front can
-    // go stale and silently resolve to the wrong element.
-    const toggle = page.getByRole('button', { name: /Thinking/ }).nth(i);
-    if ((await toggle.getAttribute('aria-expanded')) === 'true') continue;
-    await toggle.click();
-    // Verified, not fired-and-forgotten. Without this a click that lands on the wrong element leaves the
-    // group closed and the failure surfaces as missing text three lines later.
-    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-  }
 }
 
 /**

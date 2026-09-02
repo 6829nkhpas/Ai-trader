@@ -431,17 +431,20 @@ jobs:
   ci-ok:
     name: CI
     if: always()
-    # ⚠️ `e2e` is NOT in this list yet, and that is a deliberate, temporary state.
+    # `e2e` IS in this list now. It was held out while the browser journey was red, on the standing
+    # condition that it be wired in the moment the journey went green — an e2e job that cannot fail
+    # the build is the "tests that never execute" problem this suite exists to remove.
     #
-    # The job's infrastructure is verified working (see the header on the `e2e` job), but the browser
-    # journey itself does not pass yet: the spec cannot get the Deep Quant panel on screen — clicking
-    # "Quant Radar" does not reveal the session tab bar, most likely because `DeepQuantPanel`'s paywall
-    # early-return precedes it. Until that is resolved the job is red.
-    #
-    # Wiring a known-red job in here would block every merge; deleting the job would hide the gap. So
-    # it runs and reports, and it MUST be added to this list the moment the journey is green — an e2e
-    # job that cannot fail the build is the "tests that never execute" problem this task set out to fix.
-    needs: [changes, frontend, rust-services, python-agent]
+    # What was actually wrong, since the note here previously guessed at it: nothing to do with the
+    # paywall. `DeepQuantPanel` early-returns `PremiumPaywall` on `!user || !deepseekGlmEnabled`, but
+    # this fixture sets no `FEATURE_ENFORCEMENT`, so `/api/features` answers `enforced: false` and
+    # `computeFeatureAccess` unlocks every feature — verified by curling the route against the same
+    # build this job produces. The panel was reached the whole time. The three real causes were a
+    # missing `ALPHA_TEST_MODE` at BUILD time (above), a `/qa` turn appending a second `RUN_STARTED`
+    # into the analysis run's event log so a reopened session replayed its transcript and then reset
+    # it (`agents/deep-quant-loop/stream_persist.py`), and this route never exporting PATCH or DELETE,
+    # which made archiving a session a 405 (`app/api/deepquant/[...path]/route.ts`).
+    needs: [changes, frontend, rust-services, python-agent, e2e]
     runs-on: ubuntu-latest
     steps:
       - name: Verify the change detector ran

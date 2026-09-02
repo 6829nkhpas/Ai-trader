@@ -167,7 +167,19 @@ class StreamPersister:
         """Buffer one frame, flushing if the batch is full, stale, or terminal."""
         if not self.active:
             return
-        self._buffer.append((event, payload))
+        # A Q&A turn is a CHAT turn, so its frames are deliberately NOT appended to the run's
+        # glass box. Only its prose is recorded, into the `qa_answer` message below.
+        #
+        # This is load-bearing, not tidiness. `/qa` REUSES the analysis run's `run_id`
+        # (`_resolve_qa_thread`), so appending here put a second `RUN_STARTED` into that run's
+        # event log. A reopened session replays that log through the live reducer
+        # (`lib/fq/rehydrate.ts::replayEvents` -> `applyStreamEvent`), and the `RUN_STARTED`
+        # branch RESETS the session — so a session with a follow-up question rebuilt the FIND
+        # transcript and then threw it away, leaving the Q&A answer rendered as the entire
+        # glass box. The live path never showed it: its Q&A handler ignores `RUN_STARTED`
+        # outright (see `useQuantStore`), which is the same statement made on the write side.
+        if self.kind != "qa":
+            self._buffer.append((event, payload))
 
         if isinstance(payload, dict) and event in _CONTENT_EVENTS:
             content = payload.get("content")

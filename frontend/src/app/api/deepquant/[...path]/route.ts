@@ -102,3 +102,11 @@ async function handle(req: Request, ctx: Ctx): Promise<Response> {
 
 export const GET = handle;
 export const POST = handle;
+// PATCH and DELETE are the session surface's write methods, and their absence was a real gap
+// rather than an unused capability: Next answers an unexported method with 405 before the
+// handler runs, so `patchSession` (rename, archive, `active_run_id`) and `deleteSession` both
+// failed with "request failed with HTTP 405" — surfaced in the UI as "Could not archive this
+// session". `_proxy.ts` already forwards both (they are in its `BODY_METHODS`), so nothing else
+// had to change; only this route never admitted they existed.
+export const PATCH = handle;
+export const DELETE = handle;

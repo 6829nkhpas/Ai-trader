@@ -1,8 +1,8 @@
 // tests/support/e2e.ts
 //
-// The two things BOTH Find Quant specs need. They live here because each was fixed once in the
-// desktop spec and the mobile spec then failed for the very same reason, which is a copy waiting
-// to rot rather than a coincidence.
+// The things BOTH Find Quant specs need. They live here because each was fixed once in the desktop
+// spec and the mobile spec then failed for the very same reason, which is a copy waiting to rot
+// rather than a coincidence.
 
 import { expect, test, type Page } from '@playwright/test';
 
@@ -76,4 +76,50 @@ export async function seedCandles(page: Page) {
     window.__stratai_test__!.seedCandles({ symbol: 'RELIANCE', timeframe: '10m' }),
   );
   expect(seeded, 'seedCandles wrote no candles').toBeGreaterThan(0);
+}
+
+/**
+ * Expand EVERY collapsed "Thinking" group.
+ *
+ * `ThinkingGroupRenderer` opens only while a run is LIVE, so a finished run — restored, switched
+ * back to, or simply quick — hides its reasoning behind a closed toggle. That is correct product
+ * behaviour, and it is why asserting on reasoning text without this is a race: the mobile spec
+ * asserted `/Momentum is intact/` straight after FIND and passed only when the stub happened to
+ * still be streaming. Once the run finished first, both groups were collapsed and the text was not
+ * in the DOM at all.
+ *
+ * All of them, not `.first()`: the transcript groups CONSECUTIVE message steps and a tool call
+ * breaks the group. The canned script reasons, calls `get_ohlc`, then reasons again, so "Scanning
+ * RELIANCE" and "Momentum is intact" land in DIFFERENT groups — expanding only the first left the
+ * second hidden and the failure read as "the frames never arrived".
+ */
+export async function expandAllThinking(page: Page) {
+  // POLLED, not counted once. `locator.count()` resolves immediately, so on a freshly opened session
+  // it returned 0 before the replayed transcript had rendered — which read like a render bug rather
+  // than a race.
+  //
+  // Waits for AT LEAST one group and expands whatever is present, rather than demanding a specific
+  // count. A stricter "exactly two" check was tried as a diagnostic and is wrong here: how many
+  // groups a transcript renders depends on where tool calls fall in it, so a shared helper asserting
+  // a count makes every caller depend on the fixture's shape. The thing under test is whether the
+  // post-tool reasoning is READABLE, which each caller asserts for itself.
+  await expect
+    .poll(() => page.getByRole('button', { name: /Thinking/ }).count(), {
+      message: 'the transcript never rendered a Thinking group',
+      timeout: 30_000,
+    })
+    .toBeGreaterThan(0);
+
+  const total = await page.getByRole('button', { name: /Thinking/ }).count();
+
+  for (let i = 0; i < total; i += 1) {
+    // Re-queried each iteration: clicking re-renders the transcript, so a locator captured up front
+    // can go stale and silently resolve to the wrong element.
+    const toggle = page.getByRole('button', { name: /Thinking/ }).nth(i);
+    if ((await toggle.getAttribute('aria-expanded')) === 'true') continue;
+    await toggle.click();
+    // Verified, not fired-and-forgotten. Without this a click that lands on the wrong element leaves
+    // the group closed and the failure surfaces as missing text three lines later.
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  }
 }

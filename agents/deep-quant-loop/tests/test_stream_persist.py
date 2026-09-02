@@ -145,6 +145,26 @@ def test_qa_creates_a_qa_answer_message(run):
     assert messages[0]["kind"] == "qa_answer"
 
 
+def test_qa_frames_stay_out_of_the_runs_glass_box(run):
+    """A Q&A turn reuses the analysis run's `run_id`, so its frames must not be appended.
+
+    They were, and the second `RUN_STARTED` reset the transcript when a reopened session
+    replayed the log through the live reducer: the FIND analysis was rebuilt and then thrown
+    away, leaving the Q&A answer as the whole glass box. The prose still has to be recorded,
+    because that message IS the restored chat turn.
+    """
+    p = _persister(run, kind="qa")
+    p.open()
+    p.add("RUN_STARTED", {"thread_id": "t"})
+    p.add("REASONING", {"content": "The stop sits below the swing low."})
+    p.add("RUN_FINISHED", {"status": "completed"})
+    p.flush()
+
+    assert store.list_run_events(run["run"]["run_id"], path=run["path"]) == ([], 0)
+    messages, _ = store.list_messages(run["session"]["session_id"], "alice", path=run["path"])
+    assert messages[0]["content"] == "The stop sits below the swing low."
+
+
 def test_frames_are_recorded_in_order_with_structure_intact(run):
     p = _persister(run)
     p.open()
