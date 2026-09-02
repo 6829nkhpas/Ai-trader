@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # redeploy.sh â€” one-shot full redeploy on the droplet.
 #
 # Syncs the repo to origin/$DEPLOY_BRANCH (default: main), rebuilds every
