@@ -33,13 +33,20 @@ impl PredictionEngine {
 
     /// Appends a closing price to the rolling window.
     ///
+    /// Returns `false` (and leaves the window unchanged) when `price` is
+    /// non-finite or ≤ 0 — bad ticks must not poison the OLS fit.
+    ///
     /// If the window already contains [`WINDOW_SIZE`] items, the oldest
     /// entry is evicted before the new one is pushed.
-    pub fn add_close_price(&mut self, price: f64) {
+    pub fn add_close_price(&mut self, price: f64) -> bool {
+        if !price.is_finite() || price <= 0.0 {
+            return false;
+        }
         if self.closes.len() >= WINDOW_SIZE {
             self.closes.pop_front();
         }
         self.closes.push_back(price);
+        true
     }
 
     /// How many closes the window currently holds, `0..=WINDOW_SIZE`.
@@ -102,6 +109,9 @@ impl PredictionEngine {
 
         // ── Prediction ───────────────────────────────────────────────────
         let predicted_close = m * (WINDOW_SIZE as f64) + b;
+        if !predicted_close.is_finite() || predicted_close <= 0.0 {
+            return None;
+        }
 
         // ── R² (Coefficient of Determination) ────────────────────────────
         let y_mean = sum_y / n;
@@ -176,6 +186,35 @@ mod tests {
         let (predicted, confidence) = engine.predict_next().unwrap();
         assert!((predicted - 50.0).abs() < 1e-6);
         assert!((confidence - 100.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn rejects_non_positive_closes() {
+        let mut engine = PredictionEngine::new();
+        assert!(!engine.add_close_price(0.0));
+        assert!(!engine.add_close_price(-1.0));
+        assert!(!engine.add_close_price(f64::NAN));
+        assert_eq!(engine.window_fill(), 0);
+        assert!(engine.add_close_price(100.0));
+        assert_eq!(engine.window_fill(), 1);
+    }
+
+    #[test]
+    fn interleaved_symbols_need_separate_engines() {
+        // Documents the contract callers must uphold: one engine per symbol.
+        // Feeding NIFTY (~25k) and a stock (~500) into ONE window poisons OLS.
+        let mut nifty = PredictionEngine::new();
+        let mut stock = PredictionEngine::new();
+        for i in 0..14 {
+            nifty.add_close_price(25_000.0 + i as f64);
+            stock.add_close_price(500.0 + i as f64);
+        }
+        let (n_pred, _) = nifty.predict_next().unwrap();
+        let (s_pred, _) = stock.predict_next().unwrap();
+        assert!((n_pred - 25_014.0).abs() < 1e-6);
+        assert!((s_pred - 514.0).abs() < 1e-6);
+        // A poisoned shared window would land nowhere near either.
+        assert!((n_pred - s_pred).abs() > 20_000.0);
     }
 
     #[test]

@@ -25,6 +25,7 @@ pub mod engine {
     use rdkafka::consumer::{Consumer, StreamConsumer};
     use rdkafka::message::Message as KafkaMessage;
     use rdkafka::producer::{FutureProducer, FutureRecord};
+    use std::collections::HashMap;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use tokio::sync::broadcast;
 
@@ -144,13 +145,17 @@ pub mod engine {
     /// to Kafka, the signal is serialized to JSON and sent through `ws_tx`
     /// for WebSocket fan-out on port 8082.
     ///
+    /// Each symbol gets its own [`PredictionEngine`]. A single shared window
+    /// used to mix closes across instruments (e.g. NIFTY ~25k with a ₹500
+    /// equity) and emit wild `predicted_close_price` spikes.
+    ///
     /// `metrics` records input, output, and both failure modes. The work
     /// heartbeat beats on each *consumed candle*, not on each published
     /// prediction: the regression needs 14 candles before it can predict at all,
     /// so beating on output would report a stall for the whole 140-minute
     /// warm-up after every restart.
     pub async fn run(
-        prediction_engine: &mut PredictionEngine,
+        engines: &mut HashMap<String, PredictionEngine>,
         ws_tx: broadcast::Sender<String>,
         metrics: PredictiveMetrics,
     ) {
@@ -207,17 +212,33 @@ pub mod engine {
                             candle.end_timestamp_ms,
                         );
 
-                        // ── Feed into prediction engine ──────────────────
-                        prediction_engine.add_close_price(candle.close);
+                        // ── Feed into per-symbol prediction engine ───────
+                        let engine = engines
+                            .entry(candle.symbol.clone())
+                            .or_insert_with(PredictionEngine::new);
+                        if !engine.add_close_price(candle.close) {
+                            log::warn!(
+                                "[engine] skipping non-finite/non-positive close for symbol={}: {}",
+                                candle.symbol,
+                                candle.close,
+                            );
+                            continue;
+                        }
 
                         // The work point. Reported after the window advances so
                         // window_fill and the candle count can never disagree.
-                        metrics.candle_consumed(prediction_engine.window_fill());
+                        metrics.candle_consumed(engine.window_fill());
 
                         // ── Attempt prediction ───────────────────────────
-                        if let Some((predicted_close, confidence)) =
-                            prediction_engine.predict_next()
+                        if let Some((predicted_close, confidence)) = engine.predict_next()
                         {
+                            if !predicted_close.is_finite() || predicted_close <= 0.0 {
+                                log::warn!(
+                                    "[engine] skipping non-finite/non-positive prediction for symbol={}",
+                                    candle.symbol,
+                                );
+                                continue;
+                            }
                             let signal = PredictiveSignal {
                                 symbol: candle.symbol.clone(),
                                 timestamp_ms: now_ms(),

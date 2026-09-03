@@ -47,18 +47,20 @@ async fn main() {
         ws_server::start_server(8082, ws_tx_clone.subscribe(), ws_metrics).await;
     });
 
-    // ── Instantiate the math engine ──────────────────────────────────────
-    let mut prediction_engine = math::PredictionEngine::new();
+    // ── Per-symbol math engines ──────────────────────────────────────────
+    // One rolling OLS window per symbol. A shared engine mixed closes across
+    // instruments and produced wild predicted_close spikes on the Ghost Line.
+    let mut prediction_engines = std::collections::HashMap::<String, math::PredictionEngine>::new();
 
     // ── Kafka-gated block ────────────────────────────────────────────────
     #[cfg(feature = "kafka")]
     {
-        engine::engine::run(&mut prediction_engine, ws_tx, metrics).await;
+        engine::engine::run(&mut prediction_engines, ws_tx, metrics).await;
     }
 
     #[cfg(not(feature = "kafka"))]
     {
-        let _ = ws_tx; // suppress unused-variable warning
+        let _ = (ws_tx, prediction_engines); // suppress unused-variable warning
         log::warn!(
             "Binary built WITHOUT the 'kafka' feature (--no-default-features). \
              Run with `cargo run` (default features enabled) for full functionality."
