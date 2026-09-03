@@ -930,7 +930,7 @@ async def _run_events(
     #     can't be resolved. Never a silent fallback between the two modes.
     _shared_key = (os.getenv("LLM_API_KEY") or "").strip()
     if _shared_key:
-        set_run_llm_credentials(_shared_key, openrouter_base_url())
+        set_run_llm_credentials(_shared_key, None)  # use graph.py base_url (LLM_API_URL)
         svc_metrics.key_resolution("shared")
     else:
         if not (user_id and str(user_id).strip()):
