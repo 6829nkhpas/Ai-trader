@@ -461,10 +461,7 @@ services:
       # so a watcher-triggered wake can never land and the terminal sits in WATCHING
       # forever. Neither failure announces itself, which is why this is set explicitly
       # rather than left to a default.
-      # ponytail: disabled — langgraph-checkpoint-sqlite 3.1.1 threading guard
-      # conflicts with langgraph 1.2.11 astream internals. Falls back to MemorySaver.
-      # Re-enable after upgrading langgraph-checkpoint-sqlite.
-      # LANGGRAPH_CHECKPOINT_DB: "/data/checkpoints.db"
+      LANGGRAPH_CHECKPOINT_DB: "/data/checkpoints.db"
       # Restricts checkpoint deserialisation to an allowlist of types. NOT enabled yet,
       # on purpose: strict mode BLOCKS anything unlisted, so switching it on blind risks
       # breaking Q&A grounding on real graph state — an availability failure, against a

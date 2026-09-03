@@ -1496,6 +1496,66 @@ def _thread_has_pending_step(graph: Any, thread_id: str) -> bool:
         return False
 
 
+async def _athread_has_pending_step(graph: Any, thread_id: str) -> bool:
+    """Async variant of _thread_has_pending_step using aget_state."""
+    if graph is None or not thread_id:
+        return False
+    try:
+        if hasattr(graph, "aget_state"):
+            state = await graph.aget_state({"configurable": {"thread_id": thread_id}})
+        else:
+            state = graph.get_state({"configurable": {"thread_id": thread_id}})
+        return bool(getattr(state, "next", None))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def areconcile_stale_runs(graph: Any = None, *, path: Optional[str] = None) -> int:
+    """Async variant of reconcile_stale_runs for use within an active event loop.
+
+    Uses graph.aget_state to support async checkpointers (e.g. AsyncSqliteSaver).
+    """
+    adjusted = 0
+    with _Tx(path) as conn:
+        rows = conn.execute(
+            f"SELECT run_id, thread_id FROM runs WHERE status IN {_sql_in(RUN_LIVE_STATUSES)}"
+        ).fetchall()
+        stamp = now()
+        for row in rows:
+            if await _athread_has_pending_step(graph, row["thread_id"]):
+                conn.execute(
+                    "UPDATE runs SET status = ?, last_event_at = ? WHERE run_id = ?",
+                    (RUN_WATCHING, stamp, row["run_id"]),
+                )
+                continue
+            conn.execute(
+                """
+                UPDATE runs
+                   SET status = ?, terminal_status = COALESCE(terminal_status, ?),
+                       ended_at = COALESCE(ended_at, ?), last_event_at = ?
+                 WHERE run_id = ?
+                """,
+                (RUN_TRUNCATED, RUN_TRUNCATED, stamp, stamp, row["run_id"]),
+            )
+            conn.execute(
+                "UPDATE messages SET status = ?, updated_at = ? WHERE run_id = ? AND status = ?",
+                (MSG_TRUNCATED, stamp, row["run_id"], MSG_STREAMING),
+            )
+            adjusted += 1
+
+        cur = conn.execute(
+            f"""
+            UPDATE messages SET status = ?, updated_at = ?
+             WHERE status = ?
+               AND run_id IS NOT NULL
+               AND run_id NOT IN (SELECT run_id FROM runs WHERE status IN {_sql_in(RUN_LIVE_STATUSES)})
+            """,
+            (MSG_TRUNCATED, stamp, MSG_STREAMING),
+        )
+        adjusted += cur.rowcount
+    return adjusted
+
+
 # ── Retention ─────────────────────────────────────────────────────────────────
 
 

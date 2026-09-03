@@ -143,7 +143,7 @@ except Exception as _telemetry_import_error:  # noqa: BLE001 - never block the a
 # the absence is at least visible on a dashboard.
 svc_metrics.set_telemetry_available(telemetry is not None)
 
-def _reconcile_stale_runs() -> None:
+async def _reconcile_stale_runs() -> None:
     """Mark runs that claim to be live but cannot be, now that a restart has happened.
 
     The anti-fabrication pass. A process that dies mid-stream leaves a run row saying
@@ -167,7 +167,10 @@ def _reconcile_stale_runs() -> None:
         # reconciliation" instead of preventing the service from starting.
         return
     try:
-        adjusted = session_store.reconcile_stale_runs(graph_module.graph)
+        if hasattr(session_store, "areconcile_stale_runs"):
+            adjusted = await session_store.areconcile_stale_runs(graph_module.graph)
+        else:
+            adjusted = session_store.reconcile_stale_runs(graph_module.graph)
         print(f"[checkpointer] startup reconciliation: {adjusted} run(s) marked truncated.")
     except Exception as exc:  # noqa: BLE001 - never block startup on this
         print(f"[checkpointer] WARN: startup reconciliation failed ({exc}).")
@@ -231,7 +234,7 @@ async def lifespan(_app: FastAPI):
                 f"Q&A grounding and paused watch runs now survive a restart."
             )
             print(checkpointer.describe_hardening())
-            _reconcile_stale_runs()
+            await _reconcile_stale_runs()
             _prune_run_events()
         else:
             # `durable.reason` is set by __aenter__, which is why the instance is held
@@ -973,7 +976,10 @@ async def _run_events(
         if isinstance(graph_input, dict):
             run_profile = graph_input.get("profile")
         if not (isinstance(run_profile, str) and run_profile.strip()):
-            persisted = graph_module.graph.get_state(config)
+            if hasattr(graph_module.graph, "aget_state"):
+                persisted = await graph_module.graph.aget_state(config)
+            else:
+                persisted = graph_module.graph.get_state(config)
             values = getattr(persisted, "values", None)
             if isinstance(values, dict):
                 run_profile = values.get("profile")
@@ -1044,7 +1050,10 @@ async def _run_events(
         else:
             # R17.2/R17.6: a completed or paused run ends with a single terminal
             # RUN_FINISHED event stating which it was.
-            state = graph_module.graph.get_state(config)
+            if hasattr(graph_module.graph, "aget_state"):
+                state = await graph_module.graph.aget_state(config)
+            else:
+                state = graph_module.graph.get_state(config)
             status = "paused" if state.next else "completed"
             tracker.stream_event(RUN_FINISHED)
             # `paused` is a normal outcome, not a failure: the graph is waiting at
@@ -1453,7 +1462,10 @@ async def resume_agent(payload: ResumeRequest, request: Request):
         return refusal
 
     config = {"configurable": {"thread_id": payload.thread_id}}
-    state = graph_module.graph.get_state(config)
+    if hasattr(graph_module.graph, "aget_state"):
+        state = await graph_module.graph.aget_state(config)
+    else:
+        state = graph_module.graph.get_state(config)
     if not state.next:
         raise HTTPException(
             status_code=400,
