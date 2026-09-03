@@ -3,6 +3,7 @@ import time
 from typing import Annotated, Sequence, TypedDict, Optional, Literal, List
 from dataclasses import dataclass, field
 from langchain_core.messages import SystemMessage, AIMessage, HumanMessage, BaseMessage, ToolMessage
+from langchain_core.tools import tool
 import json
 
 
@@ -1160,17 +1161,26 @@ non_fno_llm_with_tools = llm.bind_tools(non_fno_tools)
 _MODEL_PROFILE_LLM_CACHE: dict = {}
 
 
-def _build_profile_llm_for_model(model: str, is_fno: bool):
+def _build_profile_llm_for_model(model: str, is_fno: bool, extra_tools=None):
     """Build (and cache) a tool-bound ChatOpenAI for a user-selected ``model``,
     binding the F&O or non-F&O tool set to match the workspace. Degrades to the
     default binding and NEVER raises if the client cannot be constructed.
+
+    ``extra_tools`` appends to that set BEFORE binding, which is the only way to add
+    them: ``bind_tools`` returns a ``RunnableBinding``, and a ``RunnableBinding`` has no
+    ``bind_tools`` of its own — so a second call on the result raises ``AttributeError``
+    and silently loses the extras. Q&A uses this to add its delegation tools.
     """
     scope = "fno" if is_fno else "nonfno"
-    key = (model, scope, _creds_cache_tag())
+    extras = list(extra_tools or [])
+    # Extras are part of the cache identity: two callers asking for the same model with
+    # different tool sets must not share a binding.
+    extras_tag = ",".join(sorted(getattr(t, "name", str(t)) for t in extras))
+    key = (model, scope, _creds_cache_tag(), extras_tag)
     cached = _MODEL_PROFILE_LLM_CACHE.get(key)
     if cached is not None:
         return cached
-    tool_set = tools if is_fno else non_fno_tools
+    tool_set = list(tools if is_fno else non_fno_tools) + extras
     try:
         role_llm = ChatOpenAI(
             model=model,
@@ -4876,11 +4886,106 @@ DEBATE_RESEARCH_ENTRY = "research"
 
 # Maximum number of Q&A model turns (each may issue read-only tool fetches)
 # before the Q&A loop is forced to end. Bounds the tool-fetch loop (R18.4).
-MAX_QA_TURNS = 3
+#
+# Raised from 3 to 8. At 3 the effective budget was TWO tool-fetch round trips: the
+# final turn is forced answer-only by `is_final_qa_turn`, so turn 3 could never fetch.
+# That is not enough for a question that needs live data — "is this still valid?" wants
+# candles AND consensus AND maybe order flow, which is already the whole budget with
+# nothing left for a follow-up — and it is far too little for the sub-agent tools below,
+# where a single `run_debate` consumes one of the two.
+#
+# The ceiling still exists, and still exists for the original reason: an unbounded Q&A
+# loop is an unbounded spend against the user's LLM credits.
+MAX_QA_TURNS = 8
 
 # Tools that would mutate/commit a trade or suspend the run. They are disabled
 # in Q&A mode so the committed Declared_Trade can never be altered (R18.6).
 QA_FORBIDDEN_TOOLS = {"declare_trade", "watch_price_condition"}
+
+
+# ── Q&A sub-agent delegation ─────────────────────────────────────────────────
+#
+# Q&A could fetch data but could not DELEGATE. The Bull/Bear/Judge agents were
+# reachable only as fixed graph nodes on a DEBATE-mode run, so "what's the bear case
+# here?" or "does this still hold?" got a single model's opinion re-read off the
+# recorded transcript — the one thing a debate exists to avoid.
+#
+# These two are declared as tools so the model can call them, but they are never
+# dispatched to `_base_tool_node`: `qa_tool_node` intercepts them by name and runs
+# them with the graph state in hand. That is the whole reason for the indirection —
+# a plain tool receives only its declared arguments, and a debate needs the thread's
+# gathered evidence, which lives in `state["messages"]`. Interception reuses the
+# machinery already there for `QA_FORBIDDEN_TOOLS`.
+#
+# NEITHER COMMITS. They run the Bull and Bear agents and the DETERMINISTIC synthesis
+# (`classify_consensus` / `derive_conviction` / `judge_directional_bias`) and stop —
+# `judge_node`, the only role bound to `declare_trade`, is deliberately not invoked.
+# So a Q&A turn can produce a full second opinion and still cannot rewrite the
+# committed trade, which is R18.6 and the reason `declare_trade` stays in
+# `QA_FORBIDDEN_TOOLS`. Flipping that is a policy change, not a code change.
+
+
+@tool
+def run_debate(focus: str = "") -> str:
+    """Run the Bull and Bear agents over THIS SESSION'S already-gathered evidence and
+    return their synthesized verdict (consensus, conviction, directional bias, and each
+    side's argument).
+
+    Use for a second opinion, the other side of the trade, or "does the recorded
+    analysis actually hold up". Fast — it re-reads the evidence rather than re-fetching
+    it. The verdict is ADVISORY and does not change the committed trade.
+
+    Args:
+        focus: Optional. What the debate should concentrate on, e.g. "the stop
+            placement" or "whether the breakout is real". Empty = debate the setup
+            as a whole.
+    """
+    # Never reached: `qa_tool_node` intercepts by name because the body needs the
+    # graph state. Kept honest in case a future caller dispatches it directly.
+    return (
+        "run_debate must be executed by the Q&A tool node, which supplies the "
+        "session evidence. It cannot run as a standalone tool call."
+    )
+
+
+@tool
+def rerun_analysis(focus: str = "") -> str:
+    """Re-gather the core market data FROM SCRATCH for this session's symbol, then run
+    the Bull and Bear agents over the fresh data and return their synthesized verdict.
+
+    Use when the user asks whether the setup is still valid NOW, or after the market has
+    moved since the recorded analysis. Slower and more expensive than `run_debate`
+    because it re-fetches before it debates. The verdict is ADVISORY and does not change
+    the committed trade.
+
+    Args:
+        focus: Optional. What to concentrate on, e.g. "whether the entry is still
+            valid". Empty = re-assess the setup as a whole.
+    """
+    # Never reached — see `run_debate`.
+    return (
+        "rerun_analysis must be executed by the Q&A tool node, which supplies the "
+        "session evidence. It cannot run as a standalone tool call."
+    )
+
+
+# Dispatched by `qa_tool_node`, not by `_base_tool_node`. Membership here is what makes
+# a call intercepted rather than executed, so a name in this set MUST have a branch in
+# `_run_qa_subagent` — the two are asserted against each other in the QA tests.
+QA_SUBAGENT_TOOLS = {"run_debate", "rerun_analysis"}
+
+# What `rerun_analysis` re-fetches before debating. Deliberately a fixed, small set
+# rather than "every tool": this runs inside a user's follow-up question, so it has to
+# be answerable in seconds, and these six are what the debate prompts actually cite.
+# `get_candles` first so price is current before anything derived from it is read.
+QA_REFRESH_TOOLS = (
+    "get_candles",
+    "get_consensus_report",
+    "get_multi_tf_trend",
+    "get_support_resistance",
+    "get_market_regime",
+    "get_order_flow",
+)
 
 
 def _is_system_message(message) -> bool:
@@ -5057,32 +5162,43 @@ def build_qa_system_prompt(context: dict) -> str:
 
     return (
         "You are Alpha-Quant in Trade Q&A mode. The user is asking follow-up "
-        "questions about a COMPLETED analysis for this session. Your job is to "
-        "explain and defend the recorded analysis — NOT to run a new analysis or "
-        "change anything.\n\n"
-        "RECORDED SESSION ANALYSIS CONTEXT (the only ground truth you may cite):\n"
+        "questions about a COMPLETED analysis for this session. Explain and defend "
+        "the recorded analysis, and FETCH WHATEVER ELSE THE QUESTION NEEDS.\n\n"
+        "RECORDED SESSION ANALYSIS CONTEXT (what this session already established):\n"
         f"{context_json}\n\n"
         "RULES:\n"
-        "1. Answer ONLY from the recorded context above, which includes both the "
-        "committed-trade fields AND the `gathered_analysis` block (the real data "
-        "every Analysis_Tool returned this session). Ground every factual claim "
-        "(levels, RR, ATR, trend bias, patterns, sentiment, regime, relative "
-        "strength, forecast, volume profile, order flow, session, options) in that "
-        "context. Do NOT report a value as missing if it is present in "
-        "`gathered_analysis`.\n"
+        "1. The recorded context above — the committed-trade fields AND the "
+        "`gathered_analysis` block (the real data every Analysis_Tool returned this "
+        "session) — is your starting point, not your ceiling. Ground claims about what "
+        "THIS SESSION decided in it, and do NOT report a value as missing if it is "
+        "present in `gathered_analysis`.\n"
         f"2. {trade_clause}\n"
-        "3. If the user asks something that is NOT in the context, you may call "
-        "ONE relevant read-only market-data tool (get_consensus_report, "
-        "get_candles, get_multi_tf_trend, get_chart_patterns, "
-        "get_support_resistance, get_news_context) to fetch it. If you cannot "
-        "obtain it, say the data is unavailable. NEVER fabricate an answer.\n"
+        "3. YOU HAVE LIVE TOOLS. CALL THEM. If the question asks for anything the "
+        "recorded context does not already answer — a current price, a fresh "
+        "indicator read, an updated level, options positioning, order flow, news, a "
+        "second opinion — call the tools and get it. You may call several, and you "
+        "may call them over several turns. Prefer fresh data for anything "
+        "time-sensitive: the recorded context is a snapshot from when the analysis "
+        "ran, and the market has moved since.\n"
+        "   NEVER answer 'that was not recorded in this session' when a tool could "
+        "fetch it. That is a non-answer. Fetch it, then answer. Only say data is "
+        "unavailable after a tool actually failed to return it, and say which one. "
+        "NEVER fabricate a value you did not receive.\n"
+        "   You may also delegate: `run_debate` runs the Bull and Bear agents over "
+        "this session's evidence and returns their synthesized verdict, and "
+        "`rerun_analysis` re-gathers the market data from scratch and then debates it. "
+        "Use them when the user asks for a re-check, a second opinion, whether the "
+        "setup still holds, or what the other side of the trade is.\n"
         "4. The committed trade is IMMUTABLE here. Do NOT call declare_trade or "
-        "watch_price_condition — they are disabled in Q&A mode. You cannot change "
-        "the committed decision.\n"
-        "5. Be concise and specific. Quote the recorded numbers when relevant. "
-        "Answer the SPECIFIC question the user asked — do NOT open the reply with the "
-        "trade/decision status (e.g. 'no trade has been declared / HOLD') unless the "
-        "question is actually about the trade or the decision.\n"
+        "watch_price_condition — they are disabled in Q&A mode. `run_debate` and "
+        "`rerun_analysis` return ADVISORY verdicts: report what they concluded, and "
+        "if they disagree with the committed trade say so plainly, but the recorded "
+        "decision itself does not change.\n"
+        "5. Be concise and specific. Quote the numbers you used and say whether each "
+        "came from the recorded analysis or from a fresh fetch. Answer the SPECIFIC "
+        "question the user asked — do NOT open the reply with the trade/decision "
+        "status (e.g. 'no trade has been declared / HOLD') unless the question is "
+        "actually about the trade or the decision.\n"
         f"6. {personalisation.QA_PROMPT_RULE}"
     )
 
@@ -5187,10 +5303,16 @@ def qa_node(state: AgentState):
         # No-tools binding (per-run creds) so the model must respond with text.
         response = _base_llm_for_run().invoke(llm_messages + [final_directive])
     else:
+        # The sub-agent tools are added HERE and nowhere else. `tools` is shared with FIND,
+        # where delegating to a debate from inside the analysis loop would be a second,
+        # unbounded loop; Q&A is where delegation belongs. They go through `extra_tools`
+        # rather than a second `bind_tools` call because `bind_tools` returns a
+        # `RunnableBinding`, which has no `bind_tools` of its own.
+        _qa_extra = [run_debate, rerun_analysis]
         _qa_llm = (
-            _build_profile_llm_for_model(_qa_model.strip(), is_fno=True)
+            _build_profile_llm_for_model(_qa_model.strip(), is_fno=True, extra_tools=_qa_extra)
             if isinstance(_qa_model, str) and _qa_model.strip()
-            else _build_profile_llm_for_model(model_name, is_fno=True)
+            else _build_profile_llm_for_model(model_name, is_fno=True, extra_tools=_qa_extra)
         )
         response = _qa_llm.invoke(llm_messages)
 
@@ -5248,12 +5370,28 @@ def qa_tool_node(state: AgentState):
     ok_calls = [tc for tc in all_calls if statuses.get(tc["id"], "ok") == "ok"]
     other_calls = [tc for tc in all_calls if statuses.get(tc["id"], "ok") != "ok"]
 
+    # Sub-agent calls are executed HERE, not by `_base_tool_node`, because they need the
+    # thread's gathered evidence — which is `state`, and which a plain tool never sees.
+    subagent_calls = [tc for tc in ok_calls if tc.get("name") in QA_SUBAGENT_TOOLS]
+    ok_calls = [tc for tc in ok_calls if tc.get("name") not in QA_SUBAGENT_TOOLS]
+
     out_messages: List[BaseMessage] = []
 
     if ok_calls:
         temp_message = AIMessage(content="", tool_calls=ok_calls)
         result = _base_tool_node.invoke({"messages": [temp_message]})
         out_messages.extend(result["messages"])
+
+    for tc in subagent_calls:
+        name = tc.get("name") or "unknown_tool"
+        print(f"[Deep Quant Q&A] Delegating to sub-agent '{name}'.")
+        out_messages.append(
+            ToolMessage(
+                content=_run_qa_subagent(name, tc.get("args") or {}, state),
+                tool_call_id=tc["id"],
+                name=name,
+            )
+        )
 
     for tc in other_calls:
         content = synthetic.get(
@@ -5267,6 +5405,117 @@ def qa_tool_node(state: AgentState):
 
     # No "decision" key in the update: the committed trade is immutable (R18.6).
     return {"messages": out_messages}
+
+
+def _qa_refresh_evidence(state: AgentState) -> List[BaseMessage]:
+    """Re-fetch `QA_REFRESH_TOOLS` for this thread's symbol and return the ToolMessages.
+
+    Dispatched through `_base_tool_node` — the same executor the graph uses — rather than
+    calling the tool functions directly, so a refreshed fetch goes through identical
+    argument handling and error behaviour to a model-issued one.
+
+    Never raises. A refresh that fails wholesale returns `[]`, and the caller debates the
+    evidence it already had; degrading to a slightly stale second opinion is a better
+    answer than an error where the user asked a question.
+    """
+    symbol = (state.get("symbol") or "").strip()
+    if not symbol:
+        return []
+    timeframe = (state.get("timeframe") or "").strip() or "10m"
+
+    calls = []
+    for i, name in enumerate(QA_REFRESH_TOOLS):
+        args = {"symbol": symbol}
+        # Only the candle fetch is timeframe-parameterised; the rest resolve their own
+        # windows. Passing an unexpected kwarg would fail the call in the executor.
+        if name == "get_candles":
+            args["timeframe"] = timeframe
+        calls.append({"name": name, "args": args, "id": f"qa_refresh_{i}", "type": "tool_call"})
+
+    try:
+        result = _base_tool_node.invoke({"messages": [AIMessage(content="", tool_calls=calls)]})
+        return list(result.get("messages") or [])
+    except Exception as exc:  # noqa: BLE001 - a stale debate beats a failed answer
+        print(f"[Deep Quant Q&A] rerun_analysis refresh failed ({exc}); debating recorded evidence.")
+        return []
+
+
+def _run_qa_subagent(name: str, args: dict, state: AgentState) -> str:
+    """Execute a Q&A sub-agent call and return the text the model reads back.
+
+    Runs the Bull and Bear agents over the thread's evidence and reports the SAME
+    deterministic synthesis `judge_node` would compute from their stances — without
+    invoking the Judge, which is the only role bound to `declare_trade`. That is what
+    makes this advisory by construction rather than by instruction (R18.6).
+
+    `rerun_analysis` differs from `run_debate` in exactly one way: it prepends freshly
+    fetched market data to the evidence before the two agents read it.
+
+    Never raises. Any failure comes back as a sentence the model can relay, because this
+    runs inside a user's question and a traceback is not an answer.
+    """
+    focus = (args or {}).get("focus") or ""
+    focus_line = f" Focus: {focus}." if str(focus).strip() else ""
+
+    try:
+        working = dict(state)
+
+        if name == "rerun_analysis":
+            fresh = _qa_refresh_evidence(state)
+            if fresh:
+                working["messages"] = list(state.get("messages") or []) + fresh
+                print(f"[Deep Quant Q&A] rerun_analysis refreshed {len(fresh)} tool result(s).")
+            else:
+                focus_line += (
+                    " NOTE: the data refresh returned nothing, so this debate is over the "
+                    "session's recorded evidence."
+                )
+
+        # The focus rides in as an extra instruction on the role prompts. The stance
+        # parser reads the model's structured output and is unaffected by the addition.
+        bull_prompt = _BULL_ROLE_PROMPT + focus_line
+        bear_prompt = _BEAR_ROLE_PROMPT + focus_line
+
+        bull_update = _run_debate_role("bull", working, bull_prompt)
+        # The Bear rebuts the Bull, which is what `bear_node` gets from the graph's
+        # sequencing and what this has to reproduce by hand.
+        working = {**working, **bull_update}
+        bear_update = _run_debate_role("bear", working, bear_prompt)
+
+        bull = parse_stance("bull", bull_update.get("bull_stance"))
+        bear = parse_stance("bear", bear_update.get("bear_stance"))
+        consensus = classify_consensus(bull, bear)
+        conviction = derive_conviction(bull, bear, consensus)
+        bias = judge_directional_bias(bull, bear, consensus)
+
+        print(
+            f"[Deep Quant Q&A] {name} -> consensus={consensus} conviction={conviction} bias={bias}."
+        )
+
+        return json.dumps(
+            {
+                "sub_agent": name,
+                "advisory": True,
+                "note": (
+                    "Advisory second opinion. The committed trade for this session is "
+                    "unchanged; report agreement or disagreement, do not present this as a "
+                    "new decision."
+                ),
+                "consensus": consensus,
+                "conviction": conviction,
+                "directional_bias": bias,
+                "bull_stance": bull_update.get("bull_stance") or {},
+                "bear_stance": bear_update.get("bear_stance") or {},
+            },
+            default=str,
+        )
+    except Exception as exc:  # noqa: BLE001 - a failed sub-agent must still answer
+        print(f"[Deep Quant Q&A] {name} failed: {exc}")
+        return (
+            f"The '{name}' sub-agent could not complete ({exc}). Answer from the recorded "
+            f"analysis and any data you already fetched, and say the second opinion was "
+            f"unavailable."
+        )
 
 
 def qa_should_continue(state: AgentState) -> str:

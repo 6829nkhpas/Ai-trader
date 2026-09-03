@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 import uvicorn
 import os
@@ -1466,22 +1467,62 @@ async def resume_agent(payload: ResumeRequest, request: Request):
         state = await graph_module.graph.aget_state(config)
     else:
         state = graph_module.graph.get_state(config)
-    if not state.next:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Thread_id '{payload.thread_id}' is not in a paused/interruptible state."
+
+    # A LOST INTERRUPT IS NOT A REASON TO DROP THE WATCH.
+    #
+    # This used to `raise HTTPException(400, "... is not in a paused/interruptible state")`,
+    # and that 400 was reached routinely in production. The watch itself does not live in
+    # LangGraph — `watch_price_condition` registers it with the Rust tool-server, which is
+    # what POSTs here when the level trades. Only the graph's PARKED position lives in the
+    # checkpoint, and several ordinary things erase it:
+    #
+    #   * a Q&A turn on the same thread. `/qa` streams new input into the analysis thread
+    #     (that is how it stays grounded), and LangGraph discards a pending interrupt when a
+    #     superstep is started with fresh input. Confirmed on the droplet: a thread that
+    #     logged "Interrupting graph, waiting for user resume" read back `next=(), mode=QA`
+    #     an hour later, and the watcher's resume 400'd.
+    #   * a checkpoint that predates `checkpointer.py` (those threads were MemorySaver-only).
+    #   * any future path that writes the thread between the park and the trigger.
+    #
+    # In every one of those the user's position is real, the level really traded, and the
+    # only thing missing is a resume token. Refusing meant the terminal sat in WATCHING for
+    # ever and the alert the user was waiting on silently never came — the worst available
+    # outcome, and an invisible one.
+    #
+    # So: resume properly when we can, and otherwise CONTINUE the thread with the trigger
+    # stated as input. The message history is intact either way (that is what makes the
+    # answer grounded), so the model gets the same context plus what just happened. The
+    # distinction is recorded in the log line because the two paths are not identical and a
+    # reader of these logs should not have to guess which one ran.
+    if state.next:
+        resume_kwargs = {
+            "resume_command": Command(
+                resume={
+                    "candle": payload.triggered_candle,
+                    "trigger_kind": payload.trigger_kind,
+                }
+            )
+        }
+    else:
+        print(
+            f"[resume] {payload.thread_id} has no pending interrupt "
+            f"(trigger_kind={payload.trigger_kind}); continuing the thread with the trigger "
+            f"as input rather than refusing."
         )
+        resume_kwargs = {
+            "graph_input": {
+                "messages": [("user", _trigger_message(payload))],
+                "mode": "FIND",
+            }
+        }
 
     gen = event_generator(
         payload.thread_id,
-        resume_command=Command(resume={
-            "candle": payload.triggered_candle,
-            "trigger_kind": payload.trigger_kind,
-        }),
         user_id=user_id,
         kind="resume",
         run_id=resume_run_id,
         session_id=resume_session_id,
+        **resume_kwargs,
     )
     # Best-effort telemetry tee. ResumeRequest carries no symbol/timeframe/mode
     # (those belong to the originating /run and are folded into the same Session
@@ -1595,6 +1636,31 @@ async def stream_thread(thread_id: str, request: Request, after_seq: int = 0):
             _refresh_subscriber_gauge()
 
     return StreamingResponse(relay(), media_type="text/event-stream")
+
+def _trigger_message(payload: "ResumeRequest") -> str:
+    """The watcher's trigger, phrased as input for a thread that lost its interrupt.
+
+    Only used on the fallback branch of ``/resume``. It has to carry the same facts the
+    ``Command(resume=...)`` payload would have delivered — what woke the run and the candle
+    that did it — because on this branch the graph re-enters at the agent node instead of
+    resuming inside ``watch_price_condition``, so nothing else tells it why it is running.
+
+    The candle is serialised with ``default=str`` and length-capped: it comes from the Rust
+    watcher and a value that will not serialise (or an unexpectedly large one) must not be
+    what stops a real price alert from reaching the user.
+    """
+    kind = (payload.trigger_kind or "target").strip() or "target"
+    try:
+        candle = json.dumps(payload.triggered_candle, default=str)[:2000]
+    except Exception:  # noqa: BLE001 - a alert must not die on its own formatting
+        candle = str(payload.triggered_candle)[:2000]
+    return (
+        f"The price condition you registered has fired (trigger: {kind}). "
+        f"Triggered candle: {candle}. "
+        "Continue the analysis from here: re-check the setup against this move and state "
+        "whether the trade is still valid, has been invalidated, or should be adjusted."
+    )
+
 
 @app.post("/qa")
 async def qa_agent(payload: QARequest, request: Request):

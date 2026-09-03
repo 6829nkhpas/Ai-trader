@@ -441,8 +441,17 @@ def test_qa_system_prompt_declared_trade_cites_levels_and_attaches_context():
     assert "A Declared_Trade EXISTS" in prompt
     assert "Risk_Reward_Ratio" in prompt
     assert "volatility basis" in prompt
-    # Answer-from-context + no-fabrication rules are present (R18.1/R18.4).
-    assert "Answer ONLY from the recorded context" in prompt
+    # Grounding + no-fabrication rules are present (R18.1/R18.4).
+    #
+    # This used to assert the literal "Answer ONLY from the recorded context", which was
+    # the prompt's actual wording and also its defect: told to answer only from the
+    # transcript, the model replied "get_options_analytics was not present in the recorded
+    # results" to questions a live tool call would have answered in one hop. The rule the
+    # prompt is supposed to encode is that recorded values are GROUND TRUTH FOR WHAT THIS
+    # SESSION DECIDED — not that they are the only thing the model may say. So the
+    # assertion now pins the surviving requirement (do not invent data) and the companion
+    # test below pins the replacement (fetch it instead of declaring it missing).
+    assert "recorded context" in prompt
     assert "NEVER fabricate" in prompt
 
 
@@ -470,14 +479,22 @@ def test_qa_system_prompt_not_declared_states_no_trade():
 
 
 def test_qa_system_prompt_missing_data_fetch_or_unavailable():
-    """R18.4: the prompt allows a read-only tool fetch or an unavailable answer,
-    and forbids fabrication and trade mutation."""
+    """R18.4: the prompt directs a live tool fetch for a gap rather than a
+    'not recorded' non-answer, and still forbids fabrication and trade mutation."""
     ctx = build_qa_context(make_qa_state(_declared_decision()))
     prompt = build_qa_system_prompt(ctx)
-    # May call a relevant read-only tool to fill a gap, else say unavailable.
-    assert "read-only market-data tool" in prompt
+    # Must instruct the model to FETCH what it lacks. The old wording ("you may call ONE
+    # relevant read-only market-data tool") is what produced the reported bug: it read as
+    # permission for a single grudging lookup, so the model preferred to report the datum
+    # missing. The budget is enforced by MAX_QA_TURNS in code, which is where a limit
+    # belongs — the prompt's job is to say that fetching is the expected behaviour.
+    assert "CALL THEM" in prompt
+    assert "not recorded in this session" in prompt  # named as the thing NOT to answer
     assert "unavailable" in prompt.lower()
     assert "NEVER fabricate" in prompt
+    # Delegation is offered, and is advisory only.
+    assert "run_debate" in prompt and "rerun_analysis" in prompt
+    assert "ADVISORY" in prompt
     # The committed trade is immutable: declare/watch are disabled (R18.6).
     assert "declare_trade" in prompt and "watch_price_condition" in prompt
     assert "IMMUTABLE" in prompt
@@ -511,3 +528,69 @@ def test_qa_should_continue_routes_and_terminates():
     assert qa_should_continue({"messages": [ai_with_calls], "qa_turns": MAX_QA_TURNS}) == "end"
     # No pending calls → final answer ends the run.
     assert qa_should_continue({"messages": [AIMessage(content="done")], "qa_turns": 0}) == "end"
+
+
+# ── Q&A sub-agent delegation ─────────────────────────────────────────────────
+
+
+def _qa_state_with_calls(names):
+    """A QA state whose last message issues `names` as accepted tool calls.
+
+    Mirrors what `qa_node` leaves behind: the calls plus the `_extraction_status`
+    bookkeeping `qa_tool_node` reads to decide what may run.
+    """
+    calls = make_native_tool_calls(names)
+    last = AIMessage(content="", tool_calls=calls)
+    last.additional_kwargs["_extraction_status"] = {c["id"]: "ok" for c in calls}
+    last.additional_kwargs["_synthetic_results"] = {}
+    return {"messages": [HumanMessage(content="is this still valid?"), last]}
+
+
+def test_qa_subagent_calls_are_intercepted_not_dispatched():
+    """`run_debate` / `rerun_analysis` run in `qa_tool_node`, never in the ToolNode.
+
+    The interception IS the mechanism: a plain tool receives only its declared
+    arguments, and a debate needs the thread's gathered evidence. If these ever reached
+    `_base_tool_node` they would execute the placeholder bodies and return the "must be
+    executed by the Q&A tool node" string as if it were an answer.
+    """
+    recorder = RecordingToolNode()
+    state = _qa_state_with_calls(["run_debate", "get_candles", "rerun_analysis"])
+
+    with mock.patch.object(graph, "_base_tool_node", recorder), mock.patch.object(
+        graph, "_run_qa_subagent", return_value='{"consensus": "aligned"}'
+    ) as sub:
+        out = graph.qa_tool_node(state)
+
+    # The read-only tool went to the executor; neither sub-agent did.
+    assert recorder.dispatched == ["get_candles"]
+    assert {c.args[0] for c in sub.call_args_list} == {"run_debate", "rerun_analysis"}
+    # Every call is answered, so the loop cannot stall on an unresolved tool call.
+    assert len(out["messages"]) == 3
+    # A Q&A turn NEVER commits (R18.6).
+    assert "decision" not in out
+
+
+def test_qa_subagent_failure_returns_text_not_an_exception():
+    """A sub-agent that blows up must still produce a ToolMessage.
+
+    It runs inside a user's follow-up question: an exception here would abort the turn
+    and leave the composer locked, which is strictly worse than an answer that says the
+    second opinion was unavailable.
+    """
+    with mock.patch.object(graph, "_run_debate_role", side_effect=RuntimeError("boom")):
+        content = graph._run_qa_subagent("run_debate", {}, {"messages": []})
+
+    assert isinstance(content, str) and "boom" in content
+
+
+def test_qa_subagent_tools_all_have_a_branch():
+    """Every name in `QA_SUBAGENT_TOOLS` is a real bound tool.
+
+    Membership in that set is what makes a call intercepted rather than executed, so a
+    name added to one and not the other silently becomes a call that resolves to nothing.
+    """
+    bound = {graph.run_debate.name, graph.rerun_analysis.name}
+    assert bound == graph.QA_SUBAGENT_TOOLS
+    # And they are NOT in the analysis tool set, or FIND could delegate mid-loop.
+    assert not (graph.QA_SUBAGENT_TOOLS & {t.name for t in graph.tools})
