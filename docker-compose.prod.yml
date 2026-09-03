@@ -378,6 +378,8 @@ services:
     environment:
       QUANT_TOOL_SERVER_PORT: "8084"
       QUESTDB_POSTGRES_URL: postgresql://${QUESTDB_USER:-admin}:${QUESTDB_PASSWORD}@questdb:8812/qdb
+      # On-demand Kite historical backfill when QuestDB historical_* is empty.
+      KITE_API_URL: "http://aggregator:8087/api/kite"
       DEEP_QUANT_URL: "http://deep-quant:8086"
       # Node sentiment service has no HTTP endpoint yet; get_news_context degrades
       # to Google-News RSS headlines when this is unreachable (honest fallback).
@@ -399,6 +401,8 @@ services:
     depends_on:
       questdb:
         condition: service_healthy
+      aggregator:
+        condition: service_started
     mem_limit: 256m
     restart: unless-stopped
 

@@ -13,6 +13,7 @@
 
 mod candles;
 mod internal_identity;
+mod kite_history;
 mod metrics;
 mod news;
 
@@ -39,6 +40,7 @@ use quant_core::{
 use tokio::sync::RwLock;
 
 use candles::{load_candles, load_candles_with_ts, CandleLoadError};
+use kite_history::KiteHistoryClient;
 use metrics::ToolServerMetrics;
 
 // ── Server State ─────────────────────────────────────────────────────────────
@@ -52,6 +54,8 @@ pub struct ServerState {
     /// middleware below cannot distinguish from a successful answer without
     /// buffering and parsing every response body.
     pub metrics: ToolServerMetrics,
+    /// Optional aggregator Kite historical client for on-demand QuestDB backfill.
+    pub kite: Option<KiteHistoryClient>,
 }
 
 // ── Request / payload contracts (identical to the desktop tool_server) ────────
@@ -322,7 +326,7 @@ async fn get_candles(
     let limit = payload.limit.unwrap_or(200);
     let tf = payload.timeframe.unwrap_or_else(|| "10m".to_string());
 
-    match load_candles_with_ts(&state.pool, &payload.symbol, &tf, limit, 30).await {
+    match load_candles_with_ts(&state.pool, &payload.symbol, &tf, limit, 30, state.kite.as_ref()).await {
         Ok(timed) => {
             let result: Vec<CandleWithTs> = timed
                 .into_iter()
@@ -352,7 +356,7 @@ async fn get_consensus(
 ) -> Response {
     let limit = payload.limit.unwrap_or(200);
     let tf = payload.timeframe.unwrap_or_else(|| "10m".to_string());
-    let candles = match load_candles(&state.pool, &payload.symbol, &tf, limit).await {
+    let candles = match load_candles(&state.pool, &payload.symbol, &tf, limit, state.kite.as_ref()).await {
         Ok(c) => c,
         Err(e) => return candle_load_error_response(e, "get_consensus", &state.metrics),
     };
@@ -377,7 +381,7 @@ async fn get_support_resistance(
             .into_response();
     }
     let limit = payload.limit.unwrap_or(200);
-    let candles = match load_candles(&state.pool, &payload.symbol, &tf, limit).await {
+    let candles = match load_candles(&state.pool, &payload.symbol, &tf, limit, state.kite.as_ref()).await {
         Ok(c) => c,
         Err(e) => return candle_load_error_response(e, "get_support_resistance", &state.metrics),
     };
@@ -401,7 +405,7 @@ async fn get_chart_patterns_handler(
 ) -> Response {
     let limit = payload.limit.unwrap_or(200);
     let tf = payload.timeframe.unwrap_or_else(|| "10m".to_string());
-    let candles = match load_candles(&state.pool, &payload.symbol, &tf, limit).await {
+    let candles = match load_candles(&state.pool, &payload.symbol, &tf, limit, state.kite.as_ref()).await {
         Ok(c) => c,
         Err(e) => return candle_load_error_response(e, "get_chart_patterns", &state.metrics),
     };
@@ -524,7 +528,15 @@ async fn get_multi_tf_chart_patterns_handler(
 
     let mut out: Vec<MultiTfChartPatterns> = Vec::with_capacity(MULTI_TF_PATTERN_TIMEFRAMES.len());
     for tf in MULTI_TF_PATTERN_TIMEFRAMES {
-        let patterns = match load_candles_with_ts(&state.pool, &payload.symbol, tf, limit, 30).await
+        let patterns = match load_candles_with_ts(
+            &state.pool,
+            &payload.symbol,
+            tf,
+            limit,
+            30,
+            state.kite.as_ref(),
+        )
+        .await
         {
             Ok(timed) => {
                 let candles: Vec<quant_core::patterns::Candle> =
@@ -599,6 +611,7 @@ async fn scan_radar_handler(
         &payload.timeframe,
         SCAN_CANDLE_LIMIT,
         0,
+        state.kite.as_ref(),
     )
     .await
     {
@@ -687,9 +700,15 @@ async fn get_multi_tf_trend_handler(
     // outage returns three "Neutral" trends with a 200, which is why the empty
     // case is recorded: with no history at any horizon there is nothing behind
     // the answer, and the status code cannot say so.
-    let candles_1h = load_candles(&state.pool, symbol, "1h", 200).await.unwrap_or_default();
-    let candles_4h = load_candles(&state.pool, symbol, "4h", 200).await.unwrap_or_default();
-    let candles_1d = load_candles(&state.pool, symbol, "1d", 200).await.unwrap_or_default();
+    let candles_1h = load_candles(&state.pool, symbol, "1h", 200, state.kite.as_ref())
+        .await
+        .unwrap_or_default();
+    let candles_4h = load_candles(&state.pool, symbol, "4h", 200, state.kite.as_ref())
+        .await
+        .unwrap_or_default();
+    let candles_1d = load_candles(&state.pool, symbol, "1d", 200, state.kite.as_ref())
+        .await
+        .unwrap_or_default();
 
     if candles_1h.is_empty() && candles_4h.is_empty() && candles_1d.is_empty() {
         state.metrics.tool_unavailable("get_multi_tf_trend");
@@ -811,7 +830,7 @@ async fn get_prediction(
         ));
     }
     let limit = payload.limit.unwrap_or(200);
-    let candles = match load_candles(&state.pool, &payload.symbol, &tf, limit).await {
+    let candles = match load_candles(&state.pool, &payload.symbol, &tf, limit, state.kite.as_ref()).await {
         Ok(c) => c,
         Err(e) => {
             // This handler flattens both CandleLoadError variants into one 200
@@ -1247,7 +1266,15 @@ async fn watch_condition(
     let timeframe = payload.timeframe.clone().unwrap_or_else(|| "10m".to_string());
 
     // Authoritative current price from QuestDB (latest candle close).
-    let reference_price = match load_candles(&state.pool, &watch_symbol, &timeframe, 1).await {
+    let reference_price = match load_candles(
+        &state.pool,
+        &watch_symbol,
+        &timeframe,
+        1,
+        state.kite.as_ref(),
+    )
+    .await
+    {
         Ok(c) if !c.is_empty() => c.last().unwrap().close,
         Ok(_) => {
             return Err((
@@ -1340,12 +1367,15 @@ async fn watch_condition(
     // live-candle broadcast (that was a desktop WS bridge), so we poll the latest
     // candle every few seconds — low-latency enough for price-level triggers.
     let pool = state.pool.clone();
+    let kite = state.kite.clone();
     let watchers = state.watchers.clone();
     let watch_metrics = state.metrics.clone();
     tokio::spawn(async move {
         // 20-period baseline average volume.
         let mut avg_volume = 1.0;
-        if let Ok(c) = load_candles(&pool, &watcher.symbol, &watcher.timeframe, 20).await {
+        if let Ok(c) =
+            load_candles(&pool, &watcher.symbol, &watcher.timeframe, 20, kite.as_ref()).await
+        {
             if !c.is_empty() {
                 avg_volume = c.iter().map(|x| x.volume).sum::<f64>() / c.len() as f64;
             }
@@ -1373,7 +1403,15 @@ async fn watch_condition(
             }
 
             // Latest candle from QuestDB.
-            let latest = match load_candles(&pool, &watcher.symbol, &watcher.timeframe, 1).await {
+            let latest = match load_candles(
+                &pool,
+                &watcher.symbol,
+                &watcher.timeframe,
+                1,
+                kite.as_ref(),
+            )
+            .await
+            {
                 Ok(c) if !c.is_empty() => c.last().cloned().unwrap(),
                 _ => continue,
             };
@@ -1505,10 +1543,17 @@ async fn main() {
         }
     });
 
+    let kite = KiteHistoryClient::from_env();
+    match &kite {
+        Some(_) => info!("[tool-server] Kite historical backfill enabled (KITE_API_URL)"),
+        None => warn!("[tool-server] KITE_API_URL unset/empty — candle backfill disabled"),
+    }
+
     let state = ServerState {
         pool,
         watchers: Arc::new(RwLock::new(HashMap::new())),
         metrics,
+        kite,
     };
 
     let router = build_router(state);
@@ -1549,6 +1594,7 @@ mod router_tests {
                 .expect("lazy pool"),
             watchers: Arc::new(RwLock::new(HashMap::new())),
             metrics: ToolServerMetrics::new(),
+            kite: None,
         }
     }
 

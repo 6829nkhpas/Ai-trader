@@ -872,7 +872,7 @@ def get_candles(symbol: str, timeframe: str, limit: int) -> list:
         response = httpx.post(
             f"{RUST_SERVER_URL}/tools/get_candles",
             json={"symbol": symbol, "timeframe": timeframe, "limit": limit},
-            timeout=10.0
+            timeout=20.0
         )
         # Classify the differentiated candle-endpoint outcomes (R2). The Rust
         # Tool_Server now distinguishes an Availability_Shortfall from an
@@ -1314,7 +1314,7 @@ def get_market_regime(symbol: str, timeframe: str) -> dict:
             response = httpx.post(
                 f"{RUST_SERVER_URL}/tools/get_candles",
                 json={"symbol": symbol, "timeframe": timeframe, "limit": limit},
-                timeout=10.0,
+                timeout=20.0,
             )
             response.raise_for_status()
             candles = response.json()
@@ -1328,17 +1328,10 @@ def get_market_regime(symbol: str, timeframe: str) -> dict:
                 f"candle retrieval failed: {fetch_exc}",
             )
 
-        # The candle payload may itself be an error list (get_candles' error path
-        # returns ``[{"error": ...}]``); treat a non-list / error payload as a
-        # retrieval failure -> Unavailable_Marker.
-        if not isinstance(candles, list) or (
-            candles and isinstance(candles[0], dict) and "error" in candles[0]
-        ):
-            reason = "candle retrieval returned no usable data"
-            if isinstance(candles, list) and candles and isinstance(candles[0], dict):
-                reason = f"candle retrieval failed: {candles[0].get('error')}"
-            print(f"[Tool Warning] <<< get_market_regime: {reason}")
-            return _regime_unavailable(symbol, timeframe, reason)
+        candles, parse_reason = _parse_candles_response(candles)
+        if candles is None:
+            print(f"[Tool Warning] <<< get_market_regime: {parse_reason}")
+            return _regime_unavailable(symbol, timeframe, parse_reason)
 
         # 4. Classify via the pure Regime_Classifier. It returns either a
         #    Regime_Label or an Unavailable_Marker, and never raises.
@@ -1390,6 +1383,37 @@ def _relative_strength_unavailable(symbol, timeframe, benchmark, reason: str) ->
     }
 
 
+def _parse_candles_response(candles, *, allow_empty: bool = False):
+    """Interpret a `/tools/get_candles` JSON body.
+
+    Returns ``(list|None, reason|None)``. Rust shortfall answers as
+    ``{"unavailable": true, "reason": "...", "available": N, "needed": M}``
+    (HTTP 200) — previously treated as a non-list and collapsed to the opaque
+    ``"candle retrieval returned no usable data"`` string, which hid the real
+    shortfall from the LLM.
+    """
+    if isinstance(candles, dict) and candles.get("unavailable") is True:
+        reason = candles.get("reason") or "candle retrieval unavailable"
+        available = candles.get("available")
+        needed = candles.get("needed")
+        if (
+            available is not None
+            and needed is not None
+            and "available" not in str(reason).lower()
+        ):
+            reason = f"{reason} (available={available}, needed={needed})"
+        return None, reason
+    if not isinstance(candles, list):
+        return None, "candle retrieval returned no usable data"
+    if not candles:
+        if allow_empty:
+            return [], None
+        return None, "candle retrieval returned no usable data"
+    if isinstance(candles[0], dict) and "error" in candles[0]:
+        return None, f"candle retrieval failed: {candles[0].get('error')}"
+    return candles, None
+
+
 def _fetch_candles_for_rs(symbol, timeframe, limit):
     """Fetch candles for a single series from the Rust Tool_Server for RS.
 
@@ -1402,25 +1426,14 @@ def _fetch_candles_for_rs(symbol, timeframe, limit):
         response = httpx.post(
             f"{RUST_SERVER_URL}/tools/get_candles",
             json={"symbol": symbol, "timeframe": timeframe, "limit": limit},
-            timeout=10.0,
+            timeout=20.0,
         )
         response.raise_for_status()
         candles = response.json()
     except Exception as fetch_exc:
         return None, f"candle retrieval failed: {fetch_exc}"
 
-    # The candle payload may itself be an error list (get_candles' error path
-    # returns ``[{"error": ...}]``); treat a non-list / error payload as a
-    # retrieval failure.
-    if not isinstance(candles, list) or (
-        candles and isinstance(candles[0], dict) and "error" in candles[0]
-    ):
-        reason = "candle retrieval returned no usable data"
-        if isinstance(candles, list) and candles and isinstance(candles[0], dict):
-            reason = f"candle retrieval failed: {candles[0].get('error')}"
-        return None, reason
-
-    return candles, None
+    return _parse_candles_response(candles)
 
 
 @tool
@@ -2289,7 +2302,7 @@ def get_session_context(symbol: str, timeframe: str) -> dict:
             response = httpx.post(
                 f"{RUST_SERVER_URL}/tools/get_candles",
                 json={"symbol": symbol, "timeframe": timeframe, "limit": 1},
-                timeout=10.0,
+                timeout=20.0,
             )
             response.raise_for_status()
             candles = response.json()
@@ -2303,17 +2316,10 @@ def get_session_context(symbol: str, timeframe: str) -> dict:
                 f"candle retrieval failed: {fetch_exc}",
             )
 
-        # The candle payload may itself be an error list (get_candles' error path
-        # returns ``[{"error": ...}]``); treat a non-list / error / empty payload
-        # as a retrieval failure -> Unavailable_Marker.
-        if not isinstance(candles, list) or not candles or (
-            isinstance(candles[0], dict) and "error" in candles[0]
-        ):
-            reason = "candle retrieval returned no usable data"
-            if isinstance(candles, list) and candles and isinstance(candles[0], dict) and "error" in candles[0]:
-                reason = f"candle retrieval failed: {candles[0].get('error')}"
-            print(f"[Tool Warning] <<< get_session_context: {reason}")
-            return _session_unavailable(symbol, timeframe, reason)
+        candles, parse_reason = _parse_candles_response(candles)
+        if candles is None:
+            print(f"[Tool Warning] <<< get_session_context: {parse_reason}")
+            return _session_unavailable(symbol, timeframe, parse_reason)
 
         # 4. Read the timestamp of the most recent candle (the last element of
         #    the chronologically-ordered candle list).
@@ -3581,16 +3587,14 @@ def get_volume_profile(
         response = httpx.post(
             f"{RUST_SERVER_URL}/tools/get_candles",
             json={"symbol": symbol, "timeframe": timeframe, "limit": limit},
-            timeout=10.0
+            timeout=20.0
         )
         if response.status_code != 200:
             print(f"[Tool Error] Server returned {response.status_code}: {response.text}")
         response.raise_for_status()
-        candles = response.json()
-        if isinstance(candles, dict) and "error" in candles:
-            return {"error": f"Failed to retrieve candles for volume profile: {candles.get('error')}"}
-        if not isinstance(candles, list):
-            return {"error": f"Unexpected candle payload for volume profile: {type(candles).__name__}"}
+        candles, parse_reason = _parse_candles_response(response.json())
+        if candles is None:
+            return {"error": f"Failed to retrieve candles for volume profile: {parse_reason}"}
         profile = _compute_volume_profile(candles, rows=rows, value_area_percent=value_area_percent)
         profile["symbol"] = symbol
         profile["timeframe"] = timeframe

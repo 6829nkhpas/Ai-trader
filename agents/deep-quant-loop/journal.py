@@ -958,7 +958,7 @@ def _fetch_candles(symbol: str, timeframe: str, limit: int) -> list:
         r = httpx.post(
             f"{RUST_SERVER_URL}/tools/get_candles",
             json={"symbol": symbol, "timeframe": timeframe, "limit": limit},
-            timeout=10.0,
+            timeout=20.0,
         )
         r.raise_for_status()
         data = r.json()

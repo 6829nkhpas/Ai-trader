@@ -1,12 +1,15 @@
-// candles.rs — Standalone QuestDB candle loader (no Kite backfill).
+// candles.rs — QuestDB candle loader with on-demand Kite historical backfill.
 //
-// A Tauri-free reimplementation of the desktop `load_candles_with_ts` merge
-// path. On the droplet the ingestion service continuously populates QuestDB, so
-// this loader only READS: it never triggers a proactive Kite backfill (which is
-// what coupled the desktop loader to the Tauri AppHandle / instrument DB). It
-// unions the three candle sources, dedups on timestamp keeping the
-// highest-priority source, and slices to the most recent `limit`.
+// Unions historical_candles / historical_intraday / live_ticks, dedups on
+// timestamp keeping the highest-priority source, and slices to `limit`.
+// When the union is short of `min_candles`, optionally pages Kite history via
+// the aggregator (`KITE_API_URL`), persists into historical_*, and re-reads.
+// That replaces the deleted Tauri history_loader so deep-quant tools work when
+// QuestDB historical tables are empty.
 
+use crate::kite_history::{
+    is_daily_interval, normalize_symbol, persist_timeframe, HistoryBar, KiteHistoryClient,
+};
 use quant_core::patterns::Candle;
 use sqlx::{PgPool, Row};
 
@@ -158,13 +161,189 @@ pub async fn load_candles(
     symbol: &str,
     timeframe: &str,
     limit: i64,
+    kite: Option<&KiteHistoryClient>,
 ) -> Result<Vec<Candle>, CandleLoadError> {
-    let timed = load_candles_with_ts(pool, symbol, timeframe, limit, 30).await?;
+    let timed = load_candles_with_ts(pool, symbol, timeframe, limit, 30, kite).await?;
     Ok(timed.into_iter().map(|(_, c)| c).collect())
 }
 
 /// Timestamp-preserving loader. Returns ascending `(ts_millis, Candle)` pairs.
+///
+/// When QuestDB alone cannot satisfy `min_candles` and `kite` is `Some`, fetches
+/// Kite history through the aggregator, persists it, and re-reads once.
 pub async fn load_candles_with_ts(
+    pool: &PgPool,
+    symbol: &str,
+    timeframe: &str,
+    limit: i64,
+    min_candles: usize,
+    kite: Option<&KiteHistoryClient>,
+) -> Result<Vec<(i64, Candle)>, CandleLoadError> {
+    let symbol = normalize_symbol(symbol);
+    let first = load_candles_from_questdb(pool, &symbol, timeframe, limit, min_candles).await;
+    match first {
+        Ok(c) => Ok(c),
+        Err(CandleLoadError::Shortfall {
+            available,
+            needed,
+            ..
+        }) => {
+            let Some(kite) = kite else {
+                return Err(CandleLoadError::Shortfall {
+                    symbol: symbol.clone(),
+                    timeframe: timeframe.to_string(),
+                    available,
+                    needed,
+                    detail: format!(
+                        "Insufficient data for {} [{}]: {} candle(s) available, need {}.",
+                        symbol, timeframe, available, needed
+                    ),
+                });
+            };
+            match backfill_and_reload(pool, kite, &symbol, timeframe, limit, min_candles, available)
+                .await
+            {
+                Ok(c) => Ok(c),
+                Err(e) => Err(e),
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
+async fn backfill_and_reload(
+    pool: &PgPool,
+    kite: &KiteHistoryClient,
+    symbol: &str,
+    timeframe: &str,
+    limit: i64,
+    min_candles: usize,
+    available_before: usize,
+) -> Result<Vec<(i64, Candle)>, CandleLoadError> {
+    let lock = kite.lock_key(symbol, timeframe).await;
+    let _guard = lock.lock().await;
+
+    // Another waiter may have filled the table while we queued.
+    if let Ok(c) = load_candles_from_questdb(pool, symbol, timeframe, limit, min_candles).await {
+        return Ok(c);
+    }
+
+    let need = (limit as usize).max(min_candles).max(50);
+    log::info!(
+        "[tool-server] backfill start symbol={} tf={} have={} need={}",
+        symbol,
+        timeframe,
+        available_before,
+        need
+    );
+    let bars = match kite.fetch_bars(symbol, timeframe, need).await {
+        Ok(b) => b,
+        Err(e) => {
+            log::warn!("[tool-server] backfill fetch failed: {}", e);
+            return Err(CandleLoadError::Shortfall {
+                symbol: symbol.to_string(),
+                timeframe: timeframe.to_string(),
+                available: available_before,
+                needed: min_candles,
+                detail: format!(
+                    "Insufficient data for {} [{}]: {} candle(s) available, need {}. Backfill failed: {}",
+                    symbol, timeframe, available_before, min_candles, e
+                ),
+            });
+        }
+    };
+
+    if bars.is_empty() {
+        return Err(CandleLoadError::Shortfall {
+            symbol: symbol.to_string(),
+            timeframe: timeframe.to_string(),
+            available: available_before,
+            needed: min_candles,
+            detail: format!(
+                "Insufficient data for {} [{}]: {} candle(s) available, need {}. Kite returned no bars.",
+                symbol, timeframe, available_before, min_candles
+            ),
+        });
+    }
+
+    if let Err(e) = persist_history_bars(pool, symbol, timeframe, &bars).await {
+        log::warn!("[tool-server] backfill persist failed: {}", e);
+        return Err(CandleLoadError::Fault {
+            source: "kite_backfill_persist".to_string(),
+            detail: e,
+        });
+    }
+    log::info!(
+        "[tool-server] backfill persisted symbol={} tf={} bars={}",
+        symbol,
+        timeframe,
+        bars.len()
+    );
+
+    load_candles_from_questdb(pool, symbol, timeframe, limit, min_candles).await
+}
+
+/// Insert Kite bars into the matching historical table (DEDUP upsert keys).
+pub async fn persist_history_bars(
+    pool: &PgPool,
+    symbol: &str,
+    timeframe: &str,
+    bars: &[HistoryBar],
+) -> Result<(), String> {
+    if bars.is_empty() {
+        return Ok(());
+    }
+    let symbol = normalize_symbol(symbol);
+
+    if is_daily_interval(timeframe) {
+        for b in bars {
+            let ts = chrono::DateTime::from_timestamp(b.time_sec, 0)
+                .ok_or_else(|| format!("bad unix time {}", b.time_sec))?
+                .naive_utc();
+            sqlx::query(
+                "INSERT INTO historical_candles (symbol, ts, open, high, low, close, volume) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            )
+            .bind(&symbol)
+            .bind(ts)
+            .bind(b.open)
+            .bind(b.high)
+            .bind(b.low)
+            .bind(b.close)
+            .bind(b.volume)
+            .execute(pool)
+            .await
+            .map_err(|e| format!("INSERT historical_candles: {e}"))?;
+        }
+    } else {
+        let tf_col = persist_timeframe(timeframe);
+        for b in bars {
+            let ts = chrono::DateTime::from_timestamp(b.time_sec, 0)
+                .ok_or_else(|| format!("bad unix time {}", b.time_sec))?
+                .naive_utc();
+            sqlx::query(
+                "INSERT INTO historical_intraday \
+                 (symbol, timeframe, ts, open, high, low, close, volume) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            )
+            .bind(&symbol)
+            .bind(tf_col)
+            .bind(ts)
+            .bind(b.open)
+            .bind(b.high)
+            .bind(b.low)
+            .bind(b.close)
+            .bind(b.volume)
+            .execute(pool)
+            .await
+            .map_err(|e| format!("INSERT historical_intraday: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// QuestDB-only merge (no Kite). Used by the public loader and the post-backfill re-read.
+async fn load_candles_from_questdb(
     pool: &PgPool,
     symbol: &str,
     timeframe: &str,
@@ -271,30 +450,6 @@ pub async fn load_candles_with_ts(
     // Live ticks — for intraday + plain-daily only (never weekly/monthly).
     if !is_weekly && !is_monthly {
         let sample_interval = live_sample_interval(timeframe);
-        // Drop FLAT buckets: `open = high = low = close`.
-        //
-        // The tick feed keeps writing the frozen last price after the 15:30 IST
-        // close, so every post-close bucket collapses to a single repeated value
-        // with zero volume. Those are not candles — a candlestick pattern is
-        // defined by body/wick geometry, and a zero-range bar has none — but
-        // PRIO_LIVE (3) outranks historical_intraday (2), so they OVERRODE real
-        // bars in the merge below.
-        //
-        // The user-visible result, measured on the live deployment: `get_consensus`
-        // returned `active_patterns: []` and `active_strategies: []` with
-        // `atr_14: 0.0` and `rsi_14: 100.0`, so the HUD read "No patterns detected
-        // / No strategies active" — while `historical_intraday` held 1296 clean
-        // bars for the same symbol and ZERO flat ones, and `scan_radar` (which
-        // reads a different path) found 9 patterns on the same instrument. The
-        // detectors were never broken; they were being fed frozen prices.
-        //
-        // Filtered in SQL rather than after parsing so the `LIMIT` still returns
-        // `limit` USABLE buckets instead of `limit` rows mostly padded with flats.
-        //
-        // A genuinely flat real bar — an illiquid instrument that printed one
-        // price in the interval — is dropped too. That is the correct trade: it
-        // carries no pattern information either, and the intraday table remains
-        // the authority for that timestamp.
         let live = format!(
             "SELECT ts, open, high, low, close, volume FROM ( \
                SELECT timestamp AS ts, first(last_traded_price) AS open, \
@@ -329,8 +484,6 @@ pub async fn load_candles_with_ts(
         });
     }
 
-    // Merge: sort ascending by ts (ties: ascending priority), then dedup keeping
-    // the highest-priority source per timestamp.
     all_candles.sort_by(|a, b| a.ts_millis.cmp(&b.ts_millis).then(a.priority.cmp(&b.priority)));
     let mut deduped: Vec<PrioCandle> = Vec::with_capacity(all_candles.len());
     for pc in all_candles {
@@ -347,7 +500,11 @@ pub async fn load_candles_with_ts(
     }
 
     let total = deduped.len();
-    let start = if total > limit as usize { total - limit as usize } else { 0 };
+    let start = if total > limit as usize {
+        total - limit as usize
+    } else {
+        0
+    };
     let final_candles: Vec<(i64, Candle)> = deduped[start..]
         .iter()
         .map(|pc| (pc.ts_millis, pc.candle.clone()))
