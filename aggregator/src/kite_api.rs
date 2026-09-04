@@ -92,6 +92,16 @@ pub struct QuoteData {
     /// from a genuinely empty book. Absent must stay absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depth: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub average_price: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lower_circuit_limit: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upper_circuit_limit: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_quantity: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_trade_time: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1362,6 +1372,18 @@ async fn quote_handler(
                 // here would add a second place for the field names to drift from
                 // Kite's. Absent (LTP/OHLC modes) stays absent — see the field doc.
                 depth: value.get("depth").cloned().filter(|d| !d.is_null()),
+                average_price: finite(value.get("average_price").and_then(|v| v.as_f64())),
+                lower_circuit_limit: finite(value.get("lower_circuit_limit").and_then(|v| v.as_f64())),
+                upper_circuit_limit: finite(value.get("upper_circuit_limit").and_then(|v| v.as_f64())),
+                last_quantity: value
+                    .get("last_traded_quantity")
+                    .or_else(|| value.get("last_quantity"))
+                    .and_then(|v| v.as_u64()),
+                last_trade_time: value
+                    .get("last_trade_time")
+                    .or_else(|| value.get("timestamp"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
             })
         })
         .collect();
