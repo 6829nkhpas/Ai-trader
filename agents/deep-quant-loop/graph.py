@@ -75,6 +75,11 @@ from langgraph.graph import StateGraph, add_messages
 from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.memory import MemorySaver
 
+# Quota-aware invocation: absorbs per-minute 429s ("reset after 1m") that the
+# OpenAI client's own exponential backoff cannot outlast. Every direct LLM
+# .invoke() below goes through this; ToolNode invokes do not (tools are local).
+from llm_retry import invoke_with_quota_retry
+
 # Import our custom quantitative tools
 from tools import (
     get_candles,
@@ -4130,7 +4135,7 @@ def call_model(state: AgentState):
     # (options analytics); every other workspace is bound to the active-symbol
     # tool set WITHOUT them, so options / broad-market data is never pulled on a
     # non-F&O run and the analysis stays on the operator's selected symbol.
-    response = _llm_for_profile(state).invoke(messages)
+    response = invoke_with_quota_retry(_llm_for_profile(state), messages)
 
     print(f"[Deep Quant Agent] Model responded. Content length: {len(response.content or '')}")
 
@@ -5301,7 +5306,7 @@ def qa_node(state: AgentState):
             )
         )
         # No-tools binding (per-run creds) so the model must respond with text.
-        response = _base_llm_for_run().invoke(llm_messages + [final_directive])
+        response = invoke_with_quota_retry(_base_llm_for_run(), llm_messages + [final_directive])
     else:
         # The sub-agent tools are added HERE and nowhere else. `tools` is shared with FIND,
         # where delegating to a debate from inside the analysis loop would be a second,
@@ -5314,7 +5319,7 @@ def qa_node(state: AgentState):
             if isinstance(_qa_model, str) and _qa_model.strip()
             else _build_profile_llm_for_model(model_name, is_fno=True, extra_tools=_qa_extra)
         )
-        response = _qa_llm.invoke(llm_messages)
+        response = invoke_with_quota_retry(_qa_llm, llm_messages)
 
     extraction = extract_tool_calls(response)
 
@@ -5713,7 +5718,7 @@ def _run_debate_role(role: str, state: AgentState, system_prompt: str) -> dict:
 
     role_llm = get_role_llm(role_norm)
     try:
-        response = role_llm.invoke([SystemMessage(content=system_prompt), human])
+        response = invoke_with_quota_retry(role_llm, [SystemMessage(content=system_prompt), human])
         raw_content = getattr(response, "content", "") or ""
     except Exception as e:
         # A role failure must not crash the debate: emit an unavailable stance so
@@ -5874,7 +5879,7 @@ def run_verify_devils_advocate(state: AgentState, messages=None) -> Optional[AIM
 
     role_llm = get_role_llm("bear")
     try:
-        response = role_llm.invoke([SystemMessage(content=system_prompt), human])
+        response = invoke_with_quota_retry(role_llm, [SystemMessage(content=system_prompt), human])
         raw_content = getattr(response, "content", "") or ""
     except Exception as e:
         # A failure must not crash verification: degrade to an unavailable stance
@@ -6036,7 +6041,7 @@ def judge_node(state: AgentState, config=None):
 
     for _ in range(max_iters):
         try:
-            response = judge_llm.invoke(judge_msgs)
+            response = invoke_with_quota_retry(judge_llm, judge_msgs)
         except Exception as e:
             print(f"[Deep Quant Debate] judge invocation failed: {e}")
             break
