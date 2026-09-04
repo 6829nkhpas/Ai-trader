@@ -1,6 +1,7 @@
 use crate::engine::OhlcEngine;
 use crate::metrics::AlphaMetrics;
 use crate::proto::market_data::Tick;
+use crate::ws_server::LiveSnapshot;
 use futures_util::stream::StreamExt;
 use prost::Message as ProstMessage;
 use rdkafka::consumer::{Consumer, StreamConsumer};
@@ -9,7 +10,7 @@ use rdkafka::ClientConfig;
 use rdkafka::producer::FutureProducer;
 use serde_json::json;
 
-pub async fn run_consumer(brokers: &str, topic: &str, producer: FutureProducer, ohlc_topic: &str, tx: tokio::sync::broadcast::Sender<String>, metrics: AlphaMetrics) {
+pub async fn run_consumer(brokers: &str, topic: &str, producer: FutureProducer, ohlc_topic: &str, tx: tokio::sync::broadcast::Sender<String>, snapshot: LiveSnapshot, metrics: AlphaMetrics) {
     let consumer: StreamConsumer = ClientConfig::new()
         .set("group.id", "alpha-terminal-group")
         .set("bootstrap.servers", brokers)
@@ -106,7 +107,13 @@ pub async fn run_consumer(brokers: &str, topic: &str, producer: FutureProducer, 
                             "close": active.close,
                             "volume": active.volume
                         });
-                        let _ = tx.send(live_json.to_string());
+                        let live_json = live_json.to_string();
+                        // Latest state per symbol, replayed to new WS clients on
+                        // connect (see ws_server::LiveSnapshot).
+                        if let Ok(mut map) = snapshot.write() {
+                            map.insert(active.symbol, live_json.clone());
+                        }
+                        let _ = tx.send(live_json);
                     }
                 } else {
                     metrics.decode_failed();
