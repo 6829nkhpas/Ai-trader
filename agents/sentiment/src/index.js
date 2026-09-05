@@ -30,15 +30,15 @@
 //   SIGINT → disconnectProducer() + redis.quit() + process.exit(0)
 
 import './loadEnv.js';  // MUST be first: loads the repo-root .env (LLM_*, NEWSDATA, etc.)
-import { loadNewsSentimentType }                   from './protoLoader.js';
-import { resolveProfileSeed }                      from './companyProfiles.js';
+import { loadNewsSentimentType } from './protoLoader.js';
+import { resolveProfileSeed } from './companyProfiles.js';
 import { fetchCompanyProfile, fetchBasicFinancials } from './profile.js';
-import { fetchStrategicNews }                      from './googleNewsFetcher.js';
-import { analyzeStrategicSentiment }               from './analyzer.js';
+import { fetchStrategicNews } from './googleNewsFetcher.js';
+import { analyzeStrategicSentiment } from './analyzer.js';
 import { connectProducer, publishSentiment, disconnectProducer } from './kafkaProducer.js';
-import { createClient }                            from 'redis';
-import http                                        from 'node:http';
-import { metrics }                                 from './metrics.js';
+import { createClient } from 'redis';
+import http from 'node:http';
+import { metrics } from './metrics.js';
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -115,7 +115,7 @@ const PROFILE_TTL_SECONDS = 86_400; // 24 h
  * fixing the provider.
  */
 const PROFILE_NEGATIVE_TTL_SECONDS = 900; // 15 min
-const PROFILE_KEY_PREFIX  = 'sentiment:profile:';
+const PROFILE_KEY_PREFIX = 'sentiment:profile:';
 
 // ── Redis client (for graceful shutdown reference) ────────────────────────────
 // cache.js manages its own singleton internally; we create a second reference
@@ -123,8 +123,8 @@ const PROFILE_KEY_PREFIX  = 'sentiment:profile:';
 // module's internal state.  We import the same env var so both point to the
 // same Redis instance.
 
-const REDIS_URL  = process.env.REDIS_URL ?? 'redis://localhost:6379';
-let   redisClient = null; // initialised inside run()
+const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379';
+let redisClient = null; // initialised inside run()
 
 // ── getProfileContext ─────────────────────────────────────────────────────────
 
@@ -324,22 +324,32 @@ async function processTicker(symbol, NewsSentiment) {
     return Number.isFinite(n) && n > 0 ? n : 10;
   })();
   const headlines = categorizedNews.map((a) => a.title).filter(Boolean).slice(0, maxHeadlines);
+  const articles = categorizedNews
+    .filter((a) => a && (a.title || a.url))
+    .slice(0, maxHeadlines)
+    .map((a) => ({
+      title: a.title,
+      url: a.url || null,
+      source: a.sourceName || null,
+      published_at: a.published_at || null,
+    }));
   const reasoningSnippet = String(verdict.thesis ?? '').slice(0, 150);
 
   latestSentiment.set(symbol.toUpperCase(), {
     symbol,
-    conviction_score:  verdict.conviction_score,
-    label:             verdict.label,
-    thesis:            verdict.thesis,
-    drivers:           verdict.drivers,
-    risks:             verdict.risks,
-    horizon:           verdict.horizon,
-    confidence:        verdict.confidence,
+    conviction_score: verdict.conviction_score,
+    label: verdict.label,
+    thesis: verdict.thesis,
+    drivers: verdict.drivers,
+    risks: verdict.risks,
+    horizon: verdict.horizon,
+    confidence: verdict.confidence,
     reasoning_snippet: reasoningSnippet,
     headlines,
+    articles,
     profile,
-    industry:          profile?.industry ?? seed.sector ?? null,
-    updated_at:        Date.now(),
+    industry: profile?.industry ?? seed.sector ?? null,
+    updated_at: Date.now(),
   });
 
   // A verdict landed, so any recorded reason for its absence is now stale.
@@ -358,9 +368,9 @@ async function processTicker(symbol, NewsSentiment) {
     verdict.drivers?.find((d) => d.headline)?.headline ?? headlines[0] ?? '';
 
   const kafkaPayload = {
-    conviction_score:  verdict.conviction_score,
+    conviction_score: verdict.conviction_score,
     reasoning_snippet: reasoningSnippet,
-    headline:          topDriverHeadline,
+    headline: topDriverHeadline,
   };
 
   try {

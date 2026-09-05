@@ -92,6 +92,16 @@ pub struct QuoteData {
     /// from a genuinely empty book. Absent must stay absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depth: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub average_price: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lower_circuit_limit: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upper_circuit_limit: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_quantity: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_trade_time: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -172,6 +182,33 @@ use std::sync::OnceLock;
 static TOKEN_CACHE: OnceLock<tokio::sync::RwLock<HashMap<String, u64>>> = OnceLock::new();
 fn token_cache() -> &'static tokio::sync::RwLock<HashMap<String, u64>> {
     TOKEN_CACHE.get_or_init(|| tokio::sync::RwLock::new(HashMap::new()))
+}
+
+// Historical-candle response cache: `token|interval|from|to` → response body.
+//
+// The frontend pages history in DATE-granular slices (`from`/`to` are
+// YYYY-MM-DD), so a page refresh, a second tab, or another user charting the
+// same symbol re-issues byte-identical requests. Kite allows 3 req/s per key
+// and answers a historical page in hundreds of ms; a refresh storm queued
+// behind that ceiling is what made "the chart takes ages after a reload".
+// A window that ends before today is closed and immutable, so it is kept for
+// hours; one that includes today holds the forming bar, so it is kept only
+// long enough to absorb a burst.
+// ponytail: wholesale clear past HIST_CACHE_MAX instead of an LRU; entries are
+// small and the bound is what matters, an LRU is the upgrade.
+type HistCache = tokio::sync::RwLock<HashMap<String, (Instant, Arc<serde_json::Value>)>>;
+const HIST_TTL_CLOSED: Duration = Duration::from_secs(6 * 60 * 60);
+const HIST_TTL_OPEN: Duration = Duration::from_secs(10);
+const HIST_CACHE_MAX: usize = 4096;
+static HIST_CACHE: OnceLock<HistCache> = OnceLock::new();
+fn hist_cache() -> &'static HistCache {
+    HIST_CACHE.get_or_init(|| tokio::sync::RwLock::new(HashMap::new()))
+}
+
+/// How long a `/historical` answer for a window ending on `to_date` stays valid.
+/// Dates are `YYYY-MM-DD`, so string order is date order.
+fn hist_ttl(to_date: &str, today: &str) -> Duration {
+    if to_date < today { HIST_TTL_CLOSED } else { HIST_TTL_OPEN }
 }
 
 pub fn get_kite_credentials() -> (String, String) {
@@ -1335,6 +1372,18 @@ async fn quote_handler(
                 // here would add a second place for the field names to drift from
                 // Kite's. Absent (LTP/OHLC modes) stays absent — see the field doc.
                 depth: value.get("depth").cloned().filter(|d| !d.is_null()),
+                average_price: finite(value.get("average_price").and_then(|v| v.as_f64())),
+                lower_circuit_limit: finite(value.get("lower_circuit_limit").and_then(|v| v.as_f64())),
+                upper_circuit_limit: finite(value.get("upper_circuit_limit").and_then(|v| v.as_f64())),
+                last_quantity: value
+                    .get("last_traded_quantity")
+                    .or_else(|| value.get("last_quantity"))
+                    .and_then(|v| v.as_u64()),
+                last_trade_time: value
+                    .get("last_trade_time")
+                    .or_else(|| value.get("timestamp"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
             })
         })
         .collect();
@@ -1409,7 +1458,16 @@ async fn historical_handler(
         .to_string();
 
     let from_date = params.from.unwrap_or(one_year_ago);
-    let to_date = params.to.unwrap_or(today);
+    let to_date = params.to.unwrap_or_else(|| today.clone());
+
+    let cache_key = format!("{token}|{interval}|{from_date}|{to_date}");
+    let ttl = hist_ttl(&to_date, &today);
+    if let Some((cached_at, body)) = hist_cache().read().await.get(&cache_key) {
+        if cached_at.elapsed() < ttl {
+            log::debug!("[Kite historical] cache hit {}", cache_key);
+            return Ok(Json((**body).clone()));
+        }
+    }
 
     log::info!(
         "[Kite historical] Fetching {} (token {}) interval={} from={} to={}",
@@ -1515,7 +1573,15 @@ async fn historical_handler(
         symbol, candles.len(), interval
     );
 
-    Ok(Json(serde_json::json!({ "candles": candles })))
+    let body = serde_json::json!({ "candles": candles });
+    {
+        let mut cache = hist_cache().write().await;
+        if cache.len() >= HIST_CACHE_MAX {
+            cache.clear();
+        }
+        cache.insert(cache_key, (Instant::now(), Arc::new(body.clone())));
+    }
+    Ok(Json(body))
 }
 
 // ── Server ───────────────────────────────────────────────────────────────────
@@ -1571,6 +1637,13 @@ pub async fn run_kite_api_server(port: &str, metrics: crate::metrics::Aggregator
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn closed_windows_cache_long_open_windows_cache_short() {
+        assert_eq!(hist_ttl("2026-09-03", "2026-09-04"), HIST_TTL_CLOSED);
+        assert_eq!(hist_ttl("2026-09-04", "2026-09-04"), HIST_TTL_OPEN);
+        assert_eq!(hist_ttl("2026-09-05", "2026-09-04"), HIST_TTL_OPEN);
+    }
 
     /// A minimal Kite instruments CSV header, in the real column order.
     const HEADER: &str = "instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,strike,tick_size,lot_size,instrument_type,segment,exchange";
