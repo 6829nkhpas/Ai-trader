@@ -1,0 +1,1230 @@
+--- a/src/hooks/ghostLineComputation.ts
++++ b/src/hooks/ghostLineComputation.ts
+@@ -8,6 +8,9 @@
+  *   · 'curved'   → VWEPR (volume-weighted polynomial / curvature)
+  *   · 'forecast' → volatility-aware, regime-conditioned EWMA-drift forecaster
+  *
++ * Lookback bars come from the TradingView chart itself (`exportData`) so the
++ * anchor is the last DISPLAYED bar at its live close on every resolution; the
++ * Zustand store / Kite REST are fallbacks for a chart that has no series yet.
+  * Projected timestamps are aligned to contiguous future NSE trading slots via
+  * nextSessionSlots() so the curve continues smoothly off the last candle
+  * instead of detaching across the overnight/weekend gap. All projections are
+@@ -153,6 +156,36 @@
+   return Boolean(ok && Number.isFinite(targetSec) && targetSec > last.time - intervalSec * 10);
+ }
+ 
++/**
++ * Path 1 geometry (pure). The slope comes from the signal's REAL horizon, not
++ * from how many bars happen to be visible.
++ *
++ * `agents/predictive` predicts the close of the next 10-minute candle and
++ * stamps `target_timestamp_ms` with that candle's close time, so the horizon
++ * is measured close-to-close: from the anchor bar's close
++ * (`last.time + intervalSec`) to the target, floored at one bar. The line is
++ * still drawn on the uniform display grid for `projBars` steps (it may run
++ * past the target — that is the same slope extended, not a second forecast).
++ *
++ * Previously `predicted - last.close` was spread over `projBars` (3–20,
++ * zoom-scaled), so the same signal drew a different slope at every zoom level,
++ * and on a 1m chart a 10-minute move was flattened over 20 minutes.
++ */
++export function path1Points(
++  last: { time: number; close: number },
++  predicted: number,
++  targetSec: number,
++  intervalSec: number,
++  projBars: number
++): { time: number; price: number }[] {
++  const horizonSec = Math.max(targetSec - (last.time + intervalSec), intervalSec);
++  const perSec = (predicted - last.close) / horizonSec;
++  return Array.from({ length: projBars + 1 }, (_, i) => ({
++    time: last.time + i * intervalSec,
++    price: last.close + perSec * i * intervalSec,
++  }));
++}
++
+ /** Compute how many bars to project from how many bars are visible. Counting
+  *  ACTUAL bars (not raw seconds) makes this immune to overnight/weekend gaps. */
+ function dynamicProjectionBars(lookback: { time: number }[], visibleFromSec: number): number {
+@@ -228,22 +261,32 @@
+ /**
+  * Resolve the projection step interval (seconds) for a given display timeframe.
+  *
+- * The display timeframe map is authoritative: it is the grid the user sees on
+- * the chart, so the ghost line must step on that grid to land on displayed bar
+- * boundaries. The inferred bar gap is only a fallback for timeframes missing
+- * from the map, because stored bars are at the Kite *base* interval (e.g. `2m`
+- * stores 1-minute bars, `75m` stores 15-minute bars) — see the note in
+- * `computeGhostPoints` for why the inferred gap is wrong for aggregated
+- * timeframes.
++ * Two cases, decided by where the lookback came from:
++ *
++ *   · `fromChart` — the bars are TradingView's own displayed series (see
++ *     `readChartBars`), already on the display grid. Their median gap IS the
++ *     display interval, and it beats the map for calendar resolutions where the
++ *     map can only approximate (`1M` = 30 days in the map; the chart's real
++ *     month-to-month gap is 28–31 days). The map is the fallback.
++ *
++ *   · store bars — these are at the Kite *base* interval (`2m` stores 1-minute
++ *     bars, `75m` stores 15-minute bars), so the inferred gap would be wrong for
++ *     every aggregated timeframe. The display-timeframe map is authoritative and
++ *     the inferred gap is only a fallback for timeframes missing from the map.
+  *
+  * Exported (pure) so the resolution precedence is unit-testable without driving
+  * stores/IPC.
+  */
+ export function resolveIntervalSec(
+   effectiveTimeframe: string,
+-  lookback: { time: number }[]
++  lookback: { time: number }[],
++  fromChart = false
+ ): number {
+   const mapInterval = Math.floor((TIMEFRAME_MS[effectiveTimeframe as Timeframe] ?? 0) / 1000);
++  if (fromChart) {
++    const barInterval = inferBarIntervalSec(lookback);
++    if (barInterval > 0) return barInterval;
++  }
+   if (mapInterval > 0) return mapInterval;
+   const barInterval = inferBarIntervalSec(lookback);
+   if (barInterval > 0) {
+@@ -298,11 +341,99 @@
+   return slots;
+ }
+ 
+-// ── Store-synced lookback ──────────────────────────────────────────────────
++// ── Chart-sourced lookback (authoritative) ─────────────────────────────────
++
++/** The slice of the TradingView chart API the lookback reader needs. */
++export type ExportableChart = {
++  exportData: (options: {
++    includeTime: boolean;
++    includeSeries: boolean;
++    includedStudies: readonly string[] | 'all';
++  }) => Promise<{
++    schema: Array<{ type: string; plotTitle?: string; sourceType?: string }>;
++    data: ArrayLike<number>[];
++  }>;
++};
++
++/**
++ * Read the bars TradingView is actually displaying, straight from the chart.
++ *
++ * `exportData` returns the main series AFTER TradingView's own resolution
++ * handling — for an aggregated resolution (2m, 75m, 2h, 1W…) these are the
++ * aggregated bars the user sees, session-aligned to 0915-1530, and the last row
++ * is the forming bar with its live close. That makes it the only lookback
++ * source that is correct by construction: the store path below has to guess
++ * which of the base-interval bars belong on the display grid, and the live
++ * `ohlcCandles` feed is a fixed 10-minute bucket regardless of what the chart
++ * shows, so on every non-10m timeframe the store-derived anchor sat on the
++ * wrong candle (1m/2m/5m: the 10m bucket overwrote the real last bar; 15m/1h:
++ * the anchor froze between :00/:30 boundaries; 125m/1D: session-aligned bars
++ * never matched the epoch-aligned `% intervalMs` test, so the anchor was never
++ * live at all).
++ *
++ * `includedStudies: 'all'` picks up the Volume study when it is on the chart
++ * (the VWLR/VWEPR engines weight by volume); without it every bar weighs 1 and
++ * those engines degrade to plain OLS, which is still a valid projection.
++ *
++ * Returns `[]` on any failure so the caller can fall back to the store.
++ */
++export async function readChartBars(chart: ExportableChart | null | undefined): Promise<LookbackCandle[]> {
++  if (!chart || typeof chart.exportData !== 'function') return [];
++  try {
++    const ex = await chart.exportData({ includeTime: true, includeSeries: true, includedStudies: 'all' });
++    return exportedDataToBars(ex);
++  } catch (err) {
++    console.warn('[GhostLine] chart.exportData failed — falling back to store bars:', err);
++    return [];
++  }
++}
++
++/** Pure: map an `ExportedData` payload onto lookback bars (UNIX seconds). */
++export function exportedDataToBars(ex: {
++  schema: Array<{ type: string; plotTitle?: string; sourceType?: string }>;
++  data: ArrayLike<number>[];
++}): LookbackCandle[] {
++  const col = (pred: (f: { type: string; plotTitle?: string; sourceType?: string }) => boolean) =>
++    ex.schema.findIndex(pred);
++  const tIdx = col((f) => f.type === 'time');
++  const series = (title: string) =>
++    col((f) => f.type === 'value' && f.sourceType === 'series' && f.plotTitle === title);
++  const oIdx = series('open');
++  const hIdx = series('high');
++  const lIdx = series('low');
++  const cIdx = series('close');
++  // Study plot titles are localised display names; match the default Volume
++  // study loosely and take the first plot (the volume bars themselves).
++  const vIdx = col(
++    (f) => f.type === 'value' && f.sourceType === 'study' && /volume/i.test(f.plotTitle ?? '')
++  );
++  if (tIdx < 0 || cIdx < 0) return [];
++
++  const out: LookbackCandle[] = [];
++  for (const row of ex.data) {
++    const time = row[tIdx];
++    const close = row[cIdx];
++    if (!Number.isFinite(time) || !Number.isFinite(close)) continue;
++    const high = hIdx >= 0 ? row[hIdx] : close;
++    const low = lIdx >= 0 ? row[lIdx] : close;
++    const open = oIdx >= 0 ? row[oIdx] : close;
++    const volume = vIdx >= 0 && Number.isFinite(row[vIdx]) ? row[vIdx] : 1;
++    out.push({
++      time: Math.floor(time),
++      close,
++      volume: volume || 1,
++      high: Number.isFinite(high) ? high : Math.max(open, close),
++      low: Number.isFinite(low) ? low : Math.min(open, close),
++    });
++  }
++  return out;
++}
++
++// ── Store-synced lookback (fallback) ──────────────────────────────────────
+ 
+ /** Read the bars the TradingView datafeed rendered (historicalCache + live
+- *  ohlcCandles). Keeps the ghost anchored to exactly what the chart shows.
+- *  Timestamps in UNIX seconds. */
++ *  ohlcCandles). Fallback for when the chart itself cannot be read (widget not
++ *  ready, `exportData` unavailable). Timestamps in UNIX seconds. */
+ function readStoreCandles(symbol: string, timeframe: string): LookbackCandle[] {
+   const store = useTradeStore.getState();
+   const sym = symbol.toUpperCase();
+@@ -396,14 +527,27 @@
+   return Number.isFinite(close) && close > 0 ? close : null;
+ }
+ 
+-async function fetchLookbackCandles(symbol: string, timeframe: string): Promise<LookbackCandle[]> {
++async function fetchLookbackCandles(
++  symbol: string,
++  timeframe: string,
++  chart?: ExportableChart | null
++): Promise<{ bars: LookbackCandle[]; fromChart: boolean }> {
+   const kiteInterval = KITE_INTERVAL_MAP[timeframe as Timeframe] ?? 'minute';
+ 
+-  // Path 0: in-memory store — authoritative, matches the chart.
++  // Path -1: the chart's own displayed series — see `readChartBars` for why this
++  // is the only source that is correct on every timeframe.
++  const chartBars = await readChartBars(chart);
++  if (chartBars.length >= 20) {
++    debugLog(`[GhostLine] Chart bars (exportData): ${chartBars.length} for ${symbol}`);
++    return { bars: chartBars, fromChart: true };
++  }
++
++  // Path 0: in-memory store — what the datafeed handed the chart, at the Kite
++  // base interval. Used while the chart has no series yet.
+   const storeBars = readStoreCandles(symbol, timeframe);
+   if (storeBars.length >= 20) {
+     debugLog(`[GhostLine] Store bars (chart-synced): ${storeBars.length} for ${symbol}`);
+-    return storeBars;
++    return { bars: storeBars, fromChart: false };
+   }
+ 
+   // Kite REST via the gateway, through `kiteFetch` so the `/kite` prefix (and the
+@@ -428,13 +572,13 @@
+         low: typeof c.low === 'number' ? c.low : c.close,
+       }));
+       debugLog(`[GhostLine] API candles: ${candles.length} bars`);
+-      return candles;
++      return { bars: candles, fromChart: false };
+     }
+     console.warn('[GhostLine] API non-OK:', res.status);
+   } catch (err) {
+     console.warn('[GhostLine] kite/historical failed:', err);
+   }
+-  return [];
++  return { bars: [], fromChart: false };
+ }
+ 
+ // ── OLS linear regression ──────────────────────────────────────────────────
+@@ -766,13 +910,18 @@
+   effectiveTimeframe: string,
+   ghostLineMode: string,
+   predictiveSignals: any[],
+-  visibleFromSec: number = 0
++  visibleFromSec: number = 0,
++  chart?: ExportableChart | null
+ ): Promise<{ time: number; price: number }[]> {
+   debugLog(
+     `[GhostLine] computeGhostPoints — symbol=${activeSymbol} tf=${effectiveTimeframe} mode=${ghostLineMode}`
+   );
+ 
+-  const rawLookback = await fetchLookbackCandles(activeSymbol, effectiveTimeframe);
++  const { bars: rawLookback, fromChart } = await fetchLookbackCandles(
++    activeSymbol,
++    effectiveTimeframe,
++    chart
++  );
+   const lookback = sanitizeLookback(rawLookback);
+   if (lookback.length < 20) {
+     console.warn(`[GhostLine] Not enough candles (${lookback.length})`);
+@@ -780,24 +929,11 @@
+   }
+ 
+   const last = lookback[lookback.length - 1];
+-  // Resolution of the forward projection step.
+-  //
+-  // The display timeframe (e.g. `2m`, `75m`, `2h`) is the grid the user sees on
+-  // the chart, and the ghost line must step on that same grid so it lands on
+-  // displayed bar boundaries. The TIMEFRAME_MS map gives us exactly that.
+-  //
+-  // `inferBarIntervalSec` measures the median gap of the *stored* bars, but the
+-  // stored bars are at the Kite *base* interval, NOT the display interval: a
+-  // `2m` chart stores 1-minute bars, `75m` stores 15-minute bars, `2h` stores
+-  // 1-hour bars, etc. For aggregated timeframes (`2m`/`4m`/`75m`/`125m`/`2h`/
+-  // `3h`/`4h`/`1W`/`1M`) the inferred gap is the base interval, so the
+-  // projection steps at the base interval → 2–5× too many points, off the
+-  // displayed bar grid → visible jitter/"unstable" ghost line.
+-  //
+-  // Therefore the display-timeframe map wins; `barInterval` is kept only as a
+-  // fallback when the map has no entry for this timeframe.
+-  const intervalSec = resolveIntervalSec(effectiveTimeframe, lookback);
+-  debugLog(`[GhostLine] intervalSec=${intervalSec}`);
++  // Resolution of the forward projection step — see `resolveIntervalSec` for
++  // why chart-sourced bars infer it from their own spacing while store bars
++  // (Kite base interval) must use the display-timeframe map.
++  const intervalSec = resolveIntervalSec(effectiveTimeframe, lookback, fromChart);
++  debugLog(`[GhostLine] intervalSec=${intervalSec} fromChart=${fromChart}`);
+   if (!Number.isFinite(last.close) || last.close <= 0) return [];
+ 
+   // Length scales with the current zoom (fraction of visible bars).
+@@ -826,13 +962,13 @@
+       (s) => s.symbol?.toUpperCase() === activeSymbol.toUpperCase()
+     );
+     const sig = sigs[sigs.length - 1];
+-    const predicted = sig.predicted_close_price as number;
+-    const N = projBars;
+-    const m = (predicted - last.close) / N;
+-    points = Array.from({ length: N + 1 }, (_, i) => ({
+-      time: last.time + i * intervalSec,
+-      price: last.close + m * i,
+-    }));
++    points = path1Points(
++      { time: last.time, close: last.close },
++      Number(sig.predicted_close_price),
++      Math.floor(Number(sig.target_timestamp_ms) / 1000),
++      intervalSec,
++      projBars
++    );
+   }
+ 
+   // ── Projection engines ──────────────────────────────────────────────
+@@ -856,6 +992,13 @@
+ 
+   // ── Pin the anchor onto the last candle at its CURRENT price ─────────
+   //
++  // Store-sourced bars only. Chart-sourced bars already end on the forming bar
++  // with its live close (TradingView applies the realtime tick to the series
++  // before `exportData` reads it), and the `ohlcCandles` feed is a 10-minute
++  // bucket whose close is only the live price of the display bar on a 10m
++  // chart — applying it elsewhere would move the anchor off the bar it was
++  // fitted to.
++  //
+   // PRICE-ONLY shift. Every engine already anchors `points[0].time` to
+   // `last.time` — the last bar of the very series it was fitted on, which is by
+   // construction on the display grid. Re-deriving the anchor's TIME from a
+@@ -863,7 +1006,7 @@
+   // whole line off the displayed candles. The only thing worth refreshing here
+   // is the price, so the ghost starts at the live close rather than the close of
+   // the last completed bar.
+-  if (points.length > 0) {
++  if (points.length > 0 && !fromChart) {
+     const livePrice = latestStorePrice(
+       activeSymbol,
+       TIMEFRAME_MS[effectiveTimeframe as Timeframe] ?? 0
+--- a/src/hooks/useGhostLine.ts
++++ b/src/hooks/useGhostLine.ts
+@@ -73,7 +73,7 @@
+  * committed). Retrying on the next redraw self-heals those. But after a widget
+  * teardown/recreate, ids from the dead widget are permanently invalid on the
+  * new chart, so `removeEntity` throws on EVERY pass. Without bounding, those
+- * dead ids live in `entityIdsRef.current` forever, warn on every redraw, and
++ * dead ids live in the renderer's id list forever, warn on every redraw, and
+  * can transiently let a new run clear a prior run's still-valid segments via
+  * the shared ref. We therefore drop an id after `maxAttempts` consecutive
+  * failures.
+@@ -169,13 +169,14 @@
+ }
+ 
+ /**
+- * Draw the ghost line as connected dashed `trend_line` segments.
++ * Fallback: draw the ghost line as connected `trend_line` segments.
+  *
+- * We deliberately use per-bar segments (NOT `polyline`/`path`): TradingView's
+- * `polyline` auto-closes into a triangle and `path` collapses to a stub in this
+- * build, whereas connected `trend_line` segments render reliably and extend
+- * into the future whitespace. The points are already a smooth, bounded curve,
+- * so the joined segments read as one continuous dashed line.
++ * Kept only as the last resort of `drawGhostEntity`. An earlier TradingView
++ * build auto-closed `polyline` into a triangle and collapsed `path` to a stub,
++ * so per-bar segments were the only reliable rendering; the vendored v32.1
++ * bundle draws both correctly (verified 2m/10m/75m/1W), and a single entity is
++ * one IPC round-trip instead of ~20 with dash patterns restarting at every
++ * vertex.
+  *
+  * `shouldAbort` is polled between each segment. If a newer draw supersedes this
+  * one mid-flight we stop immediately and remove whatever we already drew, so a
+@@ -275,7 +276,7 @@
+ // ── Draw-commit helper ──────────────────────────────────────────────────
+ 
+ /**
+- * Decide the next `entityIdsRef` value and which ids to remove now, given the
++ * Decide the next tracked-id set and which ids to remove now, given the
+  * outcome of a double-buffered draw.
+  *
+  * Drawing is async and slow (one IPC round-trip into the TradingView iframe
+@@ -293,7 +294,7 @@
+  * @param newIds The ids this draw just created (may be empty if it aborted).
+  * @param stale  True if a newer run superseded this one while/after drawing.
+  * @returns
+- *   - `next`: the new value for `entityIdsRef.current` (who owns the chart now).
++ *   - `next`: the ids now on the chart (who owns it now).
+  *   - `removeNow`: the ids the caller should remove from the chart immediately.
+  *     On success these are the prev ids; on a stale-after-draw these are the
+  *     newly-drawn ids (the stale run hands ownership back to the prior run).
+@@ -317,6 +318,168 @@
+   return { next: newIds, removeNow: prevIds };
+ }
+ 
++// ── Single-entity draw ───────────────────────────────────────────────────
++
++/** Ghost line colour. Amber is the projection's identity on the chart. */
++const GHOST_COLOR = '#f59e0b';
++
++/**
++ * Draw the whole projection as ONE chart entity and return its id.
++ *
++ * Straight engines (`linear` / `volume`) are a `trend_line` from the anchor to
++ * the end point — a rigid vector that cannot bend. Curved engines are a
++ * `polyline` through every projected point. Verified against the vendored
++ * TradingView Advanced Charts v32.1 bundle: `polyline` with
++ * `fillBackground: false, filled: false` renders an open dashed curve that
++ * extends into the future whitespace on 2m, 10m, 75m and 1W, so the older
++ * per-pair `trend_line` segments (~20 awaited IPC round-trips per redraw, with
++ * dash patterns restarting at every vertex) are no longer needed. Should
++ * `polyline` ever fail, `path` is tried, then the segment fallback.
++ *
++ * Returns `null` when nothing could be drawn.
++ */
++async function drawGhostEntity(
++  chart: any,
++  points: { time: number; price: number }[],
++  singleSegment: boolean
++): Promise<string | null> {
++  // Strictly-increasing, de-duplicated points (a session boundary can produce
++  // two points at the same timestamp, which TradingView rejects).
++  const clean: { time: number; price: number }[] = [];
++  for (const p of points) {
++    if (clean.length === 0 || p.time > clean[clean.length - 1].time) clean.push(p);
++  }
++  if (clean.length < 2) return null;
++
++  debugLog(
++    '[GhostLine] DRAW',
++    clean.length,
++    'pts times=',
++    clean.map((p) => p.time).join(','),
++    'prices=',
++    clean.map((p) => p.price).join(',')
++  );
++
++  const base = { lock: true, disableSelection: true, disableSave: true, disableUndo: true };
++
++  if (singleSegment) {
++    const id = await chart.createMultipointShape([clean[0], clean[clean.length - 1]], {
++      ...base,
++      shape: 'trend_line',
++      overrides: {
++        linecolor: GHOST_COLOR,
++        linewidth: 2,
++        linestyle: 2,
++        showLabel: false,
++        extendLeft: false,
++        extendRight: false,
++      },
++    });
++    return id == null ? null : String(id);
++  }
++
++  try {
++    const id = await chart.createMultipointShape(clean, {
++      ...base,
++      shape: 'polyline',
++      overrides: {
++        linecolor: GHOST_COLOR,
++        linewidth: 2,
++        linestyle: 2,
++        fillBackground: false,
++        filled: false,
++        transparency: 0,
++      },
++    });
++    if (id != null) return String(id);
++  } catch (err) {
++    console.warn('[GhostLine] polyline failed, trying path:', err);
++  }
++  try {
++    const id = await chart.createMultipointShape(clean, {
++      ...base,
++      shape: 'path',
++      overrides: { lineColor: GHOST_COLOR, lineWidth: 2, lineStyle: 2, leftEnd: 0, rightEnd: 0 },
++    });
++    if (id != null) return String(id);
++  } catch (err) {
++    console.warn('[GhostLine] path failed, falling back to segments:', err);
++  }
++  // Last resort: consecutive trend_line segments, the pre-polyline approach.
++  const ids = await drawGhostSegments(chart, clean, false, () => false);
++  return ids.length > 0 ? ids.join('+') : null;
++}
++
++/**
++ * Owns the ghost entity on the chart for the lifetime of a widget.
++ *
++ * The previous design tracked entity ids in refs inside the draw effect and
++ * removed them in that effect's CLEANUP. Because the effect re-runs on every
++ * pulse / new bar / zoom, every redraw began by wiping the line, and a
++ * "points unchanged — skip redraw" early-return then left the chart EMPTY
++ * until something else changed: the line flickered, and periodically vanished
++ * for a whole bar. Here the entity outlives the effect: `render` draws the new
++ * entity FIRST and only then removes the previous one (true double buffer),
++ * and `clear` runs only on widget teardown, symbol/timeframe change, feature
++ * lock, or an empty projection — never on a routine redraw.
++ *
++ * Ids that fail to remove are retried on the next pass, bounded by
++ * `pruneFailedIds` so an id from a torn-down widget cannot pile up forever.
++ */
++export class GhostLineRenderer {
++  /** Ids currently on the chart (normally exactly one). */
++  private ids: string[] = [];
++  private attempts = new Map<string, number>();
++  private lastPoints: { time: number; price: number }[] = [];
++
++  constructor(private readonly chart: any) {}
++
++  /** Points of the entity currently on the chart (for the skip-redraw check). */
++  get points(): { time: number; price: number }[] {
++    return this.lastPoints;
++  }
++
++  /**
++   * Replace whatever is on the chart with `points`. `isStale` is consulted
++   * after the awaited draw; a stale run removes what it just drew and leaves
++   * the previous entity in place, since a newer run owns the chart now.
++   */
++  async render(
++    points: { time: number; price: number }[],
++    singleSegment: boolean,
++    isStale: () => boolean
++  ): Promise<boolean> {
++    const prevIds = this.ids;
++    let newId: string | null = null;
++    try {
++      newId = await drawGhostEntity(this.chart, points, singleSegment);
++    } catch (err) {
++      console.warn('[GhostLine] draw failed:', err);
++    }
++    const newIds = newId ? newId.split('+') : [];
++    const stale = isStale();
++    const { next, removeNow } = commitDraw(prevIds, newIds, stale);
++    const failed = removeGhostSegments(this.chart, removeNow);
++    this.ids = [...next, ...pruneFailedIds(failed, this.attempts, 2, next)];
++    if (!stale && newIds.length > 0) this.lastPoints = points;
++    return !stale && newIds.length > 0;
++  }
++
++  /** Remove the ghost entity. Failed removes stay tracked for one retry. */
++  clear(): void {
++    const failed = removeGhostSegments(this.chart, this.ids);
++    this.ids = pruneFailedIds(failed, this.attempts, 2, this.ids);
++    this.lastPoints = [];
++  }
++
++  /** The chart is gone; forget everything (its ids can never be removed). */
++  dispose(): void {
++    this.ids = [];
++    this.attempts.clear();
++    this.lastPoints = [];
++  }
++}
++
+ // ── Main Hook ─────────────────────────────────────────────────────────────
+ 
+ export function useGhostLine(widget: any, activeSymbol: string, effectiveTimeframe: string) {
+@@ -342,23 +505,60 @@
+     return t;
+   });
+ 
+-  // The single source of truth for what is currently on the chart. Each draw
+-  // is double-buffered: the NEW line is drawn first, then ownership swaps to
+-  // it, then the OLD line is removed — so at most ONE ghost line ever exists
+-  // and there is never an empty frame between draws.
+-  const entityIdsRef = useRef<string[]>([]);
+-  // Last successfully drawn point set — skip IPC when the projection is unchanged.
+-  const lastPointsRef = useRef<{ time: number; price: number }[]>([]);
+-  // Per-id consecutive-remove-failure counts. Lets us bound retries: an id
+-  // that fails to remove a few passes in a row is dropped from the ref (see
+-  // `pruneFailedIds`) so dead ids — e.g. from a torn-down widget — can't pile
+-  // up forever and warn on every redraw.
+-  const failedAttemptsRef = useRef<Map<string, number>>(new Map());
++  // The one owner of what is on the chart, bound to the widget's lifetime — see
++  // `GhostLineRenderer` for why ownership must outlive the draw effect.
++  const rendererRef = useRef<GhostLineRenderer | null>(null);
+   // Monotonic draw generation. Any run whose generation is no longer the latest
+-  // is "stale": it won't start a draw, and aborts (removing its own segments)
+-  // if it's already mid-draw.
++  // is "stale": it won't start a draw, and hands the chart back if it already
++  // drew.
+   const genRef = useRef<number>(0);
+ 
++  useEffect(() => {
++    if (!widget) return;
++    let cancelled = false;
++    whenChartReady(
++      widget,
++      () => {
++        if (cancelled) return;
++        try {
++          const chart = widget.activeChart();
++          if (chart) rendererRef.current = new GhostLineRenderer(chart);
++        } catch {
++          /* torn down */
++        }
++      },
++      () => cancelled,
++      'GhostLine'
++    );
++    return () => {
++      cancelled = true;
++      const r = rendererRef.current;
++      rendererRef.current = null;
++      if (!r) return;
++      // Best-effort removal if the chart is still alive; either way the ids
++      // belong to this widget and must not survive into the next one.
++      try {
++        if (widget.activeChart()) r.clear();
++      } catch {
++        /* widget already removed */
++      }
++      r.dispose();
++    };
++  }, [widget]);
++
++  // A different symbol or timeframe is a different series: the old projection
++  // has nothing to do with the new candles, so clear it rather than leave it
++  // on the chart until the first new draw lands.
++  useEffect(() => {
++    return () => {
++      try {
++        rendererRef.current?.clear();
++      } catch {
++        /* torn down */
++      }
++    };
++  }, [activeSymbol, effectiveTimeframe]);
++
+   // ── Zoom pulse ───────────────────────────────────────────────────────
+   // Re-project when the user zooms so the line length tracks the visible
+   // range. Throttled to 900ms so a drag doesn't thrash the async shape API.
+@@ -461,13 +661,12 @@
+   /**
+    * True while the draw effect is mid-flight.
+    *
+-   * A pulse re-runs the draw effect, and that effect's CLEANUP removes the
+-   * segments currently on the chart before the new run starts drawing. The draw
+-   * itself is ~20 awaited IPC round-trips into the TradingView iframe, so it is
+-   * far slower than the pulse interval: with a live price ticking, the line was
+-   * being wiped every PULSE_THROTTLE_MS and superseded before it could finish, so
+-   * a draw never completed and no ghost line was ever visible. Nothing was wrong
+-   * with the projection — it just never got to render.
++   * A pulse re-runs the draw effect. The draw is an awaited `exportData` read
++   * plus an awaited shape creation into the TradingView iframe, so it can be
++   * slower than the pulse interval: with a live price ticking, runs used to be
++   * superseded before they could finish, so a draw never completed and no ghost
++   * line was ever visible. Nothing was wrong with the projection — it just never
++   * got to render.
+    *
+    * Interrupting a draw to start an identical-but-newer one gains nothing, so a
+    * pulse that lands mid-draw is remembered instead of applied, and fired once
+@@ -518,16 +717,7 @@
+         () => {
+           if (cancelled) return;
+           try {
+-            const chart = widget.activeChart();
+-            if (!chart) return;
+-            const failed = removeGhostSegments(chart, entityIdsRef.current);
+-            entityIdsRef.current = pruneFailedIds(
+-              failed,
+-              failedAttemptsRef.current,
+-              2,
+-              entityIdsRef.current
+-            );
+-            lastPointsRef.current = [];
++            rendererRef.current?.clear();
+           } catch {
+             /* torn down */
+           }
+@@ -574,6 +764,10 @@
+           return;
+         }
+         if (!chart) return;
++        // The widget effect above normally has the renderer ready first; cover
++        // the ordering where this effect's ready callback lands earlier.
++        if (!rendererRef.current) rendererRef.current = new GhostLineRenderer(chart);
++        const renderer = rendererRef.current;
+ 
+         // Read the CURRENT zoom window so the projection length can scale to it.
+         // `from` is a UNIX-second timestamp of the left edge of the view.
+@@ -591,99 +785,43 @@
+         // isn't re-fired by every predictive tick's new array reference.
+         const predictiveSignals = useTradeStore.getState().predictiveSignals;
+ 
+-        // From here to the `finally` below is the slow part: projecting, then one
+-        // awaited IPC round-trip per segment. A live price pulse arriving inside
+-        // this window must not restart it — see `drawInFlightRef`.
++        // From here to the `finally` below is the slow part: reading the chart's
++        // series, projecting, then one awaited IPC round-trip for the entity. A
++        // live price pulse arriving inside this window must not restart it —
++        // see `drawInFlightRef`.
+         drawInFlightRef.current = true;
+-        const points = await computeGhostPoints(
+-          activeSymbol,
+-          effectiveTimeframe,
+-          ghostLineMode,
+-          predictiveSignals,
+-          visibleFromSec
+-        );
+-        if (isStale()) {
+-          drawInFlightRef.current = false;
+-          return;
+-        }
+-
+-        // Unchanged projection → skip the expensive multipoint IPC round-trips.
+-        if (points.length >= 2 && pointsUnchanged(points, lastPointsRef.current)) {
+-          debugLog('[GhostLine] points unchanged — skip redraw');
+-          drawInFlightRef.current = false;
+-          if (pendingPulseRef.current) {
+-            pendingPulseRef.current = false;
+-            lastPulseRef.current = Date.now();
+-            setPulse((p) => p + 1);
+-          }
+-          return;
+-        }
+-
+-        // Straight engines (OLS 'linear' / VWLR 'volume') render as a SINGLE
+-        // trend_line entity (anchor → end) that can never fragment or ladder.
+-        // Curved engines ('curved' / 'forecast') draw the raw projection points
+-        // as connected segments — a handful of dashes, not a block.
+-        const isStraight = ghostLineMode === 'linear' || ghostLineMode === 'volume';
+-
+         try {
+-          // ── Double-buffered draw (no empty-frame flicker) ────────────────
+-          // TradingView's shape API is an async IPC into the iframe and is slow
+-          // (one round-trip per segment). If we CLEARED the old line BEFORE
+-          // drawing the new one, the chart would be empty for the whole draw
+-          // window → the line visibly vanishes then reappears segment-by-segment
+-          // (the "flicker / appears then disappears" artefact). Instead we draw
+-          // the NEW line first, then swap ownership, then remove the OLD line, so
+-          // there is never a frame where zero lines are on the chart.
+-          //
+-          // `drawGhostSegments` polls `shouldAbort` (= isStale) between each
+-          // segment and removes its own segments if aborted, so a stale run
+-          // cleans up after itself and never leaves half a line behind.
++          const points = await computeGhostPoints(
++            activeSymbol,
++            effectiveTimeframe,
++            ghostLineMode,
++            predictiveSignals,
++            visibleFromSec,
++            chart
++          );
++          if (isStale()) return;
+ 
+           if (points.length < 2) {
+             console.warn('[GhostLine] Not enough points:', points.length);
+-            // Nothing new to draw — just clear the old line. (This is the one
+-            // case where an empty frame is unavoidable and correct.)
+-            const failedRemove = removeGhostSegments(chart, entityIdsRef.current);
+-            entityIdsRef.current = pruneFailedIds(
+-              failedRemove,
+-              failedAttemptsRef.current,
+-              2,
+-              entityIdsRef.current
+-            );
+-            lastPointsRef.current = [];
++            // Nothing to show — clear the old line. (This is the one case where
++            // an empty chart is correct.)
++            renderer.clear();
+             return;
+           }
+ 
+-          // Snapshot the previously-displayed ids BEFORE drawing, so we can
+-          // remove them after the new line is on the chart.
+-          const prevIds = entityIdsRef.current;
+-
+-          // Draw the new line first. If a newer run supersedes us mid-draw,
+-          // drawGhostSegments aborts and removes whatever it already drew,
+-          // returning [].
+-          const newIds = await drawGhostSegments(chart, points, isStraight, isStale);
+-
+-          // Decide ownership via the pure `commitDraw` helper. Re-check isStale
+-          // here — a newer run may have bumped genRef while we were awaiting the
+-          // draw. `stale` is captured BEFORE we remove anything, so we don't
+-          // race between the check and the removal/assignment below.
+-          const stale = isStale();
+-          const { next, removeNow } = commitDraw(prevIds, newIds, stale);
+-
+-          // Remove whichever ids the helper selected (the OLD line on success,
+-          // or the just-drawn NEW line on a stale-after-draw). Any ids that FAIL
+-          // to remove are folded back into `next` so they stay tracked and get
+-          // retried next pass — this is the self-healing that keeps the chart
+-          // from accumulating orphaned segments. `pruneFailedIds` bounds those
+-          // retries so a permanently-invalid id (e.g. from a torn-down widget)
+-          // is eventually dropped instead of warning forever.
+-          const failed = removeGhostSegments(chart, removeNow);
+-          const retry = pruneFailedIds(failed, failedAttemptsRef.current, 2, next);
+-          entityIdsRef.current = [...next, ...retry];
+-          if (!stale) {
+-            lastPointsRef.current = points;
+-            debugLog('[GhostLine] Ghost line ready with', newIds.length, 'segments');
++          // Unchanged projection → skip the IPC round-trip. The entity stays on
++          // the chart because nothing here removes it.
++          if (pointsUnchanged(points, renderer.points)) {
++            debugLog('[GhostLine] points unchanged — skip redraw');
++            return;
+           }
++
++          // Straight engines (OLS 'linear' / VWLR 'volume') render as a single
++          // trend_line (anchor → end) that can never bend. Curved engines
++          // ('curved' / 'forecast') render as one polyline through every point.
++          const isStraight = ghostLineMode === 'linear' || ghostLineMode === 'volume';
++          const drawn = await renderer.render(points, isStraight, isStale);
++          if (drawn) debugLog('[GhostLine] Ghost line ready:', points.length, 'points');
+         } catch (err) {
+           console.error('[GhostLine] draw failed:', err);
+         } finally {
+@@ -705,54 +843,15 @@
+     );
+ 
+     return () => {
+-      // Mark stale so any in-flight draw aborts and no queued run draws.
++      // Mark stale so an in-flight run hands the chart back instead of
++      // committing. The entity itself is NOT removed here: routine re-runs
++      // (pulse / new bar / zoom) must leave the current line on the chart until
++      // the next one is drawn. Removal is owned by the widget, symbol/timeframe
++      // and feature-lock effects above.
+       cancelled = true;
+-
+-      // Backstop for the in-flight flag. The `finally` above clears it on every
+-      // path that reaches the draw, but `computeGhostPoints` is awaited before
+-      // that try block, so a throw there would leak the flag and wedge the pulse
+-      // permanently. Cleanup always runs before the next effect run, so clearing
+-      // here bounds the damage to nothing.
++      // Backstop for the in-flight flag: cleanup always runs before the next
++      // effect run, so clearing here bounds a leaked flag to nothing.
+       drawInFlightRef.current = false;
+-
+-      // Clear the segments we own — but only FORGET the ids we actually managed
+-      // to remove.
+-      //
+-      // This effect re-runs on every symbol / timeframe / mode change, and (now
+-      // that the widget is no longer rebuilt per symbol) the chart is usually
+-      // still ALIVE across those re-runs. The previous version cleared the ref
+-      // unconditionally: any `removeEntity` that failed left its segment on the
+-      // chart with nothing tracking it, and the next draw stacked a fresh line
+-      // on top — the reported "two ghost lines". So:
+-      //
+-      //  · chart reachable → keep the ids that failed to remove so the next
+-      //    pass retries them (`pruneFailedIds` still bounds those retries, so a
+-      //    permanently-invalid id is dropped after a couple of attempts rather
+-      //    than warning forever).
+-      //  · chart gone (widget removed) → the ids belong to a dead chart and can
+-      //    never be removed, so drop everything. Retaining them would make
+-      //    `removeEntity` throw on every redraw of the next widget.
+-      // Narrowed to what the cleanup actually needs, so this isn't another `any`.
+-      let chart: { removeEntity: (id: string) => void } | null = null;
+-      try {
+-        chart = widget.activeChart();
+-      } catch {
+-        /* widget already removed */
+-      }
+-
+-      if (chart) {
+-        const failed = removeGhostSegments(chart, entityIdsRef.current);
+-        entityIdsRef.current = pruneFailedIds(
+-          failed,
+-          failedAttemptsRef.current,
+-          2,
+-          entityIdsRef.current
+-        );
+-      } else {
+-        entityIdsRef.current = [];
+-        failedAttemptsRef.current.clear();
+-        lastPointsRef.current = [];
+-      }
+     };
+   }, [
+     widget,
+--- a/src/store/useTradeStore.ts
++++ b/src/store/useTradeStore.ts
+@@ -81,9 +81,15 @@
+ export interface PredictiveSignal {
+   symbol: string;
+   timestamp_ms: number;
++  /** Close time of the candle being predicted. */
+   target_timestamp_ms: number;
+   predicted_close_price: number;
+   confidence_score: number;
++  /** Close time / close of the last candle the regression was fitted through.
++   *  Sent by `agents/predictive` since the anchor fields landed; older signals
++   *  omit them. */
++  anchor_timestamp_ms?: number;
++  anchor_close?: number;
+ }
+ 
+ export interface MarketInsight {
+--- a/src/hooks/__tests__/ghostLineComputation.path1.spec.ts
++++ b/src/hooks/__tests__/ghostLineComputation.path1.spec.ts
+@@ -12,7 +12,12 @@
+ // uniform interval grid (no last-point time rewrite).
+ 
+ import { describe, it, expect } from 'vitest';
+-import { olsSlope, path1SignalApplies, PATH1_MIN_CONFIDENCE } from '@/hooks/ghostLineComputation';
++import {
++  olsSlope,
++  path1Points,
++  path1SignalApplies,
++  PATH1_MIN_CONFIDENCE,
++} from '@/hooks/ghostLineComputation';
+ 
+ /** Build a deterministic ramp of closes with a known positive slope so the
+  *  OLS projection is forced upward (and is NOT the signal line). */
+@@ -138,19 +143,34 @@
+   });
+ 
+   it('Path 1 grid uses uniform interval times (no end-time rewrite)', () => {
+-    // Mirrors the production construction: last.time + i * intervalSec only.
+     const last = { time: 100_000, close: 100 };
+     const intervalSec = 60;
+-    const N = 6;
+-    const predicted = 105;
+-    const m = (predicted - last.close) / N;
+-    const points = Array.from({ length: N + 1 }, (_, i) => ({
+-      time: last.time + i * intervalSec,
+-      price: last.close + m * i,
+-    }));
++    const targetSec = last.time + 10 * intervalSec; // 10m candle close, 1m chart
++    const points = path1Points(last, 105, targetSec, intervalSec, 6);
++    expect(points).toHaveLength(7);
+     for (let i = 1; i < points.length; i++) {
+       expect(points[i].time - points[i - 1].time).toBe(intervalSec);
+     }
+-    expect(points[points.length - 1].price).toBeCloseTo(predicted, 10);
++  });
++
++  it('Path 1 slope comes from the signal horizon, not from projBars', () => {
++    // 1m chart, signal targets the close of the next 10m candle. Anchor bar
++    // closes at last.time + 60, so the horizon is 9 minutes of chart time.
++    const last = { time: 100_000, close: 100 };
++    const targetSec = last.time + 600;
++    const a = path1Points(last, 109, targetSec, 60, 6);
++    const b = path1Points(last, 109, targetSec, 60, 20);
++    // Same slope at every zoom (1/min), so the price at the target bar is the
++    // predicted close in both.
++    expect(a[6].price).toBeCloseTo(106, 10);
++    expect(b[9].price).toBeCloseTo(109, 10);
++    expect(b[6].price).toBeCloseTo(a[6].price, 10);
++  });
++
++  it('Path 1 floors the horizon at one bar when the target is already inside the anchor bar', () => {
++    // 15m chart: the 10m signal's target lands inside the forming 15m bar.
++    const last = { time: 100_000, close: 100 };
++    const points = path1Points(last, 103, last.time + 600, 900, 4);
++    expect(points[1].price).toBeCloseTo(103, 10);
+   });
+ });
+--- /dev/null
++++ b/src/hooks/__tests__/ghostLineComputation.chartBars.spec.ts
+@@ -0,0 +1,113 @@
++// Feature: ghost-line-anchor
++//
++// The lookback now comes from the TradingView chart itself (`exportData`), so
++// the anchor is the last DISPLAYED bar at its live close on every resolution.
++// These tests pin the mapping from TradingView's `ExportedData` shape onto
++// lookback bars, and the interval precedence for chart-sourced bars (median
++// gap of the displayed bars wins over the TIMEFRAME_MS map).
++
++import { describe, it, expect, vi } from 'vitest';
++
++import {
++  exportedDataToBars,
++  readChartBars,
++  resolveIntervalSec,
++} from '../ghostLineComputation';
++
++const schema = [
++  { type: 'time' },
++  { type: 'value', sourceType: 'series', plotTitle: 'open', sourceTitle: 'NIFTY, NSE' },
++  { type: 'value', sourceType: 'series', plotTitle: 'high', sourceTitle: 'NIFTY, NSE' },
++  { type: 'value', sourceType: 'series', plotTitle: 'low', sourceTitle: 'NIFTY, NSE' },
++  { type: 'value', sourceType: 'series', plotTitle: 'close', sourceTitle: 'NIFTY, NSE' },
++];
++
++/** `count` display bars spaced `stepSec` apart ending at `lastSec`. */
++function rows(count: number, stepSec: number, lastSec: number, withVolume = false) {
++  const out: Float64Array[] = [];
++  for (let i = count - 1; i >= 0; i--) {
++    const t = lastSec - i * stepSec;
++    const c = 24000 + (count - i);
++    const row = [t, c - 1, c + 2, c - 2, c];
++    if (withVolume) row.push(1000 + i);
++    out.push(Float64Array.from(row));
++  }
++  return out;
++}
++
++describe('exportedDataToBars', () => {
++  it('maps time/OHLC columns by schema, not by position', () => {
++    // Shuffle the column order: exportData's schema is authoritative.
++    const shuffled = [schema[4], schema[0], schema[2], schema[1], schema[3]];
++    const data = [Float64Array.from([100.5, 1_000, 101, 99.5, 99])];
++    const bars = exportedDataToBars({ schema: shuffled, data });
++    expect(bars).toEqual([{ time: 1_000, close: 100.5, high: 101, low: 99, volume: 1 }]);
++  });
++
++  it('takes volume from a Volume study column when present, else 1', () => {
++    const withVol = [...schema, { type: 'value', sourceType: 'study', plotTitle: 'Volume', sourceTitle: 'Volume' }];
++    const bars = exportedDataToBars({ schema: withVol, data: rows(3, 60, 3_000, true) });
++    expect(bars.map((b) => b.volume)).toEqual([1002, 1001, 1000]);
++    const noVol = exportedDataToBars({ schema, data: rows(3, 60, 3_000) });
++    expect(noVol.every((b) => b.volume === 1)).toBe(true);
++  });
++
++  it('drops rows without a finite close (whitespace / gap rows)', () => {
++    const data = [Float64Array.from([1_000, 1, 2, 0, NaN]), Float64Array.from([1_060, 1, 2, 0, 1.5])];
++    expect(exportedDataToBars({ schema, data }).map((b) => b.time)).toEqual([1_060]);
++  });
++
++  it('returns [] when there is no close series', () => {
++    expect(exportedDataToBars({ schema: [schema[0]], data: [Float64Array.from([1])] })).toEqual([]);
++  });
++});
++
++describe('readChartBars', () => {
++  it('returns [] for a missing chart or a throwing exportData', async () => {
++    expect(await readChartBars(null)).toEqual([]);
++    const throwing = { exportData: vi.fn(async () => { throw new Error('torn down'); }) };
++    expect(await readChartBars(throwing)).toEqual([]);
++  });
++
++  it('asks for the series plus studies (volume) and maps the rows', async () => {
++    const exportData = vi.fn(async () => ({ schema, data: rows(25, 4_500, 1_788_498_000) }));
++    const bars = await readChartBars({ exportData });
++    expect(exportData).toHaveBeenCalledWith({ includeTime: true, includeSeries: true, includedStudies: 'all' });
++    expect(bars).toHaveLength(25);
++    expect(bars[bars.length - 1].time).toBe(1_788_498_000);
++  });
++});
++
++describe('resolveIntervalSec with chart-sourced bars', () => {
++  it('infers the display step from the displayed bars (75m chart → 4500s)', () => {
++    const bars = exportedDataToBars({ schema, data: rows(30, 4_500, 1_000_000) });
++    expect(resolveIntervalSec('75m', bars, true)).toBe(4_500);
++  });
++
++  it('beats the approximate map for calendar resolutions (1M)', () => {
++    // Real month-to-month gaps vary (28–31 days); the map says 30 days.
++    const data = [
++      Float64Array.from([Date.UTC(2026, 5, 1) / 1000, 1, 1, 1, 1]),
++      Float64Array.from([Date.UTC(2026, 6, 1) / 1000, 1, 1, 1, 1]),
++      Float64Array.from([Date.UTC(2026, 7, 1) / 1000, 1, 1, 1, 1]),
++      Float64Array.from([Date.UTC(2026, 8, 1) / 1000, 1, 1, 1, 1]),
++    ];
++    const bars = exportedDataToBars({ schema, data });
++    expect(resolveIntervalSec('1M', bars, true)).toBe(31 * 86_400);
++    expect(resolveIntervalSec('1M', bars, false)).toBe(30 * 86_400);
++  });
++
++  it('ignores an overnight gap thanks to the median (5 bars, one 19h gap)', () => {
++    const t = 1_788_498_000;
++    const data = [t - 68_400 - 3 * 4_500, t - 68_400 - 2 * 4_500, t - 68_400 - 4_500, t - 68_400, t].map((x) =>
++      Float64Array.from([x, 1, 1, 1, 1])
++    );
++    const bars = exportedDataToBars({ schema, data });
++    expect(resolveIntervalSec('75m', bars, true)).toBe(4_500);
++  });
++
++  it('store-sourced bars still use the display map (2m chart over 1-minute bars)', () => {
++    const bars = exportedDataToBars({ schema, data: rows(60, 60, 1_000_000) });
++    expect(resolveIntervalSec('2m', bars, false)).toBe(120);
++  });
++});
+--- /dev/null
++++ b/src/hooks/__tests__/useGhostLine.renderer.spec.ts
+@@ -0,0 +1,165 @@
++/**
++ * @vitest-environment jsdom
++ */
++// Feature: ghost-line-anchor
++//
++// The ghost entity is owned by `GhostLineRenderer` for the widget's lifetime,
++// not by the draw effect. Invariants pinned here:
++//
++//   · A redraw draws the NEW entity before removing the OLD one (no empty
++//     frame), and exactly one entity is on the chart afterwards.
++//   · A re-run whose projection is unchanged leaves the entity on the chart —
++//     the old cleanup-then-skip path removed it and drew nothing, which is the
++//     "line vanishes for a bar" report.
++//   · Curved modes draw ONE `polyline`; straight modes draw ONE `trend_line`.
++//   · The chart's own series is handed to the projection (`exportData`).
++
++import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
++import { renderHook, act } from '@testing-library/react';
++import { useGhostLine, GhostLineRenderer } from '../useGhostLine';
++import { useTradeStore, type OhlcCandle } from '../../store/useTradeStore';
++import { useChartUIStore } from '../../store/useChartUIStore';
++import { useFeatureStore } from '../../store/useFeatureStore';
++import { ALL_SWITCHES_OFF } from '../../lib/featureFlags';
++
++const computeGhostPoints = vi.fn();
++vi.mock('../ghostLineComputation', () => ({
++  computeGhostPoints: (...args: unknown[]) => computeGhostPoints(...args),
++}));
++
++function makeWidget() {
++  const onChart = new Set<string>();
++  const shapes: { id: string; shape: string; points: number }[] = [];
++  let n = 0;
++  const chart = {
++    getVisibleRange: () => ({ from: 0, to: 1000 }),
++    onVisibleRangeChanged: () => ({ subscribe: () => {}, unsubscribeAll: () => {} }),
++    exportData: vi.fn(async () => ({ schema: [], data: [] })),
++    createMultipointShape: vi.fn(async (pts: unknown[], opts: { shape: string }) => {
++      const id = `id-${++n}`;
++      onChart.add(id);
++      shapes.push({ id, shape: opts.shape, points: pts.length });
++      return id;
++    }),
++    removeEntity: vi.fn((id: string) => {
++      onChart.delete(id);
++    }),
++  };
++  const widget = {
++    onChartReady: (cb: () => void) => cb(),
++    chartReady: async () => {},
++    activeChart: () => chart,
++  };
++  return { widget, chart, onChart, shapes };
++}
++
++const settle = async () => {
++  for (let i = 0; i < 6; i++) await Promise.resolve();
++};
++
++describe('GhostLineRenderer', () => {
++  it('draws the new entity before removing the old one and ends with exactly one', async () => {
++    const { chart, onChart } = makeWidget();
++    const r = new GhostLineRenderer(chart);
++    const order: string[] = [];
++    chart.createMultipointShape.mockImplementation(async () => {
++      order.push('create');
++      onChart.add('x');
++      return 'x';
++    });
++    chart.removeEntity.mockImplementation((id: string) => {
++      order.push(`remove:${id}`);
++      onChart.delete(id);
++    });
++    await r.render([{ time: 1, price: 1 }, { time: 2, price: 2 }], false, () => false);
++    chart.createMultipointShape.mockImplementation(async () => {
++      order.push('create');
++      onChart.add('y');
++      return 'y';
++    });
++    await r.render([{ time: 1, price: 1 }, { time: 2, price: 3 }], false, () => false);
++    expect(order).toEqual(['create', 'create', 'remove:x']);
++    expect([...onChart]).toEqual(['y']);
++  });
++
++  it('a stale run removes its own entity and leaves the previous one', async () => {
++    const { chart, onChart } = makeWidget();
++    const r = new GhostLineRenderer(chart);
++    await r.render([{ time: 1, price: 1 }, { time: 2, price: 2 }], false, () => false);
++    const ok = await r.render([{ time: 1, price: 1 }, { time: 2, price: 3 }], false, () => true);
++    expect(ok).toBe(false);
++    expect([...onChart]).toEqual(['id-1']);
++  });
++});
++
++describe('useGhostLine draw path', () => {
++  beforeEach(() => {
++    useTradeStore.setState({ ohlcCandles: [] as OhlcCandle[], predictiveSignals: [] } as any);
++    useChartUIStore.setState({ ghostLineMode: 'curved' } as any);
++    useFeatureStore.setState({ access: { ...ALL_SWITCHES_OFF, ghostline: true } } as any);
++    computeGhostPoints.mockReset();
++    computeGhostPoints.mockResolvedValue([
++      { time: 1000, price: 10 },
++      { time: 2000, price: 11 },
++      { time: 3000, price: 12.5 },
++    ]);
++  });
++  afterEach(() => vi.clearAllMocks());
++
++  it('passes the chart into computeGhostPoints and draws one polyline in curved mode', async () => {
++    const { widget, chart, shapes, onChart } = makeWidget();
++    renderHook(() => useGhostLine(widget, 'NIFTY', '75m'));
++    await act(settle);
++    expect(computeGhostPoints).toHaveBeenCalledTimes(1);
++    expect(computeGhostPoints.mock.calls[0][5]).toBe(chart);
++    expect(shapes).toEqual([{ id: 'id-1', shape: 'polyline', points: 3 }]);
++    expect(onChart.size).toBe(1);
++  });
++
++  it('draws one trend_line (anchor → end) in a straight mode', async () => {
++    useChartUIStore.setState({ ghostLineMode: 'linear' } as any);
++    const { widget, shapes } = makeWidget();
++    renderHook(() => useGhostLine(widget, 'NIFTY', '10m'));
++    await act(settle);
++    expect(shapes).toEqual([{ id: 'id-1', shape: 'trend_line', points: 2 }]);
++  });
++
++  it('keeps the entity on the chart when a re-run produces unchanged points', async () => {
++    const { widget, chart, onChart } = makeWidget();
++    renderHook(() => useGhostLine(widget, 'NIFTY', '10m'));
++    await act(settle);
++    expect(onChart.size).toBe(1);
++
++    // A new bar re-fires the effect; the projection is byte-identical.
++    await act(async () => {
++      useTradeStore.setState({
++        ohlcCandles: [
++          { symbol: 'NIFTY', start_timestamp_ms: 600_000, open: 1, high: 1, low: 1, close: 1, volume: 1 },
++        ],
++      } as any);
++      await settle();
++    });
++    expect(computeGhostPoints).toHaveBeenCalledTimes(2);
++    expect(chart.removeEntity).not.toHaveBeenCalled();
++    expect(onChart.size).toBe(1);
++  });
++
++  it('clears the entity when the symbol changes, and on unmount', async () => {
++    const { widget, onChart } = makeWidget();
++    const { rerender, unmount } = renderHook(({ sym }) => useGhostLine(widget, sym, '10m'), {
++      initialProps: { sym: 'NIFTY' },
++    });
++    await act(settle);
++    expect(onChart.size).toBe(1);
++    computeGhostPoints.mockResolvedValue([]);
++    rerender({ sym: 'RELIANCE' });
++    await act(settle);
++    expect(onChart.size).toBe(0);
++    computeGhostPoints.mockResolvedValue([{ time: 1, price: 1 }, { time: 2, price: 2 }]);
++    rerender({ sym: 'TCS' });
++    await act(settle);
++    expect(onChart.size).toBe(1);
++    unmount();
++    expect(onChart.size).toBe(0);
++  });
++});
