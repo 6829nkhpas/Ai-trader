@@ -4,8 +4,15 @@ package ai_trade.predictive_data;
 message PredictiveSignal {
     string symbol = 1;
     uint64 timestamp_ms = 2;              // When the prediction was made
-    uint64 target_timestamp_ms = 3;       // The future time being predicted
+    uint64 target_timestamp_ms = 3;       // Close time of the candle being predicted
     double predicted_close_price = 4;     // What the AI thinks the price will be
     double confidence_score = 5;          // 1-100 scale of confidence
     string model_version = 6;             // e.g., "alpha-quant-v1"
+    // The candle the regression was fitted through last. A consumer drawing the
+    // forecast needs to know where the line STARTS, not just where it ends;
+    // without these it had to guess the anchor from its own (possibly
+    // differently-bucketed) candles, and the guess was off on every chart
+    // resolution other than the engine's 10m input.
+    uint64 anchor_timestamp_ms = 7;       // Close time of the last fitted candle
+    double anchor_close = 8;              // Its close
 }
