@@ -30,10 +30,6 @@ pub mod engine {
     use tokio::sync::broadcast;
 
     // ── Constants ────────────────────────────────────────────────────────────
-    /// 10 minutes in milliseconds — offset added to `end_timestamp_ms` to
-    /// compute the prediction's target timestamp.
-    const TEN_MINUTES_MS: u64 = 600_000;
-
     /// Model identifier embedded in every published signal.
     const MODEL_VERSION: &str = "alpha-linreg-v1";
 
@@ -138,6 +134,51 @@ pub mod engine {
             .as_millis() as u64
     }
 
+    /// Assemble the signal for a prediction made after consuming `candle`.
+    ///
+    /// `predict_next` fits `x = 0..14` over the last 14 closes and evaluates the
+    /// line at `x = 14`: that is the close of the candle immediately AFTER
+    /// `candle`, whose close time is `candle.end_timestamp_ms + 10min`. The
+    /// previous code stamped `target_timestamp_ms` with `end_timestamp_ms +
+    /// 10min` too, but `alpha-terminal` sets `end_timestamp_ms = start + 10min`
+    /// — the candle's own close — so the target landed one bar past the bar the
+    /// regression actually predicted. The anchor is `candle` itself, the last
+    /// point on the fitted line.
+    fn build_signal(candle: &OhlcCandle, predicted_close: f64, confidence: f64) -> PredictiveSignal {
+        let bar_ms = candle.end_timestamp_ms.saturating_sub(candle.start_timestamp_ms);
+        PredictiveSignal {
+            symbol: candle.symbol.clone(),
+            timestamp_ms: now_ms(),
+            target_timestamp_ms: candle.end_timestamp_ms + bar_ms,
+            predicted_close_price: predicted_close,
+            confidence_score: confidence,
+            model_version: MODEL_VERSION.to_string(),
+            anchor_timestamp_ms: candle.end_timestamp_ms,
+            anchor_close: candle.close,
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn target_is_the_close_of_the_next_candle_and_anchor_is_this_one() {
+            let candle = OhlcCandle {
+                symbol: "NIFTY".into(),
+                start_timestamp_ms: 1_000_000,
+                end_timestamp_ms: 1_600_000,
+                close: 24_000.5,
+                ..Default::default()
+            };
+            let s = build_signal(&candle, 24_010.0, 80.0);
+            assert_eq!(s.anchor_timestamp_ms, 1_600_000);
+            assert_eq!(s.anchor_close, 24_000.5);
+            assert_eq!(s.target_timestamp_ms, 2_200_000);
+            assert_eq!(s.target_timestamp_ms - s.anchor_timestamp_ms, 600_000);
+        }
+    }
+
     /// Entry point for the Kafka consume → predict → produce → broadcast loop.
     ///
     /// This function blocks indefinitely, processing each incoming candle
@@ -239,14 +280,7 @@ pub mod engine {
                                 );
                                 continue;
                             }
-                            let signal = PredictiveSignal {
-                                symbol: candle.symbol.clone(),
-                                timestamp_ms: now_ms(),
-                                target_timestamp_ms: candle.end_timestamp_ms + TEN_MINUTES_MS,
-                                predicted_close_price: predicted_close,
-                                confidence_score: confidence,
-                                model_version: MODEL_VERSION.to_string(),
-                            };
+                            let signal = build_signal(&candle, predicted_close, confidence);
 
                             log::info!(
                                 "[prediction] symbol={:<20} predicted={:>10.2}  \
@@ -266,6 +300,8 @@ pub mod engine {
                                 "predicted_close_price": signal.predicted_close_price,
                                 "confidence_score": signal.confidence_score,
                                 "model_version": signal.model_version,
+                                "anchor_timestamp_ms": signal.anchor_timestamp_ms,
+                                "anchor_close": signal.anchor_close,
                             });
 
                             // Counted before the spawn: the prediction exists at
